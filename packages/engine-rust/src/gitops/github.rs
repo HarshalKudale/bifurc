@@ -226,6 +226,8 @@ pub async fn fetch_user(token: &str) -> Result<GithubUser, String> {
 /// A repository as the engine uses it.
 #[derive(Debug, Clone)]
 pub struct Repo {
+    /// GitHub's own id for it, which stays the same when the repository is renamed or moved.
+    pub id: u64,
     pub full_name: String,
     pub name: String,
     pub owner_id: u64,
@@ -248,6 +250,7 @@ impl Repo {
             return None;
         }
         Some(Repo {
+            id: value.get("id").and_then(Value::as_u64)?,
             full_name: full_name.to_string(),
             name: str_of(value, "name").to_string(),
             owner_id: value.pointer("/owner/id").and_then(Value::as_u64)?,
