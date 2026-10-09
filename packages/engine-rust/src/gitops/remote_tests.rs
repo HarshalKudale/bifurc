@@ -1,5 +1,6 @@
 //! Tests of sign-in, import, publish and the owner and access rules, against a stand-in for GitHub whose repositories are
-//! bare repositories in a temporary directory. Skipped when git is missing.
+//! bare repositories in a temporary directory, and for the console that says who was given which workspace.
+//! Skipped when git is missing.
 
 use std::{
     collections::HashMap,
@@ -15,7 +16,7 @@ use tokio::{
 };
 
 use super::{
-    auto_sync, get_sync_config, get_workspace_git_state, get_workspace_sync_status,
+    auto_sync, console, get_sync_config, get_workspace_git_state, get_workspace_sync_status,
     github::{Endpoints, set_test_endpoints},
     remote::forget_access,
 };
@@ -52,6 +53,13 @@ struct Hub {
     root: PathBuf,
     /// Whether the user has typed the device code yet.
     granted: bool,
+    /// The console: the repositories that are an organization's workspace, by id.
+    managed: std::collections::HashSet<u64>,
+    /// The console: (repository id, user id) -> `read`, `write`, or `seatInactive` for someone who was given
+    /// the workspace and has no seat.
+    grants: HashMap<(u64, u64), &'static str>,
+    /// The console does not answer.
+    console_down: bool,
 }
 
 impl Hub {
@@ -67,9 +75,14 @@ impl Hub {
     }
 }
 
+/// The id the stand-in gives a repository: the same every time for a name.
+fn repo_id(full_name: &str) -> u64 {
+    full_name.bytes().fold(7u64, |id, byte| id.wrapping_mul(31).wrapping_add(u64::from(byte))) % 1_000_000 + 1
+}
+
 fn repo_json(full_name: &str, owner_id: u64, path: &Path, push: bool) -> Value {
     json!({
-        "full_name": full_name, "name": full_name.rsplit('/').next().unwrap(),
+        "id": repo_id(full_name), "full_name": full_name, "name": full_name.rsplit('/').next().unwrap(),
         "owner": { "id": owner_id, "login": full_name.split('/').next().unwrap() },
         "permissions": { "pull": true, "push": push },
         "private": true, "description": "", "clone_url": path.to_string_lossy(), "html_url": "",
@@ -89,6 +102,28 @@ async fn answer(hub: &Arc<Mutex<Hub>>, method: &str, path: &str, token: &str, bo
             true => (200, json!({ "access_token": "tok-octo" })),
             false => (200, json!({ "error": "authorization_pending" })),
         },
+        // The console's one question. It is asked without a token.
+        ("POST", "/api/v1/access/check") => {
+            let asked: Value = serde_json::from_str(body).unwrap_or(Value::Null);
+            let (Some(user_id), Some(repo)) = (asked["githubUserId"].as_u64(), asked["repoId"].as_u64()) else {
+                return (400, json!({ "error": { "code": "invalid" } }));
+            };
+            let hub = hub.lock();
+            if hub.console_down {
+                return (503, json!({}));
+            }
+            if !hub.managed.contains(&repo) {
+                let message = "Not a workspace of an organization.";
+                return (200, json!({ "allowed": false, "reason": "unmanaged", "message": message }));
+            }
+            match hub.grants.get(&(repo, user_id)) {
+                Some(&"seatInactive") => {
+                    (200, json!({ "allowed": false, "reason": "seatInactive", "message": "Your seat is not active." }))
+                }
+                Some(permission) => (200, json!({ "allowed": true, "permission": permission })),
+                None => (200, json!({ "allowed": false, "reason": "notGranted", "message": "Ask the owner to add you." })),
+            }
+        }
         ("GET", "/user") => match user {
             Some((id, login)) => (200, json!({ "id": id, "login": login, "name": "", "avatar_url": "" })),
             None => (401, json!({ "message": "Bad credentials" })),
@@ -150,6 +185,20 @@ struct HubGuard {
 impl Drop for HubGuard {
     fn drop(&mut self) {
         set_test_endpoints(None);
+        console::set_test_url(None);
+    }
+}
+
+impl HubGuard {
+    /// In the console: make the repository an organization's workspace and give it to `user` (`read`, `write`,
+    /// or `seatInactive`), or with `None` take it from them.
+    fn grant(&self, full_name: &str, user: u64, permission: Option<&'static str>) {
+        let mut hub = self.hub.lock();
+        hub.managed.insert(repo_id(full_name));
+        match permission {
+            Some(permission) => hub.grants.insert((repo_id(full_name), user), permission),
+            None => hub.grants.remove(&(repo_id(full_name), user)),
+        };
     }
 }
 
@@ -158,7 +207,8 @@ async fn start_hub() -> HubGuard {
     let hub = Arc::new(Mutex::new(Hub { root: dir.path().to_path_buf(), ..Hub::default() }));
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{HOST}:{}", listener.local_addr().unwrap().port());
-    set_test_endpoints(Some(Endpoints { web: base.clone(), api: base }));
+    set_test_endpoints(Some(Endpoints { web: base.clone(), api: base.clone() }));
+    console::set_test_url(Some(base));
     let state = hub.clone();
     tokio::spawn(async move {
         loop {
@@ -785,6 +835,9 @@ async fn a_shared_workspace_is_imported_and_synced_with_the_access_github_gives(
         guard.hub.lock().collaborators.entry(repo.to_string()).or_default().insert(7, push);
     };
     share("octo/team", false);
+    // The organization gave eve both workspaces to write to, so what GitHub gives is what she has.
+    guard.grant("octo/team", 7, Some("write"));
+    guard.grant("octo/other", 7, Some("write"));
     let bare = guard.hub.lock().repos["octo/team"].1.clone();
     let refuse = |result: Value, needle: &str| {
         assert_eq!(result["ok"], false, "{result}");
@@ -934,4 +987,107 @@ async fn a_shared_workspace_is_imported_and_synced_with_the_access_github_gives(
     let mine_bare = guard.hub.lock().repos["octo/mine"].1.clone();
     assert_eq!(run(&mine_bare, &["rev-parse", "main"]).await, run(&ws_dir("mine-ws"), &["rev-parse", "HEAD"]).await);
     assert_eq!(engine.call("sync.getState", json!({ "workspaceId": "mine-ws" })).await["access"], "owner");
+}
+
+#[tokio::test]
+async fn someone_elses_workspace_is_imported_only_when_the_console_gave_it_to_the_account() {
+    if !check_git_installed().await {
+        return;
+    }
+    let _root = scratch_data_root();
+    let guard = start_hub().await;
+    let _team = TeamSync::set(true);
+    let engine = Engine::new();
+    let octo = sign_in(42, "octo");
+    let eve = sign_in(7, "eve");
+    let ws = "remote-ws";
+
+    seed_remote(&guard, "octo/team", 42, workspace_file(ws)).await;
+    seed_remote(&guard, "octo/before", 42, workspace_file("before-ws")).await;
+    seed_remote(&guard, "octo/mine", 42, workspace_file("mine-ws")).await;
+    // GitHub lets eve push to both: she was made a collaborator there.
+    for repo in ["octo/team", "octo/before"] {
+        guard.hub.lock().collaborators.entry(repo.to_string()).or_default().insert(7, true);
+    }
+    let down = |down: bool| guard.hub.lock().console_down = down;
+    let import = |repo: &'static str| engine.call("workspace.import", json!({ "accountId": eve, "repo": repo }));
+    let refused = |result: Value, reason: &str| {
+        assert_eq!((result["ok"].as_bool(), result["reason"].as_str()), (Some(false), Some(reason)), "{result}");
+        assert!(!ws_dir(ws).exists(), "a refused import brings nothing to this device");
+    };
+    let access = || async { engine.call("sync.getState", json!({ "workspaceId": ws })).await["access"].clone() };
+    let publish = |id: &'static str| {
+        write_entity(ws, "requests", id, &request(id, "Request"), None).unwrap();
+        engine.call("entity.publish", json!({ "workspaceId": ws, "paths": [format!("requests/{id}.json")] }))
+    };
+
+    // Being a collaborator on GitHub imports nothing: not while no organization has the repository, not
+    // while the organization has not given it to her, and not while she has no seat there.
+    refused(import("octo/team").await, "unmanaged");
+    guard.grant("octo/team", 7, None);
+    refused(import("octo/team").await, "notGranted");
+    guard.grant("octo/team", 7, Some("seatInactive"));
+    refused(import("octo/team").await, "seatInactive");
+    // No answer is not a yes.
+    guard.grant("octo/team", 7, Some("write"));
+    down(true);
+    let unreachable = import("octo/team").await;
+    assert!(unreachable["error"].as_str().unwrap().contains("could not be reached"), "{unreachable}");
+    refused(unreachable, "consoleUnreachable");
+    // The owner of a repository is never asked about.
+    let mine = engine.call("workspace.import", json!({ "accountId": octo, "repo": "octo/mine" })).await;
+    assert_eq!(mine["ok"], true, "{mine}");
+    auto_sync::stop_all_auto_sync();
+    down(false);
+
+    // Given it to read, she has it read-only, whatever GitHub lets her do.
+    guard.grant("octo/team", 7, Some("read"));
+    let imported = import("octo/team").await;
+    assert_eq!(imported["ok"], true, "{imported}");
+    auto_sync::stop_all_auto_sync();
+    assert_eq!(imported["workspace"]["syncConfig"]["access"], "read");
+    let bare = guard.hub.lock().repos["octo/team"].1.clone();
+    let first = run(&bare, &["rev-parse", "main"]).await;
+    let blocked = publish("r2").await;
+    assert!(blocked["error"].as_str().unwrap().contains("read-only"), "{blocked}");
+    assert_eq!(run(&bare, &["rev-parse", "main"]).await, first);
+    // While the console cannot be asked, reading stays all she has.
+    down(true);
+    assert_eq!(publish("r2").await["ok"], false);
+    assert_eq!(access().await, "read");
+    down(false);
+
+    // Given it to write, the next thing that pushes finds out.
+    guard.grant("octo/team", 7, Some("write"));
+    let pushed = publish("r2").await;
+    assert_eq!(pushed["ok"], true, "{pushed}");
+    assert_eq!(access().await, "write");
+    assert_eq!(run(&bare, &["rev-parse", "main"]).await, run(&ws_dir(ws), &["rev-parse", "HEAD"]).await);
+    // A console that cannot be asked takes nothing away from someone who had it to write.
+    down(true);
+    assert_eq!(publish("r3").await["ok"], true);
+    down(false);
+    // Losing the seat, or the workspace, in the console leaves her what is on this device, read-only.
+    for lost in [Some("seatInactive"), None] {
+        guard.grant("octo/team", 7, lost);
+        assert_eq!(publish("r4").await["ok"], false, "{lost:?}");
+        assert_eq!(access().await, "read");
+    }
+
+    // A workspace that was shared before there was a console is in settings from the version before this
+    // one, on a repository no organization has. It keeps syncing with what GitHub gives.
+    guard.grant("octo/before", 7, Some("write"));
+    let before = import("octo/before").await;
+    assert_eq!(before["ok"], true, "{before}");
+    auto_sync::stop_all_auto_sync();
+    {
+        let mut hub = guard.hub.lock();
+        hub.managed.remove(&repo_id("octo/before"));
+        hub.grants.clear();
+    }
+    write_entity("before-ws", "requests", "r2", &request("r2", "Second"), None).unwrap();
+    let synced =
+        engine.call("entity.publish", json!({ "workspaceId": "before-ws", "paths": ["requests/r2.json"] })).await;
+    assert_eq!(synced["ok"], true, "{synced}");
+    assert_eq!(get_sync_config("before-ws").unwrap()["access"], "write");
 }
