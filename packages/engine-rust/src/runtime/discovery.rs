@@ -112,9 +112,30 @@ pub fn is_process_alive(pid: u32) -> bool {
     }
 }
 
-/// The engine serving `data_dir`, if its process is still alive.
+/// Whether something listens at a `socket` address. A pid alone does not prove an engine: a `runtime.json`
+/// that outlived its engine (a crash, a reboot) names a pid the system may have given to another process.
+#[cfg(unix)]
+pub fn is_socket_listening(address: &str) -> bool {
+    std::os::unix::net::UnixStream::connect(address).is_ok()
+}
+
+#[cfg(windows)]
+pub fn is_socket_listening(address: &str) -> bool {
+    use windows_sys::Win32::{
+        Foundation::{ERROR_FILE_NOT_FOUND, GetLastError},
+        System::Pipes::WaitNamedPipeW,
+    };
+    let name: Vec<u16> = address.encode_utf16().chain(std::iter::once(0)).collect();
+    // SAFETY: `name` is a NUL-terminated wide string that outlives the call.
+    // A pipe whose instances are all busy times out; only a pipe no one serves is not found.
+    unsafe { WaitNamedPipeW(name.as_ptr(), 1) != 0 || GetLastError() != ERROR_FILE_NOT_FOUND }
+}
+
+/// The engine serving `data_dir`, if its process is still alive and, over a socket, still listening.
 pub fn find_running_engine(data_dir: &Path) -> Option<EngineRuntimeInfo> {
-    read_runtime_info(data_dir).filter(|info| is_process_alive(info.pid))
+    read_runtime_info(data_dir)
+        .filter(|info| is_process_alive(info.pid))
+        .filter(|info| info.transport != "socket" || is_socket_listening(&info.address))
 }
 
 #[cfg(test)]
@@ -132,5 +153,24 @@ mod tests {
     #[test]
     fn this_process_is_alive() {
         assert!(is_process_alive(std::process::id()));
+    }
+
+    #[test]
+    fn a_live_pid_with_no_one_on_its_socket_is_not_a_running_engine() {
+        let dir = tempfile::tempdir().unwrap();
+        let mut info = EngineRuntimeInfo {
+            pid: std::process::id(),
+            transport: "socket".to_string(),
+            address: engine_socket_path(dir.path()),
+            data_dir: dir.path().to_string_lossy().into_owned(),
+            protocol_version: String::new(),
+            engine_version: String::new(),
+            started_at: 0,
+        };
+        write_runtime_info(&info).unwrap();
+        assert!(find_running_engine(dir.path()).is_none());
+        info.transport = "stdio".to_string();
+        write_runtime_info(&info).unwrap();
+        assert!(find_running_engine(dir.path()).is_some());
     }
 }

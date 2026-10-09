@@ -71,9 +71,30 @@ pub fn read_runtime_info(data_dir: &Path) -> Option<RuntimeInfo> {
     RuntimeInfo::from_json(serde_json::from_str(&text).ok()?)
 }
 
-/// The engine serving `data_dir`, if its process is still alive.
+/// The engine serving `data_dir`, if its process is still alive and, over a socket, still listening.
 pub fn find_running_engine(data_dir: &Path) -> Option<RuntimeInfo> {
-    read_runtime_info(data_dir).filter(|info| is_process_alive(info.pid))
+    read_runtime_info(data_dir)
+        .filter(|info| is_process_alive(info.pid))
+        .filter(|info| info.transport != "socket" || is_socket_listening(&info.address))
+}
+
+/// Whether something listens at a `socket` address. A pid alone does not prove an engine: a `runtime.json`
+/// that outlived its engine (a crash, a reboot) names a pid the system may have given to another process.
+#[cfg(unix)]
+pub fn is_socket_listening(address: &str) -> bool {
+    std::os::unix::net::UnixStream::connect(address).is_ok()
+}
+
+#[cfg(windows)]
+pub fn is_socket_listening(address: &str) -> bool {
+    use windows_sys::Win32::{
+        Foundation::{ERROR_FILE_NOT_FOUND, GetLastError},
+        System::Pipes::WaitNamedPipeW,
+    };
+    let name: Vec<u16> = address.encode_utf16().chain(std::iter::once(0)).collect();
+    // SAFETY: `name` is a NUL-terminated wide string that outlives the call.
+    // A pipe whose instances are all busy times out; only a pipe no one serves is not found.
+    unsafe { WaitNamedPipeW(name.as_ptr(), 1) != 0 || GetLastError() != ERROR_FILE_NOT_FOUND }
 }
 
 #[cfg(unix)]
@@ -145,10 +166,23 @@ mod tests {
     #[test]
     fn an_engine_whose_process_is_gone_is_not_running() {
         let dir = tempfile::tempdir().unwrap();
-        write_runtime(dir.path(), &json!({"pid": std::process::id(), "transport": "socket", "address": "a"}));
+        write_runtime(dir.path(), &json!({"pid": std::process::id(), "transport": "stdio", "address": "a"}));
         assert!(find_running_engine(dir.path()).is_some());
         // Pids are far below this on every supported platform.
-        write_runtime(dir.path(), &json!({"pid": 4_000_000_000u64, "transport": "socket", "address": "a"}));
+        write_runtime(dir.path(), &json!({"pid": 4_000_000_000u64, "transport": "stdio", "address": "a"}));
+        assert!(read_runtime_info(dir.path()).is_some());
+        assert!(find_running_engine(dir.path()).is_none());
+    }
+
+    #[test]
+    fn a_live_pid_with_no_one_on_its_socket_is_not_a_running_engine() {
+        let dir = tempfile::tempdir().unwrap();
+        let address = if cfg!(windows) {
+            format!(r"\\.\pipe\bifurc-test-nobody-{}", std::process::id())
+        } else {
+            dir.path().join("nobody.sock").to_string_lossy().into_owned()
+        };
+        write_runtime(dir.path(), &json!({"pid": std::process::id(), "transport": "socket", "address": address}));
         assert!(read_runtime_info(dir.path()).is_some());
         assert!(find_running_engine(dir.path()).is_none());
     }
