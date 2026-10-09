@@ -469,8 +469,8 @@ impl WorkspaceScreen {
                 format!("@{owner}"),
                 false,
                 Some(if setup.team_sync {
-                    "The account that owns the workspace's repository. Whoever it shares the repository with on \
-                     GitHub can import the workspace, and sync it if they were given write access."
+                    "The account that owns the workspace's repository. Whoever it gives the workspace to in the \
+                     Bifurc Console can import it, and sync it if they were given write access."
                 } else {
                     "The account that owns the workspace's repository. Only the owner can import it or sync it."
                 }),
