@@ -282,11 +282,11 @@ mod tests {
     #[test]
     fn engine_status_describes_a_live_engine() {
         let dir = empty_dir();
-        let runtime = json!({"pid": std::process::id(), "transport": "socket", "address": "addr", "dataDir": "x"});
+        let runtime = json!({"pid": std::process::id(), "transport": "stdio", "address": "addr", "dataDir": "x"});
         std::fs::write(dir.path().join("runtime.json"), runtime.to_string()).unwrap();
         let path = dir.path().to_str().unwrap();
         let outcome = go(&["engine", "status", "--data-dir", path]);
-        assert_eq!(outcome.stdout, format!("running  pid {}, socket addr\n", std::process::id()));
+        assert_eq!(outcome.stdout, format!("running  pid {}, stdio addr\n", std::process::id()));
         let outcome = go(&["engine", "status", "--data-dir", path, "--json"]);
         assert_eq!(serde_json::from_str::<Value>(&outcome.stdout).unwrap(), runtime);
     }
@@ -294,11 +294,11 @@ mod tests {
     #[test]
     fn engine_start_reports_a_running_engine_without_starting_another() {
         let dir = empty_dir();
-        let runtime = json!({"pid": std::process::id(), "transport": "socket", "address": "addr", "dataDir": "x"});
+        let runtime = json!({"pid": std::process::id(), "transport": "stdio", "address": "addr", "dataDir": "x"});
         std::fs::write(dir.path().join("runtime.json"), runtime.to_string()).unwrap();
         let outcome = go(&["engine", "start", "--data-dir", dir.path().to_str().unwrap()]);
         assert_eq!(outcome.code, 0);
-        assert_eq!(outcome.stdout, format!("already running  pid {}, socket addr\n", std::process::id()));
+        assert_eq!(outcome.stdout, format!("already running  pid {}, stdio addr\n", std::process::id()));
     }
 
     #[test]
