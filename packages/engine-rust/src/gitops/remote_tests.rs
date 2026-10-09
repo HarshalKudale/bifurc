@@ -16,7 +16,7 @@ use tokio::{
 };
 
 use super::{
-    auto_sync, console, get_sync_config, get_workspace_git_state, get_workspace_sync_status,
+    auto_sync, console, get_sync_config, organization, get_workspace_git_state, get_workspace_sync_status,
     github::{Endpoints, set_test_endpoints},
     remote::forget_access,
 };
@@ -60,6 +60,8 @@ struct Hub {
     grants: HashMap<(u64, u64), &'static str>,
     /// The console does not answer.
     console_down: bool,
+    /// The console: the organization the managed repositories belong to has usage analytics on.
+    analytics: bool,
 }
 
 impl Hub {
@@ -123,6 +125,31 @@ async fn answer(hub: &Arc<Mutex<Hub>>, method: &str, path: &str, token: &str, bo
                 Some(permission) => (200, json!({ "allowed": true, "permission": permission })),
                 None => (200, json!({ "allowed": false, "reason": "notGranted", "message": "Ask the owner to add you." })),
             }
+        }
+        // The console's other question: whose the workspace is. The owner of the repository is the owner of
+        // the organization; anyone else has to have been given the workspace.
+        ("POST", "/api/v1/workspaces/policy") => {
+            let asked: Value = serde_json::from_str(body).unwrap_or(Value::Null);
+            let (Some(user_id), Some(repo)) = (asked["githubUserId"].as_u64(), asked["repoId"].as_u64()) else {
+                return (400, json!({ "error": { "code": "invalid" } }));
+            };
+            let hub = hub.lock();
+            if hub.console_down {
+                return (503, json!({}));
+            }
+            let owner = hub.repos.iter().any(|(name, (owner, _))| repo_id(name) == repo && *owner == user_id);
+            if !hub.managed.contains(&repo) || !(owner || hub.grants.contains_key(&(repo, user_id))) {
+                return (200, json!({ "managed": false }));
+            }
+            (
+                200,
+                json!({
+                    "managed": true,
+                    "organization": { "publicId": "pub_acme", "name": "Acme" },
+                    "workspace": { "id": format!("ws_{repo}") },
+                    "analytics": { "enabled": hub.analytics },
+                }),
+            )
         }
         ("GET", "/user") => match user {
             Some((id, login)) => (200, json!({ "id": id, "login": login, "name": "", "avatar_url": "" })),
@@ -1090,4 +1117,135 @@ async fn someone_elses_workspace_is_imported_only_when_the_console_gave_it_to_th
         engine.call("entity.publish", json!({ "workspaceId": "before-ws", "paths": ["requests/r2.json"] })).await;
     assert_eq!(synced["ok"], true, "{synced}");
     assert_eq!(get_sync_config("before-ws").unwrap()["access"], "write");
+}
+
+#[tokio::test]
+async fn an_organizations_workspace_has_its_analytics_decided_in_the_console() {
+    if !check_git_installed().await {
+        return;
+    }
+    let _root = scratch_data_root();
+    let guard = start_hub().await;
+    let _team = TeamSync::set(true);
+    let engine = Engine::new();
+    let octo = sign_in(42, "octo");
+    let eve = sign_in(7, "eve");
+    let (ws, mine, own) = ("remote-ws", "mine-ws", "own-ws");
+
+    seed_remote(&guard, "octo/team", 42, workspace_file(ws)).await;
+    seed_remote(&guard, "octo/mine", 42, workspace_file(mine)).await;
+    seed_remote(&guard, "eve/own", 7, workspace_file(own)).await;
+    guard.hub.lock().collaborators.entry("octo/team".to_string()).or_default().insert(7, true);
+    guard.grant("octo/team", 7, Some("write"));
+    guard.hub.lock().managed.insert(repo_id("octo/mine"));
+    let down = |down: bool| guard.hub.lock().console_down = down;
+    let stored = |id: &str| load_settings().workspace(id).unwrap().get("organization").cloned().unwrap_or(Value::Null);
+    let shown = |id: &'static str| {
+        let engine = &engine;
+        async move {
+            let config = engine.call("config.get", json!({})).await;
+            let workspaces = config["workspaces"].as_array().unwrap();
+            workspaces.iter().find(|workspace| workspace["id"] == id).unwrap()["organization"].clone()
+        }
+    };
+    let acme = |repo: &str, user: u64, analytics: bool| {
+        json!({
+            "publicId": "pub_acme", "name": "Acme", "workspaceId": format!("ws_{}", repo_id(repo)),
+            "analytics": analytics, "githubUserId": user,
+        })
+    };
+
+    // Whose a workspace is is known as soon as it is on this device: the member's, the organization owner's
+    // own, and one that is nobody's but its user's.
+    for (account, repo) in [(&eve, "octo/team"), (&octo, "octo/mine"), (&eve, "eve/own")] {
+        let imported = engine.call("workspace.import", json!({ "accountId": account, "repo": repo })).await;
+        assert_eq!(imported["ok"], true, "{imported}");
+        auto_sync::stop_all_auto_sync();
+    }
+    assert_eq!(stored(ws), acme("octo/team", 7, false));
+    assert_eq!(stored(mine), acme("octo/mine", 42, false));
+    assert_eq!(stored(own), Value::Null);
+    assert_eq!(shown(ws).await, json!({ "name": "Acme", "analytics": false }));
+    assert_eq!(shown(own).await, Value::Null);
+
+    // The owner turns analytics on in the console: each workspace finds out the next time it asks, and the
+    // member's own switch on this device has no say in it.
+    engine.call("settings.update", json!({ "telemetryEnabled": false })).await;
+    guard.hub.lock().analytics = true;
+    engine.call("sync.pull", json!({ "workspaceId": ws })).await;
+    organization::refresh(mine).await;
+    organization::refresh(own).await;
+    assert_eq!(stored(ws), acme("octo/team", 7, true));
+    assert_eq!(stored(mine), acme("octo/mine", 42, true));
+    assert_eq!(stored(own), Value::Null);
+    assert_eq!(shown(ws).await, json!({ "name": "Acme", "analytics": true }));
+    assert_eq!(engine.call("config.get", json!({})).await["telemetryEnabled"], false);
+
+    // A console that cannot be asked changes nothing.
+    down(true);
+    engine.call("sync.pull", json!({ "workspaceId": ws })).await;
+    organization::refresh(mine).await;
+    assert_eq!((stored(ws), stored(mine)), (acme("octo/team", 7, true), acme("octo/mine", 42, true)));
+    down(false);
+
+    // Turned off again, and then the workspace taken out of the organization: it is its user's again.
+    guard.hub.lock().analytics = false;
+    organization::refresh(ws).await;
+    assert_eq!(stored(ws), acme("octo/team", 7, false));
+    guard.hub.lock().managed.remove(&repo_id("octo/team"));
+    organization::refresh(ws).await;
+    assert_eq!((stored(ws), shown(ws).await), (Value::Null, Value::Null));
+}
+
+#[tokio::test]
+async fn a_workspace_synced_by_a_version_before_organizations_learns_whose_it_is() {
+    if !check_git_installed().await {
+        return;
+    }
+    let _root = scratch_data_root();
+    let guard = start_hub().await;
+    let _team = TeamSync::set(true);
+    let engine = Engine::new();
+    let octo = sign_in(42, "octo");
+    let ws = "mine-ws";
+    seed_remote(&guard, "octo/mine", 42, workspace_file(ws)).await;
+    let imported = engine.call("workspace.import", json!({ "accountId": octo, "repo": "octo/mine" })).await;
+    assert_eq!(imported["ok"], true, "{imported}");
+    auto_sync::stop_all_auto_sync();
+
+    // The workspace as 0.5.0 left it in `app.json`: a remote with no repository id, and no organization.
+    let mut settings = load_settings();
+    let workspace = settings.workspace_mut(ws).unwrap();
+    let before = {
+        let stored = workspace.as_object_mut().unwrap();
+        stored.remove("organization");
+        stored["syncConfig"].as_object_mut().unwrap().remove("repoId");
+        stored.clone()
+    };
+    assert_eq!(
+        before.keys().map(String::as_str).collect::<Vec<_>>(),
+        ["id", "name", "activeEnvironmentId", "accountId", "syncConfig", "syncMeta"]
+    );
+    crate::workspace::settings::save_settings(&settings).unwrap();
+
+    // Nobody's but its user's until an organization has it: nothing is added but the repository's id.
+    organization::refresh(ws).await;
+    let mut expected = before.clone();
+    expected["syncConfig"]["repoId"] = json!(repo_id("octo/mine"));
+    assert_eq!(load_settings().workspace(ws).unwrap(), &Value::Object(expected.clone()));
+
+    // The owner adds it to an organization in the console and turns analytics on there.
+    guard.hub.lock().managed.insert(repo_id("octo/mine"));
+    guard.hub.lock().analytics = true;
+    organization::refresh(ws).await;
+    expected.insert(
+        "organization".into(),
+        json!({
+            "publicId": "pub_acme", "name": "Acme", "workspaceId": format!("ws_{}", repo_id("octo/mine")),
+            "analytics": true, "githubUserId": 42,
+        }),
+    );
+    assert_eq!(load_settings().workspace(ws).unwrap(), &Value::Object(expected));
+    // What it synced with and as whom is what it was.
+    assert_eq!(engine.call("sync.getState", json!({ "workspaceId": ws })).await["access"], "owner");
 }
