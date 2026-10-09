@@ -9,6 +9,7 @@ use serde_json::Value;
 use tokio::task::JoinHandle;
 
 use super::{
+    organization,
     remote::{refresh_access, workspace_access},
     status_tracker::invalidate_cache,
     sync_manager::{get_remote_head, sync_pull},
@@ -23,6 +24,9 @@ const POLL_INTERVAL: Duration = Duration::from_secs(10);
 /// How many looks at the remote pass between two questions to GitHub about what the account may do with a
 /// repository that is someone else's: five minutes' worth. Access given or taken there shows by then.
 const ACCESS_CHECK_EVERY: u32 = 30;
+/// How many looks pass between two questions to the console about whose the workspace is and whether its
+/// organization has usage analytics on: half an hour's worth. The first look asks too.
+const ORGANIZATION_CHECK_EVERY: u32 = 180;
 
 struct Poller {
     task: JoinHandle<()>,
@@ -65,6 +69,9 @@ pub fn start_auto_sync(ws_id: &str) {
                 }
                 // The owner's access does not change; anyone else's is what the owner last made it.
                 ticks = ticks.wrapping_add(1);
+                if ticks % ORGANIZATION_CHECK_EVERY == 1 {
+                    organization::refresh(&ws_id).await;
+                }
                 let shared = workspace_access(&ws_id).is_some_and(|access| access != "owner");
                 if shared && team_sync() && ticks % ACCESS_CHECK_EVERY == 0 {
                     let _ = refresh_access(&ws_id).await;

@@ -17,6 +17,17 @@ pub struct WorkspaceInfo {
     pub account: Option<AccountInfo>,
     /// The remote repository this workspace syncs with, once it is published or was imported.
     pub sync: Option<SyncConfig>,
+    /// The organization the workspace belongs to, when it is one's and not its user's own.
+    pub organization: Option<OrganizationInfo>,
+}
+
+/// The organization a workspace belongs to, as the Bifurc Console last said. Its usage analytics are decided
+/// there, by its owner: nothing on this device turns them on or off.
+#[derive(Debug, Clone, PartialEq)]
+pub struct OrganizationInfo {
+    pub name: String,
+    /// What is done in the workspace is reported to the organization.
+    pub analytics: bool,
 }
 
 /// A git account signed in on this device. The engine keeps its token; the UI never sees one.
@@ -211,7 +222,11 @@ impl ConfigSnapshot {
                     })
                 });
                 let account = w.get("account").and_then(AccountInfo::from_value);
-                Some(WorkspaceInfo { id: text(w, "id")?, name: text(w, "name")?, account, sync })
+                let organization = w.get("organization").filter(|o| o.is_object()).map(|o| OrganizationInfo {
+                    name: text(o, "name").unwrap_or_default(),
+                    analytics: o.get("analytics").and_then(Value::as_bool).unwrap_or(false),
+                });
+                Some(WorkspaceInfo { id: text(w, "id")?, name: text(w, "name")?, account, sync, organization })
             })
             .collect();
 
@@ -542,6 +557,24 @@ mod tests {
         // A remote assigned before access was recorded is its owner's.
         assert_eq!(read_only(json!({ "remote": "r", "repo": "octo/team" })), Some(false));
         assert_eq!(read_only(Value::Null), None);
+    }
+
+    #[test]
+    fn a_workspace_of_an_organization_says_whose_it_is_and_whether_it_is_reported() {
+        let workspace = |organization: Value| {
+            let config = json!({
+                "activeWorkspaceId": "w1",
+                "workspaces": [{ "id": "w1", "name": "W", "organization": organization }],
+            });
+            ConfigSnapshot::from_value(&config).unwrap().workspaces[0].organization.clone()
+        };
+        let acme = |analytics: bool| Some(OrganizationInfo { name: "Acme".into(), analytics });
+        assert_eq!(workspace(json!({ "name": "Acme", "analytics": true })), acme(true));
+        assert_eq!(workspace(json!({ "name": "Acme", "analytics": false })), acme(false));
+        // The user's own workspace, and what an engine from before organizations answers.
+        assert_eq!(workspace(Value::Null), None);
+        let config = json!({ "activeWorkspaceId": "w1", "workspaces": [{ "id": "w1", "name": "W" }] });
+        assert_eq!(ConfigSnapshot::from_value(&config).unwrap().workspaces[0].organization, None);
     }
 
     #[test]
