@@ -4,6 +4,7 @@
 
 mod account_commands;
 mod auto_sync;
+mod console;
 mod delete_commands;
 mod git_lock;
 mod git_ops;
