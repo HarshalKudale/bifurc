@@ -26,6 +26,7 @@ use crate::{
         },
         kinds::crud_kind,
         settings::load_settings,
+        stamp,
         status_cache::invalidate_cache,
         tree::{self, Scope},
     },
@@ -111,6 +112,11 @@ async fn delete_tree_folder(scope: Scope, params: &Value) -> Result<Value> {
     let under = format!("{}/", folder.path);
     let subtree: Vec<&tree::Folder> = all.iter().filter(|f| f.id == id || f.path.starts_with(&under)).collect();
     let in_subtree = |folder_id: &str| subtree.iter().any(|f| f.id == folder_id);
+    // A locked entity cannot be deleted, so neither can a folder that holds one: nothing is taken out of it.
+    let held = tree::entries(&ws_id, scope).into_iter().filter(|entry| entry.folder_id.as_deref().is_some_and(in_subtree));
+    if let Some(version) = held.filter_map(|entry| entry.lock()).next() {
+        return Err(stamp::folder_update_required(&version));
+    }
 
     // The folders that keep something waiting: the one an entity was in, and every folder above it.
     let mut waiting: HashSet<String> = HashSet::new();
@@ -327,6 +333,12 @@ pub fn register(registry: &mut CommandRegistry) {
                 waiting.push(current);
             }
         };
+
+        // A locked entity cannot be deleted, so neither can a folder that holds one: nothing is taken out of it.
+        let held = array_of(&cfg, conf.entity_config_key).iter().filter(|e| opt_str(e, "folderId").is_some_and(in_subtree));
+        if let Some(version) = held.filter(|e| truthy(e, "locked")).find_map(|e| opt_str(e, "requiredVersion")) {
+            return Err(stamp::folder_update_required(version));
+        }
 
         let mut affected: Vec<String> = Vec::new();
         for entity in array_of(&cfg, conf.entity_config_key) {

@@ -72,6 +72,9 @@ pub struct MockStub {
     pub folder_id: Option<String>,
     /// Deleted here; the deletion is waiting to be confirmed or reverted.
     pub deleted: bool,
+    /// The version of Bifurc it needs, when a newer one than this last saved it. It is listed and nothing
+    /// else: the engine does not read or change it until this install is updated.
+    pub locked: Option<String>,
 }
 
 /// A proxy rule that is deleted here, with the deletion waiting to be confirmed or reverted.
@@ -80,6 +83,15 @@ pub struct DeletedRule {
     pub id: String,
     pub name: String,
     pub pattern: String,
+}
+
+/// A proxy rule that a newer Bifurc than this one last saved: it is listed and nothing else.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LockedRule {
+    pub id: String,
+    pub name: String,
+    /// The version of Bifurc it needs.
+    pub version: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -155,6 +167,9 @@ pub struct RequestStub {
     pub target: String,
     /// Deleted here; the deletion is waiting to be confirmed or reverted.
     pub deleted: bool,
+    /// The version of Bifurc it needs, when a newer one than this last saved it. It is listed and nothing
+    /// else: the engine does not read or change it until this install is updated.
+    pub locked: Option<String>,
 }
 
 /// A folder of the request tree. It holds requests of any type.
@@ -181,6 +196,8 @@ pub struct ConfigSnapshot {
     pub proxy_rule_count: usize,
     /// The proxy rules that are deleted here and still listed. The live ones are read with `entity.list`.
     pub deleted_rules: Vec<DeletedRule>,
+    /// The proxy rules a newer Bifurc last saved. `entity.list` does not return them either.
+    pub locked_rules: Vec<LockedRule>,
     pub settings: EngineSettings,
 }
 
@@ -201,6 +218,11 @@ fn non_empty(value: &Value, key: &str) -> Option<String> {
 /// The engine marks what was deleted here and is still listed, waiting to be confirmed or reverted.
 fn is_deleted(value: &Value) -> bool {
     value.get("deleted").and_then(Value::as_bool).unwrap_or(false)
+}
+
+/// The version of Bifurc something needs, when the engine marks it as last saved by a newer one than this.
+fn locked_to(value: &Value) -> Option<String> {
+    value.get("locked").and_then(Value::as_bool).unwrap_or(false).then(|| text(value, "requiredVersion")).flatten()
 }
 
 fn array<'a>(config: &'a Value, key: &str) -> &'a [Value] {
@@ -279,6 +301,7 @@ impl ConfigSnapshot {
                     method: (kind == RequestKind::Rest).then(|| text(stub, "method")).flatten(),
                     target: stub_target(kind, stub),
                     deleted: is_deleted(stub),
+                    locked: locked_to(stub),
                 });
             }
         }
@@ -303,6 +326,7 @@ impl ConfigSnapshot {
                     enabled: m.get("enabled").and_then(Value::as_bool).unwrap_or(false),
                     folder_id: non_empty(m, "folderId"),
                     deleted: is_deleted(m),
+                    locked: locked_to(m),
                 })
             })
             .collect();
@@ -338,6 +362,12 @@ impl ConfigSnapshot {
                         name: text(r, "name").unwrap_or_default(),
                         pattern: text(r, "pattern").unwrap_or_default(),
                     })
+                })
+                .collect(),
+            locked_rules: array(config, "proxyRules")
+                .iter()
+                .filter_map(|r| {
+                    Some(LockedRule { version: locked_to(r)?, id: text(r, "id")?, name: text(r, "name").unwrap_or_default() })
                 })
                 .collect(),
             settings: EngineSettings {
@@ -456,6 +486,28 @@ mod tests {
             "socketioRequests": [{"id": "i1", "name": "Chat", "url": "https://io.test", "namespace": "/chat", "folderId": "if"}],
             "mcpRequests": [{"id": "m1", "name": "Tools", "transport": "stdio", "url": "npx my-server", "folderId": "mf"}],
         })
+    }
+
+    #[test]
+    fn what_a_newer_bifurc_saved_is_read_as_locked_to_its_version() {
+        let mut config = sample();
+        config["requests"][1]["locked"] = json!(true);
+        config["requests"][1]["requiredVersion"] = json!("9.0.0");
+        config["mocks"] = json!([
+            {"id": "k1", "name": "Open", "method": "GET", "urlPattern": "/a"},
+            {"id": "k2", "name": "Newer", "locked": true, "requiredVersion": "9.0.0"},
+        ]);
+        config["proxyRules"] = json!([
+            {"id": "p1", "name": "Open", "pattern": "/a"},
+            {"id": "p2", "name": "Newer", "locked": true, "requiredVersion": "9.0.0"},
+        ]);
+        let c = ConfigSnapshot::from_value(&config).unwrap();
+        assert_eq!(c.request(RequestKind::Rest, "r1").unwrap().locked, None);
+        assert_eq!(c.request(RequestKind::Rest, "r2").unwrap().locked.as_deref(), Some("9.0.0"));
+        assert_eq!(c.mock("k1").unwrap().locked, None);
+        assert_eq!(c.mock("k2").unwrap().locked.as_deref(), Some("9.0.0"));
+        let rule = LockedRule { id: "p2".into(), name: "Newer".into(), version: "9.0.0".into() };
+        assert_eq!(c.locked_rules, vec![rule]);
     }
 
     #[test]

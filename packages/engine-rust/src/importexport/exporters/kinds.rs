@@ -80,7 +80,8 @@ mod tests {
         let out: Value = serde_json::from_str(&proxy_rules(root.ws_id).unwrap().content).unwrap();
         assert_eq!(out["proxyRules"][0]["enabled"], true);
         let keys: Vec<_> = out["proxyRules"][0].as_object().unwrap().keys().collect();
-        assert_eq!(keys, ["id", "name", "pattern", "workspaceId", "enabled"]);
+        // The stamp goes with the rule: an older Bifurc that imports it keeps it locked.
+        assert_eq!(keys, ["id", "name", "pattern", "workspaceId", "engineVersion", "enabled"]);
     }
 
     #[test]
