@@ -29,14 +29,15 @@ use gpui_kit::{
 use serde_json::{Value, json};
 
 use self::runner::{FolderRunner, RunnerEvent};
-use self::tree::{RequestTree, RequestTreeEvent, is_deleted, new_menu};
+use self::tree::{RequestTree, RequestTreeEvent, is_deleted, locked_to, new_menu};
 use crate::{
     app_model::{AppModel, Deleted, Load, ModelEvent},
     components::{
         CURL_TAB_BADGE, CURL_TAB_TITLE, CurlImport, CurlImportEvent, CurlTarget, EntityAction, StripTab, TabAction,
         TabStrip,
         dialogs::{
-            FOLDER_DELETE_CONSEQUENCE, PromptField, confirm_danger, delete_consequence, prompt, resolve_deleted,
+            FOLDER_DELETE_CONSEQUENCE, PromptField, confirm_danger, delete_consequence, needs_update, prompt,
+            resolve_deleted,
         },
         entity_bar, tab_strip,
     },
@@ -305,6 +306,11 @@ impl RequestsScreen {
         if is_deleted(self.model.read(cx), node) {
             let name = self.name_of(node, cx);
             resolve_deleted(self.model.clone(), Self::deleted_target(node), name, window, cx);
+            return;
+        }
+        // Neither has one a newer Bifurc saved: the engine does not read it until this one is updated.
+        if let Some(version) = locked_to(self.model.read(cx), node) {
+            needs_update(self.name_of(node, cx), version, window, cx);
             return;
         }
         let key = TabKey::Saved { kind: *kind, id: id.clone() };
@@ -672,8 +678,9 @@ impl RequestsScreen {
             .tabs
             .iter()
             .filter(|tab| match &tab.key {
-                // Deleted and still listed counts as gone: there is no file an edit could be written to.
-                TabKey::Saved { kind, id } => config.request(*kind, id).is_none_or(|r| r.deleted),
+                // Deleted and still listed counts as gone: there is no file an edit could be written to. So does
+                // one a newer Bifurc saved since the tab was opened: the engine would refuse the edit.
+                TabKey::Saved { kind, id } => config.request(*kind, id).is_none_or(|r| r.deleted || r.locked.is_some()),
                 TabKey::Runner(folder) => config.folder(folder).is_none_or(|f| f.deleted),
                 TabKey::Draft(_) => false,
             })

@@ -365,6 +365,29 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn what_a_newer_engine_wrote_is_imported_locked() {
+        use crate::workspace::{fs::entity_lock, stamp::VERSION_FIELD};
+
+        let root = scratch_data_root();
+        let mut newer = snapshot("Newer");
+        for (list, _) in [("requests", "r1"), ("mocks", "m1"), ("proxyRules", "p1")] {
+            newer["data"][list][0][VERSION_FIELD] = json!("999.0.0");
+        }
+        let Ok(_) = json_run(root.ws_id.to_string(), text(&newer), Strategy::Keep).await else {
+            // git may be unavailable in the test environment
+            return;
+        };
+        let new_id = load_settings().active_workspace_id();
+        for (kind, id) in [("requests", "r1"), ("mocks", "m1"), ("rules", "p1")] {
+            assert_eq!(entity_lock(&new_id, kind, id).as_deref(), Some("999.0.0"), "{kind} keeps its stamp");
+            assert!(read_entity(&new_id, kind, id).is_none(), "{kind} is not read here");
+        }
+        // What carries no newer stamp is this engine's from the moment it is written.
+        assert_eq!(read_entity(&new_id, "sockets", "c1").unwrap()[VERSION_FIELD], crate::ENGINE_VERSION);
+        assert_eq!(entity_lock(&new_id, "mappings", "map1"), None);
+    }
+
+    #[tokio::test]
     async fn a_zip_round_trips_through_the_exporter() {
         let root = scratch_data_root();
         let ws = root.ws_id;

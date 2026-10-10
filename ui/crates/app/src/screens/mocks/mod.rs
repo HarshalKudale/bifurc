@@ -35,7 +35,8 @@ use crate::{
         CURL_TAB_BADGE, CURL_TAB_TITLE, CurlImport, CurlImportEvent, CurlTarget, EntityAction, EntityBar, FolderPicker,
         StripTab, TabAction, TabStrip,
         dialogs::{
-            FOLDER_DELETE_CONSEQUENCE, PromptField, confirm_danger, delete_consequence, prompt, resolve_deleted,
+            FOLDER_DELETE_CONSEQUENCE, PromptField, confirm_danger, delete_consequence, needs_update, prompt,
+            resolve_deleted,
         },
         entity_bar, page, tab_strip, tree_drag,
     },
@@ -260,6 +261,11 @@ impl MocksScreen {
         if is_deleted(self.model.read(cx), &key) {
             let name = self.name_of(&key, cx);
             resolve_deleted(self.model.clone(), deleted_target(&key), name, window, cx);
+            return;
+        }
+        // Neither has one a newer Bifurc saved: the engine does not read it until this one is updated.
+        if let Some(version) = locked_to(self.model.read(cx), &key) {
+            needs_update(self.name_of(&key, cx), version, window, cx);
             return;
         }
         let key = TabKey::Saved(id.to_owned());
@@ -523,8 +529,9 @@ impl MocksScreen {
             .tabs
             .iter()
             .filter(|tab| match &tab.key {
-                // Deleted and still listed counts as gone: there is no file an edit could be written to.
-                TabKey::Saved(id) => model.config().mock(id).is_none_or(|m| m.deleted),
+                // Deleted and still listed counts as gone: there is no file an edit could be written to. So does
+                // one a newer Bifurc saved since the tab was opened: the engine would refuse the edit.
+                TabKey::Saved(id) => model.config().mock(id).is_none_or(|m| m.deleted || m.locked.is_some()),
                 TabKey::Draft(_) => false,
             })
             .map(|tab| tab.editor.clone())
@@ -838,6 +845,15 @@ fn is_deleted(model: &AppModel, key: &TreeKey) -> bool {
     }
 }
 
+/// The version of Bifurc the mock needs, when a newer one than this last saved it. A folder is never locked:
+/// it is a directory, and moving or renaming it changes nothing in it.
+fn locked_to(model: &AppModel, key: &TreeKey) -> Option<String> {
+    match key {
+        TreeKey::Folder(_) => None,
+        TreeKey::Item(id) => model.config().mock(id).and_then(|m| m.locked.clone()),
+    }
+}
+
 /// The folder a drop on this row goes to: the folder itself, or the folder the mock is in.
 fn drop_folder(model: &AppModel, key: &TreeKey) -> Option<String> {
     match key {
@@ -878,6 +894,14 @@ fn context_menu(
             .item(PopupMenuItem::new("Confirm delete").on_click(move |_, _, cx| {
                 confirm_model.update(cx, |model, cx| model.confirm_delete(confirm.clone(), cx));
             }));
+    }
+    // What a newer Bifurc saved can only be asked about: opening it says which version it needs.
+    if let (TreeKey::Item(id), Some(_)) = (&key, locked_to(model.read(cx), &key)) {
+        let id = id.clone();
+        return menu.item(
+            PopupMenuItem::new("Update required…")
+                .on_click(act(view, move |this, window, cx| this.open_mock(&id, window, cx))),
+        );
     }
     let (rename, delete) = (key.clone(), key.clone());
     let menu = match &key {
@@ -926,6 +950,7 @@ fn render_row(
     let key = TreeKey::parse(entry.item().id.as_str());
     let label = entry.item().label.clone();
     let deleted = key.as_ref().is_some_and(|key| is_deleted(model.read(cx), key));
+    let locked = key.as_ref().is_some_and(|key| locked_to(model.read(cx), key).is_some());
     let mut pending = false;
     let mut toggle: Option<gpui_kit::AnyElement> = None;
     let lead: gpui_kit::AnyElement = match &key {
@@ -935,6 +960,13 @@ fn render_row(
                 .text_color(theme.muted_foreground)
                 .into_any_element()
         }
+        // Saved by a newer Bifurc: the sign for an update stands where its method would, and it has no switch.
+        // It answers nothing until this one is updated.
+        Some(TreeKey::Item(_)) if locked => div()
+            .w_12()
+            .flex_none()
+            .child(Icon::new(IconName::ArrowUp).small().text_color(theme.muted_foreground))
+            .into_any_element(),
         Some(TreeKey::Item(id)) => {
             let app_model = model.read(cx);
             pending = app_model.git().entity_state(id).is_some_and(|state| state != FileState::Clean);
@@ -991,6 +1023,7 @@ fn render_row(
                         .overflow_hidden()
                         .text_ellipsis()
                         .when(deleted, |this| this.line_through().text_color(theme.muted_foreground))
+                        .when(locked, |this| this.text_color(theme.muted_foreground))
                         .child(label.clone()),
                 )
                 .children(pending.then(|| div().flex_none().text_xs().text_color(theme.warning).child("●")))
@@ -1016,8 +1049,8 @@ fn render_row(
         }
         None => row,
     };
-    // What is deleted stays where it is until it is reverted.
-    match key.filter(|_| !deleted) {
+    // What is deleted stays where it is until it is reverted, and what is locked until Bifurc is updated.
+    match key.filter(|_| !deleted && !locked) {
         Some(key) => tree_drag::draggable(row, key, label, move |key: &TreeKey, cx| {
             let key = key.clone();
             drag_view.update(cx, |this, cx| this.drag_started(key, cx)).ok();

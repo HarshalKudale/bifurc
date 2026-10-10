@@ -24,11 +24,12 @@ use crate::{
         config::{load_config, save_config},
         deletions::{pending_entity, remove_entity},
         fs::{
-            delete_entity_file, find_entity_file, read_all_entities, resolve_folder, sync_enabled_set,
+            delete_entity_file, entity_lock, find_entity_file, read_all_entities, resolve_folder, sync_enabled_set,
             upsert_name_entry, write_entity, write_flat_entity,
         },
         kinds::{CrudKind, crud_kind, is_simple_kind, requires_folder},
         settings::{load_settings, save_settings},
+        stamp,
         status_cache::invalidate_cache,
         tree,
     },
@@ -183,6 +184,9 @@ fn create_entity_core(
 fn update_entity_core(kind: &CrudKind, entity: &Value) -> Result<Value> {
     let ws_id = workspace_of(entity, &load_config());
     let id = opt_str(entity, "id").ok_or_else(|| EngineError::bad_request("entity.id is required"))?.to_string();
+    if let Some(version) = entity_lock(&ws_id, kind.kind, &id) {
+        return Err(stamp::update_required(&version));
+    }
     // Writing it would bring its file back while it is still listed as deleted.
     if pending_entity(&ws_id, kind.kind, &id).is_some() && find_entity_file(&ws_id, kind.kind, &id).is_none() {
         return Err(EngineError::conflict("It is deleted. Revert the delete to change it."));
@@ -220,6 +224,9 @@ async fn delete_entity_core(kind: &CrudKind, id: &str) -> Result<Value> {
 
     let mut cfg = load_config();
     let ws_id = str_of(&cfg, "activeWorkspaceId").to_string();
+    if let Some(version) = entity_lock(&ws_id, kind.kind, id) {
+        return Err(stamp::update_required(&version));
+    }
 
     let Some(entity) = array_of(&cfg, kind.config_key).iter().find(|e| str_of(e, "id") == id).cloned() else {
         return Ok(json!({ "ok": true, "pending": false }));
@@ -359,6 +366,7 @@ mod tests {
         kernel::{CommandContext, Scope, SessionIdentity},
         protocol::ErrorCode,
         testing::scratch_data_root,
+        utils::json::{read_json, write_json_pretty},
         workspace::{
             fs::{entity_dir, read_enabled_set, read_index, read_names_index, ws_dir},
             git_store::{CommitMutation, check_git_installed, commit_mutation, init_workspace_repo},
@@ -388,6 +396,42 @@ mod tests {
 
     fn mock(url: &str) -> Value {
         json!({ "name": "M", "method": "GET", "urlPattern": url, "responseStatus": 200, "responseBody": "{}" })
+    }
+
+    /// Leave an entity's file as another engine would have: stamped `version` with a field this engine does
+    /// not know, or with no stamp at all, as an engine from before the stamp wrote it.
+    fn written_by(kind: &str, id: &str, version: Option<&str>) -> std::path::PathBuf {
+        let file = find_entity_file(WS, kind, id).expect("the entity has a file");
+        let mut entity = read_json(&file).expect("the file is an entity");
+        match version {
+            Some(version) => {
+                entity[stamp::VERSION_FIELD] = json!(version);
+                entity["somethingNewer"] = json!({ "kept": true });
+            }
+            None => {
+                entity.as_object_mut().unwrap().shift_remove(stamp::VERSION_FIELD);
+            }
+        }
+        write_json_pretty(&file, &entity).unwrap();
+        tree::mark_stale(WS);
+        file
+    }
+
+    fn stamp_of(kind: &str, id: &str) -> Value {
+        let file = find_entity_file(WS, kind, id).expect("the entity has a file");
+        read_json(&file).unwrap().get(stamp::VERSION_FIELD).cloned().unwrap_or(Value::Null)
+    }
+
+    async fn create(ctx: &CommandContext, kind: &str, entity: Value) -> Value {
+        call(ctx, "entity.create", json!({ "kind": kind, "entity": entity })).await.unwrap()["entity"].clone()
+    }
+
+    fn update_required(result: Result<Value>) -> Value {
+        let error = result.expect_err("a locked entity is left alone");
+        assert_eq!(error.code, ErrorCode::Unsupported);
+        let details = error.details.expect("the error says why");
+        assert_eq!(details["reason"], stamp::UPDATE_REQUIRED);
+        details["requiredVersion"].clone()
     }
 
     #[tokio::test]
@@ -792,6 +836,149 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(enabled("mocks"), vec![a_id]);
+    }
+
+    #[tokio::test]
+    async fn requests_mocks_and_rules_are_stamped_with_the_engine_that_writes_them() {
+        let _root = scratch_data_root();
+        let ctx = context();
+        let request = create(&ctx, "requests", json!({ "name": "Ping", "method": "GET", "url": "http://a/" })).await;
+        let stream = create(&ctx, "sseRequests", json!({ "name": "Feed", "url": "http://a/feed" })).await;
+        let made_mock = create(&ctx, "mocks", mock("/a")).await;
+        let rule = create(&ctx, "proxyRules", json!({ "name": "R", "pattern": "/x" })).await;
+        let mapping = create(&ctx, "mappings", json!({ "domain": "app.localhost", "target": "localhost:3000" })).await;
+        for (kind, entity) in [("requests", &request), ("sseRequests", &stream), ("mocks", &made_mock), ("rules", &rule)] {
+            assert_eq!(stamp_of(kind, str_of(entity, "id")), crate::ENGINE_VERSION, "{kind}");
+        }
+        assert_eq!(stamp_of("mappings", str_of(&mapping, "id")), Value::Null, "a mapping carries no stamp");
+
+        // What a client sends as the stamp is not what is written.
+        let mut forged = request.clone();
+        forged[stamp::VERSION_FIELD] = json!("0.0.1");
+        forged["name"] = json!("Pong");
+        call(&ctx, "entity.update", json!({ "kind": "requests", "entity": forged })).await.unwrap();
+        assert_eq!(stamp_of("requests", str_of(&request, "id")), crate::ENGINE_VERSION);
+    }
+
+    #[tokio::test]
+    async fn an_entity_from_before_the_stamp_is_stamped_when_it_changes_and_not_before() {
+        let _root = scratch_data_root();
+        let ctx = context();
+        for (kind, store, entity) in [
+            ("requests", "requests", json!({ "name": "Ping", "method": "GET", "url": "http://a/" })),
+            ("mocks", "mocks", mock("/a")),
+            ("proxyRules", "rules", json!({ "name": "R", "pattern": "/x" })),
+        ] {
+            let id = str_of(&create(&ctx, kind, entity).await, "id").to_string();
+            written_by(store, &id, None);
+            let load = json!({ "workspaceId": WS, "kind": kind, "id": id });
+            let loaded = call(&ctx, "entity.load", load).await.unwrap();
+            assert_eq!(loaded["ok"], true, "{kind}: an entity without a stamp is read as it always was");
+
+            // Saved as it is, and saved with everything else when the snapshot is: it stays the older engine's.
+            let same = loaded["entity"].clone();
+            call(&ctx, "entity.update", json!({ "kind": kind, "entity": same })).await.unwrap();
+            save_config(&load_config()).unwrap();
+            assert_eq!(stamp_of(store, &id), Value::Null, "{kind}: nothing changed");
+
+            let mut changed = loaded["entity"].clone();
+            changed["name"] = json!("Renamed");
+            call(&ctx, "entity.update", json!({ "kind": kind, "entity": changed })).await.unwrap();
+            assert_eq!(stamp_of(store, &id), crate::ENGINE_VERSION, "{kind}: it was changed here");
+        }
+    }
+
+    #[tokio::test]
+    async fn an_entity_a_newer_engine_wrote_is_listed_and_otherwise_left_alone() {
+        let _root = scratch_data_root();
+        let ctx = context();
+        let folder_of = |kind: &'static str| {
+            let ctx = ctx.clone();
+            async move {
+                let folder = call(&ctx, "folder.add", json!({ "kind": kind, "name": "Held", "parentId": null })).await;
+                str_of(&folder.unwrap(), "id").to_string()
+            }
+        };
+        let (request_folder, mock_folder, rule_folder) =
+            (folder_of("request").await, folder_of("mock").await, folder_of("rule").await);
+        let request =
+            json!({ "name": "Ping", "method": "POST", "url": "http://a/secret", "folderId": request_folder });
+        let mut held_mock = mock("/held");
+        held_mock["folderId"] = json!(mock_folder);
+        let rule = json!({ "name": "R", "pattern": "/x", "folderId": rule_folder });
+        let cases = [
+            ("requests", "requests", "request", request_folder, create(&ctx, "requests", request).await),
+            ("mocks", "mocks", "mock", mock_folder, create(&ctx, "mocks", held_mock).await),
+            ("proxyRules", "rules", "rule", rule_folder, create(&ctx, "proxyRules", rule).await),
+        ];
+
+        for (kind, store, folder_kind, folder_id, entity) in cases {
+            let id = str_of(&entity, "id").to_string();
+            let file = written_by(store, &id, Some("999.0.0"));
+            let before = std::fs::read(&file).unwrap();
+
+            // Listed, by name, with the version it needs; what else its file holds is not shown.
+            let cfg = load_config();
+            let listed = array_of(&cfg, kind).iter().find(|e| str_of(e, "id") == id).cloned().expect("it is listed");
+            assert_eq!(listed["locked"], true, "{kind}");
+            assert_eq!(listed["requiredVersion"], "999.0.0", "{kind}");
+            assert_eq!(listed["name"], entity["name"], "{kind}");
+            assert_eq!(listed["folderId"], folder_id.as_str(), "{kind}");
+            assert_eq!(listed["enabled"].as_bool().unwrap_or(false), false, "{kind}: it is not in use");
+            assert!(listed.get("somethingNewer").is_none(), "{kind}");
+            if kind == "requests" {
+                assert_eq!(listed["url"], "", "the address is not read out of it");
+                assert!(tree::search(WS, tree::Scope::Requests, "secret", &[], 10).is_empty());
+            }
+
+            // Nothing that uses entities is handed it.
+            assert!(read_all_entities(WS, store).is_empty(), "{kind}");
+            let load = json!({ "workspaceId": WS, "kind": kind, "id": id });
+            assert_eq!(
+                call(&ctx, "entity.load", load.clone()).await.unwrap(),
+                json!({ "ok": false, "locked": true, "requiredVersion": "999.0.0" }),
+                "{kind}"
+            );
+
+            // Nothing changes it, and each refusal names the version.
+            let mut changed = entity.clone();
+            changed["name"] = json!("Mine now");
+            let mut refused = vec![
+                call(&ctx, "entity.update", json!({ "kind": kind, "entity": changed })).await,
+                call(&ctx, "entity.delete", json!({ "kind": kind, "id": id })).await,
+                call(&ctx, "entity.duplicate", load.clone()).await,
+                call(&ctx, "folder.delete", json!({ "kind": folder_kind, "id": folder_id })).await,
+            ];
+            // A request is not something that is switched on.
+            if store != "requests" {
+                let switch = json!({ "workspaceId": WS, "kind": store, "id": id, "enabled": true });
+                refused.push(call(&ctx, "entity.setEnabled", switch).await);
+            }
+            for result in refused {
+                assert_eq!(update_required(result), "999.0.0", "{kind}");
+            }
+            assert!(write_entity(WS, store, &id, &entity, None).is_err(), "{kind}: the store itself refuses");
+            save_config(&load_config()).unwrap();
+            assert_eq!(std::fs::read(&file).unwrap(), before, "{kind}: its file is as the newer engine left it");
+            assert_eq!(array_of(&load_config(), kind).len(), 1, "{kind}: and it is still the one entity there");
+        }
+    }
+
+    #[tokio::test]
+    async fn an_entity_is_open_again_once_the_engine_is_as_new_as_its_stamp() {
+        let _root = scratch_data_root();
+        let ctx = context();
+        let request = create(&ctx, "requests", json!({ "name": "Ping", "method": "GET", "url": "http://a/" })).await;
+        let id = str_of(&request, "id").to_string();
+        let load = json!({ "workspaceId": WS, "kind": "requests", "id": id });
+        written_by("requests", &id, Some("999.0.0"));
+        assert_eq!(call(&ctx, "entity.load", load.clone()).await.unwrap()["locked"], true);
+        // The index keeps the stamp, not the verdict: the same file is read by the engine that is new enough.
+        written_by("requests", &id, Some(crate::ENGINE_VERSION));
+        let loaded = call(&ctx, "entity.load", load).await.unwrap();
+        assert_eq!(loaded["ok"], true);
+        assert_eq!(loaded["entity"]["somethingNewer"]["kept"], true);
+        assert!(load_config()["requests"][0].get("locked").is_none());
     }
 
     #[tokio::test]
