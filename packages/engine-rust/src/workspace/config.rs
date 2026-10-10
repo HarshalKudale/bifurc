@@ -99,6 +99,15 @@ fn marked_deleted(entity: Value) -> Value {
     Value::Object(out)
 }
 
+/// `entity`, marked as last written by a newer engine than this one (`workspace::stamp`): it is listed, by
+/// name, and nothing else is done with it until this install is `version` or later.
+fn marked_locked(entity: Value, version: &str) -> Value {
+    let mut out = entity.as_object().cloned().unwrap_or_default();
+    out.insert("locked".into(), json!(true));
+    out.insert("requiredVersion".into(), json!(version));
+    Value::Object(out)
+}
+
 /// A kind's folders, then the deleted ones that still hold something waiting.
 fn folders(ws_id: &str, kind: &str) -> Value {
     let mut all = match Scope::of_kind(kind) {
@@ -116,13 +125,6 @@ fn pending(ws_id: &str, kind: &str, present: &[Value], shape: impl Fn(&Value) ->
         .filter(|p| !present.iter().any(|e| str_of(e, "id") == str_of(p, "id")))
         .map(|p| marked_deleted(shape(p)))
         .collect()
-}
-
-/// `folderId` of a pending deletion: its value, or absent when it has none.
-fn pending_folder(out: &mut Map<String, Value>, p: &Value) {
-    if let Some(folder_id) = opt_str(p, "folderId") {
-        out.insert("folderId".into(), json!(folder_id));
-    }
 }
 
 /// The config snapshot for the active workspace.
@@ -187,9 +189,13 @@ pub fn load_config() -> Value {
                 Some(json!(s.folder_id)),
                 stub_field(&rule_names, s, "name").unwrap_or(""),
                 stub_field(&rule_names, s, "url").unwrap_or(""),
-                rule_enabled.contains(&s.id),
+                rule_enabled.contains(&s.id) && s.locked.is_none(),
             );
-            if s.deleted.is_some() { marked_deleted(rule) } else { rule }
+            match &s.locked {
+                Some(version) => marked_locked(rule, version),
+                None if s.deleted.is_some() => marked_deleted(rule),
+                None => rule,
+            }
         })
         .collect();
     for p in get_pending_deletions(ws_id, "rules") {
@@ -213,15 +219,17 @@ pub fn load_config() -> Value {
         })
     }));
 
-    let mut all_mocks = mocks.clone();
-    all_mocks.extend(pending(ws_id, "mocks", &mocks, |p| {
+    // A mock that is listed without being read: one deleted here and waiting, or one that is locked.
+    let mock_stub = |id: &str, folder_id: Option<&str>, name: Value, method: &str, url: &str| -> Value {
         let mut out = Map::new();
-        out.insert("id".into(), json!(str_of(p, "id")));
+        out.insert("id".into(), json!(id));
         out.insert("workspaceId".into(), json!(ws_id));
-        pending_folder(&mut out, p);
-        out.insert("name".into(), p.get("name").cloned().unwrap_or(Value::Null));
-        out.insert("method".into(), json!(opt_str(p, "method").unwrap_or("GET")));
-        out.insert("urlPattern".into(), json!(str_of(p, "url")));
+        if let Some(folder_id) = folder_id {
+            out.insert("folderId".into(), json!(folder_id));
+        }
+        out.insert("name".into(), name);
+        out.insert("method".into(), json!(method));
+        out.insert("urlPattern".into(), json!(url));
         out.insert("useRegex".into(), json!(false));
         out.insert("enabled".into(), json!(false));
         out.insert("createdAt".into(), json!(0));
@@ -231,6 +239,15 @@ pub fn load_config() -> Value {
         out.insert("responseHeaders".into(), json!({}));
         out.insert("responseBody".into(), json!(""));
         Value::Object(out)
+    };
+    let mut all_mocks = mocks.clone();
+    all_mocks.extend(tree::entries(ws_id, Scope::Mocks).iter().filter_map(|entry| {
+        let version = entry.lock()?;
+        Some(marked_locked(mock_stub(&entry.id, entry.folder_id.as_deref(), json!(entry.name), "GET", ""), &version))
+    }));
+    all_mocks.extend(pending(ws_id, "mocks", &mocks, |p| {
+        let name = p.get("name").cloned().unwrap_or(Value::Null);
+        mock_stub(str_of(p, "id"), opt_str(p, "folderId"), name, opt_str(p, "method").unwrap_or("GET"), str_of(p, "url"))
     }));
 
     let mut all_environments: Vec<Value> = environments.iter().map(|e| with_workspace(e, ws_id)).collect();
@@ -265,7 +282,13 @@ pub fn load_config() -> Value {
         let mut all: Vec<Value> = request_entries
             .iter()
             .filter(|entry| entry.ty == ty)
-            .map(|entry| Value::Object(shape(&entry.id, entry.folder_id.as_deref(), &entry.details)))
+            .map(|entry| {
+                let listed = Value::Object(shape(&entry.id, entry.folder_id.as_deref(), &entry.details));
+                match entry.lock() {
+                    Some(version) => marked_locked(listed, &version),
+                    None => listed,
+                }
+            })
             .collect();
         for record in get_pending_deletions(ws_id, kind) {
             let id = str_of(&record, "id");
@@ -427,8 +450,9 @@ pub fn save_config(cfg: &Value) -> std::io::Result<()> {
         get_pending_deletions(ws_id, "mocks").iter().map(|p| str_of(p, "id").to_string()).collect();
     for mock in array_of(cfg, "mocks") {
         let id = str_of(mock, "id");
-        if str_of(mock, "workspaceId") != ws_id || pending_mock_ids.iter().any(|p| p == id) || truthy(mock, "deleted")
-        {
+        // A deleted mock has no file to write, and a locked one is listed without ever having been read.
+        let listed_only = truthy(mock, "deleted") || truthy(mock, "locked");
+        if str_of(mock, "workspaceId") != ws_id || pending_mock_ids.iter().any(|p| p == id) || listed_only {
             continue;
         }
         write_entity(ws_id, "mocks", id, mock, opt_str(mock, "folderId"))?;

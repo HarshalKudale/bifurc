@@ -230,7 +230,7 @@ impl Shell {
         let requests: Vec<Entry> = config
             .requests
             .iter()
-            .filter(|r| !r.deleted)
+            .filter(|r| !r.deleted && r.locked.is_none())
             .map(|r| {
                 let label = if r.name.is_empty() { r.target.clone() } else { r.name.clone() };
                 Entry {
@@ -243,7 +243,7 @@ impl Shell {
         let mocks: Vec<Entry> = config
             .mocks
             .iter()
-            .filter(|m| !m.deleted)
+            .filter(|m| !m.deleted && m.locked.is_none())
             .map(|m| {
                 let label = if m.name.is_empty() { m.url_pattern.clone() } else { m.name.clone() };
                 let method = if m.method == "*" { "ANY" } else { m.method.as_str() };
