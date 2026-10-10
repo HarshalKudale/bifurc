@@ -64,6 +64,15 @@ pub fn is_deleted(model: &AppModel, node: &NodeRef) -> bool {
     }
 }
 
+/// The version of Bifurc the request needs, when a newer one than this last saved it. A folder is never
+/// locked: it is a directory, and moving or renaming it changes nothing in it.
+pub fn locked_to(model: &AppModel, node: &NodeRef) -> Option<String> {
+    match node {
+        NodeRef::Folder { .. } => None,
+        NodeRef::Request { kind, id } => model.config().request(*kind, id).and_then(|r| r.locked.clone()),
+    }
+}
+
 /// The folder a drop on this row goes to: the folder itself, or the folder the request is in.
 fn drop_folder(model: &AppModel, node: &NodeRef) -> Option<String> {
     match node {
@@ -233,6 +242,7 @@ fn render_row(
     let node = NodeRef::parse(entry.item().id.as_str());
     let label = entry.item().label.clone();
     let deleted = node.as_ref().is_some_and(|node| is_deleted(model.read(cx), node));
+    let locked = node.as_ref().is_some_and(|node| locked_to(model.read(cx), node).is_some());
     let mut pending = false;
     let lead: gpui_kit::AnyElement = match &node {
         Some(NodeRef::Folder { .. }) => {
@@ -241,6 +251,13 @@ fn render_row(
                 .text_color(theme.muted_foreground)
                 .into_any_element()
         }
+        // Saved by a newer Bifurc: the sign for an update stands where its type would, which this one cannot
+        // vouch for.
+        Some(NodeRef::Request { .. }) if locked => div()
+            .w_12()
+            .flex_none()
+            .child(Icon::new(IconName::ArrowUp).small().text_color(theme.muted_foreground))
+            .into_any_element(),
         Some(NodeRef::Request { kind, id }) => {
             let model = model.read(cx);
             pending = model.git().entity_state(id).is_some_and(|state| state != FileState::Clean);
@@ -276,6 +293,7 @@ fn render_row(
                         .overflow_hidden()
                         .text_ellipsis()
                         .when(deleted, |this| this.line_through().text_color(theme.muted_foreground))
+                        .when(locked, |this| this.text_color(theme.muted_foreground))
                         .child(label.clone()),
                 )
                 // A request with changes that are not published yet says so with a mark, not only a color.
@@ -301,8 +319,8 @@ fn render_row(
         }
         None => row,
     };
-    // What is deleted stays where it is until it is reverted.
-    match node.filter(|_| !deleted) {
+    // What is deleted stays where it is until it is reverted, and what is locked until Bifurc is updated.
+    match node.filter(|_| !deleted && !locked) {
         Some(node) => tree_drag::draggable(row, node, label, move |node: &NodeRef, cx| {
             let node = node.clone();
             drag_tree.update(cx, |this, cx| this.drag_started(node, cx)).ok();
@@ -340,6 +358,11 @@ fn context_menu(
                 PopupMenuItem::new("Confirm delete")
                     .on_click(emitter(tree, RequestTreeEvent::ConfirmDelete(node.clone()))),
             );
+    }
+    // What a newer Bifurc saved can only be asked about: opening it says which version it needs.
+    if locked_to(model.read(cx), &node).is_some() {
+        return menu
+            .item(PopupMenuItem::new("Update required…").on_click(emitter(tree, RequestTreeEvent::Open(node.clone()))));
     }
     match node {
         NodeRef::Request { .. } => menu

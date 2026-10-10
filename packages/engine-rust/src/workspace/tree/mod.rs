@@ -30,7 +30,10 @@ use serde_json::{Map, Value, json};
 pub use db::{Entry, Folder, INDEX_FILE};
 pub use scan::type_of;
 
-use super::fs::{sanitize_dir_name, ws_dir};
+use super::{
+    fs::{sanitize_dir_name, ws_dir},
+    stamp,
+};
 use crate::utils::{
     id::{generate_id, now_ms},
     json::{read_json, write_json_pretty},
@@ -187,13 +190,14 @@ fn with_index<T>(
 
 // ── entities ───────────────────────────────────────────────────────────────────────────────────────────
 
-/// An entity as its file holds it: `type` first, and without what is not the file's to say (whether it is
-/// switched on, and the folder, which is where the file is).
+/// An entity as its file holds it: `type` first, then the stamp of the engine writing it, and without what is
+/// not the file's to say (whether it is switched on, and the folder, which is where the file is).
 fn stored_form(ty: &str, data: &Value) -> Value {
     let mut out = Map::new();
     out.insert("type".into(), json!(ty));
+    out.insert(stamp::VERSION_FIELD.into(), stamp::stamp_for(data));
     for (key, value) in data.as_object().into_iter().flatten() {
-        if !matches!(key.as_str(), "type" | "enabled" | "folderId") {
+        if !matches!(key.as_str(), "type" | "enabled" | "folderId" | stamp::VERSION_FIELD) {
             out.insert(key.clone(), value.clone());
         }
     }
@@ -248,12 +252,18 @@ pub fn find_any(ws_id: &str, scope: Scope, id: &str) -> Option<(&'static str, En
         .and_then(|entry| Some((scope.kind_of_type(&entry.ty)?, entry)))
 }
 
+/// An entity of `kind`, read from its file. One that is locked (`workspace::stamp`) is not read.
 pub fn read_entity(ws_id: &str, kind: &str, id: &str) -> Option<Value> {
-    let (entry, file) = locate(ws_id, kind, id)?;
+    let (entry, file) = locate(ws_id, kind, id).filter(|(entry, _)| entry.lock().is_none())?;
     Some(handed_out(read_json(&file)?, &entry))
 }
 
-/// Every entity of `kind`, read from its file. `only` narrows them to the ids it holds.
+/// The version an entity of `kind` is locked to, when it is.
+pub fn lock_of(ws_id: &str, kind: &str, id: &str) -> Option<String> {
+    locate(ws_id, kind, id)?.0.lock()
+}
+
+/// Every entity of `kind` that is not locked, read from its file. `only` narrows them to the ids it holds.
 pub fn read_all(ws_id: &str, kind: &str, only: Option<&dyn Fn(&str) -> bool>) -> Vec<Value> {
     let (Some(scope), Some(ty)) = (Scope::of_kind(kind), type_of_kind(kind)) else { return Vec::new() };
     let listed = with_index(ws_id, scope, |conn, dir| {
@@ -262,7 +272,7 @@ pub fn read_all(ws_id: &str, kind: &str, only: Option<&dyn Fn(&str) -> bool>) ->
     let Ok((entries, dir)) = listed else { return Vec::new() };
     entries
         .into_iter()
-        .filter(|entry| only.is_none_or(|wanted| wanted(&entry.id)))
+        .filter(|entry| entry.lock().is_none() && only.is_none_or(|wanted| wanted(&entry.id)))
         .filter_map(|entry| Some(handed_out(read_json(&dir.join(&entry.path))?, &entry)))
         .collect()
 }
@@ -279,7 +289,7 @@ pub fn search(ws_id: &str, scope: Scope, query: &str, types: &[String], limit: i
 }
 
 /// Write an entity of `kind` into the folder `folder_id` (the top of the tree when it names none that
-/// exists), moving its file when that is another folder than it was in.
+/// exists), moving its file when that is another folder than it was in. A locked entity is not written over.
 pub fn write_entity(ws_id: &str, kind: &str, id: &str, data: &Value, folder_id: Option<&str>) -> std::io::Result<()> {
     let (Some(scope), Some(ty)) = (Scope::of_kind(kind), type_of_kind(kind)) else {
         return Err(std::io::Error::other(format!("\"{kind}\" is not kept in a tree.")));
@@ -293,22 +303,30 @@ pub fn write_entity(ws_id: &str, kind: &str, id: &str, data: &Value, folder_id: 
             Some(folder) => format!("{}/{id}.json", folder.path),
             None => format!("{id}.json"),
         };
-        if let Some(old) = db::entry(conn, id).map_err(db::io)?.filter(|old| old.path != path) {
+        let old = db::entry(conn, id).map_err(db::io)?;
+        if let Some(version) = old.as_ref().and_then(Entry::lock) {
+            return Err(stamp::update_required_io(&version));
+        }
+        let on_disk = old.as_ref().and_then(|old| read_json(&dir.join(&old.path)));
+        if let Some(old) = old.filter(|old| old.path != path) {
             let _ = std::fs::remove_file(dir.join(old.path));
         }
         let file = dir.join(&path);
-        let stored = stored_form(ty, data);
+        let stored = stamp::settled(on_disk, stored_form(ty, data));
         write_json_pretty(&file, &stored)?;
         let (entry, text) = scan::describe(scope, id, &stored, folder.map(|folder| folder.id), path, &file);
         db::upsert_entry(conn, &entry, &text).map_err(db::io)
     })
 }
 
-/// Remove an entity of `kind`: its file, and what the index holds of it.
+/// Remove an entity of `kind`: its file, and what the index holds of it. A locked entity stays.
 pub fn delete_entity(ws_id: &str, kind: &str, id: &str) -> std::io::Result<()> {
     let (Some(scope), Some(ty)) = (Scope::of_kind(kind), type_of_kind(kind)) else { return Ok(()) };
     with_index(ws_id, scope, |conn, dir| {
         let Some(entry) = db::entry(conn, id).map_err(db::io)?.filter(|entry| entry.ty == ty) else { return Ok(()) };
+        if let Some(version) = entry.lock() {
+            return Err(stamp::update_required_io(&version));
+        }
         let file = dir.join(&entry.path);
         if file.exists() {
             std::fs::remove_file(file)?;
@@ -490,15 +508,19 @@ pub fn move_folder(ws_id: &str, scope: Scope, id: &str, parent_id: Option<&str>)
     })
 }
 
-/// Remove a folder with every folder and file under it.
+/// Remove a folder with every folder and file under it. A folder that holds a locked entity stays.
 pub fn delete_folder(ws_id: &str, scope: Scope, id: &str) -> std::io::Result<()> {
     with_index(ws_id, scope, |conn, dir| {
         let Some(folder) = db::folder(conn, id).map_err(db::io)? else { return Ok(()) };
+        let under = format!("{}/", folder.path);
+        let inside = db::entries(conn).map_err(db::io)?.into_iter().filter(|entry| entry.path.starts_with(&under));
+        if let Some(version) = inside.filter_map(|entry| entry.lock()).next() {
+            return Err(stamp::update_required_io(&version));
+        }
         let full = dir.join(&folder.path);
         if full.exists() {
             std::fs::remove_dir_all(full)?;
         }
-        let under = format!("{}/", folder.path);
         let tx = conn.transaction().map_err(db::io)?;
         for other in db::folders(&tx).map_err(db::io)? {
             if other.id == folder.id || other.path.starts_with(&under) {
@@ -631,6 +653,41 @@ mod tests {
             .unwrap();
         std::fs::remove_file(ws_dir(ws).join("mocks").join(INDEX_FILE)).unwrap();
         assert_eq!(entries(ws, Scope::Mocks)[0].path, "Pulled/Deep/m2.json");
+    }
+
+    #[test]
+    fn an_index_of_the_version_before_the_stamp_is_kept_and_learns_the_stamps() {
+        let root = scratch_data_root();
+        let ws = root.ws_id;
+        let folder = create_folder(ws, Scope::Requests, "Kept", None, false).unwrap();
+        write_entity(ws, "requests", "r1", &request("Ping"), Some(&folder.id)).unwrap();
+        write_entity(ws, "requests", "r2", &request("Pong"), Some(&folder.id)).unwrap();
+
+        // The index as 0.5.0 left it: no stamp column, and `r2` pulled in from a newer engine since.
+        let file = ws_dir(ws).join("requests").join(INDEX_FILE);
+        let (mtime, size) = {
+            let conn = Connection::open(&file).unwrap();
+            conn.execute_batch("ALTER TABLE entities DROP COLUMN engine_version; PRAGMA user_version = 1;").unwrap();
+            let newer = ws_dir(ws).join("requests/Kept/r2.json");
+            let mut entity = read_json(&newer).unwrap();
+            entity[stamp::VERSION_FIELD] = json!("999.0.0");
+            write_json_pretty(&newer, &entity).unwrap();
+            // That engine indexed the file as it is now, so nothing about the file says to read it again.
+            let (mtime, size) = scan::stamp(&newer);
+            conn.execute("UPDATE entities SET mtime = ?1, size = ?2 WHERE id = 'r2'", rusqlite::params![mtime, size])
+                .unwrap();
+            (mtime, size)
+        };
+        mark_stale(ws);
+
+        assert_eq!(folders(ws, Scope::Requests), vec![folder.clone()], "the folder keeps its id");
+        assert_eq!(lock_of(ws, "requests", "r2").as_deref(), Some("999.0.0"));
+        assert!(read_entity(ws, "requests", "r2").is_none());
+        assert_eq!(lock_of(ws, "requests", "r1"), None);
+        assert_eq!(read_entity(ws, "requests", "r1").unwrap()["folderId"], folder.id.as_str());
+        let listed = entries(ws, Scope::Requests).into_iter().find(|entry| entry.id == "r2").unwrap();
+        assert_eq!((listed.mtime, listed.size), (mtime, size));
+        assert_eq!(listed.details, json!({ "name": "Pong" }), "only its name is listed");
     }
 
     #[test]

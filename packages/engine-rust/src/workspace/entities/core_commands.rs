@@ -6,11 +6,12 @@ use crate::{
     kernel::{CommandRegistry, kinds::to_engine_kind},
     protocol::EngineError,
     runtime::{entity_status::emit_entity_status, instances::notify_config_changed},
-    utils::json::{array_of, merged, str_of, truthy},
+    utils::json::{array_of, merged, opt_str, str_of, truthy},
     workspace::{
         config::{load_config, load_entity, save_config},
         deletions::pending_entity,
-        fs::{read_enabled_set, sync_enabled_set},
+        fs::{entity_lock, read_enabled_set, sync_enabled_set},
+        stamp,
     },
 };
 
@@ -63,6 +64,10 @@ pub fn register(registry: &mut CommandRegistry) {
         let engine_kind = to_engine_kind(str_of(&params, "kind"));
         let (ws_id, id) = (str_of(&params, "workspaceId"), str_of(&params, "id"));
         let Some(entity) = load_entity(ws_id, engine_kind, id) else {
+            // Written by a newer Bifurc: it is not read until this one is updated.
+            if let Some(version) = entity_lock(ws_id, engine_kind, id) {
+                return Ok(json!({ "ok": false, "locked": true, "requiredVersion": version }));
+            }
             // Deleted here and not confirmed yet: there is nothing to read until the delete is reverted.
             if pending_entity(ws_id, engine_kind, id).is_some() {
                 return Ok(json!({ "ok": false, "deleted": true }));
@@ -83,6 +88,9 @@ pub fn register(registry: &mut CommandRegistry) {
             .invoke("entity.load", json!({ "workspaceId": ws_id, "kind": kind, "id": id }), ctx.clone())
             .await?;
         let Some(mut copy) = loaded.get("entity").filter(|e| e.is_object()).cloned() else {
+            if let Some(version) = opt_str(&loaded, "requiredVersion").filter(|_| truthy(&loaded, "locked")) {
+                return Err(stamp::update_required(version));
+            }
             return Err(EngineError::not_found(format!("No {kind} entity \"{id}\" in workspace \"{ws_id}\".")));
         };
         if let Some(object) = copy.as_object_mut() {
@@ -117,6 +125,9 @@ pub fn register(registry: &mut CommandRegistry) {
     registry.register_sync("entity.setEnabled", |params, ctx| {
         let (ws_id, kind, id) = (str_of(&params, "workspaceId"), str_of(&params, "kind"), str_of(&params, "id"));
         let enabled = truthy(&params, "enabled");
+        if let Some(version) = entity_lock(ws_id, to_engine_kind(kind), id) {
+            return Err(stamp::update_required(&version));
+        }
 
         if enabled && ctx.may_affect_unnamed_entities() {
             match kind {
