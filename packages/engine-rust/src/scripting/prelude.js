@@ -364,6 +364,28 @@
       if (err !== undefined) out.error = err;
       return out;
     };
+  } else if (mode === "flow") {
+    // A flow node's after-execute script: `lp.output` is what the node produced, to change or replace.
+    var produced = input.output;
+    globalThis.lp = {
+      get output() {
+        return produced;
+      },
+      set output(v) {
+        produced = v;
+      },
+      input: input.input,
+      nodes: input.nodes,
+      flow: input.flow,
+      environment: envApi,
+      console: consoleApi,
+    };
+    globalThis.console = consoleApi;
+    result = function (err) {
+      var out = { output: produced === undefined ? null : produced, envVars: vars, logs: logs };
+      if (err !== undefined) out.error = err;
+      return out;
+    };
   } else {
     var req = copy(input.request || {});
     req.headers = copy((input.request && input.request.headers) || {});

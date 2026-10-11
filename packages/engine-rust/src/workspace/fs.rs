@@ -26,7 +26,8 @@ use crate::utils::{
     json::{read_json, str_of, write_json_pretty},
 };
 
-pub const ALL_ENTITY_KINDS: [&str; 12] = [
+pub const ALL_ENTITY_KINDS: [&str; 13] = [
+    "flows",
     "requests",
     "mocks",
     "sockets",
@@ -41,7 +42,7 @@ pub const ALL_ENTITY_KINDS: [&str; 12] = [
     "environments",
 ];
 
-pub const FLAT_ENTITY_KINDS: [&str; 2] = ["mappings", "environments"];
+pub const FLAT_ENTITY_KINDS: [&str; 3] = ["mappings", "environments", "flows"];
 
 /// Files in a kind's directory that are not entities.
 const SKIP_FILES: [&str; 4] = ["index.json", "enabled.json", "names.json", "pending-deletions.json"];
@@ -102,7 +103,7 @@ pub fn workspace_identity(info: &Value) -> Option<(String, String)> {
 pub fn init_workspace_dir(ws_id: &str, name: &str) -> std::io::Result<()> {
     let root = ws_dir(ws_id);
     std::fs::create_dir_all(&root)?;
-    for kind in ["mappings", "rules", "environments", "mocks", "requests", "capture", "applications"] {
+    for kind in ["mappings", "rules", "environments", "flows", "mocks", "requests", "capture", "applications"] {
         std::fs::create_dir_all(root.join(kind))?;
     }
     let ws_file = root.join("workspace.json");

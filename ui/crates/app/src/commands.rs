@@ -64,6 +64,7 @@ actions!(
         ShowCapture,
         ShowRequests,
         ShowMocks,
+        ShowFlows,
         ShowEnvironments,
         ShowVaults,
         ShowWorkspaceConfig,
@@ -185,6 +186,7 @@ pub fn register_actions(cx: &mut App) {
     show::<ShowCapture>(cx, Screen::Capture);
     show::<ShowRequests>(cx, Screen::Requests);
     show::<ShowMocks>(cx, Screen::Mocks);
+    show::<ShowFlows>(cx, Screen::Flows);
     show::<ShowEnvironments>(cx, Screen::Environments);
     show::<ShowVaults>(cx, Screen::Vaults);
     show::<ShowWorkspaceConfig>(cx, Screen::WorkspaceConfig);

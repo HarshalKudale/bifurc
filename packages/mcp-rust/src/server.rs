@@ -298,6 +298,8 @@ mod tests {
                 "mocks_create",
                 "mappings_list",
                 "mappings_create",
+                "flows_list",
+                "flows_run",
                 "services_list",
                 "search_tools",
                 "describe_tool",

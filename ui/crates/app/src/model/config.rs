@@ -142,6 +142,15 @@ impl EnvironmentInfo {
     }
 }
 
+/// A flow as it is listed. The flow itself is loaded by id (`entity.load`) when it is opened.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FlowInfo {
+    pub id: String,
+    pub name: String,
+    /// Deleted here; the deletion is waiting to be confirmed or reverted.
+    pub deleted: bool,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct MappingInfo {
     pub id: String,
@@ -188,6 +197,7 @@ pub struct ConfigSnapshot {
     pub active_workspace_id: String,
     pub active_environment_id: Option<String>,
     pub environments: Vec<EnvironmentInfo>,
+    pub flows: Vec<FlowInfo>,
     pub mappings: Vec<MappingInfo>,
     pub requests: Vec<RequestStub>,
     pub folders: Vec<FolderInfo>,
@@ -274,6 +284,13 @@ impl ConfigSnapshot {
             })
             .collect();
 
+        let flows = array(config, "flows")
+            .iter()
+            .filter_map(|f| {
+                Some(FlowInfo { id: text(f, "id")?, name: text(f, "name").unwrap_or_default(), deleted: is_deleted(f) })
+            })
+            .collect();
+
         let mappings = array(config, "mappings")
             .iter()
             .filter_map(|m| {
@@ -347,6 +364,7 @@ impl ConfigSnapshot {
             active_workspace_id,
             active_environment_id: non_empty(config, "activeEnvironmentId"),
             environments,
+            flows,
             mappings,
             requests,
             folders,

@@ -12,7 +12,7 @@ use super::{
 use crate::utils::json::{array_of, opt_str, str_of};
 
 /// The kinds outside the trees, in the order they are listed in.
-const KIND_ORDER: [&str; 3] = ["mappings", "rules", "environments"];
+const KIND_ORDER: [&str; 4] = ["mappings", "rules", "environments", "flows"];
 
 #[derive(Debug, Default)]
 pub struct EntityPathMaps {

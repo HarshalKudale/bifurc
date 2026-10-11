@@ -10,6 +10,7 @@ pub mod commands;
 pub mod discovery;
 pub mod entities;
 pub mod error;
+pub mod flows;
 pub mod format;
 pub mod health;
 pub mod locate;
