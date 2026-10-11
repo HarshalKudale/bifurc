@@ -5,6 +5,7 @@
 
 pub mod config;
 pub mod explorer;
+pub mod flow;
 pub mod git;
 pub mod http;
 pub mod kind;

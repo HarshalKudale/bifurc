@@ -3,6 +3,9 @@
 //! An environment is `{id, name, variables: [{id, key, value}], createdAt, workspaceId}`. `__global__` always
 //! exists and is merged under the selected environment.
 
+use std::{future::Future, sync::Arc};
+
+use parking_lot::Mutex;
 use regress::Regex;
 use serde_json::{Value, json};
 
@@ -11,7 +14,7 @@ use crate::{
     protocol::Result,
     runtime::instances::notify_config_changed,
     utils::{
-        json::{array_of, str_of},
+        json::{array_of, str_of, truthy},
         randomizer::resolve_randomizers,
     },
     workspace::{
@@ -20,6 +23,51 @@ use crate::{
         settings::load_settings,
     },
 };
+
+/// What scripts did to their variables while a [`VariableScope`] was collecting them.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct VariableChanges {
+    pub set: Vec<(String, String)>,
+    pub removed: Vec<String>,
+}
+
+/// Variables a caller lays over a workspace's environment for the commands it invokes: a flow run does, for
+/// each of its nodes. They are data, not text an author wrote, so they are never read for vault references.
+#[derive(Clone, Default)]
+pub struct VariableScope {
+    /// Later pairs win over earlier ones, and all of them over the environment.
+    pub variables: Vec<(String, String)>,
+    /// Where the variables a script sets go instead of the environment's file. `None` writes the file as usual.
+    pub changes: Option<Arc<Mutex<VariableChanges>>>,
+}
+
+tokio::task_local! {
+    static SCOPE: VariableScope;
+}
+
+/// Run `future` with `scope` laid over every environment it loads. The scope follows the task, so it reaches
+/// a command only while that command resolves its variables before spawning anything.
+pub async fn with_variable_scope<F: Future>(scope: VariableScope, future: F) -> F::Output {
+    SCOPE.scope(scope, future).await
+}
+
+fn lay_over(env: &mut Value, variables: &[(String, String)]) {
+    let Some(list) = env.get_mut("variables").and_then(Value::as_array_mut) else { return };
+    for (key, value) in variables {
+        let scoped = json!({ "id": key, "key": key, "value": value, "scoped": true });
+        match list.iter_mut().find(|v| str_of(v, "key") == key) {
+            Some(existing) => *existing = scoped,
+            None => list.push(scoped),
+        }
+    }
+}
+
+/// The values of the variables an environment's author wrote, as one text: what a [`VariableScope`] laid over
+/// it is left out.
+pub fn authored_variables_text(env: &Value) -> String {
+    let authored: Vec<&Value> = array_of(env, "variables").iter().filter(|v| !truthy(v, "scoped")).collect();
+    json!(authored).to_string()
+}
 
 /// The environment in force: the stored pointer if it names a real, non-global environment; otherwise the
 /// only non-global environment, if there is exactly one.
@@ -63,6 +111,7 @@ pub fn load_merged_environment(ws_id: &str) -> Option<Value> {
     let mut merged = merge_env_vars(find(GLOBAL_ENV_ID), active_id.as_deref().and_then(find))
         .unwrap_or_else(|| json!({ "id": "merged", "name": "merged", "variables": [], "createdAt": 0 }));
     merged["workspaceId"] = json!(ws_id);
+    let _ = SCOPE.try_with(|scope| lay_over(&mut merged, &scope.variables));
     Some(merged)
 }
 
@@ -70,6 +119,12 @@ pub fn load_merged_environment(ws_id: &str) -> Option<Value> {
 /// when none is selected), `removed` keys are deleted from both. Returns whether anything was written.
 pub fn apply_variable_changes(ws_id: &str, set: &[(String, String)], removed: &[String]) -> bool {
     if set.is_empty() && removed.is_empty() {
+        return false;
+    }
+    if let Ok(Some(changes)) = SCOPE.try_with(|scope| scope.changes.clone()) {
+        let mut changes = changes.lock();
+        changes.set.extend_from_slice(set);
+        changes.removed.extend_from_slice(removed);
         return false;
     }
     let environments = read_all_entities(ws_id, "environments");

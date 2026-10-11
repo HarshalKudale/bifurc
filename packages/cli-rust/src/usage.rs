@@ -19,6 +19,7 @@ Groups (bifurc <group> --help shows the arguments and options of each)
   mocks         list | show | create | update | enable | disable      Mocked responses
   requests      list | show | create | update | send | reflect        REST, GraphQL, gRPC, SOAP, WebSocket, SSE, Socket.IO, MCP
   health        list | show | create | update | run                   Health checks
+  flows         list | show | run                                    Saved chains of requests
   vault         list | create | set | unseal | seal | run            Encrypted secrets
   account       list | login | repos                                  GitHub sign-in
   services      list                                                  Local processes listening on a port
@@ -163,6 +164,22 @@ A health check is a URL, with {{variables}}, that answers or does not.
   update <id|name> [--name <text>] [--url <url>] [--auto | --no-auto]
   run [<id|name>]                        Check one, or all of them; exits 1 when one does not answer";
 
+const FLOWS: &str = "Usage: bifurc flows <verb>
+
+A flow is a saved graph of requests: each node's output is the next one's input. Flows are made and edited
+in the desktop app.
+
+  list
+  show <id|name>                         Inputs with their defaults, the nodes with the request each runs,
+                                         and what the engine finds wrong with the flow
+  run <id|name> [--input <name=value>]... [--timeout <seconds>] [--max-events <n>]
+                                         Run it and print each node as it finishes, then a summary. Exits 1
+                                         when the run does not succeed or a test fails.
+                                         --input: a value for an input the flow declares (repeatable)
+                                         --timeout: stop the run after that long (0: no limit)
+                                         --max-events: stop after that many stream messages
+                                         With --json nothing is printed until the end, then the run's report";
+
 const VAULT: &str = "Usage: bifurc vault <verb>
 
 Encrypted secrets, used as {{vault.SECRET}}. A vault is sealed or unsealed. Unsealing takes its passphrase
@@ -222,6 +239,7 @@ pub fn canonical_group(group: &str) -> &str {
         "mock" => "mocks",
         "request" => "requests",
         "healthcheck" | "healthchecks" | "health-check" | "health-checks" => "health",
+        "flow" => "flows",
         "vaults" => "vault",
         "accounts" => "account",
         "service" => "services",
@@ -239,6 +257,7 @@ pub fn group_usage(group: &str) -> Option<&'static str> {
         "mocks" => MOCKS,
         "requests" => REQUESTS,
         "health" => HEALTH,
+        "flows" => FLOWS,
         "vault" => VAULT,
         "account" => ACCOUNT,
         "services" => SERVICES,
@@ -255,7 +274,7 @@ mod tests {
     #[test]
     fn every_group_of_the_overview_has_its_own_help() {
         for group in
-            ["workspaces", "env", "mappings", "rules", "mocks", "requests", "health", "vault", "account", "services"]
+            ["workspaces", "env", "mappings", "rules", "mocks", "requests", "health", "flows", "vault", "account", "services"]
         {
             assert!(USAGE.contains(&format!("\n  {group} ")), "{group} is not in the overview");
             let help = group_usage(group).unwrap_or_else(|| panic!("{group} has no help"));

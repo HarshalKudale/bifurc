@@ -10,7 +10,7 @@ use serde_json::{Map, Value, json};
 
 use super::request_body::resolve_request_body;
 use crate::{
-    env::{apply_variable_changes, load_merged_environment, resolve_headers, resolve_vars},
+    env::{apply_variable_changes, authored_variables_text, load_merged_environment, resolve_headers, resolve_vars},
     protocol::Result,
     scripting::execute_ipc_script,
     vault::{Redactor, references_in, resolve_value_allowed},
@@ -33,7 +33,7 @@ fn has_script(script: &Option<String>) -> Option<&str> {
 }
 
 /// The flat map the sandbox's `lp.environment` reads.
-fn env_to_map(env: Option<&Value>) -> Value {
+pub(crate) fn env_to_map(env: Option<&Value>) -> Value {
     let mut map = Map::new();
     if let Some(env) = env {
         for variable in array_of(env, "variables") {
@@ -61,7 +61,7 @@ fn collect_logs(output: &Value, into: &mut Vec<Value>) {
 }
 
 /// Write the variables a script set or removed (against the environment the run started with) to disk.
-fn persist_script_variables(ws_id: &str, before: &Value, after: &Value) {
+pub(crate) fn persist_script_variables(ws_id: &str, before: &Value, after: &Value) {
     let (Some(before), Some(after)) = (before.as_object(), after.as_object()) else { return };
     let text = |v: &Value| v.as_str().map(str::to_string).unwrap_or_else(|| v.to_string());
     let set: Vec<(String, String)> = after
@@ -99,7 +99,7 @@ where
     for script in [&scripts.pre, &scripts.post, &scripts.test].into_iter().flatten() {
         allowed.extend(references_in(script));
     }
-    allowed.extend(references_in(&full_env.as_ref().map(|e| e["variables"].to_string()).unwrap_or_default()));
+    allowed.extend(references_in(&full_env.as_ref().map(authored_variables_text).unwrap_or_default()));
     let env = full_env.map(|mut env| {
         env["workspaceId"] = json!("");
         env

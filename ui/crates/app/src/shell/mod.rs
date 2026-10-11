@@ -39,6 +39,7 @@ use crate::{
         audit::AuditScreen,
         capture::{CaptureEvent, CaptureScreen},
         environments::EnvironmentsScreen,
+        flows::FlowsScreen,
         healthbar::HealthBarScreen,
         mappings::MappingsScreen,
         mocks::MocksScreen,
@@ -88,6 +89,7 @@ pub struct Shell {
     capture: Entity<CaptureScreen>,
     mappings: Entity<MappingsScreen>,
     environments: Entity<EnvironmentsScreen>,
+    flows: Entity<FlowsScreen>,
     vaults: Entity<VaultsScreen>,
     settings: Entity<SettingsScreen>,
     workspace: Entity<WorkspaceScreen>,
@@ -112,6 +114,7 @@ impl Shell {
         let capture = cx.new(|cx| CaptureScreen::new(model.clone(), window, cx));
         let mappings = cx.new(|cx| MappingsScreen::new(model.clone(), window, cx));
         let environments = cx.new(|cx| EnvironmentsScreen::new(model.clone(), window, cx));
+        let flows = cx.new(|cx| FlowsScreen::new(model.clone(), window, cx));
         let vaults = cx.new(|cx| VaultsScreen::new(model.clone(), cx));
         let settings = cx.new(|cx| SettingsScreen::new(model.clone(), cx));
         let workspace = cx.new(|cx| WorkspaceScreen::new(model.clone(), window, cx));
@@ -129,6 +132,7 @@ impl Shell {
             cx.observe_in(&mocks, window, |this, _, window, cx| this.sync_right_sidebar(window, cx)),
             cx.observe_in(&proxy_rules, window, |this, _, window, cx| this.sync_right_sidebar(window, cx)),
             cx.observe_in(&environments, window, |this, _, window, cx| this.sync_right_sidebar(window, cx)),
+            cx.observe_in(&flows, window, |this, _, window, cx| this.sync_right_sidebar(window, cx)),
             // These screens give the footer a line that changes as they work.
             cx.observe(&services, |_, _, cx| cx.notify()),
             cx.observe(&healthbar, |_, _, cx| cx.notify()),
@@ -150,6 +154,7 @@ impl Shell {
             capture,
             mappings,
             environments,
+            flows,
             vaults,
             settings,
             workspace,
@@ -190,6 +195,8 @@ impl Shell {
             | ModelEvent::Traffic(_)
             | ModelEvent::RunnerProgress(_)
             | ModelEvent::RunnerFinished(_)
+            | ModelEvent::FlowProgress(_)
+            | ModelEvent::FlowFinished(_)
             | ModelEvent::SyncStatus
             | ModelEvent::AccountChanged(_)
             | ModelEvent::CompanionsChanged
@@ -205,6 +212,7 @@ impl Shell {
             Screen::Mocks => self.mocks.read(cx).active_target(cx),
             Screen::ProxyRules => self.proxy_rules.read(cx).active_target(cx),
             Screen::Environments => self.environments.read(cx).active_target(cx),
+            Screen::Flows => self.flows.read(cx).active_target(cx),
             _ => None,
         }
     }
@@ -217,6 +225,7 @@ impl Shell {
             Screen::Mocks => self.mocks.update(cx, |screen, cx| screen.entity_action(action, window, cx)),
             Screen::ProxyRules => self.proxy_rules.update(cx, |screen, cx| screen.entity_action(action, window, cx)),
             Screen::Environments => self.environments.update(cx, |screen, cx| screen.entity_action(action, window, cx)),
+            Screen::Flows => self.flows.update(cx, |screen, cx| screen.entity_action(action, window, cx)),
             Screen::Vaults => self.vaults.update(cx, |screen, cx| screen.entity_action(action, window, cx)),
             _ => {}
         }
@@ -240,6 +249,7 @@ impl Shell {
             Screen::Mocks => Some(self.mocks.clone().into()),
             Screen::Mappings => Some(self.mappings.clone().into()),
             Screen::Environments => Some(self.environments.clone().into()),
+            Screen::Flows => Some(self.flows.clone().into()),
             Screen::Vaults => Some(self.vaults.clone().into()),
             Screen::Settings => Some(self.settings.clone().into()),
             Screen::WorkspaceConfig => Some(self.workspace.clone().into()),
