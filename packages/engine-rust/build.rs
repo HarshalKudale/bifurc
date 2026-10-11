@@ -1,10 +1,10 @@
-//! Bakes the engine's build-time settings into the binary: `BIFURC_GITHUB_CLIENT_ID`, and the PostHog project
-//! `BIFURC_POSTHOG_KEY` / `BIFURC_POSTHOG_HOST`. Each comes from the build's environment, else from the
+//! Bakes the engine's build-time settings into the binary: `BIFURC_GITHUB_CLIENT_ID`, the PostHog project
+//! `BIFURC_POSTHOG_KEY` / `BIFURC_POSTHOG_HOST`, and where the console is, `BIFURC_CONSOLE_URL`. Each comes from the build's environment, else from the
 //! untracked `.env` at the repository root, so it is in every binary built here and never in the repository.
 
 use std::{env, fs, path::Path};
 
-const KEYS: [&str; 3] = ["BIFURC_GITHUB_CLIENT_ID", "BIFURC_POSTHOG_KEY", "BIFURC_POSTHOG_HOST"];
+const KEYS: [&str; 4] = ["BIFURC_GITHUB_CLIENT_ID", "BIFURC_POSTHOG_KEY", "BIFURC_POSTHOG_HOST", "BIFURC_CONSOLE_URL"];
 
 /// The value of `key` in a `.env` file: `KEY=value` lines, `#` comments, optional quotes.
 fn lookup(text: &str, key: &str) -> Option<String> {
