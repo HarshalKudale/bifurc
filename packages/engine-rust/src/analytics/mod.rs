@@ -148,6 +148,9 @@ fn event(target: &Target, name: &str, properties: Value) -> Value {
         // No person profile and no location lookup: the events stay anonymous.
         "$process_person_profile": false,
         "$geoip_disable": true,
+        // PostHog stores the connecting IP as `$ip` unless the event supplies one; supplying a placeholder keeps the
+        // real address out of the event.
+        "$ip": "0.0.0.0",
         "engine_version": ENGINE_VERSION,
         "os": std::env::consts::OS,
         "arch": std::env::consts::ARCH,
@@ -348,9 +351,10 @@ mod tests {
         keys.sort_unstable();
         assert_eq!(
             keys,
-            ["$geoip_disable", "$lib", "$process_person_profile", "arch", "client", "engine_version", "os"]
+            ["$geoip_disable", "$ip", "$lib", "$process_person_profile", "arch", "client", "engine_version", "os"]
         );
         assert_eq!(properties["$process_person_profile"], false);
+        assert_eq!(properties["$ip"], "0.0.0.0");
     }
 
     #[test]
