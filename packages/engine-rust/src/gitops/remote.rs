@@ -12,6 +12,11 @@
 //! changed here stays here). Without team sync only the owner imports and syncs. The token an account
 //! presents is asked who it belongs to. A repository is a workspace when the `workspace.json` at its root
 //! says so.
+//!
+//! Someone else's workspace takes a second yes, from the Bifurc Console ([`console`]): the organization the
+//! workspace belongs to has to have given it to the account. Being a collaborator on GitHub is not enough to
+//! import one, and the console can give less than GitHub does (read where GitHub gives write, which is all
+//! GitHub gives on a personal repository). The owner of a repository is never asked about.
 
 use std::{
     collections::HashMap,
@@ -23,6 +28,7 @@ use parking_lot::Mutex;
 use serde_json::{Value, json};
 
 use super::{
+    console::{self, Denial, Grant},
     git_lock::workspace_lock,
     github::{self, Repo},
     sync_state::{get_sync_config, save_sync_config, save_sync_meta, sync_meta_value},
@@ -55,6 +61,9 @@ fn refused(message: impl Into<String>) -> Value {
 /// The `reason` of an import refused because the repository is another account's, which only happens with
 /// team sync off.
 pub const NOT_OWNER: &str = "notOwner";
+
+/// The `reason` of an import refused because the console could not be asked.
+pub const CONSOLE_UNREACHABLE: &str = "consoleUnreachable";
 
 /// Why an import was refused: what the user is told, and a word for the refusals a client can tell apart.
 struct Refusal {
@@ -221,8 +230,24 @@ fn record_access(ws_id: &str, access: Access) {
     crate::kernel::bus().emit("settings.changed", json!({}));
 }
 
-/// Ask GitHub what the workspace's account may do with its repository now. `None` for a workspace with no
-/// account or no repository.
+/// Write access as GitHub gives it, narrowed to what the console gives, for a workspace that is already on
+/// this device. Only a yes for less, or a no, narrows it: a repository no organization has (one shared
+/// before there was a console) keeps what GitHub gives, and so does a workspace when the console cannot be
+/// asked, unless reading was all it had (`recorded`) when it last could.
+async fn narrowed(github: Access, repo: &Repo, account: &Account, recorded: Option<String>) -> Access {
+    if github != Access::Write {
+        return github;
+    }
+    match console::check(account.user_id, repo.id).await {
+        Ok(Grant::Allowed { write: true }) | Ok(Grant::Denied { denial: Denial::Unmanaged, .. }) => Access::Write,
+        Ok(Grant::Allowed { write: false }) | Ok(Grant::Denied { .. }) => Access::Read,
+        Err(_) if recorded.as_deref() == Some(Access::Read.as_str()) => Access::Read,
+        Err(_) => Access::Write,
+    }
+}
+
+/// Ask GitHub, and for someone else's repository the console, what the workspace's account may do with its
+/// repository now. `None` for a workspace with no account or no repository.
 pub async fn refresh_access(ws_id: &str) -> Result<Option<Access>, GitError> {
     let Some((account, repo_name)) = remote_link(ws_id) else { return Ok(None) };
     let token = account
@@ -230,7 +255,7 @@ pub async fn refresh_access(ws_id: &str) -> Result<Option<Access>, GitError> {
         .clone()
         .ok_or_else(|| GitError(format!("Sign in to GitHub as {} to sync this workspace.", account.login)))?;
     let repo = github::get_repo(&token, &repo_name).await.map_err(|e| GitError(flag_if_rejected(&account.id, e)))?;
-    let access = Access::of(&repo, account.user_id);
+    let access = narrowed(Access::of(&repo, account.user_id), &repo, &account, workspace_access(ws_id)).await;
     KNOWN_ACCESS
         .lock()
         .get_or_insert_with(HashMap::new)
@@ -402,7 +427,9 @@ async fn commit_default_global_environment(ws_id: &str) -> Result<(), String> {
 
 /// Bring a workspace that lives in a repository the account owns, or with team sync one it was given access
 /// to, to this device as a new workspace. Returns `{ ok: true, workspace }` or `{ ok: false, error }`, with
-/// `reason: "notOwner"` when the repository is another account's and team sync is off.
+/// a `reason` for the refusals that are about whose workspace it is: `notOwner` when the repository is
+/// another account's and team sync is off; `unmanaged`, `notGranted` or `seatInactive` when the console
+/// says the account was not given it; `consoleUnreachable` when the console could not be asked.
 pub async fn import_workspace(account_id: &str, repo_name: &str) -> Value {
     match import(account_id, repo_name).await {
         Ok(workspace) => json!({ "ok": true, "workspace": workspace }),
@@ -438,6 +465,27 @@ async fn import(account_id: &str, repo_name: &str) -> Result<Value, Refusal> {
     if workspace_for_repo(&repo.full_name).is_some() {
         return Err(format!("{} is already a workspace on this device.", repo.full_name).into());
     }
+    // Someone else's workspace: GitHub letting the account in is half of it. The organization it belongs to
+    // has to have given it to the account, and no answer is not a yes.
+    let access = match access {
+        Access::Owner => access,
+        _ => match console::check(account.user_id, repo.id).await {
+            Ok(Grant::Allowed { write: true }) => access,
+            Ok(Grant::Allowed { write: false }) => Access::Read,
+            Ok(Grant::Denied { denial, message }) => {
+                return Err(Refusal { message, reason: Some(denial.as_str()) });
+            }
+            Err(error) => {
+                return Err(Refusal {
+                    message: format!(
+                        "{error}. A workspace that belongs to {} can only be imported once the console has confirmed                          you were given it. Check your connection and try again.",
+                        named(&repo.owner_login)
+                    ),
+                    reason: Some(CONSOLE_UNREACHABLE),
+                });
+            }
+        },
+    };
     // Asked before anything is cloned: a repository that is not a workspace never reaches this device.
     let not_a_workspace = || format!("{} is not a Bifurc workspace: it has no workspace.json of one.", repo.full_name);
     let listed = github::read_json_file(&token, &repo.full_name, WORKSPACE_FILE).await?;
