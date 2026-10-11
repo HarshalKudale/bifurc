@@ -258,6 +258,17 @@ pub fn load_config() -> Value {
         })
     }));
 
+    // A flow is listed by name; its nodes are read when it is opened, validated or run.
+    let flow_stub = |flow: &Value| {
+        json!({
+            "id": str_of(flow, "id"), "name": flow.get("name").cloned().unwrap_or(Value::Null),
+            "createdAt": flow.get("createdAt").cloned().unwrap_or(json!(0)), "workspaceId": ws_id,
+        })
+    };
+    let flows = read_all_entities(ws_id, "flows");
+    let mut all_flows: Vec<Value> = flows.iter().map(flow_stub).collect();
+    all_flows.extend(pending(ws_id, "flows", &flows, flow_stub));
+
     // The requests of one type, listed from the request tree's index with the fields a listing shows, then
     // those of them that are deleted here and waiting.
     let request_entries = tree::entries(ws_id, Scope::Requests);
@@ -340,6 +351,7 @@ pub fn load_config() -> Value {
         "mockFolders": mock_folders,
         "requestFolders": request_folders,
         "environments": all_environments,
+        "flows": all_flows,
         "graphqlRequests": graphql_requests,
         "graphqlSchemas": [],
         "grpcRequests": grpc_requests,

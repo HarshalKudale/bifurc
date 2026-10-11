@@ -15,7 +15,7 @@ use crate::{
     discovery::{RuntimeInfo, find_running_engine, platform_default_data_dir},
     entities,
     error::{CliError, Result},
-    health,
+    flows, health,
     locate::locate_engine,
     requests,
     session::{Engine, connect},
@@ -101,8 +101,9 @@ fn context<'a>(args: &'a ParsedArgs, data_dir: &'a Path) -> Context<'a> {
     Context::new(args, connector)
 }
 
-/// Run the command in `args` and return the text to print.
-fn dispatch(args: &ParsedArgs, data_dir: &Path) -> Result<String> {
+/// Run the command in `args` and return the text to print. A command that reports as it goes writes those
+/// lines to `stdout` itself.
+fn dispatch(args: &ParsedArgs, data_dir: &Path, stdout: &mut dyn Write) -> Result<String> {
     let mut ctx = context(args, data_dir);
     let group = args.positional(0).unwrap_or_default();
     let sub = args.positional(1);
@@ -117,6 +118,7 @@ fn dispatch(args: &ParsedArgs, data_dir: &Path) -> Result<String> {
         "mocks" => entities::mocks(&mut ctx, sub),
         "requests" => requests::requests(&mut ctx, sub),
         "health" => health::health(&mut ctx, sub),
+        "flows" => flows::flows(&mut ctx, sub, stdout),
         "services" => commands::services(&mut ctx, sub),
         "vault" => vault::vaults(&mut ctx, sub),
         "update" => update::update(&mut ctx, sub),
@@ -182,7 +184,7 @@ pub fn run_with_env(
         return 0;
     }
     let data_dir = data_dir_of(&args, env_data_dir);
-    match dispatch(&args, &data_dir) {
+    match dispatch(&args, &data_dir, stdout) {
         Ok(text) => {
             let _ = writeln!(stdout, "{text}");
             0
