@@ -502,7 +502,8 @@ impl WorkspaceSetup {
         let setup = self.model.read(cx).setup().clone();
         let needs_account = self.mode == Mode::Import || !matches!(self.purpose, Purpose::First | Purpose::Add);
         let help = if needs_account && setup.team_sync {
-            "The workspace syncs as this account, with the access the account has to its repository on GitHub."
+            "The workspace syncs as this account, with the access the account was given. Someone else's \
+             workspace has to be given to this account in the Bifurc Console before it can be imported."
         } else if needs_account {
             "The workspace syncs as this account. Only the account that owns a workspace can use it."
         } else {
