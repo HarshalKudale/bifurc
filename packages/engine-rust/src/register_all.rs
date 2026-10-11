@@ -17,6 +17,7 @@ pub fn register_all_engine_commands(registry: &mut CommandRegistry) {
     crate::services::register(registry);
     crate::env::register(registry);
     crate::runner::register(registry);
+    crate::flows::register(registry);
     crate::graphql::register(registry);
     crate::soap::register(registry);
     crate::grpc::register(registry);

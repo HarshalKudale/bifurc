@@ -59,6 +59,7 @@ fn noun(kind: &str) -> Option<(&'static str, Option<&'static str>)> {
         "proxyRules" | "rules" => ("proxy rule", None),
         "mappings" => ("mapping", None),
         "environments" => ("environment", None),
+        "flows" => ("flow", None),
         "requests" => ("request", Some("rest")),
         "graphqlRequests" => ("request", Some("graphql")),
         "soapRequests" => ("request", Some("soap")),
@@ -228,6 +229,7 @@ pub fn describe(action: &str, params: &Value) -> Option<Event> {
         "ws.connect" =>event("request sent", json!({ "request_type": "websocket", "saved": true })),
         "request.replay" => event("request replayed", json!({ "method": http_method(str_of(params, "method")) })),
         "runner.start" => event("runner started", json!({})),
+        "flow.run" => event("flow started", json!({})),
 
         "workspace.add" => event("workspace created", json!({ "with_account": has_text(params, "accountId") })),
         "workspace.import" => event("workspace imported", json!({})),

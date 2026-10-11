@@ -1,5 +1,5 @@
 //! A tiny loopback HTTP server for tests: it answers every request with a JSON echo of what it received,
-//! except for paths a test registered a fixed answer for.
+//! except for paths a test registered a fixed answer for. `/status/<code>` is answered with that status.
 
 use std::{collections::HashMap, sync::Arc};
 
@@ -65,8 +65,10 @@ pub async fn start(canned: Canned) -> String {
                         json!({ "method": method, "path": path, "headers": headers, "body": body }).to_string(),
                     ),
                 };
+                // `/status/503` answers with that status.
+                let status = route.strip_prefix("/status/").and_then(|code| code.parse::<u16>().ok()).unwrap_or(200);
                 let response = format!(
-                    "HTTP/1.1 200 OK\r\ncontent-type: {content_type}\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{answer}",
+                    "HTTP/1.1 {status} OK\r\ncontent-type: {content_type}\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{answer}",
                     answer.len()
                 );
                 let _ = socket.write_all(response.as_bytes()).await;

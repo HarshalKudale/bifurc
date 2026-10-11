@@ -26,6 +26,7 @@ pub enum Screen {
     Capture,
     Requests,
     Mocks,
+    Flows,
     Environments,
     Vaults,
     WorkspaceConfig,
@@ -43,6 +44,7 @@ impl Screen {
             Screen::Capture => "Capture",
             Screen::Requests => "Requests",
             Screen::Mocks => "Mocks",
+            Screen::Flows => "Flows",
             Screen::Environments => "Environments",
             Screen::Vaults => "Vaults",
             Screen::WorkspaceConfig => "Config",
@@ -60,6 +62,7 @@ impl Screen {
             Screen::Capture => IconName::Inbox,
             Screen::Requests => IconName::Globe,
             Screen::Mocks => IconName::GalleryVerticalEnd,
+            Screen::Flows => IconName::LayoutDashboard,
             Screen::Environments => IconName::Asterisk,
             Screen::Vaults => IconName::EyeOff,
             Screen::WorkspaceConfig => IconName::Settings2,
@@ -74,6 +77,7 @@ impl Screen {
         match self {
             Screen::Requests => &["requests/", "graphqlRequests/", "soapRequests/", "grpcRequests/", "sseRequests/", "socketioRequests/", "mcpRequests/", "sockets/"],
             Screen::Mocks => &["mocks/"],
+            Screen::Flows => &["flows/"],
             Screen::Mappings => &["mappings/"],
             Screen::ProxyRules => &["rules/"],
             Screen::Environments => &["environments/"],
@@ -90,6 +94,7 @@ impl Screen {
             Screen::ProxyRules => config.proxy_rule_count,
             Screen::Requests => config.requests.iter().filter(|r| !r.deleted).count(),
             Screen::Mocks => config.mocks.iter().filter(|m| !m.deleted).count(),
+            Screen::Flows => config.flows.iter().filter(|f| !f.deleted).count(),
             Screen::Environments => config.selectable_environments().count(),
             Screen::Services
             | Screen::HealthBar
@@ -107,7 +112,7 @@ impl Screen {
 const GROUPS: [(&str, &[Screen]); 4] = [
     ("Applications", &[Screen::Services, Screen::HealthBar]),
     ("Routing", &[Screen::Mappings, Screen::ProxyRules, Screen::Capture]),
-    ("API", &[Screen::Requests, Screen::Mocks]),
+    ("API", &[Screen::Requests, Screen::Mocks, Screen::Flows]),
     ("Workspace", &[Screen::Environments, Screen::Vaults, Screen::WorkspaceConfig, Screen::AuditLog]),
 ];
 

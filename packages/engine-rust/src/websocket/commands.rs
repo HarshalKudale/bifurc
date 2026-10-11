@@ -31,7 +31,8 @@ fn resolve_target(params: &Value) -> Result<(String, Option<Value>)> {
             "ws.connect takes `headers` only together with `url`; a saved request supplies its own.",
         ));
     }
-    let (workspace_id, socket_id) = (str_of(params, "workspaceId"), str_of(params, "socketId"));
+    let workspace_id = str_of(params, "workspaceId");
+    let socket_id = opt_str(params, "id").unwrap_or_else(|| str_of(params, "socketId"));
     let Some(saved) = load_entity(workspace_id, "sockets", socket_id) else {
         return Err(EngineError::not_found(format!(
             "No saved sockets entity \"{socket_id}\" in workspace \"{workspace_id}\". Pass `url` to connect a draft."

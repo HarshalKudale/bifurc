@@ -4,6 +4,7 @@
 pub mod audit;
 pub mod capture;
 pub mod environments;
+pub mod flows;
 pub mod healthbar;
 pub mod licenses;
 pub mod mappings;

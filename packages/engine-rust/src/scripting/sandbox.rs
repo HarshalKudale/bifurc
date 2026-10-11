@@ -176,9 +176,41 @@ pub(crate) async fn execute_ipc_script_with(opts: Json, timeout: Duration) -> Js
     }
 }
 
+/// A flow node's after-execute script. `data` holds `output` (what the node produced, which the script reads
+/// and replaces as `lp.output`), `input`, `nodes` and `flow`. Returns `{ output, envVars, logs, error? }`.
+pub async fn execute_flow_script(script: &str, mut data: Json, env_vars: Json) -> Json {
+    data["mode"] = json!("flow");
+    data["envVars"] = env_vars;
+    match run_blocking(data, script, Duration::from_millis(SCRIPT_TIMEOUT_MS)).await {
+        Ok(out) => out,
+        Err(e) => json!({ "error": e }),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn a_flow_script_reads_and_replaces_what_its_node_produced() {
+        let data = || json!({ "output": { "body": "{\"id\":7}" }, "input": { "user": "1" }, "nodes": {}, "flow": {} });
+        let out = execute_flow_script(
+            "var id = JSON.parse(lp.output.body).id; lp.environment.set('id', id);\
+             lp.output = { id: id, user: lp.input.user }; console.log('seen', id);",
+            data(),
+            json!({ "K": "v" }),
+        )
+        .await;
+        assert_eq!(out["output"], json!({ "id": 7, "user": "1" }));
+        assert_eq!(out["envVars"], json!({ "K": "v", "id": "7" }));
+        assert_eq!(out["logs"], json!(["seen 7"]));
+        assert!(out.get("error").is_none());
+
+        let out = execute_flow_script("lp.output.extra = 1; throw new Error('boom');", data(), json!({})).await;
+        assert_eq!(out["error"], "Error: boom");
+        assert_eq!(out["output"]["extra"], 1);
+        assert_eq!(execute_flow_script("lp.output = undefined", data(), json!({})).await["output"], Json::Null);
+    }
 
     fn headers(pairs: &[(&str, &str)]) -> Headers {
         pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()

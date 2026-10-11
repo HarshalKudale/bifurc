@@ -4,7 +4,8 @@
 mod sandbox;
 
 pub use sandbox::{
-    ProxyScriptResult, SCRIPT_TIMEOUT_MS, execute_ipc_script, execute_request_script, execute_response_script,
+    ProxyScriptResult, SCRIPT_TIMEOUT_MS, execute_flow_script, execute_ipc_script, execute_request_script,
+    execute_response_script,
 };
 
 use crate::kernel::CommandRegistry;

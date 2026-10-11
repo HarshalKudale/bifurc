@@ -20,7 +20,9 @@ use crate::{
 /// `entity.changed` is only sent when a REST request or mock is *created*; an update, a delete, or any other
 /// kind of entity is announced by `sync.entityStatus` alone (the engine sends it after every entity
 /// write). Both therefore mean "re-read the workspace".
-const EVENTS: [&str; 24] = [
+const EVENTS: [&str; 26] = [
+    "event.flow.progress",
+    "event.flow.finished",
     "event.account.changed",
     "event.companions.changed",
     "event.update.changed",
@@ -169,6 +171,10 @@ pub enum ModelEvent {
     RunnerProgress(Value),
     /// `event.runner.finished`: a folder run ended, with its report.
     RunnerFinished(Value),
+    /// `event.flow.progress`: the nodes and connections of a flow's run that changed.
+    FlowProgress(Value),
+    /// `event.flow.finished`: a flow's run ended, with its report.
+    FlowFinished(Value),
     /// The entity with this id was put back to its last synced version; an editor showing it must re-read it.
     EntityReverted(String),
     /// `event.sync.status`: the workspace's remote sync started, finished or failed at something.
@@ -437,6 +443,8 @@ impl AppModel {
                 "event.log.entry" => cx.emit(ModelEvent::Traffic(event.payload)),
                 "event.runner.progress" => cx.emit(ModelEvent::RunnerProgress(event.payload)),
                 "event.runner.finished" => cx.emit(ModelEvent::RunnerFinished(event.payload)),
+                "event.flow.progress" => cx.emit(ModelEvent::FlowProgress(event.payload)),
+                "event.flow.finished" => cx.emit(ModelEvent::FlowFinished(event.payload)),
                 _ => {}
             },
         }
