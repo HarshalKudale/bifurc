@@ -34,7 +34,7 @@ use gpui_kit::{
 use serde_json::{Value, json};
 
 use crate::{
-    app_model::{AppModel, Load, ProxyStatus, SetupState},
+    app_model::{AppModel, Load, ModelEvent, ProxyStatus, SetupState},
     components::certificate::Certificate,
     engine::{call, call_in, failure},
     preferences::Preferences,
@@ -155,6 +155,10 @@ pub struct Onboarding {
     /// The ports (reverse, forward) a proxy last failed to start with. Going on with the same two is the
     /// user's choice to sort it out later.
     servers_failed_on: Option<(u16, u16)>,
+    /// The ports (reverse, forward) the engine last asked for permission to listen on.
+    permission_asked_on: Option<(u16, u16)>,
+    /// The engine was given that permission and is starting again to have it.
+    awaiting_restart: bool,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -171,6 +175,14 @@ impl Onboarding {
         let forward_port = cx.new(|cx| InputState::new(window, cx).placeholder("8080"));
         let subscriptions = vec![
             cx.observe_in(&model, window, |this, _, window, cx| this.sync(window, cx)),
+            // The engine is back with the permission it was given: the servers step picks up where it stopped.
+            cx.subscribe_in(&model, window, |this, _, event: &ModelEvent, window, cx| {
+                if matches!(event, ModelEvent::EngineRestarted) && this.awaiting_restart {
+                    this.awaiting_restart = false;
+                    this.busy = false;
+                    this.start_servers(window, cx);
+                }
+            }),
             cx.observe(&certificate, |_, _, cx| cx.notify()),
             cx.subscribe(&reverse_port, |this, _, event: &InputEvent, cx| this.on_port_event(event, cx)),
             cx.subscribe(&forward_port, |this, _, event: &InputEvent, cx| this.on_port_event(event, cx)),
@@ -188,6 +200,8 @@ impl Onboarding {
             forward_port,
             ports_filled: false,
             servers_failed_on: None,
+            permission_asked_on: None,
+            awaiting_restart: false,
             _subscriptions: subscriptions,
         };
         this.sync(window, cx);
@@ -210,6 +224,11 @@ impl Onboarding {
         let setup = model.setup().clone();
         let ready = *model.load() == Load::Ready;
         let settings = model.config().settings.clone();
+        // The engine did not come back from the restart: nothing is on its way any more.
+        if self.awaiting_restart && model.is_connection_lost() {
+            self.awaiting_restart = false;
+            self.busy = false;
+        }
         if self.stage.is_none() && setup.known {
             self.stage = Some(first_stage(&setup));
             self.terms_accepted = setup.terms_accepted;
@@ -287,7 +306,14 @@ impl Onboarding {
                 cx.notify();
                 return;
             }
-            match outcome.ok().as_ref().and_then(start_problem) {
+            let result = outcome.ok();
+            let denied = result.as_ref().and_then(|result| result.get("lowPortsDenied")).and_then(Value::as_bool);
+            match result.as_ref().and_then(start_problem) {
+                // The engine may be given the permission it lacks. It is asked for once for a pair of ports.
+                Some(problem) if denied == Some(true) && this.permission_asked_on != Some((reverse, forward)) => {
+                    this.permission_asked_on = Some((reverse, forward));
+                    this.allow_low_ports(problem, cx);
+                }
                 Some(problem) if !acknowledged => {
                     this.servers_failed_on = Some((reverse, forward));
                     this.error =
@@ -298,6 +324,31 @@ impl Onboarding {
                     this.servers_failed_on = None;
                     if this.has_workspace(cx) { this.complete(cx) } else { this.go_to(Stage::Workspace, window, cx) }
                 }
+            }
+        });
+    }
+
+    /// Has the engine ask for the password that lets it listen below 1024. It has the permission from its
+    /// next start, so it is restarted, and the proxies are started again once it is back. Refused, the
+    /// walk stays here with `problem`, the port that could not be opened, as any other that failed.
+    fn allow_low_ports(&mut self, problem: String, cx: &mut Context<Self>) {
+        self.busy = true;
+        cx.notify();
+        let client = self.model.read(cx).client().clone();
+        call(&client, cx, "setup.allowLowPorts", json!({}), move |this, outcome, cx| match failure(&outcome) {
+            None => {
+                this.awaiting_restart = true;
+                this.model.update(cx, |model, cx| model.restart_engine(cx));
+            }
+            Some(why) => {
+                this.busy = false;
+                this.servers_failed_on = this.permission_asked_on;
+                this.error = Some(format!(
+                    "{problem} Bifurc was not allowed to use ports below {FIRST_UNRESERVED_PORT}: {}. Choose \
+                     another port, or continue and change it later in Settings.",
+                    why.trim_end_matches('.')
+                ));
+                cx.notify();
             }
         });
     }
@@ -756,8 +807,9 @@ impl Onboarding {
                     "reverse-port-permission",
                     format!(
                         "Linux only lets a program listen below {FIRST_UNRESERVED_PORT} when it has been allowed \
-                         to. The .deb package allows Bifurc's engine; with any other package, port {port} may be \
-                         refused, and a port from {FIRST_UNRESERVED_PORT} up, such as 8000, always works.",
+                         to. If Bifurc's engine is not allowed yet, continuing asks for your password to allow \
+                         it; refuse, and port {port} stays closed. A port from {FIRST_UNRESERVED_PORT} up, such \
+                         as 8000, needs no permission.",
                     ),
                 )
                 .title(format!("Port {port} needs permission"))
