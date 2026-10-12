@@ -260,7 +260,7 @@ mod tests {
                 &json!({
                     "id": id, "name": name, "method": "GET", "url": format!("{base}/{id}"), "headers": {},
                     "body": "", "folderId": f1, "workspaceId": WS, "createdAt": 0,
-                    "testScript": "lp.test('ok', () => { lp.expect(lp.response.status).to.equal(200); });",
+                    "testScript": "bc.test('ok', () => { bc.expect(bc.response.status).to.equal(200); });",
                 }),
                 Some(f1),
             )
@@ -304,7 +304,7 @@ mod tests {
         assert_eq!(status["report"]["passedTests"], 2);
         assert_eq!(finished.lock().len(), 1);
         let row = &status["results"][0];
-        assert!(row["scripts"]["test"].as_str().unwrap().contains("lp.test('ok'"));
+        assert!(row["scripts"]["test"].as_str().unwrap().contains("bc.test('ok'"));
         assert_eq!(row["tests"][0]["name"], "ok");
         assert!(row["responseHeaders"].is_object());
         assert!(row["responseBody"].is_string());

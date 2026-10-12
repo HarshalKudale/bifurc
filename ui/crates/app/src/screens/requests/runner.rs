@@ -891,7 +891,7 @@ mod tests {
             "status": 200, "responseTime": 12, 
             "tests": [{ "name": "ok", "passed": true }, { "name": "bad", "passed": false, "error": "expected 1" }],
             "testLogs": ["hello"],
-            "scripts": { "pre": "", "post": "lp.environment.set('a', 1)", "test": "lp.test('ok', () => {})" },
+            "scripts": { "pre": "", "post": "bc.environment.set('a', 1)", "test": "bc.test('ok', () => {})" },
             "responseHeaders": { "b": "2" }, "responseBody": "{}",
             "postScriptError": "boom",
         }));
@@ -907,10 +907,10 @@ mod tests {
 
     #[test]
     fn a_test_is_found_in_its_script_by_name() {
-        let script = "const x = 1;\nlp.test('a (b)', () => {\n  expect(f(')')).to.equal(1);\n});\ntest(\"second\", () => {});";
+        let script = "const x = 1;\nbc.test('a (b)', () => {\n  expect(f(')')).to.equal(1);\n});\ntest(\"second\", () => {});";
         assert_eq!(
             test_source(script, "a (b)").as_deref(),
-            Some("lp.test('a (b)', () => {\n  expect(f(')')).to.equal(1);\n});")
+            Some("bc.test('a (b)', () => {\n  expect(f(')')).to.equal(1);\n});")
         );
         assert_eq!(test_source(script, "second").as_deref(), Some("test(\"second\", () => {});"));
         assert_eq!(test_source(script, "missing"), None);

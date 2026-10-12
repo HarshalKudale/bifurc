@@ -121,8 +121,8 @@ mod tests {
                 "workspaceId": "ws1",
                 "request": { "method": "POST", "url": format!("{base}/p"), "headers": { "X-A": "1" }, "body": "hi" },
                 "scripts": {
-                    "pre": "lp.request.headers.set('X-B', '2');",
-                    "test": "lp.test('status', () => { lp.expect(lp.response.status).to.equal(200); });",
+                    "pre": "bc.request.headers.set('X-B', '2');",
+                    "test": "bc.test('status', () => { bc.expect(bc.response.status).to.equal(200); });",
                 },
             }),
         )
@@ -192,9 +192,9 @@ mod tests {
                 "workspaceId": "ws1",
                 "request": { "method": "POST", "url": format!("{base}/p"), "headers": {}, "body": "{\"n\":1}" },
                 "scripts": {
-                    "pre": "lp.environment.set('stamp', 'S1'); lp.request.headers.set('X-Stamp', lp.environment.get('stamp')); lp.environment.unset('d'); console.log('pre', lp.request.method);",
-                    "post": "const j = lp.response.json(); lp.environment.set('echoed', j.method + ':' + j.body); lp.environment.set('k', lp.response.status); console.log('post', lp.response.headers.get('content-type'));",
-                    "test": "test('status 200', () => expect(lp.response.status).to.equal(200));                             test('post var visible', () => expect(lp.environment.get('echoed')).to.equal('POST:{\"n\":1}'));                             test('time + headers', () => { expect(lp.response.responseTime).to.be.a('number'); expect(lp.response.headers.has('content-type')).to.be.true; expect(lp.request.headers.get('x-stamp')).to.equal('S1'); });                             test('json body', () => expect(lp.response.json()).to.have.property('headers'));                             test('expected failure', () => expect(lp.response.status).to.equal(500));",
+                    "pre": "bc.environment.set('stamp', 'S1'); bc.request.headers.set('X-Stamp', bc.environment.get('stamp')); bc.environment.unset('d'); console.log('pre', bc.request.method);",
+                    "post": "const j = bc.response.json(); bc.environment.set('echoed', j.method + ':' + j.body); bc.environment.set('k', bc.response.status); console.log('post', bc.response.headers.get('content-type'));",
+                    "test": "test('status 200', () => expect(bc.response.status).to.equal(200));                             test('post var visible', () => expect(bc.environment.get('echoed')).to.equal('POST:{\"n\":1}'));                             test('time + headers', () => { expect(bc.response.responseTime).to.be.a('number'); expect(bc.response.headers.has('content-type')).to.be.true; expect(bc.request.headers.get('x-stamp')).to.equal('S1'); });                             test('json body', () => expect(bc.response.json()).to.have.property('headers'));                             test('expected failure', () => expect(bc.response.status).to.equal(500));",
                 },
             }),
         )
