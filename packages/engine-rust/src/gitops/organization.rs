@@ -2,7 +2,8 @@
 //!
 //! The Bifurc Console knows ([`console::policy`]); what it last said is kept with the workspace in `app.json`,
 //! as `organization`: `{ publicId, name, workspaceId, analytics, githubUserId }`, or nothing for a workspace
-//! no organization has. It is asked when a workspace's remote is first looked at and every half hour after
+//! no organization has. A workspace the console made says whose it is in its own `workspace.json`, which is
+//! taken at the import ([`declared`]); what the console says after replaces it. The console is asked when a workspace's remote is first looked at and every half hour after
 //! ([`super::auto_sync`]), and whenever the workspace's access is asked about. A console that cannot be
 //! reached changes nothing: what was known stands.
 //!
@@ -38,6 +39,20 @@ fn stored(policy: &Policy, account: &Account) -> Option<Value> {
             "githubUserId": account.user_id,
         })),
     }
+}
+
+/// What a workspace's own `workspace.json` says of its organization (`{ publicId, name, workspaceId }`, written
+/// by the console that made the workspace), as `app.json` keeps it for `account`. It is known from the import
+/// on, console or no console. Whether the organization wants usage reported is only ever the console's to
+/// say, so it is off until the console answers.
+pub fn declared(info: &Value, account: &Account) -> Option<Value> {
+    let organization = info.get("organization")?;
+    // Read from a repository: only plain ids are taken.
+    let plain = |key: &str| Some(str_of(organization, key)).filter(|id| super::remote::is_plain_id(id));
+    Some(json!({
+        "publicId": plain("publicId")?, "name": str_of(organization, "name"), "workspaceId": plain("workspaceId")?,
+        "analytics": false, "githubUserId": account.user_id,
+    }))
 }
 
 /// Keep what the console said, and tell the clients and the analytics when it is news.

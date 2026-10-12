@@ -62,6 +62,8 @@ struct Hub {
     console_down: bool,
     /// The console: the organization the managed repositories belong to has usage analytics on.
     analytics: bool,
+    /// `owner/name` of the repositories that do not carry the workspace topic.
+    untagged: std::collections::HashSet<String>,
 }
 
 impl Hub {
@@ -73,7 +75,11 @@ impl Hub {
     fn repo_json(&self, full_name: &str, viewer: u64) -> Option<Value> {
         let (owner, dir) = self.repos.get(full_name)?;
         let push = *owner == viewer || self.shared_with(full_name, viewer) == Some(true);
-        Some(repo_json(full_name, *owner, dir, push))
+        let mut repo = repo_json(full_name, *owner, dir, push);
+        if self.untagged.contains(full_name) {
+            repo["topics"] = json!([]);
+        }
+        Some(repo)
     }
 }
 
@@ -88,7 +94,7 @@ fn repo_json(full_name: &str, owner_id: u64, path: &Path, push: bool) -> Value {
         "owner": { "id": owner_id, "login": full_name.split('/').next().unwrap() },
         "permissions": { "pull": true, "push": push },
         "private": true, "description": "", "clone_url": path.to_string_lossy(), "html_url": "",
-        "default_branch": "main", "updated_at": "2026-01-01T00:00:00Z", "topics": [],
+        "default_branch": "main", "updated_at": "2026-01-01T00:00:00Z", "topics": [super::github::WORKSPACE_TOPIC],
     })
 }
 
@@ -698,7 +704,9 @@ async fn without_team_sync_only_the_owner_imports_a_workspace_and_nothing_local_
     // Sharing a repository on GitHub shares no workspace while team sync is off.
     guard.hub.lock().collaborators.entry("octo/team".into()).or_default().insert(7, true);
 
-    // The listing shows an account only what it owns.
+    // The listing shows an account only what it owns, and of that only what is marked as a workspace.
+    seed_remote(&guard, "eve/plain", 7, None).await;
+    guard.hub.lock().untagged.insert("eve/plain".into());
     let repos = engine.call("account.repos", json!({ "accountId": eve })).await;
     let names: Vec<&str> = repos["repos"].as_array().unwrap().iter().map(|r| r["fullName"].as_str().unwrap()).collect();
     assert_eq!(names, ["eve/own"]);
@@ -1195,6 +1203,49 @@ async fn an_organizations_workspace_has_its_analytics_decided_in_the_console() {
     guard.hub.lock().managed.remove(&repo_id("octo/team"));
     organization::refresh(ws).await;
     assert_eq!((stored(ws), shown(ws).await), (Value::Null, Value::Null));
+}
+
+#[tokio::test]
+async fn a_workspace_the_console_made_says_whose_it_is_at_the_import() {
+    if !check_git_installed().await {
+        return;
+    }
+    let _root = scratch_data_root();
+    let guard = start_hub().await;
+    let engine = Engine::new();
+    let octo = sign_in(42, "octo");
+    let declares = |ws: &str, organization: Value| {
+        let mut file = workspace_file(ws).unwrap();
+        file["organization"] = organization;
+        Some(file)
+    };
+    let acme = json!({ "publicId": "pub_acme", "name": "Acme", "workspaceId": "wsp_team" });
+    seed_remote(&guard, "octo/team", 42, declares("team-ws", acme)).await;
+    seed_remote(&guard, "octo/odd", 42, declares("odd-ws", json!({ "publicId": "../x", "workspaceId": "wsp_odd" }))).await;
+    let stored = |id: &str| load_settings().workspace(id).unwrap().get("organization").cloned().unwrap_or(Value::Null);
+    let import = |repo: &'static str| engine.call("workspace.import", json!({ "accountId": octo, "repo": repo }));
+
+    // The console cannot be asked: the ids are known all the same, and nothing is reported until it says so.
+    guard.hub.lock().console_down = true;
+    for repo in ["octo/team", "octo/odd"] {
+        let imported = import(repo).await;
+        assert_eq!(imported["ok"], true, "{imported}");
+        auto_sync::stop_all_auto_sync();
+    }
+    let known = json!({
+        "publicId": "pub_acme", "name": "Acme", "workspaceId": "wsp_team", "analytics": false, "githubUserId": 42,
+    });
+    assert_eq!(stored("team-ws"), known);
+    // An id that is not a plain one is not taken.
+    assert_eq!(stored("odd-ws"), Value::Null);
+
+    // What the console says once it can be asked is what stands.
+    guard.hub.lock().console_down = false;
+    guard.hub.lock().managed.insert(repo_id("octo/team"));
+    guard.hub.lock().analytics = true;
+    organization::refresh("team-ws").await;
+    assert_eq!(stored("team-ws")["analytics"], true);
+    assert_eq!(stored("team-ws")["workspaceId"], format!("ws_{}", repo_id("octo/team")));
 }
 
 #[tokio::test]
