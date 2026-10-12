@@ -27,7 +27,7 @@ use gpui_kit::{
 pub use self::nav::Screen;
 use self::right_sidebar::RightSidebar;
 use crate::{
-    app_model::{AppModel, Load, ModelEvent},
+    app_model::{AppModel, Load, ModelEvent, SyncScope},
     commands::ShellHandle,
     components::{
         EntityAction,
@@ -182,6 +182,23 @@ impl Shell {
                 cx.notify();
             }
             ModelEvent::Notice(text) => window.push_notification(Notification::warning(text.clone()), cx),
+            ModelEvent::AskSyncMessage(scope) => {
+                let scope = scope.clone();
+                let title = match &scope {
+                    SyncScope::Paths(paths) if paths.len() == 1 => "Sync 1 change".to_owned(),
+                    SyncScope::Paths(paths) => format!("Sync {} changes", paths.len()),
+                    SyncScope::All => "Sync the workspace".to_owned(),
+                };
+                prompt(
+                    self.model.downgrade(),
+                    window,
+                    cx,
+                    title,
+                    "Sync",
+                    vec![PromptField::new("Message", "Optional. Describes the commit.").optional()],
+                    move |model, values, _, cx| model.sync_with_message(scope.clone(), &values[0], cx),
+                );
+            }
             ModelEvent::SocketStatus(_)
             | ModelEvent::SocketMessage(_)
             | ModelEvent::GrpcStatus(_)
@@ -198,6 +215,7 @@ impl Shell {
             | ModelEvent::FlowProgress(_)
             | ModelEvent::FlowFinished(_)
             | ModelEvent::SyncStatus
+            | ModelEvent::HistoryChanged
             | ModelEvent::AccountChanged(_)
             | ModelEvent::CompanionsChanged
             | ModelEvent::CookiesChanged
