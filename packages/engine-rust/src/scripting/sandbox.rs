@@ -162,7 +162,7 @@ pub(crate) async fn execute_ipc_script_with(opts: Json, timeout: Duration) -> Js
     let request = opts.get("request").filter(|v| v.is_object());
     let response = opts.get("response").filter(|v| v.is_object());
 
-    let input = match (context, request, response) {
+    let mut input = match (context, request, response) {
         ("pre", Some(req), _) => json!({ "mode": "pre", "request": req, "envVars": env_vars }),
         ("post", req, Some(res)) => json!({ "mode": "post", "request": req, "response": res, "envVars": env_vars }),
         ("test", req, Some(res)) => json!({ "mode": "test", "request": req, "response": res, "envVars": env_vars }),
@@ -170,6 +170,8 @@ pub(crate) async fn execute_ipc_script_with(opts: Json, timeout: Duration) -> Js
             return json!({ "envVars": env_vars, "error": "Invalid script context or missing request/response" });
         }
     };
+    // What `lp.cookies` reads; the script's changes come back as the result's `cookies`, for the caller to apply.
+    input["cookies"] = opts.get("cookies").cloned().unwrap_or_default();
     match run_blocking(input, &script, timeout).await {
         Ok(out) => out,
         Err(e) => json!({ "envVars": env_vars, "error": e }),
