@@ -1,5 +1,6 @@
 //! A tiny loopback HTTP server for tests: it answers every request with a JSON echo of what it received,
-//! except for paths a test registered a fixed answer for. `/status/<code>` is answered with that status.
+//! except for paths a test registered a fixed answer for. `/status/<code>` is answered with that status,
+//! `/set-cookie/<name=value>/...` sets those cookies.
 
 use std::{collections::HashMap, sync::Arc};
 
@@ -67,8 +68,15 @@ pub async fn start(canned: Canned) -> String {
                 };
                 // `/status/503` answers with that status.
                 let status = route.strip_prefix("/status/").and_then(|code| code.parse::<u16>().ok()).unwrap_or(200);
+                // `/set-cookie/a=1/b=2` sets those cookies.
+                let cookies: String = route
+                    .strip_prefix("/set-cookie/")
+                    .into_iter()
+                    .flat_map(|pairs| pairs.split('/'))
+                    .map(|pair| format!("set-cookie: {pair}; Path=/\r\n"))
+                    .collect();
                 let response = format!(
-                    "HTTP/1.1 {status} OK\r\ncontent-type: {content_type}\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{answer}",
+                    "HTTP/1.1 {status} OK\r\ncontent-type: {content_type}\r\n{cookies}content-length: {}\r\nconnection: close\r\n\r\n{answer}",
                     answer.len()
                 );
                 let _ = socket.write_all(response.as_bytes()).await;

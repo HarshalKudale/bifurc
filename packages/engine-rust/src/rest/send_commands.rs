@@ -58,20 +58,20 @@ pub fn register(registry: &mut CommandRegistry) {
             (inline, scripts)
         };
 
+        let jar = ws_id.clone();
         let result = run_request_pipeline(&ws_id, &request, &scripts, |resolved| async move {
             let encoded = encode_request_body(&resolved);
-            ctx.registry
-                .invoke(
-                    "request.replay",
-                    json!({
-                        "method": resolved["method"],
-                        "url": resolved["url"],
-                        "headers": encoded.headers,
-                        "body": encoded.body_base64,
-                    }),
-                    ctx.clone(),
-                )
-                .await
+            let sent = ctx.registry.invoke(
+                "request.replay",
+                json!({
+                    "method": resolved["method"],
+                    "url": resolved["url"],
+                    "headers": encoded.headers,
+                    "body": encoded.body_base64,
+                }),
+                ctx.clone(),
+            );
+            crate::cookies::scoped(&jar, sent).await
         })
         .await?;
 

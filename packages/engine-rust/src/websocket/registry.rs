@@ -239,7 +239,8 @@ pub fn connect_socket(workspace_id: &str, socket_id: &str, url: &str, headers: O
     emit(events);
 
     let (request, generation) = outcome?;
-    tokio::spawn(run(key, generation, request, rx));
+    let workspace_id = workspace_id.to_string();
+    tokio::spawn(async move { crate::cookies::scoped(&workspace_id, run(key, generation, request, rx)).await });
     Ok(())
 }
 
@@ -426,13 +427,18 @@ fn is_plain_close(error: &WsError) -> bool {
 }
 
 /// Owns one socket from handshake to close. The registry reaches it through `rx`.
-async fn run(key: String, generation: u64, request: Request, mut rx: UnboundedReceiver<Command>) {
+async fn run(key: String, generation: u64, mut request: Request, mut rx: UnboundedReceiver<Command>) {
+    let url = request.uri().to_string();
+    crate::cookies::attach(&url, request.headers_mut());
     let connect = connect_async(request);
     tokio::pin!(connect);
     let mut stream = loop {
         tokio::select! {
             result = &mut connect => match result {
-                Ok((stream, _)) => break stream,
+                Ok((stream, response)) => {
+                    crate::cookies::collect(&url, response.headers());
+                    break stream;
+                }
                 Err(error) => {
                     record_error(&key, generation, &error.to_string());
                     record_close(&key, generation, 1006, "");
