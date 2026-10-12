@@ -278,12 +278,13 @@ impl RightSidebar {
         v_flex()
             .size_full()
             .child(table_header(["Variable", "Value", "From"], cx))
-            .child(v_flex().id("variables").flex_1().min_h_0().overflow_y_scroll().children(rows.into_iter().map(
-                |(variable, env)| {
+            .child(v_flex().id("variables").flex_1().min_h_0().overflow_y_scroll().children(
+                rows.into_iter().enumerate().map(|(ix, (variable, env))| {
                     table_row(cx)
                         .child(cell(variable.key.clone()).font_family(theme.mono_font_family.clone()))
                         .child(cell(variable.value.clone()))
                         .child(cell(env.name.clone()).text_color(theme.muted_foreground))
+                        .child(copy_button(("copy-variable", ix), format!("{{{{{}}}}}", variable.key)))
                 },
             )))
             .into_any_element()
@@ -303,6 +304,18 @@ fn table_header(labels: [&'static str; 3], cx: &gpui_kit::App) -> Div {
         .border_b_1()
         .border_color(theme.border)
         .children(labels.map(cell))
+        // As wide as the rows' copy button, so the columns line up.
+        .child(div().flex_none().w_6())
+}
+
+/// Copies a row's reference, `{{name}}`, ready to paste into a request.
+fn copy_button(id: impl Into<gpui_kit::ElementId>, reference: String) -> Button {
+    Button::new(id)
+        .ghost()
+        .small()
+        .icon(IconName::Copy)
+        .tooltip("Copy the reference")
+        .on_click(move |_, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(reference.clone())))
 }
 
 fn table_row(cx: &gpui_kit::App) -> Div {
@@ -335,6 +348,7 @@ impl RightSidebar {
                         .child(cell(secret.clone()).font_family(theme.mono_font_family.clone()))
                         .child(cell(vault.name.clone()))
                         .child(cell(vault.state.label()).text_color(theme.muted_foreground))
+                        .child(copy_button(rows.len(), copy.clone()))
                         // A click copies the reference, `{{vault.SECRET}}`.
                         .on_click(move |_, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(copy.clone()))),
                 );
