@@ -1198,6 +1198,49 @@ async fn an_organizations_workspace_has_its_analytics_decided_in_the_console() {
 }
 
 #[tokio::test]
+async fn a_workspace_the_console_made_says_whose_it_is_at_the_import() {
+    if !check_git_installed().await {
+        return;
+    }
+    let _root = scratch_data_root();
+    let guard = start_hub().await;
+    let engine = Engine::new();
+    let octo = sign_in(42, "octo");
+    let declares = |ws: &str, organization: Value| {
+        let mut file = workspace_file(ws).unwrap();
+        file["organization"] = organization;
+        Some(file)
+    };
+    let acme = json!({ "publicId": "pub_acme", "name": "Acme", "workspaceId": "wsp_team" });
+    seed_remote(&guard, "octo/team", 42, declares("team-ws", acme)).await;
+    seed_remote(&guard, "octo/odd", 42, declares("odd-ws", json!({ "publicId": "../x", "workspaceId": "wsp_odd" }))).await;
+    let stored = |id: &str| load_settings().workspace(id).unwrap().get("organization").cloned().unwrap_or(Value::Null);
+    let import = |repo: &'static str| engine.call("workspace.import", json!({ "accountId": octo, "repo": repo }));
+
+    // The console cannot be asked: the ids are known all the same, and nothing is reported until it says so.
+    guard.hub.lock().console_down = true;
+    for repo in ["octo/team", "octo/odd"] {
+        let imported = import(repo).await;
+        assert_eq!(imported["ok"], true, "{imported}");
+        auto_sync::stop_all_auto_sync();
+    }
+    let known = json!({
+        "publicId": "pub_acme", "name": "Acme", "workspaceId": "wsp_team", "analytics": false, "githubUserId": 42,
+    });
+    assert_eq!(stored("team-ws"), known);
+    // An id that is not a plain one is not taken.
+    assert_eq!(stored("odd-ws"), Value::Null);
+
+    // What the console says once it can be asked is what stands.
+    guard.hub.lock().console_down = false;
+    guard.hub.lock().managed.insert(repo_id("octo/team"));
+    guard.hub.lock().analytics = true;
+    organization::refresh("team-ws").await;
+    assert_eq!(stored("team-ws")["analytics"], true);
+    assert_eq!(stored("team-ws")["workspaceId"], format!("ws_{}", repo_id("octo/team")));
+}
+
+#[tokio::test]
 async fn a_workspace_synced_by_a_version_before_organizations_learns_whose_it_is() {
     if !check_git_installed().await {
         return;
