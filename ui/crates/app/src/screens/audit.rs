@@ -1,11 +1,11 @@
 //! The Audit log screen: the workspace's git history, one row per change.
 //!
 //! The engine does the history walking, filtering and paging; this screen sends the filters it shows and
-//! renders the page that comes back. A row expands to the before/after of the fields a change touched, which
-//! the engine computes on demand.
+//! renders the page that comes back. A row expands to the diff of what its commit changed, which the engine
+//! writes on demand, and the page is read again whenever the engine says the history moved.
 
 use std::{
-    collections::{HashMap, HashSet},
+    collections::HashSet,
     time::{SystemTime, UNIX_EPOCH},
 };
 
@@ -27,7 +27,7 @@ use serde_json::{Value, json};
 
 use crate::{
     app_model::{AppModel, ModelEvent},
-    components::{binary::save_to_file, page},
+    components::{binary::save_to_file, commit_diffs::CommitDiffs, page},
     engine::{call, describe, failure, fetch_artifact},
 };
 
@@ -139,6 +139,8 @@ fn entity_label(entity: &str) -> &'static str {
         "wsConnection" => "WS",
         "folder" => "FOLDER",
         "workspace" => "WS",
+        // A commit of several files, or one made outside the app: it is about no one item.
+        "" => "COMMIT",
         _ => "?",
     }
 }
@@ -161,37 +163,6 @@ fn fields_summary(fields: &[String]) -> String {
     line
 }
 
-/// The top-level keys of a change, split into those whose value differs and those that do not. Keys that
-/// start with `_` are the engine's bookkeeping and are left out.
-fn split_fields(before: &Value, after: &Value) -> (Vec<String>, Vec<String>) {
-    let mut keys: Vec<&String> = Vec::new();
-    for side in [after, before] {
-        if let Some(map) = side.as_object() {
-            for key in map.keys() {
-                if !key.starts_with('_') && !keys.contains(&key) {
-                    keys.push(key);
-                }
-            }
-        }
-    }
-    let (mut changed, mut same) = (Vec::new(), Vec::new());
-    for key in keys {
-        if before.get(key) == after.get(key) {
-            same.push(key.clone());
-        } else {
-            changed.push(key.clone());
-        }
-    }
-    (changed, same)
-}
-
-fn pretty(value: Option<&Value>) -> String {
-    match value {
-        Some(value) => serde_json::to_string_pretty(value).unwrap_or_default(),
-        None => "(not set)".to_owned(),
-    }
-}
-
 /// One history row as the engine reports it.
 #[derive(Clone)]
 struct Entry {
@@ -199,9 +170,9 @@ struct Entry {
     ts: i64,
     action: String,
     entity: String,
-    entity_id: String,
     entity_name: String,
-    workspace_id: String,
+    /// The commit's subject, when the user wrote it.
+    message: String,
     actor: String,
     fields: Vec<String>,
 }
@@ -214,9 +185,8 @@ impl Entry {
             ts: value.get("ts").and_then(Value::as_i64).unwrap_or_default(),
             action: text("action"),
             entity: text("entity"),
-            entity_id: text("entityId"),
             entity_name: text("entityName"),
-            workspace_id: text("workspaceId"),
+            message: text("message"),
             actor: text("actor"),
             fields: value
                 .get("changedFields")
@@ -225,13 +195,6 @@ impl Entry {
                 .unwrap_or_default(),
         })
     }
-}
-
-/// What is known of one expanded change.
-enum Diff {
-    Loading,
-    Ready { before: Option<Value>, after: Option<Value> },
-    Failed(String),
 }
 
 pub struct AuditScreen {
@@ -250,8 +213,7 @@ pub struct AuditScreen {
     /// Bumped by every load; an answer carrying an older number is stale.
     generation: u64,
     expanded: HashSet<String>,
-    show_unchanged: HashSet<String>,
-    diffs: HashMap<String, Diff>,
+    diffs: Entity<CommitDiffs>,
     exporting: Option<&'static str>,
     _subscriptions: Vec<Subscription>,
 }
@@ -264,8 +226,12 @@ impl AuditScreen {
         let mut subscriptions = vec![cx.subscribe(&model, |this, model, event: &ModelEvent, cx| match event {
             ModelEvent::WorkspaceSwitched => this.reload(0, cx),
             ModelEvent::ConfigChanged if model.read(cx).workspace_id() != this.loaded_for => this.reload(0, cx),
+            // A commit was made or pulled: the page is read again, and what is open stays open.
+            ModelEvent::HistoryChanged => this.fetch(this.offset, cx),
             _ => {}
         })];
+        let diffs = cx.new(|_| CommitDiffs::new(model.clone()));
+        subscriptions.push(cx.observe(&diffs, |_, _, cx| cx.notify()));
         for input in [&search, &from, &to] {
             subscriptions.push(cx.subscribe(input, |this, _, event: &InputEvent, cx| {
                 if matches!(event, InputEvent::Change) {
@@ -287,8 +253,7 @@ impl AuditScreen {
             loaded_for: String::new(),
             generation: 0,
             expanded: HashSet::new(),
-            show_unchanged: HashSet::new(),
-            diffs: HashMap::new(),
+            diffs,
             exporting: None,
             _subscriptions: subscriptions,
         };
@@ -308,18 +273,22 @@ impl AuditScreen {
             || !self.to.read(cx).value().trim().is_empty()
     }
 
-    /// Asks the engine for the page at `offset` under the current filters.
+    /// Shows the page at `offset` under the current filters, with every change closed.
     fn reload(&mut self, offset: usize, cx: &mut Context<Self>) {
+        self.expanded.clear();
+        self.fetch(offset, cx);
+    }
+
+    /// Asks the engine for the page at `offset` under the current filters.
+    fn fetch(&mut self, offset: usize, cx: &mut Context<Self>) {
         self.generation += 1;
         let generation = self.generation;
         let model = self.model.read(cx);
         let client = model.client().clone();
         let workspace = model.workspace_id().to_owned();
         if workspace != self.loaded_for {
-            self.diffs.clear();
+            self.diffs.update(cx, |diffs, _| diffs.clear());
         }
-        self.expanded.clear();
-        self.show_unchanged.clear();
 
         let mut payload = json!({ "workspaceId": workspace, "limit": PAGE_SIZE, "offset": offset });
         if let Some(entity) = self.entity {
@@ -382,51 +351,11 @@ impl AuditScreen {
         self.reload(0, cx);
     }
 
-    /// Opens or closes a change; opening an update loads what it changed the first time.
-    fn toggle(&mut self, entry: &Entry, cx: &mut Context<Self>) {
-        if entry.action != "update" {
-            return;
-        }
-        if !self.expanded.remove(&entry.commit) {
-            self.expanded.insert(entry.commit.clone());
-            if matches!(self.diffs.get(&entry.commit), None | Some(Diff::Failed(_))) {
-                self.load_diff(entry.clone(), cx);
-            }
-        }
-        cx.notify();
-    }
-
-    fn load_diff(&mut self, entry: Entry, cx: &mut Context<Self>) {
-        let client = self.model.read(cx).client().clone();
-        let workspace = self.model.read(cx).workspace_id().to_owned();
-        self.diffs.insert(entry.commit.clone(), Diff::Loading);
-        let payload = json!({
-            "commitHash": entry.commit,
-            "entity": entry.entity,
-            "entityId": entry.entity_id,
-            "workspaceId": entry.workspace_id,
-        });
-        call(&client, cx, "audit.diff", payload, move |this, outcome, cx| {
-            if this.model.read(cx).workspace_id() != workspace {
-                return;
-            }
-            let diff = match failure(&outcome) {
-                Some(message) => Diff::Failed(message),
-                None => {
-                    let side = |key: &str| {
-                        outcome.as_ref().ok().and_then(|result| result.get(key)).filter(|v| !v.is_null()).cloned()
-                    };
-                    Diff::Ready { before: side("before"), after: side("after") }
-                }
-            };
-            this.diffs.insert(entry.commit, diff);
-            cx.notify();
-        });
-    }
-
-    fn toggle_unchanged(&mut self, commit: &str, cx: &mut Context<Self>) {
-        if !self.show_unchanged.remove(commit) {
-            self.show_unchanged.insert(commit.to_owned());
+    /// Opens or closes a change; opening one loads what it changed the first time.
+    fn toggle(&mut self, commit: &str, cx: &mut Context<Self>) {
+        if !self.expanded.remove(commit) {
+            self.expanded.insert(commit.to_owned());
+            self.diffs.update(cx, |diffs, cx| diffs.load(commit, cx));
         }
         cx.notify();
     }
@@ -552,24 +481,6 @@ impl AuditScreen {
             .into_any_element()
     }
 
-    fn json_block(&self, text: String, tint: Option<gpui_kit::Hsla>, cx: &Context<Self>) -> AnyElement {
-        let theme = cx.theme();
-        div()
-            .flex_1()
-            .min_w_0()
-            .max_h_64()
-            .overflow_hidden()
-            .p_2()
-            .rounded_md()
-            .border_1()
-            .border_color(theme.border)
-            .bg(tint.map_or(theme.muted, |color| color.opacity(0.12)))
-            .text_xs()
-            .font_family(theme.mono_font_family.clone())
-            .child(text)
-            .into_any_element()
-    }
-
     fn render_detail(&self, entry: &Entry, cx: &Context<Self>) -> AnyElement {
         let theme = cx.theme().clone();
         let header = div()
@@ -577,68 +488,7 @@ impl AuditScreen {
             .text_color(theme.muted_foreground)
             .font_family(theme.mono_font_family.clone())
             .child(format!("commit {} · {} · {}", entry.commit, entry.actor, absolute_time(entry.ts)));
-        let note = |text: &str| div().text_sm().text_color(theme.muted_foreground).child(text.to_owned());
-        let body: AnyElement = match self.diffs.get(&entry.commit) {
-            None | Some(Diff::Loading) => note("Loading changes…").into_any_element(),
-            Some(Diff::Failed(message)) => note(&format!("Couldn't load the changes. {message}")).into_any_element(),
-            Some(Diff::Ready { before: None, .. }) => note("Created.").into_any_element(),
-            Some(Diff::Ready { after: None, .. }) => note("Deleted.").into_any_element(),
-            Some(Diff::Ready { before: Some(before), after: Some(after) }) => {
-                let (changed, same) = split_fields(before, after);
-                let shown = self.show_unchanged.contains(&entry.commit);
-                let key_label = |key: &str| {
-                    div()
-                        .text_xs()
-                        .font_family(theme.mono_font_family.clone())
-                        .text_color(theme.muted_foreground)
-                        .child(key.to_owned())
-                };
-                let mut column = v_flex().gap_3();
-                if changed.is_empty() {
-                    column = column.child(note("No field changes."));
-                }
-                for key in &changed {
-                    column = column.child(
-                        v_flex().gap_1().child(key_label(key)).child(
-                            h_flex()
-                                .gap_2()
-                                .items_start()
-                                .child(self.json_block(pretty(before.get(key)), Some(theme.danger), cx))
-                                .child(self.json_block(pretty(after.get(key)), Some(theme.success), cx)),
-                        ),
-                    );
-                }
-                if !same.is_empty() {
-                    let commit = entry.commit.clone();
-                    let label = if shown {
-                        format!("Hide {} unchanged fields", same.len())
-                    } else {
-                        format!("Show {} unchanged fields", same.len())
-                    };
-                    column = column.child(
-                        div().child(
-                            Button::new(gpui_kit::ElementId::Name(format!("audit-unchanged-{}", entry.commit).into()))
-                                .ghost()
-                                .xsmall()
-                                .label(label)
-                                .on_click(cx.listener(move |this, _, _, cx| this.toggle_unchanged(&commit, cx))),
-                        ),
-                    );
-                    if shown {
-                        for key in &same {
-                            column = column.child(
-                                v_flex().gap_1().child(key_label(key)).child(h_flex().child(self.json_block(
-                                    pretty(after.get(key)),
-                                    None,
-                                    cx,
-                                ))),
-                            );
-                        }
-                    }
-                }
-                column.into_any_element()
-            }
-        };
+        let body = self.diffs.read(cx).render(&entry.commit, cx);
         v_flex()
             .w_full()
             .gap_2()
@@ -654,20 +504,21 @@ impl AuditScreen {
 
     fn render_row(&self, entry: &Entry, now: i64, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme().clone();
-        let expandable = entry.action == "update";
         let open = self.expanded.contains(&entry.commit);
         let tag = match entry.action.as_str() {
             "create" => Tag::success(),
             "update" => Tag::warning(),
             _ => Tag::danger(),
         };
-        let chevron = if !expandable {
-            div().size_4().flex_none()
+        let icon = if open { IconName::ChevronDown } else { IconName::ChevronRight };
+        let chevron = div().size_4().flex_none().child(Icon::new(icon).small().text_color(theme.muted_foreground));
+        let clicked = entry.commit.clone();
+        // A message the user gave the commit leads; what it was about follows it.
+        let (title, about) = if entry.message.is_empty() {
+            (entry.entity_name.clone(), String::new())
         } else {
-            let icon = if open { IconName::ChevronDown } else { IconName::ChevronRight };
-            div().size_4().flex_none().child(Icon::new(icon).small().text_color(theme.muted_foreground))
+            (entry.message.clone(), entry.entity_name.clone())
         };
-        let clicked = entry.clone();
         let row = h_flex()
             .id(gpui_kit::ElementId::Name(format!("audit-row-{}", entry.commit).into()))
             .w_full()
@@ -692,13 +543,14 @@ impl AuditScreen {
                     .child(fields_summary(&entry.fields)),
             )
             .child(
-                div()
+                h_flex()
                     .flex_1()
                     .min_w_0()
+                    .gap_2()
                     .overflow_hidden()
-                    .text_ellipsis()
                     .whitespace_nowrap()
-                    .child(entry.entity_name.clone()),
+                    .child(div().min_w_0().overflow_hidden().text_ellipsis().child(title))
+                    .child(div().flex_none().text_color(theme.muted_foreground).child(about)),
             )
             .child(
                 div()
@@ -719,13 +571,10 @@ impl AuditScreen {
                     .text_color(theme.muted_foreground)
                     .child(relative_time(now, entry.ts)),
             );
-        let row = if expandable {
-            row.cursor_pointer()
-                .hover(|style| style.bg(theme.muted))
-                .on_click(cx.listener(move |this, _, _, cx| this.toggle(&clicked, cx)))
-        } else {
-            row
-        };
+        let row = row
+            .cursor_pointer()
+            .hover(|style| style.bg(theme.muted))
+            .on_click(cx.listener(move |this, _, _, cx| this.toggle(&clicked, cx)));
         let mut block = v_flex().w_full().border_b_1().border_color(theme.border).child(row);
         if open {
             block = block.child(self.render_detail(entry, cx));
@@ -896,14 +745,5 @@ mod tests {
         assert_eq!(fields_summary(&fields(2)), "f1, f2");
         assert_eq!(fields_summary(&fields(5)), "f1, f2, f3 +2");
         assert_eq!(fields_summary(&[]), "");
-    }
-
-    #[test]
-    fn fields_are_split_into_changed_and_unchanged_without_bookkeeping_keys() {
-        let before = json!({ "name": "a", "url": "x", "_rev": 1, "gone": true });
-        let after = json!({ "name": "b", "url": "x", "_rev": 2, "added": 1 });
-        let (changed, same) = split_fields(&before, &after);
-        assert_eq!(changed, ["name", "added", "gone"]);
-        assert_eq!(same, ["url"]);
     }
 }

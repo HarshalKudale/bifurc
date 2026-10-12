@@ -14,7 +14,7 @@ path = "src/main.rs"
 bifurc-engine-client = { path = "../engine-client" }
 base64 = "0.22"
 futures = "0.3"
-gpui-kit = { version = "0.7", features = [
+gpui-kit = { version = "0.7.3", features = [
     "tree-sitter",
     "tree-sitter-html",
     "tree-sitter-javascript",

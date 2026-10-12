@@ -103,6 +103,7 @@ const SCOPE_BY_COMMAND: &[(&str, Scope)] = &[
     ("audit.export", Scope::Write),
     ("history.list", Scope::Read),
     ("history.diff", Scope::Read),
+    ("history.patch", Scope::Read),
     ("tls.generate", Scope::Admin),
     ("tls.certStatus", Scope::Read),
     ("tls.removeCert", Scope::Admin),
