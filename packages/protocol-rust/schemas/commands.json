@@ -2100,6 +2100,9 @@
    "properties": {
     "workspaceId": {
      "type": "string"
+    },
+    "message": {
+     "type": "string"
     }
    },
    "required": [
@@ -2385,6 +2388,25 @@
    "required": [
     "commitHash",
     "filePath",
+    "workspaceId"
+   ],
+   "additionalProperties": false
+  },
+  "history.patch": {
+   "type": "object",
+   "properties": {
+    "commitHash": {
+     "type": "string"
+    },
+    "filePath": {
+     "type": "string"
+    },
+    "workspaceId": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "commitHash",
     "workspaceId"
    ],
    "additionalProperties": false

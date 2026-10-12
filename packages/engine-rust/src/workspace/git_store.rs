@@ -254,8 +254,9 @@ fn body_field(body: &str, name: &str) -> Option<String> {
     body.lines().find_map(|line| line.strip_prefix(&format!("{name}: ")).map(|v| v.trim().to_string()))
 }
 
-/// One audit entry from a commit's hash, timestamp, subject and body; `None` for a commit that is not an
-/// entity mutation.
+/// One audit entry from a commit's hash, timestamp, subject and body. A commit whose subject the user wrote
+/// says what it did in its `change:` line, and carries the subject as `message`; any other commit (several
+/// files at once, one made outside the engine) is an update of no one entity, named by its subject.
 fn parse_audit_entry(block: &str) -> Option<Value> {
     let mut lines = block.trim().split('\n');
     let (hash, ts, subject) = (lines.next()?, lines.next()?, lines.next()?);
@@ -264,20 +265,26 @@ fn parse_audit_entry(block: &str) -> Option<Value> {
     }
     let body = lines.collect::<Vec<_>>().join("\n");
 
-    let current = Regex::new(r"^(create|update|delete) (\w+)(?: \[([^\]]*)\])? (.+)$").ok()?;
+    let current = Regex::new(r"^(create|update|delete) ([A-Za-z]\w*)(?: \[([^\]]*)\])? (.+)$").ok()?;
     let legacy = Regex::new(r"^(create|update|delete)\((\w+)\): (.+)$").ok()?;
-    let group = |m: &regress::Match, i: usize| m.group(i).map(|range| subject[range].to_string());
+    let change = body_field(&body, "change");
+    let described = if current.find(subject).is_some() || legacy.find(subject).is_some() {
+        subject
+    } else {
+        change.as_deref().unwrap_or(subject)
+    };
+    let group = |m: &regress::Match, i: usize| m.group(i).map(|range| described[range].to_string());
 
-    let (action, entity, name, changed_fields) = if let Some(m) = current.find(subject) {
+    let (action, entity, name, changed_fields) = if let Some(m) = current.find(described) {
         let fields = group(&m, 3)
             .filter(|f| !f.is_empty())
             .map(|f| f.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect::<Vec<_>>());
         (group(&m, 1)?, group(&m, 2)?, group(&m, 4)?.trim().to_string(), fields)
-    } else if let Some(m) = legacy.find(subject) {
+    } else if let Some(m) = legacy.find(described) {
         let name = group(&m, 3)?;
         (group(&m, 1)?, group(&m, 2)?, name.split(" — ").next().unwrap_or("").trim().to_string(), None)
     } else {
-        return None;
+        ("update".to_string(), String::new(), subject.trim().to_string(), None)
     };
 
     let mut entry = json!({
@@ -293,6 +300,9 @@ fn parse_audit_entry(block: &str) -> Option<Value> {
     if let Some(fields) = changed_fields {
         entry["changedFields"] = json!(fields);
     }
+    if described != subject {
+        entry["message"] = json!(subject.trim());
+    }
     Some(entry)
 }
 
@@ -301,8 +311,14 @@ pub async fn query_log(opts: &QueryLogOptions) -> (Vec<Value>, usize) {
     if !is_repo(&opts.workspace_id) {
         return (Vec::new(), 0);
     }
-    let mut args = vec!["log".to_string(), "--format=%H%n%at%n%s%n%b%n---END---".to_string()];
+    // A merge changes nothing of its own: what it brought in is listed commit by commit.
+    let mut args =
+        vec!["log".to_string(), "--no-merges".to_string(), "--format=%H%n%at%n%s%n%b%n---END---".to_string()];
     if let Some(path) = opts.file_path.as_deref().filter(|p| !p.is_empty()) {
+        // An entity moved to another folder is the same entity: its history goes on through the move.
+        if path.ends_with(".json") {
+            args.push("--follow".into());
+        }
         args.push("--".into());
         args.push(path.replace('\\', "/"));
     }
@@ -324,7 +340,7 @@ pub async fn query_log(opts: &QueryLogOptions) -> (Vec<Value>, usize) {
             opts.search
                 .as_ref()
                 .filter(|s| !s.is_empty())
-                .is_none_or(|s| text(e, "entityName").to_lowercase().contains(&s.to_lowercase()))
+                .is_none_or(|s| format!("{}\n{}", text(e, "entityName"), text(e, "message")).to_lowercase().contains(&s.to_lowercase()))
         })
         .collect();
 
@@ -343,6 +359,38 @@ pub async fn get_entity_at_commit(commit_ref: &str, ws_id: &str, rel_path: &str)
     let spec = format!("{commit_ref}:{}", rel_path.replace('\\', "/"));
     let content = git(ws_id, &["show", &spec]).await.ok()?;
     serde_json::from_str(&content).ok()
+}
+
+/// What a commit changed, as a patch against its first parent. With `rel_path`, only the file of that
+/// entity, wherever it was then: an entity's file keeps its name when it moves to another folder.
+pub async fn commit_patch(ws_id: &str, commit: &str, rel_path: Option<&str>) -> Result<String, GitError> {
+    // The hash goes on git's command line: nothing but an object id may.
+    if !matches!(commit.len(), 40 | 64) || !commit.bytes().all(|b| b.is_ascii_hexdigit()) {
+        return Err(GitError("Not a commit id.".to_string()));
+    }
+    let mut args = vec![
+        "show",
+        "--no-show-signature",
+        "--no-color",
+        "--no-ext-diff",
+        "--no-textconv",
+        "--format=",
+        "--first-parent",
+        "--patch",
+        "--find-renames",
+        "--src-prefix=a/",
+        "--dst-prefix=b/",
+        commit,
+        "--",
+    ];
+    let pathspec = rel_path
+        .map(|path| path.replace('\\', "/"))
+        .filter(|path| !path.is_empty())
+        .map(|path| format!(":(glob)**/{}", path.rsplit('/').next().unwrap_or(&path)));
+    if let Some(pathspec) = &pathspec {
+        args.push(pathspec);
+    }
+    git(ws_id, &args).await
 }
 
 pub async fn get_commit_changed_files(commit_ref: &str, ws_id: &str) -> Vec<String> {
@@ -374,6 +422,24 @@ mod tests {
         assert_eq!(legacy["actor"], "local");
         assert!(legacy.get("changedFields").is_none());
 
-        assert!(parse_audit_entry("ghi\n1\nchore: init workspace repo\n").is_none());
+        // The user's own subject: what the commit did is in its `change:` line.
+        let custom = parse_audit_entry(
+            "jkl\n1\nFix the login path\nchange: update request Login\nentity-id: r1\nworkspace-id: w1\nactor: sam\n",
+        )
+        .unwrap();
+        assert_eq!(custom["message"], "Fix the login path");
+        assert_eq!(custom["action"], "update");
+        assert_eq!(custom["entity"], "request");
+        assert_eq!(custom["entityName"], "Login");
+        assert_eq!(custom["entityId"], "r1");
+
+        // Any other commit is listed too, named by its subject.
+        for subject in ["chore: init workspace repo", "update 3 files"] {
+            let other = parse_audit_entry(&format!("ghi\n1\n{subject}\n")).unwrap();
+            assert_eq!(other["action"], "update");
+            assert_eq!(other["entity"], "");
+            assert_eq!(other["entityName"], subject);
+            assert!(other.get("message").is_none());
+        }
     }
 }

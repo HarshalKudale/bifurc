@@ -125,6 +125,8 @@ pub struct HistoryEntry {
     pub action: String,
     /// The entity's name at that commit.
     pub entity_name: String,
+    /// The commit's subject, when the user wrote it; empty otherwise.
+    pub message: String,
     pub actor: String,
     /// Epoch milliseconds.
     pub ts: u64,
@@ -136,7 +138,7 @@ impl HistoryEntry {
     }
 }
 
-/// Reads a `git.history` result: `{ entries: [{ commitHash, ts, action, entityName, actor }], total }`.
+/// Reads a `git.history` result: `{ entries: [{ commitHash, ts, action, entityName, message?, actor }], total }`.
 pub fn parse_history(result: &Value) -> Vec<HistoryEntry> {
     let text = |entry: &Value, key: &str| entry.get(key).and_then(Value::as_str).unwrap_or_default().to_owned();
     result
@@ -150,6 +152,7 @@ pub fn parse_history(result: &Value) -> Vec<HistoryEntry> {
                         commit: entry.get("commitHash")?.as_str()?.to_owned(),
                         action: text(entry, "action"),
                         entity_name: text(entry, "entityName"),
+                        message: text(entry, "message"),
                         actor: text(entry, "actor"),
                         ts: entry.get("ts").and_then(Value::as_u64).unwrap_or(0),
                     })
@@ -233,6 +236,7 @@ mod tests {
         assert_eq!(entries[0].short_commit(), "3034b96");
         assert_eq!(entries[0].action, "create");
         assert_eq!(entries[0].entity_name, "Get thing");
+        assert_eq!(entries[0].message, "");
         assert!(parse_history(&json!({})).is_empty());
     }
 
