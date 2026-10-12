@@ -99,23 +99,60 @@ fn body_to_text(body: Option<&Value>) -> String {
     }
 }
 
-/// `(preScript, postScript)` from an item's events; the last of each kind wins.
+/// Postman's names in a script and what Bifurc calls them: `pm` is `bc`, and the calls of the older `postman`
+/// object have a `bc` counterpart.
+const SCRIPT_RENAMES: [(&str, &str); 8] = [
+    ("pm.", "bc."),
+    ("postman.setEnvironmentVariable(", "bc.environment.set("),
+    ("postman.getEnvironmentVariable(", "bc.environment.get("),
+    ("postman.clearEnvironmentVariable(", "bc.environment.unset("),
+    ("postman.setGlobalVariable(", "bc.globals.set("),
+    ("postman.getGlobalVariable(", "bc.globals.get("),
+    ("postman.clearGlobalVariable(", "bc.globals.unset("),
+    ("responseCode.code", "bc.response.code"),
+];
+
+/// A Postman script rewritten to run in Bifurc. A name is only rewritten where it starts a word, so `npm.x`
+/// and `a.pm.b` are left alone.
+// shortcut: a textual rewrite that also reaches strings and comments, parse the script if that ever bites.
+fn to_bifurc_script(source: &str) -> String {
+    let mut text = source.to_string();
+    for (from, to) in SCRIPT_RENAMES {
+        let mut out = String::with_capacity(text.len());
+        let mut last = 0;
+        for (at, _) in text.match_indices(from) {
+            let glued =
+                text[..at].chars().next_back().is_some_and(|c| c.is_alphanumeric() || matches!(c, '_' | '$' | '.'));
+            if !glued {
+                out.push_str(&text[last..at]);
+                out.push_str(to);
+                last = at + from.len();
+            }
+        }
+        out.push_str(&text[last..]);
+        text = out;
+    }
+    text
+}
+
+/// `(preScript, testScript)` from an item's events, rewritten for Bifurc; the last of each kind wins. Postman's
+/// `test` event becomes the test script, the one whose `bc.test` results are reported.
 fn events_to_scripts(events: Option<&Value>) -> (String, String) {
-    let (mut pre, mut post) = (String::new(), String::new());
+    let (mut pre, mut test) = (String::new(), String::new());
     for event in events.and_then(Value::as_array).into_iter().flatten() {
         let source = event
             .get("script")
             .and_then(|s| s.get("exec"))
             .and_then(Value::as_array)
-            .map(|lines| lines.iter().map(js_str).collect::<Vec<_>>().join("\n"))
+            .map(|lines| to_bifurc_script(&lines.iter().map(js_str).collect::<Vec<_>>().join("\n")))
             .unwrap_or_default();
         match opt_str(event, "listen") {
             Some("prerequest") => pre = source,
-            Some("test") => post = source,
+            Some("test") => test = source,
             _ => {}
         }
     }
-    (pre, post)
+    (pre, test)
 }
 
 fn b64_encode(text: &str) -> String {
@@ -309,7 +346,7 @@ pub struct ParsedRequest {
     pub headers: Value,
     pub body: String,
     pub pre_script: String,
-    pub post_script: String,
+    pub test_script: String,
     pub folder: Option<String>,
 }
 
@@ -379,7 +416,7 @@ pub fn parse_postman_requests(json_text: &str) -> Result<(Vec<ParsedFolder>, Vec
         &mut |name, parent| folders.push(ParsedFolder { name: name.to_string(), parent: parent.map(str::to_string) }),
         &mut |item, parent| {
             let request = &item["request"];
-            let (pre_script, post_script) = events_to_scripts(item.get("event"));
+            let (pre_script, test_script) = events_to_scripts(item.get("event"));
             requests.push(ParsedRequest {
                 name: text_or(item, "name", "undefined"),
                 method: upper_method(request, "GET"),
@@ -387,7 +424,7 @@ pub fn parse_postman_requests(json_text: &str) -> Result<(Vec<ParsedFolder>, Vec
                 headers: h_to_record(request.get("header")),
                 body: body_to_text(request.get("body")),
                 pre_script,
-                post_script,
+                test_script,
                 folder: parent.map(str::to_string),
             });
         },
@@ -490,6 +527,24 @@ mod tests {
         assert_eq!(parsed[1].body, "{\"a\":1}");
         assert_eq!(parsed[1].pre_script, "log(1)\nlog(2)");
         assert_eq!(parsed[0].headers, json!({ "X-A": "1" }));
+    }
+
+    #[test]
+    fn postman_scripts_are_rewritten_for_bifurc() {
+        let events = json!([
+            { "listen": "prerequest", "script": { "exec": ["postman.setEnvironmentVariable('a', npm.pm.x);"] } },
+            { "listen": "test", "script": { "exec": [
+                "pm.test('ok', () => pm.expect(pm.response.code).to.eql(200));",
+                "if(pm.globals.has('rpm.limit')) x=[pm.info, responseCode.code];",
+            ] } },
+        ]);
+        let (pre, test) = events_to_scripts(Some(&events));
+        assert_eq!(pre, "bc.environment.set('a', npm.pm.x);");
+        assert_eq!(
+            test,
+            "bc.test('ok', () => bc.expect(bc.response.code).to.eql(200));\n\
+             if(bc.globals.has('rpm.limit')) x=[bc.info, bc.response.code];"
+        );
     }
 
     #[test]

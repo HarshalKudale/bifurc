@@ -394,8 +394,8 @@ pub async fn postman_run(ws_id: String, source: ImportSource, _strategy: Strateg
         if !parsed.pre_script.is_empty() {
             request.insert("preScript".into(), json!(parsed.pre_script));
         }
-        if !parsed.post_script.is_empty() {
-            request.insert("postScript".into(), json!(parsed.post_script));
+        if !parsed.test_script.is_empty() {
+            request.insert("testScript".into(), json!(parsed.test_script));
         }
         request.insert("createdAt".into(), json!(now_ms()));
         request.insert("folderId".into(), json!(folder_id));
@@ -548,14 +548,14 @@ mod tests {
                 { "name": "Group", "item": [
                     { "name": "In", "request": { "method": "post", "url": { "raw": "http://h/in" },
                       "header": [{ "key": "K", "value": "V" }], "body": { "mode": "raw", "raw": "b" } },
-                      "event": [{ "listen": "test", "script": { "exec": ["a", "b"] } }] } ] } ] })
+                      "event": [{ "listen": "test", "script": { "exec": ["a", "pm.test('b')"] } }] } ] } ] })
         .to_string();
         assert_eq!(postman_preflight(&ws, &source(&col, "c.json")).unwrap().item_count, 2);
         assert_eq!(postman_run(ws.clone(), source(&col, "c.json"), Strategy::Keep).await.unwrap().imported, 2);
         let all = requests(&ws);
         let inside = all.iter().find(|r| r["name"] == "In").unwrap();
         assert_eq!(inside["method"], "POST");
-        assert_eq!(inside["postScript"], "a\nb");
+        assert_eq!(inside["testScript"], "a\nbc.test('b')");
         assert!(inside.get("preScript").is_none());
         assert!(inside["folderId"].is_string());
         let keys: Vec<_> = inside.as_object().unwrap().keys().collect();
@@ -570,7 +570,7 @@ mod tests {
                 "url",
                 "headers",
                 "body",
-                "postScript",
+                "testScript",
                 "createdAt",
                 "workspaceId",
                 "folderId"

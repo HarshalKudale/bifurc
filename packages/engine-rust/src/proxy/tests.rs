@@ -244,8 +244,8 @@ async fn a_rule_forwards_to_its_target_and_runs_its_scripts() {
         json!({
             "id": "r1", "workspaceId": "ws1", "name": "r", "pattern": "^http://ruled\\.test/", "useRegex": true,
             "targetType": "external", "targetExternal": format!("127.0.0.1:{target}"),
-            "requestScript": "lp.request.headers['x-added'] = 'req';",
-            "responseScript": "lp.response.headers['x-seen'] = '1'; lp.response.body = lp.response.body.toUpperCase();",
+            "requestScript": "bc.request.headers['x-added'] = 'req';",
+            "responseScript": "bc.response.headers['x-seen'] = '1'; bc.response.body = bc.response.body.toUpperCase();",
             "createdAt": 0,
         }),
     );
@@ -500,7 +500,7 @@ async fn a_rule_script_can_inject_a_secret_that_the_log_shows_unresolved() {
         json!({
             "id": "r2", "workspaceId": "ws1", "name": "r", "pattern": "^http://inject\\.test/", "useRegex": true,
             "targetType": "external", "targetExternal": format!("127.0.0.1:{target}"),
-            "requestScript": "lp.request.headers['authorization'] = 'Bearer {{keys.TOKEN}}';",
+            "requestScript": "bc.request.headers['authorization'] = 'Bearer {{keys.TOKEN}}';",
             "responseScript": "", "createdAt": 0,
         }),
     );

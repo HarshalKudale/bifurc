@@ -75,7 +75,7 @@ pub async fn evaluate(run: &Run, node: &Node, token: &Token, wired: &Wired) -> O
     let nodes: Map<String, Value> = token.nodes.iter().map(|(id, value)| (id.clone(), (**value).clone())).collect();
     let data = json!({ "input": *token.input, "vars": vars, "nodes": nodes, "flow": run.inputs });
     let script =
-        format!("lp.output = (function (input, vars) {{ return (\n{}\n); }})(lp.input, lp.vars);", node.expression);
+        format!("bc.output = (function (input, vars) {{ return (\n{}\n); }})(bc.input, bc.vars);", node.expression);
     let result = execute_flow_script(&script, data, json!({})).await;
     match opt_str(&result, "error") {
         Some(error) => failed(format!("The expression failed: {error}")),
