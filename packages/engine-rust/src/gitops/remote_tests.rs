@@ -436,6 +436,11 @@ async fn the_proxies_are_the_engines_to_start_only_once_the_servers_step_is_pass
 
     let started = engine.call("setup.startServers", json!({ "port": 8123 })).await;
     assert_eq!(started["ok"], true);
+    // Ports from 1024 up need nobody's permission, and only Linux has one the engine can be given.
+    assert_eq!(started["lowPortsDenied"], false);
+    if !cfg!(target_os = "linux") {
+        assert_eq!(engine.call("setup.allowLowPorts", json!({})).await["ok"], false);
+    }
     let settings = load_settings();
     assert!(settings.servers_confirmed());
     assert_eq!((settings.port(), settings.forward_proxy_port()), (8123, 8080));

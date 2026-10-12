@@ -1097,6 +1097,12 @@
    "extra": true
   }
  },
+ "setup.allowLowPorts": {
+  "valid": {},
+  "invalid": {
+   "extra": true
+  }
+ },
  "setup.complete": {
   "valid": {},
   "invalid": {
