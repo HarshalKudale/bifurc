@@ -62,6 +62,8 @@ struct Hub {
     console_down: bool,
     /// The console: the organization the managed repositories belong to has usage analytics on.
     analytics: bool,
+    /// `owner/name` of the repositories that do not carry the workspace topic.
+    untagged: std::collections::HashSet<String>,
 }
 
 impl Hub {
@@ -73,7 +75,11 @@ impl Hub {
     fn repo_json(&self, full_name: &str, viewer: u64) -> Option<Value> {
         let (owner, dir) = self.repos.get(full_name)?;
         let push = *owner == viewer || self.shared_with(full_name, viewer) == Some(true);
-        Some(repo_json(full_name, *owner, dir, push))
+        let mut repo = repo_json(full_name, *owner, dir, push);
+        if self.untagged.contains(full_name) {
+            repo["topics"] = json!([]);
+        }
+        Some(repo)
     }
 }
 
@@ -88,7 +94,7 @@ fn repo_json(full_name: &str, owner_id: u64, path: &Path, push: bool) -> Value {
         "owner": { "id": owner_id, "login": full_name.split('/').next().unwrap() },
         "permissions": { "pull": true, "push": push },
         "private": true, "description": "", "clone_url": path.to_string_lossy(), "html_url": "",
-        "default_branch": "main", "updated_at": "2026-01-01T00:00:00Z", "topics": [],
+        "default_branch": "main", "updated_at": "2026-01-01T00:00:00Z", "topics": [super::github::WORKSPACE_TOPIC],
     })
 }
 
@@ -698,7 +704,9 @@ async fn without_team_sync_only_the_owner_imports_a_workspace_and_nothing_local_
     // Sharing a repository on GitHub shares no workspace while team sync is off.
     guard.hub.lock().collaborators.entry("octo/team".into()).or_default().insert(7, true);
 
-    // The listing shows an account only what it owns.
+    // The listing shows an account only what it owns, and of that only what is marked as a workspace.
+    seed_remote(&guard, "eve/plain", 7, None).await;
+    guard.hub.lock().untagged.insert("eve/plain".into());
     let repos = engine.call("account.repos", json!({ "accountId": eve })).await;
     let names: Vec<&str> = repos["repos"].as_array().unwrap().iter().map(|r| r["fullName"].as_str().unwrap()).collect();
     assert_eq!(names, ["eve/own"]);
