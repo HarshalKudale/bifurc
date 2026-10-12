@@ -14,6 +14,7 @@ const REST: &str = "requests";
 const GRAPHQL: &str = "graphqlRequests";
 const SOAP: &str = "soapRequests";
 const WEBSOCKET: &str = "wsConnections";
+const SSE: &str = "sseRequests";
 
 /// The command's headers as an entity stores them: hop-by-hop ones dropped, and the ones in `owned` too,
 /// which the request type sets itself.
@@ -159,17 +160,28 @@ fn rest_entity(request: &CurlRequest) -> Value {
 /// A cURL command as the request it describes: `{ kind, request }`, where `kind` is the `EntityKind` the
 /// request is created as. The error says why the text is not a usable cURL command.
 pub fn curl_to_request(curl: &str) -> Result<Value, &'static str> {
-    let request = parse_curl_strict(curl)?;
-    let (kind, entity) = if is_websocket(&request) {
-        (WEBSOCKET, websocket_entity(&request))
-    } else if is_soap(&request) {
-        (SOAP, soap_entity(&request))
-    } else if let Some(graphql) = graphql_of(&request) {
-        (GRAPHQL, graphql_entity(&request, graphql))
-    } else {
-        (REST, rest_entity(&request))
-    };
+    let (kind, entity) = request_entity(&parse_curl_strict(curl)?);
     Ok(json!({ "kind": kind, "request": entity }))
+}
+
+/// An HTTP call as the request of the type it describes, with the `EntityKind` it is created as. The
+/// importers build their requests through this, so a call is the same type wherever it came from.
+pub fn request_entity(request: &CurlRequest) -> (&'static str, Value) {
+    if is_websocket(request) {
+        (WEBSOCKET, websocket_entity(request))
+    } else if is_soap(request) {
+        (SOAP, soap_entity(request))
+    } else if let Some(graphql) = graphql_of(request) {
+        (GRAPHQL, graphql_entity(request, graphql))
+    } else if request.header("accept").is_some_and(|accept| accept.to_lowercase().contains("text/event-stream")) {
+        let mut entity = rest_entity(request);
+        if let Some(fields) = entity.as_object_mut() {
+            fields.shift_remove("protocol");
+        }
+        (SSE, entity)
+    } else {
+        (REST, rest_entity(request))
+    }
 }
 
 /// A cURL command as a mock of the call it makes. The command says nothing about the answer, so the mock

@@ -146,7 +146,7 @@ mod tests {
     };
 
     fn source(content: &str, filename: &str) -> ImportSource {
-        ImportSource { content: content.to_string(), filename: filename.to_string() }
+        ImportSource::text(content, filename)
     }
 
     #[test]

@@ -36,14 +36,13 @@ use crate::{
 };
 
 /// The kinds of thing the engine can export and import, in the order they are offered.
-const KINDS: [(&str, &str); 7] = [
+const KINDS: [(&str, &str); 6] = [
     ("workspace", "Whole workspace"),
     ("requests", "Requests"),
     ("mocks", "Mocks"),
     ("environments", "Environments"),
     ("mappings", "Mappings"),
     ("proxyRules", "Proxy rules"),
-    ("websockets", "WebSockets"),
 ];
 
 /// What an import does with something that is already in the workspace.
@@ -828,7 +827,7 @@ impl WorkspaceScreen {
                         }),
                 )
             }))
-            .footer(|_, _| "Writes a file you choose the place of. Nothing in the workspace changes.");
+            .footer(|_, _| "Writes a Bifurc JSON file you choose the place of. Nothing in the workspace changes.");
         let import_group = SettingGroup::new()
             .title("Import")
             .items(self.transfer_fields(false, cx))
@@ -866,7 +865,10 @@ impl WorkspaceScreen {
                         }),
                 )
             }))
-            .footer(|_, _| "Imported items are added to this workspace.");
+            .footer(|_, _| {
+                "Imported items are added to this workspace. Requests of other tools become requests of their \
+                 type: REST, GraphQL, gRPC, WebSocket and the rest."
+            });
         SettingPage::new("Import & export").icon(IconName::Inbox).groups(vec![export_group, import_group])
     }
 

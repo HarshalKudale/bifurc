@@ -16,6 +16,16 @@ pub struct ExportFile {
 pub struct ImportSource {
     pub content: String,
     pub filename: String,
+    /// The file as it was uploaded, for a format that is not text (an archive).
+    pub bytes: Vec<u8>,
+}
+
+#[cfg(test)]
+impl ImportSource {
+    pub fn text(content: impl Into<String>, filename: impl Into<String>) -> Self {
+        let content = content.into();
+        Self { bytes: content.as_bytes().to_vec(), content, filename: filename.into() }
+    }
 }
 
 /// What to do with an imported item whose id already exists.
@@ -97,12 +107,8 @@ pub enum Importer {
     Path(PathImporter),
 }
 
-pub enum Exporter {
-    /// Renders text in memory.
-    Text(fn(&str) -> ExportOutcome),
-    /// Writes a file (a zip archive) to the given path.
-    Path(fn(&str, &Path) -> Result<(), String>),
-}
+/// Renders the export of a workspace. Only Bifurc's own JSON is written; the other formats are read.
+pub type Exporter = fn(&str) -> ExportOutcome;
 
 /// One row of the format registry.
 pub struct FormatEntry {
@@ -110,7 +116,8 @@ pub struct FormatEntry {
     pub id: &'static str,
     pub label: &'static str,
     pub extensions: &'static [&'static str],
-    pub exporter: Exporter,
+    /// `None` for a format that is only imported.
+    pub exporter: Option<Exporter>,
     pub importer: Importer,
 }
 
@@ -121,7 +128,7 @@ impl FormatEntry {
             "id": self.id,
             "label": self.label,
             "extensions": self.extensions,
-            "supportsExport": true,
+            "supportsExport": self.exporter.is_some(),
             "supportsImport": true,
         })
     }

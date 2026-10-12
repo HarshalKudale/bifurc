@@ -1,4 +1,4 @@
-//! Bifurc JSON exports of mappings, proxy rules and WebSocket connections.
+//! Bifurc JSON exports of mappings and proxy rules.
 
 use serde_json::{Value, json};
 
@@ -37,19 +37,6 @@ pub fn proxy_rules(ws_id: &str) -> ExportOutcome {
     Ok(ExportFile { content: pretty(&payload), suggested_name: "proxy-rules-export.json" })
 }
 
-pub fn websockets(ws_id: &str) -> ExportOutcome {
-    let cfg = load_config();
-    let connections: Vec<Value> =
-        read_all_entities(ws_id, "sockets").into_iter().filter(|c| str_of(c, "workspaceId") == ws_id).collect();
-    let payload = json!({
-        "schema": "lp-websockets-v1",
-        "name": workspace_name(&cfg, ws_id, "Bifurc"),
-        "wsConnections": connections,
-        "folders": in_workspace(&cfg, "requestFolders", ws_id),
-    });
-    Ok(ExportFile { content: pretty(&payload), suggested_name: "websockets-export.json" })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -82,16 +69,5 @@ mod tests {
         let keys: Vec<_> = out["proxyRules"][0].as_object().unwrap().keys().collect();
         // The stamp goes with the rule: an older Bifurc that imports it keeps it locked.
         assert_eq!(keys, ["id", "name", "pattern", "workspaceId", "engineVersion", "enabled"]);
-    }
-
-    #[test]
-    fn websockets_export_lists_connections_and_folders() {
-        let root = scratch_data_root();
-        let conn = json!({ "id": "c1", "name": "Feed", "url": "ws://x", "headers": {}, "createdAt": 1, "folderId": null, "workspaceId": root.ws_id });
-        write_entity(root.ws_id, "sockets", "c1", &conn, None).unwrap();
-        let out: Value = serde_json::from_str(&websockets(root.ws_id).unwrap().content).unwrap();
-        assert_eq!(out["schema"], "lp-websockets-v1");
-        assert_eq!(out["wsConnections"][0]["name"], "Feed");
-        assert_eq!(out["folders"], json!([]));
     }
 }
