@@ -9,11 +9,12 @@ use std::{
 
 use serde_json::{Value, json};
 
+use super::requests::kind_of_request;
 use crate::{
     importexport::{
         support::{
             FolderSpec, add_import_folders, default_folder, io_failure, js_str, parse_json, pretty, push_to,
-            store_request, sync_enabled,
+            sync_enabled,
         },
         types::{ImportOutcome, ImportSource, Imported, Preflight, PreflightOutcome, Strategy},
     },
@@ -42,7 +43,7 @@ fn parse_snapshot(content: &str) -> Result<Result<Value, String>, String> {
 }
 
 fn item_count(data: &Value) -> usize {
-    ["mocks", "requests", "mappings", "proxyRules", "wsConnections", "environments"]
+    ["mocks", "requests", "mappings", "proxyRules", "wsConnections", "flows", "environments"]
         .iter()
         .map(|key| array_of(data, key).len())
         .sum()
@@ -161,8 +162,27 @@ pub async fn json_run(_ws_id: String, source: ImportSource, _strategy: Strategy)
     request_folders.extend(tree_folders(&mut cfg, "requestFolders", "requests", &new_id, array_of(data, "wsFolders"))?);
     let rule_folders = folder_names(&remap(data, "ruleFolders", &new_id));
 
+    // A request names its type; one from before the types shared a list is a REST request.
     for request in remap(data, "requests", &new_id) {
-        store_request(&new_id, &request, folder_of(&request, &request_folders).as_deref())?;
+        let folder_id = match folder_of(&request, &request_folders) {
+            Some(folder_id) => folder_id,
+            None => ensure_default_folder(&new_id, "requests").map_err(io_failure)?.0,
+        };
+        let stored = merged(&request, &json!({ "folderId": folder_id }));
+        write_entity(&new_id, kind_of_request(&request), str_of(&request, "id"), &stored, Some(&folder_id))
+            .map_err(io_failure)?;
+    }
+    let flow_folders = tree_folders(&mut cfg, "flowFolders", "flows", &new_id, array_of(data, "flowFolders"))?;
+    for flow in remap(data, "flows", &new_id) {
+        let folder_id = match folder_of(&flow, &flow_folders) {
+            Some(folder_id) => folder_id,
+            None => ensure_default_folder(&new_id, "flows").map_err(io_failure)?.0,
+        };
+        let stored = merged(&flow, &json!({ "folderId": folder_id }));
+        write_entity(&new_id, "flows", str_of(&flow, "id"), &stored, Some(&folder_id)).map_err(io_failure)?;
+    }
+    for proto in remap(data, "protoFiles", &new_id) {
+        write_entity(&new_id, "protoFiles", str_of(&proto, "id"), &proto, None).map_err(io_failure)?;
     }
     for connection in remap(data, "wsConnections", &new_id) {
         let id = str_of(&connection, "id").to_string();
@@ -305,7 +325,6 @@ pub async fn zip_run(_ws_id: String, source: PathBuf, _strategy: Strategy) -> Im
 mod tests {
     use super::*;
     use crate::{
-        importexport::exporters::workspace as exporter,
         testing::scratch_data_root,
         workspace::fs::{load_enabled_set, read_entity},
     };
@@ -317,7 +336,10 @@ mod tests {
                 "proxyRules": [{ "id": "p1", "name": "Rule", "pattern": "/x", "enabled": true, "folderId": "rf", "workspaceId": "old" }],
                 "mocks": [{ "id": "m1", "name": "Mock", "method": "GET", "urlPattern": "/m", "enabled": true, "workspaceId": "old" }],
                 "requests": [{ "id": "r1", "name": "Req", "method": "GET", "url": "http://a/", "headers": {}, "body": "",
-                    "createdAt": 1, "folderId": "qf", "workspaceId": "old" }],
+                    "createdAt": 1, "folderId": "qf", "workspaceId": "old" },
+                    { "id": "g1", "type": "grpc", "name": "Rpc", "serverAddress": "h:1", "serviceName": "a.B", "methodName": "C",
+                    "folderId": "qf", "workspaceId": "old" }],
+                "flows": [{ "id": "fl1", "name": "Flow", "nodes": [], "edges": [], "folderId": null, "workspaceId": "old" }],
                 "mockFolders": [], "ruleFolders": [{ "id": "rf", "name": "Rules", "parentId": null, "workspaceId": "old" }],
                 "requestFolders": [{ "id": "qf", "name": "Reqs", "parentId": null, "workspaceId": "old" }],
                 "wsConnections": [{ "id": "c1", "name": "Feed", "url": "ws://x", "headers": {}, "createdAt": 1, "folderId": null, "workspaceId": "old" }],
@@ -326,16 +348,34 @@ mod tests {
             } })
     }
 
+    /// A zip of the files under `dir`, as an archive of a workspace directory is.
+    fn zip_of(dir: &Path, dest: &Path) {
+        fn add(writer: &mut zip::ZipWriter<File>, dir: &Path, prefix: &str) {
+            for entry in std::fs::read_dir(dir).unwrap().flatten() {
+                let name = format!("{prefix}{}", entry.file_name().to_string_lossy());
+                if entry.path().is_dir() {
+                    add(writer, &entry.path(), &format!("{name}/"));
+                } else if !name.contains("index.db") {
+                    writer.start_file(name, zip::write::SimpleFileOptions::default()).unwrap();
+                    std::io::Write::write_all(writer, &std::fs::read(entry.path()).unwrap()).unwrap();
+                }
+            }
+        }
+        let mut writer = zip::ZipWriter::new(File::create(dest).unwrap());
+        add(&mut writer, dir, "");
+        writer.finish().unwrap();
+    }
+
     fn text(value: &Value) -> ImportSource {
-        ImportSource { content: value.to_string(), filename: "ws.json".to_string() }
+        ImportSource::text(value.to_string(), "ws.json")
     }
 
     #[test]
     fn preflight_counts_the_entities() {
         let pre = json_preflight("ws1", &text(&snapshot("Old"))).unwrap();
-        assert_eq!((pre.item_count, pre.collision_ids.len()), (6, 0));
+        assert_eq!((pre.item_count, pre.collision_ids.len()), (8, 0));
         assert_eq!(json_preflight("ws1", &text(&json!({ "schema": "x" }))).err().unwrap(), NOT_A_SNAPSHOT);
-        assert!(json_preflight("ws1", &ImportSource { content: "nope".into(), filename: String::new() }).is_err());
+        assert!(json_preflight("ws1", &ImportSource::text("nope", "")).is_err());
     }
 
     #[tokio::test]
@@ -347,7 +387,7 @@ mod tests {
             eprintln!("skipped: {done:?}", done = done.err());
             return;
         };
-        assert_eq!(done.imported, 6);
+        assert_eq!(done.imported, 8);
         let settings = load_settings();
         let created = settings.workspaces().iter().find(|w| w["name"] == "Workspace 1 (2)").expect("renamed workspace");
         let new_id = created["id"].as_str().unwrap();
@@ -359,6 +399,9 @@ mod tests {
         assert!(crate::workspace::fs::entity_dir(new_id, "requests").join("Reqs").join("r1.json").exists());
         assert!(crate::workspace::fs::entity_dir(new_id, "rules").join("Rules").join("p1.json").exists());
         assert!(read_entity(new_id, "sockets", "c1").is_some());
+        assert_eq!(read_entity(new_id, "grpcRequests", "g1").unwrap()["methodName"], "C");
+        assert!(crate::workspace::fs::entity_dir(new_id, "requests").join("Reqs").join("g1.json").exists());
+        assert!(read_entity(new_id, "flows", "fl1").is_some());
         assert!(read_entity(new_id, "mocks", "m1").is_some());
         assert!(read_entity(new_id, "mappings", "map1").is_some());
         assert!(load_enabled_set(new_id, "mocks").contains("m1"));
@@ -397,7 +440,7 @@ mod tests {
             "createdAt": 1, "folderId": null, "workspaceId": ws });
         write_entity(ws, "requests", "r1", &request, None).unwrap();
         let archive = root.dir.path().join("ws.zip");
-        exporter::zip(ws, &archive).unwrap();
+        zip_of(&ws_dir(ws), &archive);
 
         assert!(zip_preflight(&archive).is_ok());
         assert_eq!(zip_preflight(&root.dir.path().join("none.zip")).err().unwrap(), "File not found");
