@@ -140,6 +140,31 @@ async fn status_publish_discard_diff_and_history() {
         .call("audit.diff", json!({ "commitHash": hash, "entity": "request", "entityId": "r1", "workspaceId": ws }))
         .await;
     assert_eq!(audit["after"]["id"], "r1");
+
+    // A commit with the user's own message is still that entity's update, and its patch is the change.
+    write_entity(ws, "requests", "r1", &request("r1", "Renamed"), None).unwrap();
+    let published = engine
+        .call(
+            "entity.publish",
+            json!({ "workspaceId": ws, "paths": ["requests/r1.json"], "message": "Give it a better name" }),
+        )
+        .await;
+    let history = engine.call("git.history", json!({ "workspaceId": ws, "relPath": "requests/r1.json" })).await;
+    assert_eq!(history["total"], 2);
+    let latest = &history["entries"][0];
+    assert_eq!(latest["commitHash"], published["commit"]);
+    assert_eq!(latest["message"], "Give it a better name");
+    assert_eq!(latest["action"], "update");
+    assert_eq!(latest["entity"], "request");
+    assert_eq!(latest["entityId"], "r1");
+    let patch = engine
+        .call(
+            "history.patch",
+            json!({ "workspaceId": ws, "commitHash": latest["commitHash"], "filePath": "requests/r1.json" }),
+        )
+        .await;
+    let patch = patch["patch"].as_str().unwrap();
+    assert!(patch.contains("+++ b/requests/r1.json") && patch.contains("Renamed"), "{patch}");
 }
 
 #[tokio::test]
