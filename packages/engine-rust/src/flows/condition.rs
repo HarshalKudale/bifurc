@@ -25,9 +25,21 @@ fn numbers(left: &str, right: &str) -> Option<(f64, f64)> {
 
 /// Whether one rule holds. A path the run does not hold makes every comparison false, and only `notExists`
 /// and `isEmpty` true: a missing value is not an error here, it is what a condition is asked about.
-fn holds(rule: &Rule, scope: &Scope) -> bool {
+pub fn holds(rule: &Rule, scope: &Scope) -> bool {
     let found = lookup(&rule.path, scope);
     match rule.op {
+        Op::IsType => {
+            let name = match &found {
+                None => return false,
+                Some(Value::Null) => "null",
+                Some(Value::Bool(_)) => "boolean",
+                Some(Value::Number(_)) => "number",
+                Some(Value::String(_)) => "string",
+                Some(Value::Array(_)) => "array",
+                Some(Value::Object(_)) => "object",
+            };
+            return name == rule.value.trim();
+        }
         Op::Exists => return found.is_some(),
         Op::NotExists => return found.is_none(),
         Op::IsEmpty => return found.as_ref().is_none_or(is_empty),
@@ -52,7 +64,7 @@ fn holds(rule: &Rule, scope: &Scope) -> bool {
         Op::GreaterOrEqual => ordered(|order| order.is_ge()),
         Op::LessThan => ordered(|order| order.is_lt()),
         Op::LessOrEqual => ordered(|order| order.is_le()),
-        Op::Exists | Op::NotExists | Op::IsEmpty | Op::NotEmpty => unreachable!("answered above"),
+        Op::Exists | Op::NotExists | Op::IsEmpty | Op::NotEmpty | Op::IsType => unreachable!("answered above"),
     }
 }
 
@@ -107,6 +119,8 @@ mod tests {
         assert!(one("input.body.tags", Op::IsEmpty, ""));
         assert!(one("input.body.name", Op::NotEmpty, ""));
         assert!(one("input.body.name", Op::Exists, ""));
+        assert!(one("input.body.tags", Op::IsType, "array") && one("input.status", Op::IsType, "number"));
+        assert!(!one("input.body.name", Op::IsType, "number") && !one("input.gone", Op::IsType, "null"));
     }
 
     #[test]

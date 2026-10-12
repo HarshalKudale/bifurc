@@ -135,8 +135,8 @@ pub static CRUD_KINDS: [CrudKind; 13] = [
     CrudKind {
         kind: "flows",
         config_key: "flows",
-        folder_config_key: None,
-        is_flat: true,
+        folder_config_key: Some("flowFolders"),
+        is_flat: false,
         has_enabled_state: false,
         validate: Some(|flow, _| crate::flows::check_shape(flow)),
         on_add_conflict: None,
@@ -326,6 +326,7 @@ pub fn folder_store_kind(folder_kind: &str) -> Option<&'static str> {
         "mock" => Some("mocks"),
         "rule" => Some("rules"),
         "request" => Some("requests"),
+        "flow" => Some("flows"),
         _ => None,
     }
 }

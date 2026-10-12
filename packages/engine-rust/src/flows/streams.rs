@@ -10,10 +10,10 @@ use serde_json::{Value, json};
 use tokio::sync::mpsc::{UnboundedReceiver, unbounded_channel};
 
 use super::{
-    model::{Node, PORT_CLOSED, PORT_ERROR, PORT_MESSAGE},
-    nodes::{after_execute, bindings},
-    reference::render,
-    run::{Live, Run, Token, fire, forward},
+    model::{Node, PORT_CLOSED, PORT_ERROR, PORT_MESSAGE, PORT_SUCCESS},
+    nodes::bindings,
+    reference::{render, text_of},
+    run::{Live, Run, Token, Wired, fire, forward},
 };
 use crate::{
     kernel::{ListenerId, bus},
@@ -96,12 +96,14 @@ fn live_id(run: &Run, node: &Node) -> String {
 }
 
 /// Send the node's message over its open connection, if it has one to send and the type takes one.
-async fn send(run: &Run, node: &Node, token: &Token) -> Result<(), String> {
-    if node.message.trim().is_empty() {
-        return Ok(());
-    }
+async fn send(run: &Run, node: &Node, token: &Token, wired: &Wired) -> Result<(), String> {
     let scope = run.scope(token);
-    let text = render(&node.message, &scope)?;
+    // What is wired into the message wins over what was typed for it.
+    let text = match wired.iter().find(|(input, _)| input == "message") {
+        Some((_, value)) => text_of(value),
+        None if node.message.trim().is_empty() => return Ok(()),
+        None => render(&node.message, &scope)?,
+    };
     let id = live_id(run, node);
     let (command, payload) = match node.request_kind.as_str() {
         "wsConnections" => ("ws.send", json!({ "workspaceId": run.ws_id, "socketId": id, "data": text })),
@@ -142,9 +144,10 @@ fn broken(error: impl Into<String>) -> End {
     End { port: PORT_ERROR, output: json!({ "ok": false, "error": error.into() }) }
 }
 
-/// Connect and listen until the stream ends. Each message is handed on before the next one is read.
-async fn receive(run: &Arc<Run>, node: &Node, token: &Token, kind: &Kind) -> End {
-    let variables = match bindings(run, node, token) {
+/// Connect and listen until the stream ends. Each message is handed on before the next one is read; with
+/// `once`, the first message is the answer and ends it.
+async fn receive(run: &Arc<Run>, node: &Node, token: &Token, wired: &Wired, kind: &Kind, once: bool) -> End {
+    let variables = match bindings(run, node, token, wired) {
         Ok(variables) => variables,
         Err(error) => return broken(error),
     };
@@ -181,7 +184,7 @@ async fn receive(run: &Arc<Run>, node: &Node, token: &Token, kind: &Kind) -> End
                 "connected" | "open" if !opened => {
                     opened = true;
                     run.waiting(node);
-                    if let Err(error) = send(run, node, token).await {
+                    if let Err(error) = send(run, node, token, wired).await {
                         return broken(error);
                     }
                 }
@@ -207,13 +210,11 @@ async fn receive(run: &Arc<Run>, node: &Node, token: &Token, kind: &Kind) -> End
             continue;
         }
         received += 1;
-        let arrived = (PORT_MESSAGE.to_string(), Arc::new(message.clone()));
-        let (port, message) = after_execute(run, node, token, arrived).await;
-        if port == PORT_ERROR {
-            return broken(str_of(&message, "error"));
+        if once {
+            return End { port: PORT_SUCCESS, output: message.clone() };
         }
-        run.received(node, &message);
-        forward(run, node, PORT_MESSAGE, message, token).await;
+        run.received(node, PORT_MESSAGE, message);
+        forward(run, node, PORT_MESSAGE, Arc::new(message.clone()), &run.turn(token)).await;
 
         let taken = run.events.fetch_add(1, Ordering::Relaxed) + 1;
         if (node.max_messages > 0 && received >= node.max_messages) || run.max_events.is_some_and(|max| taken >= max) {
@@ -230,8 +231,9 @@ async fn receive(run: &Arc<Run>, node: &Node, token: &Token, kind: &Kind) -> End
 }
 
 /// Run a stream node. The first time a run reaches it, it connects and listens; reaching it again while it is
-/// connected sends its message over the connection that is already open.
-pub async fn listen(run: &Arc<Run>, node: &Node, token: &Token, started: Instant) {
+/// connected sends its message over the connection that is already open. With `once` it is a request node
+/// over a streaming request: it connects, answers with the first message and disconnects.
+pub async fn listen(run: &Arc<Run>, node: &Node, token: &Token, wired: &Wired, started: Instant, once: bool) {
     let Some(kind) = kind_of(&node.request_kind) else {
         let error = format!("A request of the kind \"{}\" cannot be listened to by a flow.", node.request_kind);
         return fire(run, node, PORT_ERROR, Arc::new(json!({ "ok": false, "error": error })), token, started.elapsed())
@@ -239,12 +241,15 @@ pub async fn listen(run: &Arc<Run>, node: &Node, token: &Token, started: Instant
     };
     if !run.listening.lock().insert(node.id.clone()) {
         run.waiting(node);
-        if let Err(error) = send(run, node, token).await {
+        if let Err(error) = send(run, node, token, wired).await {
             run.note(node, error);
         }
         return;
     }
-    let end = receive(run, node, token, &kind).await;
+    let mut end = receive(run, node, token, wired, &kind, once).await;
+    if once && end.port == PORT_CLOSED {
+        end = broken("The connection closed before a message arrived.");
+    }
     run.listening.lock().remove(&node.id);
     let mut payload = json!({ "workspaceId": run.ws_id });
     payload[kind.id_field] = json!(live_id(run, node));

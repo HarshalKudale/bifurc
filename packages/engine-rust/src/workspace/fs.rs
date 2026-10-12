@@ -42,7 +42,7 @@ pub const ALL_ENTITY_KINDS: [&str; 13] = [
     "environments",
 ];
 
-pub const FLAT_ENTITY_KINDS: [&str; 3] = ["mappings", "environments", "flows"];
+pub const FLAT_ENTITY_KINDS: [&str; 2] = ["mappings", "environments"];
 
 /// Files in a kind's directory that are not entities.
 const SKIP_FILES: [&str; 4] = ["index.json", "enabled.json", "names.json", "pending-deletions.json"];

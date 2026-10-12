@@ -19,6 +19,10 @@ pub const PORT_MESSAGE: &str = "message";
 pub const PORT_CLOSED: &str = "closed";
 /// The port of a condition none of whose branches matched.
 pub const PORT_ELSE: &str = "else";
+pub const PORT_PASS: &str = "pass";
+/// The ports of a loop: `each` once per turn, `done` when the turns are over.
+pub const PORT_EACH: &str = "each";
+pub const PORT_DONE: &str = "done";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -28,18 +32,40 @@ pub enum NodeKind {
     Stream,
     Mcp,
     Condition,
+    Validate,
+    Evaluate,
     Delay,
+    Or,
+    Repeat,
+    ForEach,
+    Display,
+    Data,
+    Sample,
 }
 
 impl NodeKind {
     /// The kinds of saved request a node of this type may name, by their protocol names.
     pub fn request_kinds(self) -> &'static [&'static str] {
         match self {
-            NodeKind::Request => &["requests", "graphqlRequests", "soapRequests", "grpcRequests"],
+            // A request node over a streaming request connects, hands on the first message and disconnects.
+            NodeKind::Request => &[
+                "requests",
+                "graphqlRequests",
+                "soapRequests",
+                "grpcRequests",
+                "sseRequests",
+                "wsConnections",
+                "socketioRequests",
+            ],
             NodeKind::Stream => &["sseRequests", "wsConnections", "socketioRequests", "grpcRequests"],
             NodeKind::Mcp => &["mcpRequests"],
-            NodeKind::Start | NodeKind::Condition | NodeKind::Delay => &[],
+            _ => &[],
         }
+    }
+
+    /// A node that only holds a value: it never runs, and what it holds is wired into other nodes.
+    pub fn is_constant(self) -> bool {
+        self == NodeKind::Data
     }
 }
 
@@ -78,6 +104,8 @@ pub enum Op {
     NotExists,
     IsEmpty,
     NotEmpty,
+    /// The value is of the type named: `string`, `number`, `boolean`, `object`, `array` or `null`.
+    IsType,
 }
 
 /// One comparison of a condition: what `path` (`input.status`) holds against `value`.
@@ -119,21 +147,21 @@ pub struct Node {
     pub request_kind: String,
     #[serde(default)]
     pub request_id: String,
-    /// Values for the request's `{{variables}}`, over the environment's.
+    /// Values typed in for the request's `{{variables}}`, over the environment's and under what is wired. For
+    /// an evaluate node, the names its expression reads as `vars.<name>`.
     #[serde(default)]
     pub variables: Vec<Pair>,
-    /// Whether the saved request's own post script runs once it has answered. Off, the node's `after_execute`
-    /// runs in its place: never both. A request's pre script never runs in a flow, its tests always do.
+    /// Whether the saved request's pre and post scripts run, and whether its tests do.
     #[serde(default = "yes")]
-    pub run_post_script: bool,
-    /// A script run over what the node produced before that is handed on: it reads and replaces `lp.output`.
+    pub execute_scripts: bool,
+    #[serde(default = "yes")]
+    pub execute_tests: bool,
+    /// Whether a failed test is let pass. Off, it sends the node out by its error port.
     #[serde(default)]
-    pub after_execute: String,
+    pub ignore_test_errors: bool,
     /// Whether an answer outside 2xx (or a gRPC status other than OK) leaves by the error port.
     #[serde(default = "yes")]
     pub fail_on_status: bool,
-    #[serde(default)]
-    pub fail_on_tests: bool,
     #[serde(default)]
     pub retries: u32,
     #[serde(default)]
@@ -166,6 +194,22 @@ pub struct Node {
 
     #[serde(default)]
     pub delay_ms: u64,
+
+    /// Validate: the checks, all of which must hold.
+    #[serde(default)]
+    pub rules: Vec<Rule>,
+    /// Evaluate: a JavaScript expression over `input` (what the node was handed) and `vars`.
+    #[serde(default)]
+    pub expression: String,
+    /// Repeat: how many turns.
+    #[serde(default)]
+    pub count: u64,
+    /// For each: where the list is in what the node was handed (`input.body.items`).
+    #[serde(default)]
+    pub path: String,
+    /// Data and sample: what the node holds.
+    #[serde(default)]
+    pub value: Value,
 }
 
 impl Node {
@@ -179,18 +223,19 @@ impl Node {
         to_engine_kind(&self.request_kind)
     }
 
-    /// Whether the saved request's post script is the one that runs. Only a REST request has scripts.
-    pub fn runs_post_script(&self) -> bool {
-        self.run_post_script && self.request_kind == "requests"
-    }
-
     /// The ports the node can leave by: id and label.
     pub fn ports(&self) -> Vec<(String, String)> {
         let fixed =
             |ports: &[(&str, &str)]| ports.iter().map(|(id, label)| (id.to_string(), label.to_string())).collect();
         match self.kind {
-            NodeKind::Start | NodeKind::Delay => fixed(&[(PORT_OUT, "Next")]),
+            NodeKind::Start | NodeKind::Delay | NodeKind::Or | NodeKind::Display | NodeKind::Sample => {
+                fixed(&[(PORT_OUT, "Next")])
+            }
+            NodeKind::Data => fixed(&[(PORT_OUT, "Value")]),
             NodeKind::Request | NodeKind::Mcp => fixed(&[(PORT_SUCCESS, "Success"), (PORT_ERROR, "Error")]),
+            NodeKind::Validate => fixed(&[(PORT_PASS, "Pass"), (PORT_ERROR, "Fail")]),
+            NodeKind::Evaluate => fixed(&[(PORT_OUT, "Result"), (PORT_ERROR, "Error")]),
+            NodeKind::Repeat | NodeKind::ForEach => fixed(&[(PORT_EACH, "Each"), (PORT_DONE, "Done")]),
             NodeKind::Stream => fixed(&[(PORT_MESSAGE, "Message"), (PORT_CLOSED, "Closed"), (PORT_ERROR, "Error")]),
             NodeKind::Condition => {
                 let mut ports: Vec<(String, String)> = self
@@ -215,6 +260,20 @@ pub struct Edge {
     #[serde(default)]
     pub port: String,
     pub to: String,
+    /// The input of `to` this is wired into: `var:<name>`, `arg:<name>` or `message`. Empty, the connection is
+    /// what makes `to` run; with a name it only carries a value, and running is left to another connection.
+    #[serde(default)]
+    pub input: String,
+    /// Wired: the part of what `from` produced that is taken, as the keys and indexes that lead to it. Empty
+    /// is all of it.
+    #[serde(default)]
+    pub path: Vec<Value>,
+}
+
+impl Edge {
+    pub fn is_wire(&self) -> bool {
+        !self.input.is_empty()
+    }
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -248,9 +307,14 @@ impl Flow {
         self.nodes.iter().find(|node| node.id == id)
     }
 
-    /// The edges leaving `node` by `port`, in the order they were drawn.
+    /// The connections that make another node run when `node` leaves by `port`, in the order they were drawn.
     pub fn edges_from<'a>(&'a self, node: &'a str, port: &'a str) -> impl Iterator<Item = &'a Edge> {
-        self.edges.iter().filter(move |edge| edge.from == node && edge.port == port)
+        self.edges.iter().filter(move |edge| edge.from == node && edge.port == port && !edge.is_wire())
+    }
+
+    /// What is wired into the inputs of `node`.
+    pub fn wires_into<'a>(&'a self, node: &'a str) -> impl Iterator<Item = &'a Edge> {
+        self.edges.iter().filter(move |edge| edge.to == node && edge.is_wire())
     }
 }
 
@@ -268,19 +332,24 @@ mod tests {
                 { "id": "start", "type": "start", "x": 10, "y": 20 },
                 { "id": "call", "type": "request", "requestKind": "wsConnections", "requestId": "r1" },
                 { "id": "check", "type": "condition", "branches": [{ "id": "ok", "name": "OK", "match": "any" }] },
+                { "id": "each", "type": "forEach", "path": "input.items" },
             ],
-            "edges": [{ "id": "e1", "from": "start", "port": "out", "to": "call" }],
+            "edges": [
+                { "id": "e1", "from": "start", "port": "out", "to": "call" },
+                { "id": "e2", "from": "start", "port": "out", "to": "call", "input": "var:user", "path": ["users", 0] },
+            ],
         }))
         .unwrap();
         let call = flow.node("call").unwrap();
-        assert!(call.run_post_script && call.fail_on_status && !call.fail_on_tests);
-        assert!(!call.runs_post_script(), "only a REST request has a post script to run");
+        assert!(call.execute_scripts && call.execute_tests && call.fail_on_status && !call.ignore_test_errors);
         assert_eq!(call.store_kind(), "sockets");
         assert_eq!(call.label(), "call");
         let ports: Vec<String> = flow.node("check").unwrap().ports().into_iter().map(|(id, _)| id).collect();
         assert_eq!(ports, ["ok", "else"]);
         assert_eq!(flow.node("check").unwrap().branches[0].matching, Match::Any);
-        assert_eq!(flow.edges_from("start", "out").count(), 1);
+        assert_eq!(flow.node("each").unwrap().ports()[0].0, PORT_EACH);
+        assert_eq!(flow.edges_from("start", "out").count(), 1, "a wire does not make its node run");
+        assert_eq!(flow.wires_into("call").map(|wire| wire.input.as_str()).collect::<Vec<_>>(), ["var:user"]);
     }
 
     #[test]
