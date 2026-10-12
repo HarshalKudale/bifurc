@@ -29,6 +29,7 @@ pub fn register_all_engine_commands(registry: &mut CommandRegistry) {
     crate::websocket::register(registry);
     crate::capture::register(registry);
     crate::vault::register(registry);
+    crate::cookies::register(registry);
     crate::updates::register(registry);
 }
 

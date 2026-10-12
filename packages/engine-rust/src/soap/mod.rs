@@ -58,7 +58,8 @@ pub fn register(registry: &mut CommandRegistry) {
             "headers": resolve_headers(stored.get("headers").unwrap_or(&Value::Null), env),
             "body": resolve_vars(str_of(&stored, "body"), env),
         });
-        let mut result = ctx.registry.invoke("soap.execute", payload, ctx.clone()).await?;
+        let mut result =
+            crate::cookies::scoped(ws_id, ctx.registry.invoke("soap.execute", payload, ctx.clone())).await?;
         crate::vault::redact_value(ws_id, &mut result);
         Ok(result)
     });

@@ -88,6 +88,7 @@ pub async fn exchange(
             .map_err(|_| format!("Invalid character in header content [\"{name}\"]"))?;
         request_headers.insert(name, value);
     }
+    crate::cookies::attach(parsed.as_str(), &mut request_headers);
 
     let mut request = client()?.request(Method::from_bytes(method.as_bytes()).map_err(|e| e.to_string())?, target);
     request = request.headers(request_headers);
@@ -96,6 +97,7 @@ pub async fn exchange(
     }
     let response = request.send().await.map_err(|err| describe_error(&err, host, port))?;
     let status = response.status().as_u16();
+    crate::cookies::collect(parsed.as_str(), response.headers());
     let mut out = Map::new();
     for name in response.headers().keys() {
         let values: Vec<String> = response

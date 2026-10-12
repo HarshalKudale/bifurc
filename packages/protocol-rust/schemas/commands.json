@@ -3694,6 +3694,46 @@
     "repoName"
    ],
    "additionalProperties": false
+  },
+  "cookies.list": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "workspaceId"
+   ]
+  },
+  "cookies.clear": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "domain": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "workspaceId"
+   ]
+  },
+  "cookies.configure": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "clearOnRestart": {
+     "type": "boolean"
+    }
+   },
+   "required": [
+    "workspaceId",
+    "clearOnRestart"
+   ]
   }
  }
 }
