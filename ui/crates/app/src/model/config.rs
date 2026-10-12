@@ -147,6 +147,7 @@ impl EnvironmentInfo {
 pub struct FlowInfo {
     pub id: String,
     pub name: String,
+    pub folder_id: Option<String>,
     /// Deleted here; the deletion is waiting to be confirmed or reverted.
     pub deleted: bool,
 }
@@ -198,6 +199,7 @@ pub struct ConfigSnapshot {
     pub active_environment_id: Option<String>,
     pub environments: Vec<EnvironmentInfo>,
     pub flows: Vec<FlowInfo>,
+    pub flow_folders: Vec<PlainFolder>,
     pub mappings: Vec<MappingInfo>,
     pub requests: Vec<RequestStub>,
     pub folders: Vec<FolderInfo>,
@@ -287,9 +289,27 @@ impl ConfigSnapshot {
         let flows = array(config, "flows")
             .iter()
             .filter_map(|f| {
-                Some(FlowInfo { id: text(f, "id")?, name: text(f, "name").unwrap_or_default(), deleted: is_deleted(f) })
+                Some(FlowInfo {
+                    id: text(f, "id")?,
+                    name: text(f, "name").unwrap_or_default(),
+                    folder_id: non_empty(f, "folderId"),
+                    deleted: is_deleted(f),
+                })
             })
             .collect();
+        let plain_folders = |key: &str| -> Vec<PlainFolder> {
+            array(config, key)
+                .iter()
+                .filter_map(|f| {
+                    Some(PlainFolder {
+                        id: text(f, "id")?,
+                        name: text(f, "name")?,
+                        parent_id: non_empty(f, "parentId"),
+                        deleted: is_deleted(f),
+                    })
+                })
+                .collect()
+        };
 
         let mappings = array(config, "mappings")
             .iter()
@@ -347,17 +367,7 @@ impl ConfigSnapshot {
                 })
             })
             .collect();
-        let mock_folders = array(config, "mockFolders")
-            .iter()
-            .filter_map(|f| {
-                Some(PlainFolder {
-                    id: text(f, "id")?,
-                    name: text(f, "name")?,
-                    parent_id: non_empty(f, "parentId"),
-                    deleted: is_deleted(f),
-                })
-            })
-            .collect();
+        let mock_folders = plain_folders("mockFolders");
 
         Ok(Self {
             workspaces,
@@ -365,6 +375,7 @@ impl ConfigSnapshot {
             active_environment_id: non_empty(config, "activeEnvironmentId"),
             environments,
             flows,
+            flow_folders: plain_folders("flowFolders"),
             mappings,
             requests,
             folders,
@@ -427,6 +438,22 @@ impl ConfigSnapshot {
         self.environments.iter().find(|e| e.is_global())
     }
 
+    /// What `{{key}}` resolves to, merged the way the engine does it (`merge_env_vars`): the global
+    /// variables, each replaced in place by the active environment's variable of the same key, then the
+    /// environment's own. Each comes with the environment its value is from.
+    pub fn resolved_variables(&self) -> Vec<(&EnvVariable, &EnvironmentInfo)> {
+        let mut resolved: Vec<(&EnvVariable, &EnvironmentInfo)> = Vec::new();
+        for env in [self.global_environment(), self.active_environment()].into_iter().flatten() {
+            for variable in &env.variables {
+                match resolved.iter_mut().find(|(known, _)| known.key == variable.key) {
+                    Some(existing) => *existing = (variable, env),
+                    None => resolved.push((variable, env)),
+                }
+            }
+        }
+        resolved
+    }
+
     pub fn folder(&self, id: &str) -> Option<&FolderInfo> {
         self.folders.iter().find(|f| f.id == id)
     }
@@ -435,6 +462,14 @@ impl ConfigSnapshot {
     /// kept in.
     pub fn request_folder_rows(&self) -> Vec<FolderRow<'_>> {
         self.folders
+            .iter()
+            .filter(|f| !f.deleted)
+            .map(|f| FolderRow { id: &f.id, name: &f.name, parent_id: f.parent_id.as_deref() })
+            .collect()
+    }
+
+    pub fn flow_folder_rows(&self) -> Vec<FolderRow<'_>> {
+        self.flow_folders
             .iter()
             .filter(|f| !f.deleted)
             .map(|f| FolderRow { id: &f.id, name: &f.name, parent_id: f.parent_id.as_deref() })
@@ -504,6 +539,19 @@ mod tests {
             "socketioRequests": [{"id": "i1", "name": "Chat", "url": "https://io.test", "namespace": "/chat", "folderId": "if"}],
             "mcpRequests": [{"id": "m1", "name": "Tools", "transport": "stdio", "url": "npx my-server", "folderId": "mf"}],
         })
+    }
+
+    #[test]
+    fn the_active_environment_overrides_global_variables_in_place_and_adds_its_own() {
+        let mut config = sample();
+        config["environments"][0]["variables"] =
+            json!([{"id": "a", "key": "HOST", "value": "prod"}, {"id": "b", "key": "TOKEN", "value": "t"}]);
+        config["environments"][1]["variables"] =
+            json!([{"id": "c", "key": "PORT", "value": "81"}, {"id": "v", "key": "HOST", "value": "stg"}]);
+        let c = ConfigSnapshot::from_value(&config).unwrap();
+        let rows: Vec<_> =
+            c.resolved_variables().into_iter().map(|(v, env)| (v.key.as_str(), v.value.as_str(), env.name.as_str())).collect();
+        assert_eq!(rows, vec![("HOST", "stg", "Staging"), ("TOKEN", "t", "Global"), ("PORT", "81", "Staging")]);
     }
 
     #[test]

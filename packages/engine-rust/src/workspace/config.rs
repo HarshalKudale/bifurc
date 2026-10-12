@@ -262,6 +262,7 @@ pub fn load_config() -> Value {
     let flow_stub = |flow: &Value| {
         json!({
             "id": str_of(flow, "id"), "name": flow.get("name").cloned().unwrap_or(Value::Null),
+            "folderId": flow.get("folderId").cloned().unwrap_or(Value::Null),
             "createdAt": flow.get("createdAt").cloned().unwrap_or(json!(0)), "workspaceId": ws_id,
         })
     };
@@ -352,6 +353,7 @@ pub fn load_config() -> Value {
         "requestFolders": request_folders,
         "environments": all_environments,
         "flows": all_flows,
+        "flowFolders": folders(ws_id, "flows"),
         "graphqlRequests": graphql_requests,
         "graphqlSchemas": [],
         "grpcRequests": grpc_requests,

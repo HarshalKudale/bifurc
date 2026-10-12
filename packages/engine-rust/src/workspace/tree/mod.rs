@@ -44,6 +44,7 @@ use crate::utils::{
 pub enum Scope {
     Requests,
     Mocks,
+    Flows,
 }
 
 const REQUEST_TYPES: [(&str, &str); 8] = [
@@ -59,14 +60,17 @@ const REQUEST_TYPES: [(&str, &str); 8] = [
 
 const MOCK_TYPES: [(&str, &str); 1] = [("mocks", "mock")];
 
+const FLOW_TYPES: [(&str, &str); 1] = [("flows", "flow")];
+
 impl Scope {
-    pub const ALL: [Scope; 2] = [Scope::Requests, Scope::Mocks];
+    pub const ALL: [Scope; 3] = [Scope::Requests, Scope::Mocks, Scope::Flows];
 
     /// The tree's directory in the workspace.
     pub fn dir(self) -> &'static str {
         match self {
             Scope::Requests => "requests",
             Scope::Mocks => "mocks",
+            Scope::Flows => "flows",
         }
     }
 
@@ -76,6 +80,7 @@ impl Scope {
         match self {
             Scope::Requests => &REQUEST_TYPES,
             Scope::Mocks => &MOCK_TYPES,
+            Scope::Flows => &FLOW_TYPES,
         }
     }
 

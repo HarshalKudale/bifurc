@@ -239,7 +239,7 @@ fn summarize(report: &Value) -> String {
         count("failedTests"),
     )];
     for node in report.get("nodes").and_then(Value::as_array).into_iter().flatten() {
-        for test in node.pointer("/output/tests").and_then(Value::as_array).into_iter().flatten() {
+        for test in node.get("tests").and_then(Value::as_array).into_iter().flatten() {
             if test.get("passed").and_then(Value::as_bool) == Some(false) {
                 let error = test.get("error").and_then(Value::as_str).map(|e| format!(": {e}")).unwrap_or_default();
                 lines.push(format!(
@@ -308,7 +308,7 @@ mod tests {
             "nodeRuns": 2, "totalTests": 2, "passedTests": 2 - failed_tests, "failedTests": failed_tests,
             "nodes": [
                 {"id": "n2", "name": "Login", "status": "succeeded", "runs": runs, "durationMs": 35,
-                 "output": {"tests": [{"name": "is 200", "passed": failed_tests == 0, "error": "got 503"}]}}]});
+                 "tests": [{"name": "is 200", "passed": failed_tests == 0, "error": "got 503"}]}]});
         event("event.flow.finished", "run1", json!({"status": status, "error": error, "report": report}))
     }
 
