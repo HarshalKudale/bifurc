@@ -468,6 +468,51 @@
    "extra": true
   }
  },
+ "flow.cancel": {
+  "valid": {
+   "workspaceId": "ws1",
+   "id": "f1"
+  },
+  "invalid": {
+   "workspaceId": "ws1"
+  }
+ },
+ "flow.run": {
+  "valid": {
+   "workspaceId": "ws1",
+   "id": "f1",
+   "inputs": {
+    "user": "42"
+   },
+   "timeoutMs": 1000
+  },
+  "invalid": {
+   "workspaceId": "ws1",
+   "id": "f1",
+   "maxEvents": 0
+  }
+ },
+ "flow.status": {
+  "valid": {
+   "workspaceId": "ws1",
+   "id": "f1"
+  },
+  "invalid": {
+   "workspaceId": "ws1"
+  }
+ },
+ "flow.validate": {
+  "valid": {
+   "workspaceId": "ws1",
+   "flow": {
+    "nodes": [],
+    "edges": []
+   }
+  },
+  "invalid": {
+   "id": "f1"
+  }
+ },
  "folder.add": {
   "valid": {
    "kind": "mock",

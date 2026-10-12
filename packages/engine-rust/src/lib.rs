@@ -12,6 +12,7 @@ pub mod certificates;
 pub mod env;
 pub mod features;
 pub mod fileops;
+pub mod flows;
 pub mod gitops;
 pub mod graphql;
 pub mod grpc;

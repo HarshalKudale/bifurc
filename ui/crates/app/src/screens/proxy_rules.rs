@@ -9,7 +9,7 @@
 //! breadcrumb, which shows this screen's name field.
 
 use gpui_kit::component::{
-    ActiveTheme as _, Disableable as _, IconName, Sizable as _,
+    ActiveTheme as _, Disableable as _, Icon, IconName, Sizable as _,
     button::Button,
     checkbox::Checkbox,
     h_flex,
@@ -31,7 +31,7 @@ use crate::{
     app_model::{AppModel, Deleted, ModelEvent},
     components::{
         Autosave, EntityAction, EntityBar, Syntax, VarEditor,
-        dialogs::{confirm_danger, delete_consequence, resolve_deleted},
+        dialogs::{confirm_danger, delete_consequence, needs_update, resolve_deleted},
         entity_bar, page,
     },
     engine::{call, call_in, describe, failure},
@@ -253,6 +253,13 @@ impl ProxyRulesScreen {
             .filter(|deleted| self.rule(&deleted.id).is_none())
             .cloned()
             .collect()
+    }
+
+    /// Rules a newer Bifurc than this one last saved. `entity.list` does not return them either: the engine
+    /// lists them and does nothing else with them.
+    fn locked_rules(&self, cx: &gpui_kit::App) -> Vec<crate::model::config::LockedRule> {
+        let config = self.model.read(cx).config();
+        config.locked_rules.iter().filter(|locked| self.rule(&locked.id).is_none()).cloned().collect()
     }
 
     fn rule(&self, id: &str) -> Option<&Map<String, Value>> {
@@ -620,6 +627,24 @@ impl ProxyRulesScreen {
                     resolve_deleted(this.model.clone(), target, name.clone(), window, cx);
                 }))
         });
+        // Rules a newer Bifurc saved stay in place too, marked with the sign for an update. Opening one says
+        // which version it needs.
+        let locked_rows = self.locked_rules(cx).into_iter().map(|locked| {
+            let (name, version) = (locked.name.clone(), locked.version.clone());
+            ListItem::new(gpui_kit::ElementId::Name(format!("rule-locked-{}", locked.id).into()))
+                .px_2()
+                .py_1()
+                .text_sm()
+                .child(
+                    h_flex()
+                        .gap_2()
+                        .items_center()
+                        .text_color(theme.muted_foreground)
+                        .child(div().flex_1().min_w_0().overflow_hidden().text_ellipsis().child(locked.name))
+                        .child(Icon::new(IconName::ArrowUp).small()),
+                )
+                .on_click(move |_, window, cx| needs_update(name.clone(), version.clone(), window, cx))
+        });
         v_flex()
             .id("rule-list")
             .w_72()
@@ -633,6 +658,7 @@ impl ProxyRulesScreen {
             .gap_1()
             .children(rows)
             .children(deleted_rows)
+            .children(locked_rows)
             .when(self.selection == Selection::Draft, |this| {
                 this.child(
                     ListItem::new("rule-draft")
@@ -809,7 +835,10 @@ impl Render for ProxyRulesScreen {
             cx,
         );
         let has_list =
-            !self.rules.is_empty() || !self.deleted_rules(cx).is_empty() || self.selection == Selection::Draft;
+            !self.rules.is_empty()
+                || !self.deleted_rules(cx).is_empty()
+                || !self.locked_rules(cx).is_empty()
+                || self.selection == Selection::Draft;
         let body = h_flex()
             .size_full()
             .items_stretch()

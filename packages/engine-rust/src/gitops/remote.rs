@@ -31,6 +31,7 @@ use super::{
     console::{self, Denial, Grant},
     git_lock::workspace_lock,
     github::{self, Repo},
+    organization,
     sync_state::{get_sync_config, save_sync_config, save_sync_meta, sync_meta_value},
 };
 use crate::{
@@ -138,7 +139,7 @@ pub enum Need {
 
 fn sync_config_for(repo: &Repo, access: Access) -> Value {
     json!({
-        "remote": repo.clone_url, "branch": repo.default_branch, "repo": repo.full_name,
+        "remote": repo.clone_url, "branch": repo.default_branch, "repo": repo.full_name, "repoId": repo.id,
         "owner": { "host": github::host(), "userId": repo.owner_id, "login": repo.owner_login },
         "access": access.as_str(),
     })
@@ -261,6 +262,8 @@ pub async fn refresh_access(ws_id: &str) -> Result<Option<Access>, GitError> {
         .get_or_insert_with(HashMap::new)
         .insert(access_key(ws_id, &account, &repo_name), (access, Instant::now()));
     record_access(ws_id, access);
+    // Whose the workspace is, and what they decided about its analytics, is asked along with it.
+    organization::refresh_for(ws_id, &account, repo.id).await;
     Ok(Some(access))
 }
 
@@ -536,6 +539,8 @@ async fn import(account_id: &str, repo_name: &str) -> Result<Value, Refusal> {
     settings.set("activeWorkspaceId", json!(id));
     save_settings(&settings).map_err(|e| e.to_string())?;
     apply_commit_identity(&id).await.map_err(|e| e.to_string())?;
+    // Whose it is is known before anything is done in it: an organization's analytics are its own from the start.
+    organization::refresh_for(&id, &account, repo.id).await;
     Ok(workspace)
 }
 

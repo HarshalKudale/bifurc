@@ -12,7 +12,9 @@ use std::sync::{
 use parking_lot::Mutex;
 use serde_json::Value;
 
-pub const ENGINE_EVENT_NAMES: [&str; 27] = [
+pub const ENGINE_EVENT_NAMES: [&str; 29] = [
+    "flow.progress",
+    "flow.finished",
     "sync.status",
     "sync.entityStatus",
     "log.entry",

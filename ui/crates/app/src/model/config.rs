@@ -17,6 +17,17 @@ pub struct WorkspaceInfo {
     pub account: Option<AccountInfo>,
     /// The remote repository this workspace syncs with, once it is published or was imported.
     pub sync: Option<SyncConfig>,
+    /// The organization the workspace belongs to, when it is one's and not its user's own.
+    pub organization: Option<OrganizationInfo>,
+}
+
+/// The organization a workspace belongs to, as the Bifurc Console last said. Its usage analytics are decided
+/// there, by its owner: nothing on this device turns them on or off.
+#[derive(Debug, Clone, PartialEq)]
+pub struct OrganizationInfo {
+    pub name: String,
+    /// What is done in the workspace is reported to the organization.
+    pub analytics: bool,
 }
 
 /// A git account signed in on this device. The engine keeps its token; the UI never sees one.
@@ -61,6 +72,9 @@ pub struct MockStub {
     pub folder_id: Option<String>,
     /// Deleted here; the deletion is waiting to be confirmed or reverted.
     pub deleted: bool,
+    /// The version of Bifurc it needs, when a newer one than this last saved it. It is listed and nothing
+    /// else: the engine does not read or change it until this install is updated.
+    pub locked: Option<String>,
 }
 
 /// A proxy rule that is deleted here, with the deletion waiting to be confirmed or reverted.
@@ -69,6 +83,15 @@ pub struct DeletedRule {
     pub id: String,
     pub name: String,
     pub pattern: String,
+}
+
+/// A proxy rule that a newer Bifurc than this one last saved: it is listed and nothing else.
+#[derive(Debug, Clone, PartialEq)]
+pub struct LockedRule {
+    pub id: String,
+    pub name: String,
+    /// The version of Bifurc it needs.
+    pub version: String,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -119,6 +142,16 @@ impl EnvironmentInfo {
     }
 }
 
+/// A flow as it is listed. The flow itself is loaded by id (`entity.load`) when it is opened.
+#[derive(Debug, Clone, PartialEq)]
+pub struct FlowInfo {
+    pub id: String,
+    pub name: String,
+    pub folder_id: Option<String>,
+    /// Deleted here; the deletion is waiting to be confirmed or reverted.
+    pub deleted: bool,
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct MappingInfo {
     pub id: String,
@@ -144,6 +177,9 @@ pub struct RequestStub {
     pub target: String,
     /// Deleted here; the deletion is waiting to be confirmed or reverted.
     pub deleted: bool,
+    /// The version of Bifurc it needs, when a newer one than this last saved it. It is listed and nothing
+    /// else: the engine does not read or change it until this install is updated.
+    pub locked: Option<String>,
 }
 
 /// A folder of the request tree. It holds requests of any type.
@@ -162,6 +198,8 @@ pub struct ConfigSnapshot {
     pub active_workspace_id: String,
     pub active_environment_id: Option<String>,
     pub environments: Vec<EnvironmentInfo>,
+    pub flows: Vec<FlowInfo>,
+    pub flow_folders: Vec<PlainFolder>,
     pub mappings: Vec<MappingInfo>,
     pub requests: Vec<RequestStub>,
     pub folders: Vec<FolderInfo>,
@@ -170,6 +208,8 @@ pub struct ConfigSnapshot {
     pub proxy_rule_count: usize,
     /// The proxy rules that are deleted here and still listed. The live ones are read with `entity.list`.
     pub deleted_rules: Vec<DeletedRule>,
+    /// The proxy rules a newer Bifurc last saved. `entity.list` does not return them either.
+    pub locked_rules: Vec<LockedRule>,
     pub settings: EngineSettings,
 }
 
@@ -192,6 +232,11 @@ fn is_deleted(value: &Value) -> bool {
     value.get("deleted").and_then(Value::as_bool).unwrap_or(false)
 }
 
+/// The version of Bifurc something needs, when the engine marks it as last saved by a newer one than this.
+fn locked_to(value: &Value) -> Option<String> {
+    value.get("locked").and_then(Value::as_bool).unwrap_or(false).then(|| text(value, "requiredVersion")).flatten()
+}
+
 fn array<'a>(config: &'a Value, key: &str) -> &'a [Value] {
     config.get(key).and_then(Value::as_array).map(Vec::as_slice).unwrap_or(&[])
 }
@@ -211,7 +256,11 @@ impl ConfigSnapshot {
                     })
                 });
                 let account = w.get("account").and_then(AccountInfo::from_value);
-                Some(WorkspaceInfo { id: text(w, "id")?, name: text(w, "name")?, account, sync })
+                let organization = w.get("organization").filter(|o| o.is_object()).map(|o| OrganizationInfo {
+                    name: text(o, "name").unwrap_or_default(),
+                    analytics: o.get("analytics").and_then(Value::as_bool).unwrap_or(false),
+                });
+                Some(WorkspaceInfo { id: text(w, "id")?, name: text(w, "name")?, account, sync, organization })
             })
             .collect();
 
@@ -236,6 +285,31 @@ impl ConfigSnapshot {
                 Some(EnvironmentInfo { id: text(e, "id")?, name: text(e, "name")?, variables, deleted: is_deleted(e) })
             })
             .collect();
+
+        let flows = array(config, "flows")
+            .iter()
+            .filter_map(|f| {
+                Some(FlowInfo {
+                    id: text(f, "id")?,
+                    name: text(f, "name").unwrap_or_default(),
+                    folder_id: non_empty(f, "folderId"),
+                    deleted: is_deleted(f),
+                })
+            })
+            .collect();
+        let plain_folders = |key: &str| -> Vec<PlainFolder> {
+            array(config, key)
+                .iter()
+                .filter_map(|f| {
+                    Some(PlainFolder {
+                        id: text(f, "id")?,
+                        name: text(f, "name")?,
+                        parent_id: non_empty(f, "parentId"),
+                        deleted: is_deleted(f),
+                    })
+                })
+                .collect()
+        };
 
         let mappings = array(config, "mappings")
             .iter()
@@ -264,6 +338,7 @@ impl ConfigSnapshot {
                     method: (kind == RequestKind::Rest).then(|| text(stub, "method")).flatten(),
                     target: stub_target(kind, stub),
                     deleted: is_deleted(stub),
+                    locked: locked_to(stub),
                 });
             }
         }
@@ -288,26 +363,19 @@ impl ConfigSnapshot {
                     enabled: m.get("enabled").and_then(Value::as_bool).unwrap_or(false),
                     folder_id: non_empty(m, "folderId"),
                     deleted: is_deleted(m),
+                    locked: locked_to(m),
                 })
             })
             .collect();
-        let mock_folders = array(config, "mockFolders")
-            .iter()
-            .filter_map(|f| {
-                Some(PlainFolder {
-                    id: text(f, "id")?,
-                    name: text(f, "name")?,
-                    parent_id: non_empty(f, "parentId"),
-                    deleted: is_deleted(f),
-                })
-            })
-            .collect();
+        let mock_folders = plain_folders("mockFolders");
 
         Ok(Self {
             workspaces,
             active_workspace_id,
             active_environment_id: non_empty(config, "activeEnvironmentId"),
             environments,
+            flows,
+            flow_folders: plain_folders("flowFolders"),
             mappings,
             requests,
             folders,
@@ -323,6 +391,12 @@ impl ConfigSnapshot {
                         name: text(r, "name").unwrap_or_default(),
                         pattern: text(r, "pattern").unwrap_or_default(),
                     })
+                })
+                .collect(),
+            locked_rules: array(config, "proxyRules")
+                .iter()
+                .filter_map(|r| {
+                    Some(LockedRule { version: locked_to(r)?, id: text(r, "id")?, name: text(r, "name").unwrap_or_default() })
                 })
                 .collect(),
             settings: EngineSettings {
@@ -364,6 +438,22 @@ impl ConfigSnapshot {
         self.environments.iter().find(|e| e.is_global())
     }
 
+    /// What `{{key}}` resolves to, merged the way the engine does it (`merge_env_vars`): the global
+    /// variables, each replaced in place by the active environment's variable of the same key, then the
+    /// environment's own. Each comes with the environment its value is from.
+    pub fn resolved_variables(&self) -> Vec<(&EnvVariable, &EnvironmentInfo)> {
+        let mut resolved: Vec<(&EnvVariable, &EnvironmentInfo)> = Vec::new();
+        for env in [self.global_environment(), self.active_environment()].into_iter().flatten() {
+            for variable in &env.variables {
+                match resolved.iter_mut().find(|(known, _)| known.key == variable.key) {
+                    Some(existing) => *existing = (variable, env),
+                    None => resolved.push((variable, env)),
+                }
+            }
+        }
+        resolved
+    }
+
     pub fn folder(&self, id: &str) -> Option<&FolderInfo> {
         self.folders.iter().find(|f| f.id == id)
     }
@@ -372,6 +462,14 @@ impl ConfigSnapshot {
     /// kept in.
     pub fn request_folder_rows(&self) -> Vec<FolderRow<'_>> {
         self.folders
+            .iter()
+            .filter(|f| !f.deleted)
+            .map(|f| FolderRow { id: &f.id, name: &f.name, parent_id: f.parent_id.as_deref() })
+            .collect()
+    }
+
+    pub fn flow_folder_rows(&self) -> Vec<FolderRow<'_>> {
+        self.flow_folders
             .iter()
             .filter(|f| !f.deleted)
             .map(|f| FolderRow { id: &f.id, name: &f.name, parent_id: f.parent_id.as_deref() })
@@ -441,6 +539,41 @@ mod tests {
             "socketioRequests": [{"id": "i1", "name": "Chat", "url": "https://io.test", "namespace": "/chat", "folderId": "if"}],
             "mcpRequests": [{"id": "m1", "name": "Tools", "transport": "stdio", "url": "npx my-server", "folderId": "mf"}],
         })
+    }
+
+    #[test]
+    fn the_active_environment_overrides_global_variables_in_place_and_adds_its_own() {
+        let mut config = sample();
+        config["environments"][0]["variables"] =
+            json!([{"id": "a", "key": "HOST", "value": "prod"}, {"id": "b", "key": "TOKEN", "value": "t"}]);
+        config["environments"][1]["variables"] =
+            json!([{"id": "c", "key": "PORT", "value": "81"}, {"id": "v", "key": "HOST", "value": "stg"}]);
+        let c = ConfigSnapshot::from_value(&config).unwrap();
+        let rows: Vec<_> =
+            c.resolved_variables().into_iter().map(|(v, env)| (v.key.as_str(), v.value.as_str(), env.name.as_str())).collect();
+        assert_eq!(rows, vec![("HOST", "stg", "Staging"), ("TOKEN", "t", "Global"), ("PORT", "81", "Staging")]);
+    }
+
+    #[test]
+    fn what_a_newer_bifurc_saved_is_read_as_locked_to_its_version() {
+        let mut config = sample();
+        config["requests"][1]["locked"] = json!(true);
+        config["requests"][1]["requiredVersion"] = json!("9.0.0");
+        config["mocks"] = json!([
+            {"id": "k1", "name": "Open", "method": "GET", "urlPattern": "/a"},
+            {"id": "k2", "name": "Newer", "locked": true, "requiredVersion": "9.0.0"},
+        ]);
+        config["proxyRules"] = json!([
+            {"id": "p1", "name": "Open", "pattern": "/a"},
+            {"id": "p2", "name": "Newer", "locked": true, "requiredVersion": "9.0.0"},
+        ]);
+        let c = ConfigSnapshot::from_value(&config).unwrap();
+        assert_eq!(c.request(RequestKind::Rest, "r1").unwrap().locked, None);
+        assert_eq!(c.request(RequestKind::Rest, "r2").unwrap().locked.as_deref(), Some("9.0.0"));
+        assert_eq!(c.mock("k1").unwrap().locked, None);
+        assert_eq!(c.mock("k2").unwrap().locked.as_deref(), Some("9.0.0"));
+        let rule = LockedRule { id: "p2".into(), name: "Newer".into(), version: "9.0.0".into() };
+        assert_eq!(c.locked_rules, vec![rule]);
     }
 
     #[test]
@@ -542,6 +675,24 @@ mod tests {
         // A remote assigned before access was recorded is its owner's.
         assert_eq!(read_only(json!({ "remote": "r", "repo": "octo/team" })), Some(false));
         assert_eq!(read_only(Value::Null), None);
+    }
+
+    #[test]
+    fn a_workspace_of_an_organization_says_whose_it_is_and_whether_it_is_reported() {
+        let workspace = |organization: Value| {
+            let config = json!({
+                "activeWorkspaceId": "w1",
+                "workspaces": [{ "id": "w1", "name": "W", "organization": organization }],
+            });
+            ConfigSnapshot::from_value(&config).unwrap().workspaces[0].organization.clone()
+        };
+        let acme = |analytics: bool| Some(OrganizationInfo { name: "Acme".into(), analytics });
+        assert_eq!(workspace(json!({ "name": "Acme", "analytics": true })), acme(true));
+        assert_eq!(workspace(json!({ "name": "Acme", "analytics": false })), acme(false));
+        // The user's own workspace, and what an engine from before organizations answers.
+        assert_eq!(workspace(Value::Null), None);
+        let config = json!({ "activeWorkspaceId": "w1", "workspaces": [{ "id": "w1", "name": "W" }] });
+        assert_eq!(ConfigSnapshot::from_value(&config).unwrap().workspaces[0].organization, None);
     }
 
     #[test]

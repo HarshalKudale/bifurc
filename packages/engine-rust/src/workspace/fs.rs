@@ -20,13 +20,14 @@ use std::path::{Path, PathBuf};
 use indexmap::IndexSet;
 use serde_json::{Map, Value, json};
 
-use super::{config::GLOBAL_ENV_ID, paths::data_dir, tree};
+use super::{config::GLOBAL_ENV_ID, paths::data_dir, stamp, tree};
 use crate::utils::{
     id::{generate_id, now_ms},
     json::{read_json, str_of, write_json_pretty},
 };
 
-pub const ALL_ENTITY_KINDS: [&str; 12] = [
+pub const ALL_ENTITY_KINDS: [&str; 13] = [
+    "flows",
     "requests",
     "mocks",
     "sockets",
@@ -102,7 +103,7 @@ pub fn workspace_identity(info: &Value) -> Option<(String, String)> {
 pub fn init_workspace_dir(ws_id: &str, name: &str) -> std::io::Result<()> {
     let root = ws_dir(ws_id);
     std::fs::create_dir_all(&root)?;
-    for kind in ["mappings", "rules", "environments", "mocks", "requests", "capture", "applications"] {
+    for kind in ["mappings", "rules", "environments", "flows", "mocks", "requests", "capture", "applications"] {
         std::fs::create_dir_all(root.join(kind))?;
     }
     let ws_file = root.join("workspace.json");
@@ -199,20 +200,51 @@ fn without_enabled(data: &Value) -> Value {
     Value::Object(out)
 }
 
+/// An entity of `kind` as stored: of a stamped kind, with the stamp of the engine writing it
+/// (`workspace::stamp`).
+fn stamped(kind: &str, data: &Value) -> Value {
+    let mut out = without_enabled(data);
+    if stamp::is_stamped_kind(kind) {
+        out[stamp::VERSION_FIELD] = stamp::stamp_for(data);
+    }
+    out
+}
+
+/// The version an entity is locked to, when a newer engine than this one last wrote it (`workspace::stamp`).
+pub fn entity_lock(ws_id: &str, kind: &str, id: &str) -> Option<String> {
+    if tree::is_tree_kind(kind) {
+        return tree::lock_of(ws_id, kind, id);
+    }
+    if !stamp::is_stamped_kind(kind) {
+        return None;
+    }
+    stamp::lock_of(&read_json(&find_entity_file(ws_id, kind, id)?)?)
+}
+
+/// What an entity file holds, unless it is of a stamped kind and locked.
+fn read_unlocked(kind: &str, path: &Path) -> Option<Value> {
+    read_json(path).filter(|entity| !stamp::is_stamped_kind(kind) || stamp::lock_of(entity).is_none())
+}
+
 /// Write an entity, moving its file if its folder changed. `folder` is the folder's id for a kind kept in a
-/// tree, and its name for the others.
+/// tree, and its name for the others. A locked entity is not written over.
 pub fn write_entity(ws_id: &str, kind: &str, id: &str, data: &Value, folder: Option<&str>) -> std::io::Result<()> {
     if tree::is_tree_kind(kind) {
         return tree::write_entity(ws_id, kind, id, data, folder);
     }
     let folder_name = folder;
+    let on_disk = find_entity_file(ws_id, kind, id).and_then(|file| read_json(&file));
     delete_entity_file(ws_id, kind, id)?;
-    write_json_pretty(&entity_file(ws_id, kind, id, folder_name), &without_enabled(data))
+    write_json_pretty(&entity_file(ws_id, kind, id, folder_name), &stamp::settled(on_disk, stamped(kind, data)))
 }
 
+/// Remove an entity's file. A locked entity stays.
 pub fn delete_entity_file(ws_id: &str, kind: &str, id: &str) -> std::io::Result<()> {
     if tree::is_tree_kind(kind) {
         return tree::delete_entity(ws_id, kind, id);
+    }
+    if let Some(version) = entity_lock(ws_id, kind, id) {
+        return Err(stamp::update_required_io(&version));
     }
     match find_entity_file(ws_id, kind, id) {
         Some(file) => std::fs::remove_file(file),
@@ -256,12 +288,12 @@ fn entity_files(ws_id: &str, kind: &str) -> Vec<(String, PathBuf, Option<String>
     out
 }
 
-/// Every entity of a kind, parsed. Unreadable files are skipped.
+/// Every entity of a kind, parsed. Unreadable files are skipped, and so are locked entities.
 pub fn read_all_entities(ws_id: &str, kind: &str) -> Vec<Value> {
     if tree::is_tree_kind(kind) {
         return tree::read_all(ws_id, kind, None);
     }
-    entity_files(ws_id, kind).into_iter().filter_map(|(_, path, _)| read_json(&path)).collect()
+    entity_files(ws_id, kind).into_iter().filter_map(|(_, path, _)| read_unlocked(kind, &path)).collect()
 }
 
 /// The entities of a kind whose id is in `enabled_ids`; all of them when it is `None`.
@@ -276,15 +308,16 @@ pub fn read_enabled_entities(ws_id: &str, kind: &str, enabled_ids: Option<&Index
     entity_files(ws_id, kind)
         .into_iter()
         .filter(|(id, _, _)| enabled.contains(id))
-        .filter_map(|(_, path, _)| read_json(&path))
+        .filter_map(|(_, path, _)| read_unlocked(kind, &path))
         .collect()
 }
 
+/// One entity, from its file. One that is locked is not read: `entity_lock` says that it is.
 pub fn read_entity(ws_id: &str, kind: &str, id: &str) -> Option<Value> {
     if tree::is_tree_kind(kind) {
         return tree::read_entity(ws_id, kind, id);
     }
-    read_json(&find_entity_file(ws_id, kind, id)?)
+    read_unlocked(kind, &find_entity_file(ws_id, kind, id)?)
 }
 
 /// What a listing needs of an entity without opening its file.
@@ -294,6 +327,8 @@ pub struct EntityStub {
     pub folder_id: Option<String>,
     /// The pending-deletion record of an entity that was deleted here and whose deletion is not synced yet.
     pub deleted: Option<Value>,
+    /// The version the entity is locked to, when a newer engine than this one last wrote it.
+    pub locked: Option<String>,
 }
 
 /// The ids and folders of a kind's entities, plus those deleted locally but not yet published.
@@ -308,17 +343,19 @@ pub fn read_entity_stubs(ws_id: &str, kind: &str) -> Vec<EntityStub> {
     };
     let mut stubs: Vec<EntityStub> = entity_files(ws_id, kind)
         .into_iter()
-        .map(|(id, _, folder_dir)| EntityStub {
+        .map(|(id, path, folder_dir)| EntityStub {
             id,
             folder_id: folder_dir.as_deref().and_then(folder_id_of),
             deleted: None,
+            // The one thing a listing opens a file of a stamped kind for.
+            locked: stamp::is_stamped_kind(kind).then(|| read_json(&path)).flatten().as_ref().and_then(stamp::lock_of),
         })
         .collect();
     for pending in get_pending_deletions(ws_id, kind) {
         let id = str_of(&pending, "id").to_string();
         if !stubs.iter().any(|stub| stub.id == id) {
             let folder_id = pending.get("folderId").and_then(Value::as_str).map(str::to_string);
-            stubs.push(EntityStub { id, folder_id, deleted: Some(pending) });
+            stubs.push(EntityStub { id, folder_id, deleted: Some(pending), locked: None });
         }
     }
     stubs

@@ -244,6 +244,7 @@ impl Shell {
             Screen::Mocks => plural(config.mocks.iter().filter(|m| !m.deleted).count(), "mock"),
             Screen::Mappings => plural(config.mappings.iter().filter(|m| !m.deleted).count(), "mapping"),
             Screen::ProxyRules => plural(config.proxy_rule_count, "rule"),
+            Screen::Flows => plural(config.flows.iter().filter(|f| !f.deleted).count(), "flow"),
             Screen::Environments => plural(config.selectable_environments().count(), "environment"),
             Screen::Vaults => plural(self.model.read(cx).vaults().len(), "vault"),
             Screen::Services => self.services.read(cx).status_line(),

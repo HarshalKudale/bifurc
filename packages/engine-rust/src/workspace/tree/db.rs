@@ -1,17 +1,26 @@
 //! The SQLite file that indexes one tree: its folders and what a listing or a search needs of each entity.
 //!
 //! Everything in it can be made again from the tree's files, so it is written without waiting for the disk and
-//! is thrown away when it cannot be read or is of another version.
+//! is thrown away when it cannot be read or is of a version this engine cannot bring up to its own. Making it
+//! again gives every folder a new id, so an index of an earlier version is changed in place instead.
 
 use std::path::Path;
 
 use rusqlite::{Connection, OptionalExtension, Row, params};
 use serde_json::Value;
 
+use crate::workspace::stamp;
+
 /// The index's file name inside its tree. Git never sees it.
 pub const INDEX_FILE: &str = "index.db";
 
-const SCHEMA_VERSION: i64 = 1;
+const SCHEMA_VERSION: i64 = 2;
+
+/// What version 2 added to version 1: the stamp of each entity. Every file is read again for it.
+const FROM_VERSION_1: &str = "
+    ALTER TABLE entities ADD COLUMN engine_version TEXT;
+    UPDATE entities SET mtime = 0;
+";
 
 const SCHEMA: &str = "
     DROP TABLE IF EXISTS folders;
@@ -33,7 +42,8 @@ const SCHEMA: &str = "
         details TEXT NOT NULL,
         path TEXT NOT NULL,
         mtime INTEGER NOT NULL,
-        size INTEGER NOT NULL
+        size INTEGER NOT NULL,
+        engine_version TEXT
     );
     CREATE INDEX entities_type ON entities(type);
     CREATE INDEX entities_folder ON entities(folder_id);
@@ -62,6 +72,15 @@ pub struct Entry {
     pub path: String,
     pub mtime: i64,
     pub size: i64,
+    /// The version of the engine that last wrote its file (`workspace::stamp`), when the file says.
+    pub engine_version: Option<String>,
+}
+
+impl Entry {
+    /// The version the entity needs when this engine is older than the one that last wrote it.
+    pub fn lock(&self) -> Option<String> {
+        stamp::lock_of_stamp(self.engine_version.as_deref())
+    }
 }
 
 pub fn io(err: rusqlite::Error) -> std::io::Error {
@@ -73,7 +92,7 @@ fn prepare(conn: &Connection) -> rusqlite::Result<()> {
     conn.pragma_update(None, "synchronous", "OFF")?;
     let version: i64 = conn.query_row("PRAGMA user_version", [], |row| row.get(0))?;
     if version != SCHEMA_VERSION {
-        conn.execute_batch(SCHEMA)?;
+        conn.execute_batch(if version == 1 { FROM_VERSION_1 } else { SCHEMA })?;
         conn.pragma_update(None, "user_version", SCHEMA_VERSION)?;
     }
     Ok(())
@@ -150,10 +169,11 @@ fn entry_of(row: &Row) -> rusqlite::Result<Entry> {
         path: row.get(5)?,
         mtime: row.get(6)?,
         size: row.get(7)?,
+        engine_version: row.get(8)?,
     })
 }
 
-const ENTRY_COLUMNS: &str = "id, type, folder_id, name, details, path, mtime, size";
+const ENTRY_COLUMNS: &str = "id, type, folder_id, name, details, path, mtime, size, engine_version";
 
 /// Every entity of the tree, oldest in the index first.
 pub fn entries(conn: &Connection) -> rusqlite::Result<Vec<Entry>> {
@@ -195,10 +215,10 @@ pub fn search(conn: &Connection, needle: &str, types: &[String], limit: i64) -> 
 /// Add an entity, or replace what the index holds of it. It keeps its place in the order.
 pub fn upsert_entry(conn: &Connection, entry: &Entry, search: &str) -> rusqlite::Result<()> {
     conn.execute(
-        "INSERT INTO entities (id, type, folder_id, name, search, details, path, mtime, size)
-         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+        "INSERT INTO entities (id, type, folder_id, name, search, details, path, mtime, size, engine_version)
+         VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
          ON CONFLICT(id) DO UPDATE SET type = ?2, folder_id = ?3, name = ?4, search = ?5, details = ?6,
-             path = ?7, mtime = ?8, size = ?9",
+             path = ?7, mtime = ?8, size = ?9, engine_version = ?10",
         params![
             entry.id,
             entry.ty,
@@ -208,7 +228,8 @@ pub fn upsert_entry(conn: &Connection, entry: &Entry, search: &str) -> rusqlite:
             entry.details.to_string(),
             entry.path,
             entry.mtime,
-            entry.size
+            entry.size,
+            entry.engine_version
         ],
     )?;
     Ok(())
