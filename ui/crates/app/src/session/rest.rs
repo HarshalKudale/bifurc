@@ -157,7 +157,7 @@ impl RestSession {
         let body = VarEditor::code(Syntax::Json, "Request body", window, cx);
         let pre_script = VarEditor::code(Syntax::JavaScript, "// Runs before the request is sent", window, cx);
         let post_script = VarEditor::code(Syntax::JavaScript, "// Runs after the response arrives", window, cx);
-        let test_script = VarEditor::code(Syntax::JavaScript, "// test(\"status is 200\", () => { ... })", window, cx);
+        let test_script = VarEditor::code(Syntax::JavaScript, "// bc.test(\"status is 200\", () => { ... })", window, cx);
         let exchange = cx.new(|cx| Exchange::new(window, cx));
 
         let mut subscriptions = Vec::new();

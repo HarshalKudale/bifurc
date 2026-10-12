@@ -138,7 +138,7 @@ pub fn collect(url: &str, headers: &HeaderMap) {
     changed(&ws_id);
 }
 
-/// The jar's cookies for `url` by name: what a request's script reads as `lp.cookies`.
+/// The jar's cookies for `url` by name: what a request's script reads as `bc.cookies`.
 pub fn for_url(ws_id: &str, url: &str) -> Value {
     let Some(url) = request_url(url) else { return json!({}) };
     with_jar(ws_id, |jar| {
@@ -146,7 +146,7 @@ pub fn for_url(ws_id: &str, url: &str) -> Value {
     })
 }
 
-/// Carry out what a script did through `lp.cookies`: a list of `{ op: set|unset|clear, name?, value?, url? }`,
+/// Carry out what a script did through `bc.cookies`: a list of `{ op: set|unset|clear, name?, value?, url? }`,
 /// each on the site of its own `url`, or else of `url`, the request's.
 pub fn apply(ws_id: &str, url: &str, ops: &Value) {
     let Some(ops) = ops.as_array().filter(|ops| !ops.is_empty()) else { return };
@@ -365,18 +365,18 @@ mod tests {
             serde_json::from_slice::<Value>(&body).unwrap()["headers"]["cookie"].clone()
         };
 
-        let script = "lp.cookies.set('token', lp.response.json().token); lp.cookies.set('far', 1, 'http://other.test/');";
+        let script = "bc.cookies.set('token', bc.response.json().token); bc.cookies.set('far', 1, 'http://other.test/');";
         send("/login", json!({ "post": script })).await;
         // A request deep in the site carries it, and its own scripts read it.
-        let answer = send("/api/v1/me", json!({ "test": "test('seen', () => expect(lp.cookies.get('token')).to.equal('t-9'));" })).await;
+        let answer = send("/api/v1/me", json!({ "test": "test('seen', () => expect(bc.cookies.get('token')).to.equal('t-9'));" })).await;
         assert_eq!(answer["tests"][0]["passed"], true, "{answer}");
         assert_eq!(cookie_sent(answer), "token=t-9");
         assert_eq!(for_url("ws1", "http://other.test/x"), json!({ "far": "1" }));
 
         // A pre-script's change is in time for its own request.
-        let answer = send("/me", json!({ "pre": "lp.cookies.unset('token'); lp.cookies.set('fresh', lp.cookies.has('token'));" })).await;
+        let answer = send("/me", json!({ "pre": "bc.cookies.unset('token'); bc.cookies.set('fresh', bc.cookies.has('token'));" })).await;
         assert_eq!(cookie_sent(answer), "fresh=false");
-        send("/me", json!({ "post": "lp.cookies.clear();" })).await;
+        send("/me", json!({ "post": "bc.cookies.clear();" })).await;
         assert_eq!(for_url("ws1", &base), json!({}));
         assert_eq!(for_url("ws1", "http://other.test/"), json!({ "far": "1" }));
     }

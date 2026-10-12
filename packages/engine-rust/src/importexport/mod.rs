@@ -1,7 +1,8 @@
-//! Import and export of workspace data in other tools' formats: `import.preflight`, `import.commit`,
-//! `export.formats` and `export.create`.
+//! Import and export of workspace data: `import.preflight`, `import.commit`, `export.formats` and
+//! `export.create`. An export is Bifurc JSON; an import also reads the formats of other tools.
 
 mod commands;
+mod convert;
 mod exporters;
 mod formats;
 mod importers;
