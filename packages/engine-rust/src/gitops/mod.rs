@@ -11,6 +11,7 @@ mod git_ops;
 mod git_state;
 mod git_sync_ops;
 mod github;
+mod history_watch;
 mod login;
 mod organization;
 mod publish_service;
@@ -28,6 +29,7 @@ mod tests;
 
 pub use auto_sync::{start_auto_sync, stop_all_auto_sync};
 pub use delete_commands::reconcile_deletions;
+pub use history_watch::{start_history_watch, stop_history_watch};
 pub use git_state::get_workspace_git_state;
 pub use organization::workspace_organization;
 pub use remote::NOT_OWNER;

@@ -20,7 +20,7 @@ use crate::{
 /// `entity.changed` is only sent when a REST request or mock is *created*; an update, a delete, or any other
 /// kind of entity is announced by `sync.entityStatus` alone (the engine sends it after every entity
 /// write). Both therefore mean "re-read the workspace".
-const EVENTS: [&str; 27] = [
+const EVENTS: [&str; 28] = [
     "event.flow.progress",
     "event.flow.finished",
     "event.account.changed",
@@ -30,6 +30,7 @@ const EVENTS: [&str; 27] = [
     "event.ui.activate",
     "event.entity.changed",
     "event.sync.entityStatus",
+    "event.history.changed",
     "event.vault.changed",
     "event.cookies.changed",
     "event.sync.status",
@@ -140,6 +141,13 @@ pub enum Deleted {
     Folder { kind: &'static str, id: String },
 }
 
+/// What a sync commits: the named files, or everything in the workspace that was never synced.
+#[derive(Debug, Clone, PartialEq)]
+pub enum SyncScope {
+    Paths(Vec<String>),
+    All,
+}
+
 #[derive(Debug, Clone)]
 pub enum ModelEvent {
     /// A new snapshot is in place.
@@ -180,6 +188,10 @@ pub enum ModelEvent {
     EntityReverted(String),
     /// `event.sync.status`: the workspace's remote sync started, finished or failed at something.
     SyncStatus,
+    /// `event.history.changed`: the active workspace has a commit it did not have, or lost one.
+    HistoryChanged,
+    /// A sync that will commit is about to run: the user may give its commits a message first.
+    AskSyncMessage(SyncScope),
     /// `event.account.changed`: a sign-in finished or failed, or an account was signed out.
     AccountChanged(Value),
     /// `event.companions.changed`: a browser extension connected or disconnected.
@@ -422,6 +434,11 @@ impl AppModel {
                     self.refresh_git(cx);
                     cx.emit(ModelEvent::SyncStatus);
                 }
+                "event.history.changed" => {
+                    if event.payload.get("workspaceId").and_then(Value::as_str) == Some(self.workspace_id()) {
+                        cx.emit(ModelEvent::HistoryChanged);
+                    }
+                }
                 "event.account.changed" => {
                     self.refresh_setup(cx);
                     self.refresh(cx);
@@ -655,11 +672,32 @@ impl AppModel {
         });
     }
 
-    /// Commits `paths` (and pushes, when the workspace has a remote).
+    /// Commits `paths` (and pushes, when the workspace has a remote), once the user has had the chance to
+    /// give the commit a message.
     pub fn publish(&mut self, paths: Vec<String>, cx: &mut Context<Self>) {
         if self.publishing || self.refuse_read_only(cx) {
             return;
         }
+        if paths.is_empty() {
+            self.publish_paths(paths, None, cx);
+        } else {
+            cx.emit(ModelEvent::AskSyncMessage(SyncScope::Paths(paths)));
+        }
+    }
+
+    /// Runs the sync the user was asked about. An empty `message` leaves the engine to word the commits.
+    pub fn sync_with_message(&mut self, scope: SyncScope, message: &str, cx: &mut Context<Self>) {
+        if self.publishing || self.refuse_read_only(cx) {
+            return;
+        }
+        let message = Some(message.trim().to_owned()).filter(|message| !message.is_empty());
+        match scope {
+            SyncScope::Paths(paths) => self.publish_paths(paths, message, cx),
+            SyncScope::All => self.sync_everything(message, cx),
+        }
+    }
+
+    fn publish_paths(&mut self, paths: Vec<String>, message: Option<String>, cx: &mut Context<Self>) {
         self.publishing = true;
         cx.notify();
         let client = self.engine.client.clone();
@@ -668,7 +706,11 @@ impl AppModel {
         let (action, payload) = if paths.is_empty() {
             ("sync.push", json!({ "workspaceId": self.workspace_id() }))
         } else {
-            ("entity.publish", json!({ "workspaceId": self.workspace_id(), "paths": paths }))
+            let mut payload = json!({ "workspaceId": self.workspace_id(), "paths": paths });
+            if let Some(message) = message {
+                payload["message"] = json!(message);
+            }
+            ("entity.publish", payload)
         };
         call(&client, cx, action, payload, |this, outcome, cx| {
             this.publishing = false;
@@ -693,10 +735,22 @@ impl AppModel {
         if self.publishing || self.refuse_read_only(cx) {
             return;
         }
+        // With nothing to commit there is no commit to word: what is left is the push.
+        if self.git.rollup(&[]).changed.is_empty() {
+            self.sync_everything(None, cx);
+        } else {
+            cx.emit(ModelEvent::AskSyncMessage(SyncScope::All));
+        }
+    }
+
+    fn sync_everything(&mut self, message: Option<String>, cx: &mut Context<Self>) {
         self.publishing = true;
         cx.notify();
         let client = self.engine.client.clone();
-        let payload = json!({ "workspaceId": self.workspace_id() });
+        let mut payload = json!({ "workspaceId": self.workspace_id() });
+        if let Some(message) = message {
+            payload["message"] = json!(message);
+        }
         call(&client, cx, "sync.all", payload, |this, outcome, cx| {
             this.publishing = false;
             let message = match failure(&outcome) {

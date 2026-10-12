@@ -4,6 +4,7 @@ pub mod autosave;
 pub mod binary;
 pub mod body_pane;
 pub mod certificate;
+pub mod commit_diffs;
 pub mod curl_import;
 pub mod dialogs;
 pub mod entity_bar;

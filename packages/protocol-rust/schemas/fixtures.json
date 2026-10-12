@@ -813,6 +813,15 @@
   },
   "invalid": {}
  },
+ "history.patch": {
+  "valid": {
+   "commitHash": "c1",
+   "workspaceId": "ws1"
+  },
+  "invalid": {
+   "commitHash": "c1"
+  }
+ },
  "import.commit": {
   "valid": {
    "kind": "mocks",

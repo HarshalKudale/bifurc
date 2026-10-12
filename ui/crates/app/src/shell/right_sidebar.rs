@@ -1,14 +1,16 @@
 //! The right sidebar: reference panels about what is open, kept beside the work rather than over it.
 //!
-//! 1. **History** — the commits that touched the open entity's file.
+//! 1. **History** — the commits that touched the open entity's file; each opens to the diff it made there.
 //! 2. **Snippet** — the open request written out as cURL, `fetch`, axios or Python, to copy elsewhere.
 //! 3. **Variables** — what `{{name}}` resolves against: the active environment over the global one.
 //!
 //! Nothing here is editable. The shell tells it what is open ([`ActiveTarget`]); it reads the rest from the
-//! model and asks the engine for the history.
+//! model and asks the engine for the history, again whenever the engine says the history moved.
+
+use std::collections::HashSet;
 
 use gpui_kit::component::{
-    ActiveTheme as _, IconName, Sizable as _,
+    ActiveTheme as _, Icon, IconName, Sizable as _,
     button::{Button, ButtonVariants as _},
     h_flex,
     input::{Editor, EditorState},
@@ -25,8 +27,8 @@ use serde_json::json;
 
 use super::ActiveTarget;
 use crate::{
-    app_model::AppModel,
-    components::{Syntax, page},
+    app_model::{AppModel, ModelEvent},
+    components::{Syntax, commit_diffs::CommitDiffs, page},
     engine::{call, describe},
     model::{
         git::{FileState, HistoryEntry, date_time_utc, parse_history},
@@ -73,7 +75,10 @@ pub struct RightSidebar {
     history: History,
     /// The file the loaded (or loading) history belongs to; a result for any other file is stale.
     history_path: Option<String>,
-    _subscription: Subscription,
+    /// The commits whose diff is open.
+    expanded: HashSet<String>,
+    diffs: Entity<CommitDiffs>,
+    _subscriptions: [Subscription; 3],
 }
 
 impl RightSidebar {
@@ -84,7 +89,16 @@ impl RightSidebar {
             state.set_readonly(true, cx);
             state
         });
-        let subscription = cx.observe(&model, |_, _, cx| cx.notify());
+        let diffs = cx.new(|_| CommitDiffs::new(model.clone()));
+        let subscriptions = [
+            cx.observe(&model, |_, _, cx| cx.notify()),
+            cx.observe(&diffs, |_, _, cx| cx.notify()),
+            cx.subscribe(&model, |this, _, event: &ModelEvent, cx| {
+                if matches!(event, ModelEvent::HistoryChanged) {
+                    this.refresh_history(true, cx);
+                }
+            }),
+        ];
         Self {
             model,
             panel: Panel::History,
@@ -93,7 +107,9 @@ impl RightSidebar {
             snippet,
             history: History::Idle,
             history_path: None,
-            _subscription: subscription,
+            expanded: HashSet::new(),
+            diffs,
+            _subscriptions: subscriptions,
         }
     }
 
@@ -148,12 +164,21 @@ impl RightSidebar {
         if path == self.history_path && !force {
             return;
         }
+        // The same file read again keeps its list on screen until the new one arrives, and what is open
+        // in it stays open.
+        let same_file = path == self.history_path;
+        if !same_file {
+            self.expanded.clear();
+            self.diffs.update(cx, |diffs, _| diffs.set_file(path.clone()));
+        }
         self.history_path = path.clone();
         let Some(path) = path else {
             self.history = History::Idle;
             return;
         };
-        self.history = History::Loading;
+        if !(same_file && matches!(self.history, History::Loaded(_))) {
+            self.history = History::Loading;
+        }
         let model = self.model.read(cx);
         let client = model.client().clone();
         let payload = json!({ "workspaceId": model.workspace_id(), "relPath": path, "limit": 50 });
@@ -168,6 +193,15 @@ impl RightSidebar {
             };
             cx.notify();
         });
+    }
+
+    /// Opens or closes a commit; opening one loads what it changed in the file the first time.
+    fn toggle_commit(&mut self, commit: &str, cx: &mut Context<Self>) {
+        if !self.expanded.remove(commit) {
+            self.expanded.insert(commit.to_owned());
+            self.diffs.update(cx, |diffs, cx| diffs.load(commit, cx));
+        }
+        cx.notify();
     }
 
     fn render_history(&self, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
@@ -199,18 +233,31 @@ impl RightSidebar {
             .id("history-entries")
             .size_full()
             .overflow_y_scroll()
-            .p_3()
-            .gap_3()
             .children(entries.iter().map(|entry| {
-                v_flex()
+                let open = self.expanded.contains(&entry.commit);
+                let icon = if open { IconName::ChevronDown } else { IconName::ChevronRight };
+                let title = if entry.message.is_empty() { &entry.entity_name } else { &entry.message };
+                let commit = entry.commit.clone();
+                let summary = v_flex()
                     .id(gpui_kit::ElementId::Name(format!("commit-{}", entry.commit).into()))
+                    .w_full()
                     .gap_1()
-                    .child(h_flex().gap_2().child(Tag::secondary().small().child(entry.action.clone())).child(
-                        div().flex_1().min_w_0().overflow_hidden().text_ellipsis().child(entry.entity_name.clone()),
-                    ))
+                    .px_3()
+                    .py_2()
+                    .cursor_pointer()
+                    .hover(|style| style.bg(theme.muted))
+                    .on_click(cx.listener(move |this, _, _, cx| this.toggle_commit(&commit, cx)))
                     .child(
                         h_flex()
                             .gap_2()
+                            .child(Icon::new(icon).small().text_color(theme.muted_foreground))
+                            .child(Tag::secondary().small().child(entry.action.clone()))
+                            .child(div().flex_1().min_w_0().overflow_hidden().text_ellipsis().child(title.clone())),
+                    )
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .pl_6()
                             .text_xs()
                             .text_color(theme.muted_foreground)
                             .child(
@@ -220,7 +267,15 @@ impl RightSidebar {
                             )
                             .child(format!("{} UTC", date_time_utc(entry.ts)))
                             .child(entry.actor.clone()),
-                    )
+                    );
+                v_flex()
+                    .w_full()
+                    .border_b_1()
+                    .border_color(theme.border)
+                    .child(summary)
+                    .when(open, |this| {
+                        this.child(div().px_3().pb_3().child(self.diffs.read(cx).render(&entry.commit, cx)))
+                    })
             }))
             .into_any_element()
     }

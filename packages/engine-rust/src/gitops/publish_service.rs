@@ -29,7 +29,7 @@ pub struct PublishOptions {
     pub ws_id: String,
     /// Workspace-relative paths (files, or directories ending in a separator) to stage and commit.
     pub paths: Vec<String>,
-    /// Overrides the generated commit message.
+    /// The commit's subject, in place of the generated one.
     pub message: Option<String>,
 }
 
@@ -272,9 +272,15 @@ pub(super) async fn commit_paths(opts: &PublishOptions) -> Result<Value, GitErro
         return Ok(json!({ "ok": true, "commit": null }));
     }
 
-    let (message, body) = match opts.message.clone().filter(|m| !m.is_empty()) {
-        Some(message) => (message, None),
-        None => build_message(opts, &status, &pre_status, &actor),
+    // A message the user wrote is the subject; what the engine would have said goes under it as `change:`,
+    // so the audit log still knows which entity the commit touched and how.
+    let (generated, body) = build_message(opts, &status, &pre_status, &actor);
+    let (message, body) = match opts.message.as_deref().map(str::trim).filter(|m| !m.is_empty()) {
+        Some(message) => {
+            let trailers = body.unwrap_or_else(|| format!("workspace-id: {ws_id}\nactor: {actor}"));
+            (message.to_string(), Some(format!("change: {generated}\n{trailers}")))
+        }
+        None => (generated, body),
     };
     let full_message = match body {
         Some(body) => format!("{message}\n\n{body}"),
