@@ -231,7 +231,7 @@ mod tests {
     };
 
     fn source(content: &str) -> ImportSource {
-        ImportSource { content: content.to_string(), filename: "mocks.json".to_string() }
+        ImportSource::text(content, "mocks.json")
     }
 
     /// The directory of the one folder an import run made.

@@ -343,7 +343,7 @@ async fn what_a_script_sets_stays_in_the_run_unless_the_flow_keeps_it() {
     let canned =
         HashMap::from([("/login".to_string(), ("application/json".to_string(), r#"{"token":"t-9"}"#.to_string()))]);
     let base = test_server::start(canned).await;
-    let script = "lp.environment.set('token', lp.response.json().token);";
+    let script = "bc.environment.set('token', bc.response.json().token);";
     store.request("r-login", format!("{base}/login"), json!({ "postScript": script }));
     store.request("r-user", format!("{base}/me"), json!({ "headers": { "Authorization": "Bearer {{token}}" } }));
     let flow = |settings: Value, login: Value| {
@@ -382,9 +382,9 @@ async fn a_node_says_whether_its_requests_scripts_and_tests_run() {
         "r-login",
         format!("{base}/login"),
         json!({
-            "preScript": "lp.environment.set('seen', 'pre');",
-            "postScript": "lp.environment.set('token', 'from-post');",
-            "testScript": "test('is created', () => expect(lp.response.status).to.equal(201));",
+            "preScript": "bc.environment.set('seen', 'pre');",
+            "postScript": "bc.environment.set('token', 'from-post');",
+            "testScript": "test('is created', () => expect(bc.response.status).to.equal(201));",
         }),
     );
     store.request(
