@@ -414,6 +414,7 @@ impl WorkspaceHost {
         }
         crate::analytics::start(opts.transport.kind().as_str());
         crate::updates::start();
+        crate::gitops::start_history_watch();
 
         Ok(Self {
             opts,
@@ -445,6 +446,7 @@ impl WorkspaceHost {
         self.forward_proxy.stop();
         crate::applications::stop_all();
         crate::gitops::stop_all_auto_sync();
+        crate::gitops::stop_history_watch();
         crate::capture::flush_capture();
         crate::analytics::stop().await;
         crate::updates::stop();
