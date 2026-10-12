@@ -1,7 +1,7 @@
 //! The QuickJS sandbox that runs user scripts: request pre/post/test scripts and proxy rule scripts.
 //!
 //! Every execution gets a fresh runtime and context with a memory limit, a stack limit and a wall-clock
-//! interrupt. The script sees only the language built-ins plus `lp` (and `console` in test scripts), which the
+//! interrupt. The script sees only the language built-ins plus `bc` (and `console` in test scripts), which the
 //! JavaScript prelude builds from a JSON input. The result leaves the sandbox as JSON.
 
 use std::{
@@ -139,12 +139,12 @@ fn json_string(v: &Json) -> String {
     }
 }
 
-/// Proxy rule request script: `lp.request.headers` (a plain mutable object) and `lp.request.body` (get/set).
+/// Proxy rule request script: `bc.request.headers` (a plain mutable object) and `bc.request.body` (get/set).
 pub async fn execute_request_script(script: &str, headers: &Headers, body: &str) -> ProxyScriptResult {
     run_proxy("request", script, headers, body, Duration::from_millis(SCRIPT_TIMEOUT_MS)).await
 }
 
-/// Proxy rule response script: the same with `lp.response`.
+/// Proxy rule response script: the same with `bc.response`.
 pub async fn execute_response_script(script: &str, headers: &Headers, body: &str) -> ProxyScriptResult {
     run_proxy("response", script, headers, body, Duration::from_millis(SCRIPT_TIMEOUT_MS)).await
 }
@@ -170,7 +170,7 @@ pub(crate) async fn execute_ipc_script_with(opts: Json, timeout: Duration) -> Js
             return json!({ "envVars": env_vars, "error": "Invalid script context or missing request/response" });
         }
     };
-    // What `lp.cookies` reads; the script's changes come back as the result's `cookies`, for the caller to apply.
+    // What `bc.cookies` reads; the script's changes come back as the result's `cookies`, for the caller to apply.
     input["cookies"] = opts.get("cookies").cloned().unwrap_or_default();
     match run_blocking(input, &script, timeout).await {
         Ok(out) => out,
@@ -179,7 +179,7 @@ pub(crate) async fn execute_ipc_script_with(opts: Json, timeout: Duration) -> Js
 }
 
 /// A flow node's after-execute script. `data` holds `output` (what the node produced, which the script reads
-/// and replaces as `lp.output`), `input`, `nodes` and `flow`. Returns `{ output, envVars, logs, error? }`.
+/// and replaces as `bc.output`), `input`, `nodes` and `flow`. Returns `{ output, envVars, logs, error? }`.
 pub async fn execute_flow_script(script: &str, mut data: Json, env_vars: Json) -> Json {
     data["mode"] = json!("flow");
     data["envVars"] = env_vars;
@@ -197,8 +197,8 @@ mod tests {
     async fn a_flow_script_reads_and_replaces_what_its_node_produced() {
         let data = || json!({ "output": { "body": "{\"id\":7}" }, "input": { "user": "1" }, "nodes": {}, "flow": {} });
         let out = execute_flow_script(
-            "var id = JSON.parse(lp.output.body).id; lp.environment.set('id', id);\
-             lp.output = { id: id, user: lp.input.user }; console.log('seen', id);",
+            "var id = JSON.parse(bc.output.body).id; bc.environment.set('id', id);\
+             bc.output = { id: id, user: bc.input.user }; console.log('seen', id);",
             data(),
             json!({ "K": "v" }),
         )
@@ -208,10 +208,10 @@ mod tests {
         assert_eq!(out["logs"], json!(["seen 7"]));
         assert!(out.get("error").is_none());
 
-        let out = execute_flow_script("lp.output.extra = 1; throw new Error('boom');", data(), json!({})).await;
+        let out = execute_flow_script("bc.output.extra = 1; throw new Error('boom');", data(), json!({})).await;
         assert_eq!(out["error"], "Error: boom");
         assert_eq!(out["output"]["extra"], 1);
-        assert_eq!(execute_flow_script("lp.output = undefined", data(), json!({})).await["output"], Json::Null);
+        assert_eq!(execute_flow_script("bc.output = undefined", data(), json!({})).await["output"], Json::Null);
     }
 
     fn headers(pairs: &[(&str, &str)]) -> Headers {
@@ -253,9 +253,9 @@ mod tests {
 
     #[tokio::test]
     async fn pre_script_mutates_request_and_env() {
-        let out = pre("lp.request.url += '/x'; lp.request.method = 'POST'; lp.request.body = 'y';\
-            lp.request.headers.set('C','3'); lp.request.headers.unset('A');\
-            lp.environment.set('N', 5); lp.environment.unset('K');")
+        let out = pre("bc.request.url += '/x'; bc.request.method = 'POST'; bc.request.body = 'y';\
+            bc.request.headers.set('C','3'); bc.request.headers.unset('A');\
+            bc.environment.set('N', 5); bc.environment.unset('K');")
         .await;
         assert_eq!(out["request"]["url"], "http://a/b/x");
         assert_eq!(out["request"]["method"], "POST");
@@ -268,7 +268,7 @@ mod tests {
 
     #[tokio::test]
     async fn pre_script_error_keeps_partial_state() {
-        let out = pre("lp.request.url = 'u'; lp.environment.set('Z','1'); throw new Error('boom');").await;
+        let out = pre("bc.request.url = 'u'; bc.environment.set('Z','1'); throw new Error('boom');").await;
         assert_eq!(out["error"], "Error: boom");
         assert_eq!(out["request"]["url"], "u");
         assert_eq!(out["envVars"]["Z"], "1");
@@ -287,15 +287,15 @@ mod tests {
     #[tokio::test]
     async fn post_script_reads_response() {
         let out = execute_ipc_script(json!({
-            "script": "var j = lp.response.json(); lp.environment.set('first', j.a[0]); lp.environment.set('st', lp.response.status);\
-                lp.environment.set('h', lp.response.headers.get('content-type'));",
+            "script": "var j = bc.response.json(); bc.environment.set('first', j.a[0]); bc.environment.set('st', bc.response.status);\
+                bc.environment.set('h', bc.response.headers.get('content-type'));",
             "context": "post", "response": res(), "envVars": {}
         }))
         .await;
         assert_eq!(out["envVars"], json!({ "first": "1", "st": "200", "h": "application/json" }));
         assert_eq!(out["response"]["status"], 200);
         let bad = execute_ipc_script(json!({
-            "script": "lp.environment.set('n', lp.response.json())", "context": "post",
+            "script": "bc.environment.set('n', bc.response.json())", "context": "post",
             "response": { "status": 1, "headers": {}, "body": "nope" }, "envVars": {}
         }))
         .await;
@@ -317,9 +317,9 @@ mod tests {
     #[tokio::test]
     async fn test_script_passes_and_fails() {
         let out = test(
-            "lp.test('ok', function(){ lp.expect(lp.response.status).to.equal(200); });\
-             lp.test('bad', function(){ lp.expect(lp.response.status).to.equal(404); });\
-             lp.test('thrown', function(){ throw 'str'; });",
+            "bc.test('ok', function(){ bc.expect(bc.response.status).to.equal(200); });\
+             bc.test('bad', function(){ bc.expect(bc.response.status).to.equal(404); });\
+             bc.test('thrown', function(){ throw 'str'; });",
         )
         .await;
         let t = tests_of(&out);
@@ -332,25 +332,60 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn scripts_written_the_postman_way_run() {
+        let script =
+            "bc.test('response', function(){ bc.response.to.have.status(200); bc.response.to.be.ok; bc.response.to.be.success;\
+               bc.response.to.not.be.error; bc.response.to.be.json; bc.response.to.have.jsonBody();\
+               bc.response.to.have.header('Content-Type'); bc.response.to.have.header('content-type', 'application/json');\
+               bc.response.to.have.body(/hi/); bc.expect(bc.response).to.have.status(200); bc.expect(bc.response.code).to.eql(200); });\
+             bc.test('chai', function(){ var j = bc.response.json(); bc.expect(j.a).to.deep.equal([1,2]); bc.expect(j.s).to.exist;\
+               bc.expect(j.none).to.not.exist; bc.expect(j).to.have.property('s', 'hi'); });\
+             bc.test('scopes', function(){ bc.globals.set('g', 1); bc.collectionVariables.set('c', 2);\
+               bc.expect(bc.variables.get('g')).to.equal('1'); bc.expect(bc.variables.replaceIn('{{K}}/{{ c }}/{{no}}')).to.equal('v/2/{{no}}'); });\
+             bc.test('jar', function(){ var jar = bc.cookies.jar(), seen; jar.set('http://o.test/', 'far', 'x');\
+               jar.set('http://o.test/', { name: 'obj', value: 'y' }, function(){}); jar.get('http://a/b', 'sid', function(e, v){ seen = v; });\
+               bc.expect(seen).to.equal('s1'); jar.unset('http://o.test/', 'far'); });\
+             bc.test('fail-status', function(){ bc.response.to.have.status(404); });\
+             bc.test('fail-header', function(){ bc.response.to.have.header('x-none'); });\
+             lp.test('old name', function(){ lp.expect(lp).to.equal(bc); });";
+        let out = execute_ipc_script(json!({ "script": script, "context": "test", "request": req(), "response": res(),
+            "envVars": { "K": "v" }, "cookies": { "sid": "s1" } }))
+        .await;
+        let t = tests_of(&out);
+        let failed: Vec<_> = t.iter().filter(|t| !t.1).collect();
+        assert_eq!(failed.len(), 2, "{t:?}");
+        assert_eq!(t[4].2.as_deref(), Some("expected status 200 to be 404"));
+        assert_eq!(t[5].2.as_deref(), Some("expected response to have header \"x-none\""));
+        assert_eq!(out["envVars"], json!({ "K": "v", "g": "1", "c": "2" }));
+        assert_eq!(out["cookies"][1], json!({ "op": "set", "name": "obj", "value": "y", "url": "http://o.test/" }));
+        assert_eq!(out["cookies"][2], json!({ "op": "unset", "name": "far", "url": "http://o.test/" }));
+
+        let out = pre("bc.request.headers.add({ key: 'C', value: '3' }); bc.request.headers.upsert({ key: 'a', value: '9' });\
+            bc.request.headers.remove('B');")
+        .await;
+        assert_eq!(out["request"]["headers"], json!({ "a": "9", "C": "3" }));
+    }
+
+    #[tokio::test]
     async fn expect_chain_sample() {
         let out = test(
-            "var e = lp.expect;\
-             lp.test('equal', function(){ e(1).to.equal(1); e(1).to.not.equal(2); });\
-             lp.test('eql', function(){ e({a:[1]}).to.eql({a:[1]}); });\
-             lp.test('type', function(){ e([]).to.be.an('array'); e({}).to.be.an('object'); e(null).to.be.a('null'); e('s').to.be.a('string'); });\
-             lp.test('include', function(){ e('abc').to.include('b'); e([1,2]).to.include(2); e({k:1}).to.include('k'); });\
-             lp.test('property', function(){ e({k:1}).to.have.property('k'); });\
-             lp.test('length', function(){ e([1,2,3]).to.have.lengthOf(3); e('ab').to.have.length(2); e([1,2]).to.have.lengthAbove(1); });\
-             lp.test('numbers', function(){ e(5).to.be.above(4); e(5).to.be.below(6); e(5).to.be.at.least(5); e(5).to.be.at.most(5); });\
-             lp.test('match', function(){ e('hello').to.match(/ell/); e('hello').to.match('^h'); });\
-             lp.test('status', function(){ e(200).to.have.status(200); });\
-             lp.test('empty', function(){ e('').to.be.empty; e([]).to.be.empty; e({}).to.be.empty; e([1]).to.not.be.empty; });\
-             lp.test('oneOf', function(){ e(2).to.be.oneOf([1,2]); });\
-             lp.test('flags', function(){ e(1).to.be.ok; e(true).to.be.true; e(false).to.be.false; e(null).to.be.null; e(undefined).to.be.undefined; e(0).to.not.be.ok; });\
-             lp.test('fail-above', function(){ e(1).to.be.above(2); });\
-             lp.test('fail-not', function(){ e('a').not.to.be.a('string'); });\
-             lp.test('fail-property', function(){ e({}).to.have.property('z'); });\
-             lp.test('fail-oneOf', function(){ e(3).to.be.oneOf([1,2]); });",
+            "var e = bc.expect;\
+             bc.test('equal', function(){ e(1).to.equal(1); e(1).to.not.equal(2); });\
+             bc.test('eql', function(){ e({a:[1]}).to.eql({a:[1]}); });\
+             bc.test('type', function(){ e([]).to.be.an('array'); e({}).to.be.an('object'); e(null).to.be.a('null'); e('s').to.be.a('string'); });\
+             bc.test('include', function(){ e('abc').to.include('b'); e([1,2]).to.include(2); e({k:1}).to.include('k'); });\
+             bc.test('property', function(){ e({k:1}).to.have.property('k'); });\
+             bc.test('length', function(){ e([1,2,3]).to.have.lengthOf(3); e('ab').to.have.length(2); e([1,2]).to.have.lengthAbove(1); });\
+             bc.test('numbers', function(){ e(5).to.be.above(4); e(5).to.be.below(6); e(5).to.be.at.least(5); e(5).to.be.at.most(5); });\
+             bc.test('match', function(){ e('hello').to.match(/ell/); e('hello').to.match('^h'); });\
+             bc.test('status', function(){ e(200).to.have.status(200); });\
+             bc.test('empty', function(){ e('').to.be.empty; e([]).to.be.empty; e({}).to.be.empty; e([1]).to.not.be.empty; });\
+             bc.test('oneOf', function(){ e(2).to.be.oneOf([1,2]); });\
+             bc.test('flags', function(){ e(1).to.be.ok; e(true).to.be.true; e(false).to.be.false; e(null).to.be.null; e(undefined).to.be.undefined; e(0).to.not.be.ok; });\
+             bc.test('fail-above', function(){ e(1).to.be.above(2); });\
+             bc.test('fail-not', function(){ e('a').not.to.be.a('string'); });\
+             bc.test('fail-property', function(){ e({}).to.have.property('z'); });\
+             bc.test('fail-oneOf', function(){ e(3).to.be.oneOf([1,2]); });",
         )
         .await;
         for (name, passed, error) in tests_of(&out) {
@@ -367,9 +402,9 @@ mod tests {
     async fn console_capture_and_test_helpers() {
         let out = test(
             "console.log('a', {b:1}, 2); console.warn('w'); console.error('e'); console.info('i');\
-             lp.test('t', function(){ lp.expect(lp.response.headers.get('Content-Type')).to.equal('application/json');\
-               lp.expect(lp.response.headers.has('CONTENT-TYPE')).to.be.true; lp.expect(lp.response.responseTime).to.equal(12);\
-               lp.expect(lp.response.text()).to.include('hi'); lp.expect(lp.environment.has('K')).to.be.true; });",
+             bc.test('t', function(){ bc.expect(bc.response.headers.get('Content-Type')).to.equal('application/json');\
+               bc.expect(bc.response.headers.has('CONTENT-TYPE')).to.be.true; bc.expect(bc.response.responseTime).to.equal(12);\
+               bc.expect(bc.response.text()).to.include('hi'); bc.expect(bc.environment.has('K')).to.be.true; });",
         )
         .await;
         assert_eq!(out["testLogs"], json!(["a {\"b\":1} 2", "[WARN] w", "[ERROR] e", "i"]));
@@ -378,10 +413,10 @@ mod tests {
 
     #[tokio::test]
     async fn console_and_bare_test_helpers_exist_in_every_context() {
-        let out = pre("console.log('a', 1); lp.environment.set('c', typeof console + typeof test + typeof expect)").await;
+        let out = pre("console.log('a', 1); bc.environment.set('c', typeof console + typeof test + typeof expect)").await;
         assert_eq!(out["envVars"]["c"], "objectfunctionfunction");
         assert_eq!(out["logs"], json!(["a 1"]));
-        let out = test("test('bare', () => { expect(lp.response.status).to.equal(200); expect(1).to.be.ok; });").await;
+        let out = test("test('bare', () => { expect(bc.response.status).to.equal(200); expect(1).to.be.ok; });").await;
         assert_eq!(tests_of(&out), vec![("bare".to_string(), true, None)]);
     }
 
@@ -394,17 +429,17 @@ mod tests {
         };
         let out = both(
             "post",
-            "lp.environment.set('m', lp.request.method); lp.environment.set('u', lp.request.url);             lp.environment.set('t', lp.response.responseTime); lp.environment.set('ct', lp.response.headers.get('Content-Type'));             lp.environment.set('txt', lp.response.text().length); lp.environment.set('has', lp.response.headers.has('CONTENT-TYPE'));",
+            "bc.environment.set('m', bc.request.method); bc.environment.set('u', bc.request.url);             bc.environment.set('t', bc.response.responseTime); bc.environment.set('ct', bc.response.headers.get('Content-Type'));             bc.environment.set('txt', bc.response.text().length); bc.environment.set('has', bc.response.headers.has('CONTENT-TYPE'));",
         )
         .await;
         assert_eq!(
             out["envVars"],
             json!({ "m": "GET", "u": "http://a/b", "t": "12", "ct": "application/json", "txt": "20", "has": "true" })
         );
-        let out = both("test", "lp.environment.set('fromTest', 1); lp.test('r', () => expect(lp.request.headers.get('a')).to.equal('1'));").await;
+        let out = both("test", "bc.environment.set('fromTest', 1); bc.test('r', () => expect(bc.request.headers.get('a')).to.equal('1'));").await;
         assert_eq!(out["envVars"], json!({ "fromTest": "1" }));
         assert_eq!(tests_of(&out), vec![("r".to_string(), true, None)]);
-        let out = pre("lp.request.headers.set('a', '9'); lp.environment.set('h', lp.request.headers.get('A'));").await;
+        let out = pre("bc.request.headers.set('a', '9'); bc.environment.set('h', bc.request.headers.get('A'));").await;
         assert_eq!(out["request"]["headers"], json!({ "B": "2", "a": "9" }));
         assert_eq!(out["envVars"]["h"], "9");
     }
@@ -414,7 +449,7 @@ mod tests {
         let out = test("throw new Error('top')").await;
         assert_eq!(tests_of(&out), vec![("Script execution".to_string(), false, Some("Error: top".to_string()))]);
         assert_eq!(out["testResults"][0]["durationMs"], 0);
-        let out = test("lp.test('one', function(){}); throw new Error('late')").await;
+        let out = test("bc.test('one', function(){}); throw new Error('late')").await;
         assert_eq!(tests_of(&out).len(), 1);
         assert_eq!(out["testLogs"], json!(["[ERROR] Uncaught: Error: late"]));
     }
@@ -423,7 +458,7 @@ mod tests {
     async fn proxy_scripts() {
         let h = headers(&[("a", "1"), ("b", "2")]);
         let r = execute_request_script(
-            "delete lp.request.headers.a; lp.request.headers['x-new'] = 'y'; lp.request.body = lp.request.body + '!';",
+            "delete bc.request.headers.a; bc.request.headers['x-new'] = 'y'; bc.request.body = bc.request.body + '!';",
             &h,
             "hi",
         )
@@ -432,7 +467,7 @@ mod tests {
         assert_eq!(r.headers.keys().collect::<Vec<_>>(), ["b", "x-new"]);
         assert_eq!(r.body, "hi!");
         let r = execute_response_script(
-            "lp.response.headers.b = '3'; lp.response.body = 'new'; throw new Error('late');",
+            "bc.response.headers.b = '3'; bc.response.body = 'new'; throw new Error('late');",
             &h,
             "hi",
         )
@@ -441,7 +476,7 @@ mod tests {
         assert_eq!(r.headers["b"], "3");
         assert_eq!(r.body, "new");
         // The other side is not defined.
-        let r = execute_request_script("lp.response.body = 'x'", &h, "hi").await;
+        let r = execute_request_script("bc.response.body = 'x'", &h, "hi").await;
         assert!(r.error.is_some());
         assert_eq!(r.body, "hi");
     }
@@ -449,14 +484,14 @@ mod tests {
     #[tokio::test]
     async fn infinite_loop_is_interrupted() {
         let out = execute_ipc_script_with(
-            json!({ "script": "lp.request.url = 'set'; while(true){}", "context": "pre", "request": req(), "envVars": {} }),
+            json!({ "script": "bc.request.url = 'set'; while(true){}", "context": "pre", "request": req(), "envVars": {} }),
             Duration::from_millis(150),
         )
         .await;
         assert_eq!(out["error"], "Script execution timed out after 150ms");
         assert_eq!(out["request"]["url"], "set");
         let out = execute_ipc_script_with(
-            json!({ "script": "lp.test('a',function(){}); try { while(true){} } catch (e) {}", "context": "test", "response": res(), "envVars": {} }),
+            json!({ "script": "bc.test('a',function(){}); try { while(true){} } catch (e) {}", "context": "test", "response": res(), "envVars": {} }),
             Duration::from_millis(150),
         )
         .await;
@@ -487,7 +522,7 @@ mod tests {
         let out = pre(
             "var names = ['require','process','fetch','setTimeout','setInterval','setImmediate','XMLHttpRequest','Buffer','module','exports','std','os','__input','__dirname'];\
              var present = names.filter(function(n){ return typeof globalThis[n] !== 'undefined'; });\
-             lp.environment.set('present', present.join(','));",
+             bc.environment.set('present', present.join(','));",
         )
         .await;
         assert_eq!(out["envVars"]["present"], "");
@@ -498,7 +533,7 @@ mod tests {
     #[tokio::test]
     async fn executions_do_not_share_globals() {
         pre("globalThis.leak = 1; var other = 2;").await;
-        let out = pre("lp.environment.set('v', typeof leak + typeof other)").await;
+        let out = pre("bc.environment.set('v', typeof leak + typeof other)").await;
         assert_eq!(out["envVars"]["v"], "undefinedundefined");
     }
 }
