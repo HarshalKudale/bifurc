@@ -527,6 +527,42 @@ async fn a_sample_is_checked_looped_over_and_worked_out() {
 }
 
 #[tokio::test]
+async fn an_if_node_hands_on_what_it_was_handed_by_the_port_its_expression_picks() {
+    let store = store();
+    let flow = |expression: &str| {
+        json!({
+            "nodes": [
+                start(),
+                { "id": "sample", "type": "sample", "value": { "status": 200, "limit": 100 } },
+                { "id": "ok", "type": "if", "expression": expression, "variables": [{ "name": "limit", "value": "" }] },
+                { "id": "yes", "type": "display" },
+                { "id": "no", "type": "display" },
+            ],
+            "edges": [
+                edge("start", "out", "sample"), edge("sample", "out", "ok"),
+                edge("ok", "true", "yes"), edge("ok", "false", "no"),
+                wire("sample", "out", "ok", "var:limit", json!(["limit"])),
+            ],
+        })
+    };
+    let ran = |report: &Value, id: &str| node(report, id)["runs"].as_u64().unwrap();
+
+    store.flow("holds", flow("input.status === 200 && vars.limit > 50"));
+    let report = run("holds").await;
+    assert_eq!(report["status"], "succeeded", "{report}");
+    assert_eq!((node(&report, "ok")["port"].as_str(), ran(&report, "yes"), ran(&report, "no")), (Some("true"), 1, 0));
+    assert_eq!(node(&report, "yes")["input"]["status"], 200, "what it was handed goes on, not what it worked out");
+
+    store.flow("fails", flow("input.status - 200"));
+    let report = run("fails").await;
+    assert_eq!((node(&report, "ok")["port"].as_str(), ran(&report, "yes"), ran(&report, "no")), (Some("false"), 0, 1));
+
+    store.flow("throws", flow("input.gone.deeper"));
+    let report = run("throws").await;
+    assert_eq!(report["status"], "failed", "{report}");
+}
+
+#[tokio::test]
 async fn an_or_node_lets_the_first_arrival_of_each_turn_through() {
     let store = store();
     let wait = |id: &str, ms: u64| json!({ "id": id, "type": "delay", "delayMs": ms });

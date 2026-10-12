@@ -190,7 +190,7 @@ fn check_edge(flow: &Flow, edge: &Edge, reach: &HashMap<&str, HashSet<&str>>) ->
         };
     }
     let takes_inputs =
-        matches!(to.kind, NodeKind::Request | NodeKind::Stream | NodeKind::Mcp | NodeKind::Evaluate);
+        matches!(to.kind, NodeKind::Request | NodeKind::Stream | NodeKind::Mcp | NodeKind::Evaluate | NodeKind::If);
     if !takes_inputs {
         return Some(format!("\"{}\" has no inputs to wire a value into.", to.label()));
     }
@@ -270,6 +270,13 @@ pub fn check(ws_id: &str, flow: &Flow) -> Vec<Problem> {
                 }
                 check_variables(&mut report, node);
             }
+            NodeKind::If => {
+                if node.expression.trim().is_empty() {
+                    report.node(node, "Write the condition this node decides by.");
+                }
+                check_variables(&mut report, node);
+                check_in_the_middle(&mut report, flow, node, "An if node");
+            }
             NodeKind::Repeat => {
                 if node.count == 0 {
                     report.warn(node, "It repeats 0 times, so what follows Each never runs.");
@@ -338,7 +345,7 @@ fn inputs_of(flow: &Flow, node: &Node, variables: &[String], env: &Value) -> Vec
     // The id of each input, with what was typed in for it.
     let mut listed: Vec<(String, Option<String>)> = Vec::new();
     let takes_variables =
-        matches!(node.kind, NodeKind::Request | NodeKind::Stream | NodeKind::Mcp | NodeKind::Evaluate);
+        matches!(node.kind, NodeKind::Request | NodeKind::Stream | NodeKind::Mcp | NodeKind::Evaluate | NodeKind::If);
     if takes_variables {
         let names = variables.iter().chain(node.variables.iter().map(|pair| &pair.name));
         for name in names {
@@ -368,7 +375,7 @@ fn inputs_of(flow: &Flow, node: &Node, variables: &[String], env: &Value) -> Vec
             let name = id.split_once(':').map_or(id.as_str(), |(_, name)| name).to_string();
             let wire = flow.wires_into(&node.id).find(|wire| wire.input == id);
             let from_run = flow.inputs.iter().find(|input| input.name == name).filter(|_| id.starts_with("var:"));
-            let from_env = env.get(&name).filter(|_| id.starts_with("var:") && node.kind != NodeKind::Evaluate);
+            let from_env = env.get(&name).filter(|_| id.starts_with("var:") && !matches!(node.kind, NodeKind::Evaluate | NodeKind::If));
             let (source, value) = match (wire, typed, from_run, from_env) {
                 (Some(_), ..) => ("wired", Value::Null),
                 (None, Some(text), ..) => ("static", json!(text)),
