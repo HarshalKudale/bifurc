@@ -127,6 +127,8 @@ pub struct WorkspaceScreen {
     collision: &'static str,
     /// An export or an import is in flight.
     transferring: Option<&'static str>,
+    /// The workspace's cookie jar, as `cookies.list` answers.
+    cookies: Value,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -141,9 +143,11 @@ impl WorkspaceScreen {
             }),
             cx.subscribe_in(&model, window, |this, _, event: &ModelEvent, window, cx| match event {
                 ModelEvent::SyncStatus | ModelEvent::AccountChanged(_) => this.refresh_sync(cx),
+                ModelEvent::CookiesChanged => this.refresh_cookies(cx),
                 ModelEvent::EngineRestarted => {
                     this.load_formats(cx);
                     this.refresh_sync(cx);
+                    this.refresh_cookies(cx);
                 }
                 ModelEvent::WorkspaceSwitched => this.follow_workspace(window, cx),
                 _ => {}
@@ -165,6 +169,7 @@ impl WorkspaceScreen {
             import: ("workspace".to_owned(), String::new()),
             collision: "keep",
             transferring: None,
+            cookies: Value::Null,
             _subscriptions: subscriptions,
         };
         this.follow_workspace(window, cx);
@@ -200,6 +205,8 @@ impl WorkspaceScreen {
         self.shown = current;
         if switched {
             self.refresh_sync(cx);
+            self.cookies = Value::Null;
+            self.refresh_cookies(cx);
         }
         cx.notify();
     }
@@ -219,6 +226,37 @@ impl WorkspaceScreen {
             {
                 this.sync = SyncInfo::from_value(&state);
                 cx.notify();
+            }
+        });
+    }
+
+    fn refresh_cookies(&mut self, cx: &mut Context<Self>) {
+        let model = self.model.read(cx);
+        let workspace_id = model.workspace_id().to_owned();
+        if workspace_id.is_empty() {
+            return;
+        }
+        let client = model.client().clone();
+        let asked = workspace_id.clone();
+        call(&client, cx, "cookies.list", json!({ "workspaceId": workspace_id }), move |this, outcome, cx| {
+            if let Ok(listed) = outcome
+                && this.model.read(cx).workspace_id() == asked
+            {
+                this.cookies = listed;
+                cx.notify();
+            }
+        });
+    }
+
+    /// `cookies.clear` or `cookies.configure` on the workspace in front. The list is re-read on the engine's
+    /// `cookies.changed`.
+    fn cookie_command(&mut self, action: &'static str, mut payload: Value, cx: &mut Context<Self>) {
+        let model = self.model.read(cx);
+        payload["workspaceId"] = json!(model.workspace_id());
+        let client = model.client().clone();
+        call(&client, cx, action, payload, |this, outcome, cx| {
+            if let Some(message) = failure(&outcome) {
+                this.report(message, cx);
             }
         });
     }
@@ -832,6 +870,106 @@ impl WorkspaceScreen {
         SettingPage::new("Import & export").icon(IconName::Inbox).groups(vec![export_group, import_group])
     }
 
+    fn cookies_page(&self, cx: &mut Context<Self>) -> SettingPage {
+        let this = cx.weak_entity();
+        let clear_on_restart = self.cookies.get("clearOnRestart").and_then(Value::as_bool).unwrap_or(true);
+        let domains = self.cookies.get("domains").and_then(Value::as_array).cloned().unwrap_or_default();
+        let cookies_of = |entry: &Value| entry.get("cookies").and_then(Value::as_array).cloned().unwrap_or_default();
+        let total: usize = domains.iter().map(|entry| cookies_of(entry).len()).sum();
+        let summary = match (total, domains.len()) {
+            (0, _) => "No cookies are stored for this workspace.".to_owned(),
+            (1, _) => "1 cookie is stored.".to_owned(),
+            (n, 1) => format!("{n} cookies are stored for 1 site."),
+            (n, sites) => format!("{n} cookies are stored for {sites} sites."),
+        };
+
+        let configure = this.clone();
+        let behaviour = SettingGroup::new().title("On restart").item(
+            SettingItem::new(
+                "Clear cookies when the engine restarts",
+                SettingField::switch(
+                    move |_: &App| clear_on_restart,
+                    move |value: bool, cx: &mut App| {
+                        configure
+                            .update(cx, |this, cx| {
+                                this.cookie_command("cookies.configure", json!({ "clearOnRestart": value }), cx)
+                            })
+                            .ok();
+                    },
+                ),
+            )
+            .description("Requests keep the cookies a server sets and send them back to the same site, as a browser does: a login is followed by the requests after it, a logout ends it. Turned off, the cookies are also kept on this computer and survive a restart.")
+            .keywords(["cookie", "session", "login", "restart"]),
+        );
+
+        let clear_all = this.clone();
+        let mut stored = SettingGroup::new().title("Stored cookies").item(SettingItem::render(move |options, _, cx| {
+            let clear_all = clear_all.clone();
+            h_flex()
+                .w_full()
+                .gap_2()
+                .child(div().flex_1().text_sm().text_color(cx.theme().muted_foreground).child(summary.clone()))
+                .child(
+                    Button::new("clear-all-cookies")
+                        .with_size(options.size())
+                        .label("Clear all")
+                        .disabled(total == 0)
+                        .on_click(move |_, _, cx| {
+                            clear_all.update(cx, |this, cx| this.cookie_command("cookies.clear", json!({}), cx)).ok();
+                        }),
+                )
+        }));
+        for (index, entry) in domains.into_iter().enumerate() {
+            let this = this.clone();
+            let text = |value: &Value, key: &str| value.get(key).and_then(Value::as_str).unwrap_or_default().to_owned();
+            let domain = text(&entry, "domain");
+            let cookies: Vec<(String, String, String)> = cookies_of(&entry)
+                .iter()
+                .map(|cookie| (text(cookie, "name"), text(cookie, "value"), text(cookie, "path")))
+                .collect();
+            stored = stored.item(SettingItem::render(move |options, _, cx| {
+                let theme = cx.theme().clone();
+                let clear = this.clone();
+                let cleared = domain.clone();
+                v_flex()
+                    .w_full()
+                    .gap_1()
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .gap_2()
+                            .child(
+                                div().flex_1().font_family(theme.mono_font_family.clone()).child(domain.clone()),
+                            )
+                            .child(Button::new(("clear-cookies", index)).with_size(options.size()).label("Clear").on_click(
+                                move |_, _, cx| {
+                                    let payload = json!({ "domain": cleared });
+                                    clear.update(cx, |this, cx| this.cookie_command("cookies.clear", payload, cx)).ok();
+                                },
+                            )),
+                    )
+                    .children(cookies.iter().map(|(name, value, path)| {
+                        h_flex()
+                            .w_full()
+                            .gap_2()
+                            .text_xs()
+                            .font_family(theme.mono_font_family.clone())
+                            .child(div().child(name.clone()))
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .min_w_0()
+                                    .truncate()
+                                    .text_color(theme.muted_foreground)
+                                    .child(value.clone()),
+                            )
+                            .child(div().text_color(theme.muted_foreground).child(path.clone()))
+                    }))
+            }));
+        }
+        SettingPage::new("Cookies").icon(IconName::Globe).groups(vec![behaviour, stored])
+    }
+
     fn danger_page(&self, cx: &mut Context<Self>) -> SettingPage {
         let this = cx.weak_entity();
         let can_delete = self.model.read(cx).config().workspaces.len() > 1;
@@ -868,7 +1006,13 @@ impl WorkspaceScreen {
 
 impl Render for WorkspaceScreen {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let pages = vec![self.general_page(cx), self.sync_page(cx), self.transfer_page(cx), self.danger_page(cx)];
+        let pages = vec![
+            self.general_page(cx),
+            self.sync_page(cx),
+            self.cookies_page(cx),
+            self.transfer_page(cx),
+            self.danger_page(cx),
+        ];
         div()
             .size_full()
             .bg(cx.theme().background)
