@@ -35,35 +35,52 @@ fn hide_console(command: &mut Command) {
 #[cfg(not(windows))]
 fn hide_console(_: &mut Command) {}
 
-fn is_installed(program: &str) -> bool {
-    let finder = if cfg!(windows) { "where" } else { "which" };
-    Command::new(finder)
-        .arg(program)
-        .stdin(Stdio::null())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()
-        .is_ok_and(|status| status.success())
-}
-
 fn home() -> PathBuf {
     env::var_os("HOME").or_else(|| env::var_os("USERPROFILE")).map(PathBuf::from).unwrap_or_default()
 }
 
-/// What to tell the user to run when this platform has no tool that installs without elevation.
-fn linux_instructions(certificate: &Path) -> String {
+/// Where each Linux family keeps the roots an administrator adds, and what rebuilds its bundle from them.
+const LINUX_STORES: [(&str, &str); 4] = [
+    ("/etc/pki/ca-trust/source/anchors/bifurc-ca.pem", "update-ca-trust extract"),
+    ("/usr/local/share/ca-certificates/bifurc-ca.crt", "update-ca-certificates"),
+    ("/etc/ca-certificates/trust-source/anchors/bifurc-ca.crt", "trust extract-compat"),
+    ("/usr/share/pki/trust/anchors/bifurc-ca.pem", "update-ca-certificates"),
+];
+
+/// The shell line that puts the certificate (`$1`) in a store and rebuilds the bundle. It needs root.
+fn linux_script(target: &str, rebuild: &str) -> String {
+    format!("install -m 644 \"$1\" {target} && {rebuild}")
+}
+
+/// What to tell the user to run when the certificate could not be installed for them.
+fn linux_instructions(certificate: &Path, target: &str, rebuild: &str) -> String {
     format!(
-        "Run these in a terminal:\nsudo cp \"{}\" /usr/local/share/ca-certificates/bifurc-ca.crt\nsudo update-ca-certificates",
+        "Run this in a terminal: sudo sh -c '{}' sh \"{}\"",
+        linux_script(target, rebuild),
         certificate.display()
     )
 }
 
-/// Puts `pem` in the current user's trust store. The message says where it went, or why it did not.
+fn install_linux(file: &Path) -> Result<String, String> {
+    let (target, rebuild) = LINUX_STORES
+        .into_iter()
+        .find(|(target, _)| Path::new(target).parent().is_some_and(Path::is_dir))
+        .ok_or_else(|| format!("No system trust store was found. Add {} to your trusted roots by hand.", file.display()))?;
+    // The stores belong to root on every distribution, so polkit asks for the password.
+    run(Command::new("pkexec").args(["sh", "-c", &linux_script(target, rebuild), "sh"]).arg(file))
+        .map_err(|error| format!("{error}. {}", linux_instructions(file, target, rebuild)))?;
+    Ok("Installed in the system trust store. Restart your browser to pick it up.".to_owned())
+}
+
+/// Puts `pem` in this computer's trust store. The message says where it went, or why it did not.
 pub fn install(pem: &[u8]) -> Result<String, String> {
     let file = env::temp_dir().join(format!("bifurc-ca-{}.pem", std::process::id()));
     fs::write(&file, pem).map_err(|error| format!("Couldn't write the certificate to a file. {error}"))?;
     let outcome = install_file(&file);
-    let _ = fs::remove_file(&file);
+    // A failure can name the file in what it tells the user to run, so it is only removed on success.
+    if outcome.is_ok() {
+        let _ = fs::remove_file(&file);
+    }
     outcome
 }
 
@@ -78,11 +95,8 @@ fn install_file(file: &Path) -> Result<String, String> {
             .arg(keychain)
             .arg(file))?;
         Ok("Installed in your login keychain. Restart your browser to pick it up.".to_owned())
-    } else if is_installed("trust") {
-        run(Command::new("trust").arg("anchor").arg(file))?;
-        Ok("Installed in the p11-kit trust store. Restart your browser to pick it up.".to_owned())
     } else {
-        Err(format!("No tool that installs it without administrator rights was found. {}", linux_instructions(file)))
+        install_linux(file)
     }
 }
 
@@ -92,8 +106,9 @@ mod tests {
 
     #[test]
     fn instructions_name_the_file_and_the_commands() {
-        let text = linux_instructions(Path::new("/tmp/ca.pem"));
-        assert!(text.contains("/tmp/ca.pem") && text.contains("update-ca-certificates"));
+        let (target, rebuild) = LINUX_STORES[1];
+        let text = linux_instructions(Path::new("/tmp/ca.pem"), target, rebuild);
+        assert!(text.contains("/tmp/ca.pem") && text.contains(target) && text.contains("update-ca-certificates"));
     }
 
     #[test]
