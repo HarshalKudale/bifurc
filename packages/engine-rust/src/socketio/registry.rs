@@ -377,7 +377,8 @@ pub fn connect_connection(workspace_id: &str, connection_id: &str, target: &Targ
     emit(events);
 
     let (prepared, generation) = outcome?;
-    tokio::spawn(run(key, generation, prepared, rx));
+    let workspace_id = workspace_id.to_string();
+    tokio::spawn(async move { crate::cookies::scoped(&workspace_id, run(key, generation, prepared, rx)).await });
     Ok(())
 }
 
@@ -565,13 +566,18 @@ async fn close(stream: &mut Socket) {
 
 /// Owns one connection from the WebSocket handshake to its end. The registry reaches it through `rx`.
 async fn run(key: String, generation: u64, prepared: Prepared, mut rx: UnboundedReceiver<Command>) {
-    let Prepared { request, namespace, auth } = prepared;
+    let Prepared { mut request, namespace, auth } = prepared;
+    let url = request.uri().to_string();
+    crate::cookies::attach(&url, request.headers_mut());
     let connect = connect_async(request);
     tokio::pin!(connect);
     let mut stream = loop {
         tokio::select! {
             result = &mut connect => match result {
-                Ok((stream, _)) => break stream,
+                Ok((stream, response)) => {
+                    crate::cookies::collect(&url, response.headers());
+                    break stream;
+                }
                 Err(error) => {
                     let message = format!("No Socket.IO server answered at this address and path ({error}).");
                     return record_end(&key, generation, Some(message), "transport error");

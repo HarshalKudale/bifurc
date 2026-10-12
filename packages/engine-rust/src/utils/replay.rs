@@ -176,6 +176,7 @@ pub async fn replay_request(
         request_headers.append(name, value);
     }
     request_headers.insert(HeaderName::from_static("connection"), HeaderValue::from_static("close"));
+    crate::cookies::attach(parsed.as_str(), &mut request_headers);
 
     let method = Method::from_bytes(method.as_bytes())
         .map_err(|_| format!("Method must be a valid HTTP token [\"{method}\"]"))?;
@@ -186,6 +187,7 @@ pub async fn replay_request(
 
     let response = request.send().await.map_err(|err| connect_message(&err, host, port))?;
     let status = response.status().as_u16();
+    crate::cookies::collect(parsed.as_str(), response.headers());
     let mut headers = response_headers(response.headers());
     let raw = response.bytes().await.map_err(|err| root_message(&err))?;
 
