@@ -7,7 +7,7 @@ use serde_json::{Value, json};
 
 use super::{
     registry::{all_formats, get_entry},
-    types::{ExportFile, Exporter, FormatEntry, ImportSource, Importer, Strategy},
+    types::{ExportFile, ImportSource, Importer, Strategy},
 };
 use crate::{
     kernel::CommandRegistry,
@@ -16,118 +16,37 @@ use crate::{
         id::now_ms,
         json::{opt_str, str_of},
     },
-    workspace::blob::{
-        BlobError, blob_content_path, create_staging, describe_blob_error, publish_artifact_checked, read_blob_bytes,
-        stat_blob,
-    },
+    workspace::blob::{blob_content_path, describe_blob_error, publish_artifact_checked, read_blob_bytes, stat_blob},
 };
 
 fn failure(error: impl Into<String>) -> Value {
     json!({ "ok": false, "error": error.into() })
 }
 
-fn mime_type_for(entry: &FormatEntry) -> &'static str {
-    match entry.extensions.first().copied().unwrap_or("") {
-        "json" | "har" => "application/json",
-        "zip" => "application/zip",
-        "yaml" | "yml" => "application/yaml",
-        "env" | "txt" | "sh" | "curl" => "text/plain",
-        _ => "application/octet-stream",
-    }
-}
-
-/// `proxyRules` -> `proxy-rules-export.json`.
-fn default_name_for(kind: &str, entry: &FormatEntry) -> String {
-    let mut kebab = String::new();
-    for c in kind.chars() {
-        if c.is_ascii_uppercase() {
-            kebab.push('-');
-        }
-        kebab.push(c);
-    }
-    format!("{}-export.{}", kebab.to_lowercase(), entry.extensions.first().copied().unwrap_or("bin"))
-}
-
-async fn export_create(params: &Value) -> Value {
+fn export_create(params: &Value) -> Value {
     let (kind, format) = (str_of(params, "kind"), str_of(params, "format"));
     let ws_id = str_of(params, "workspaceId");
     let Some(entry) = get_entry(kind, format) else {
         return failure(format!("No export format \"{format}\" for kind \"{kind}\"."));
     };
-    let requested_name = opt_str(params, "filename").filter(|name| !name.is_empty());
-    let mime_type = mime_type_for(entry);
-
-    match &entry.exporter {
-        Exporter::Text(render) => {
-            let ExportFile { content, suggested_name } = match render(ws_id) {
-                Ok(file) => file,
-                Err(error) => return failure(error),
-            };
-            match publish_artifact_checked(&content, requested_name.unwrap_or(suggested_name), mime_type, Some(ws_id)) {
-                Ok(artifact) => artifact,
-                Err(err) => failure(describe_blob_error(&err)),
-            }
-        }
-        Exporter::Path(write) => match publish_staged(*write, ws_id, requested_name, kind, entry, mime_type).await {
-            Ok(artifact) | Err(artifact) => artifact,
-        },
-    }
-}
-
-/// Run a file-writing exporter into a staging file and commit it as a blob. Both arms carry the result.
-async fn publish_staged(
-    write: fn(&str, &std::path::Path) -> std::result::Result<(), String>,
-    ws_id: &str,
-    requested_name: Option<&str>,
-    kind: &str,
-    entry: &FormatEntry,
-    mime_type: &str,
-) -> std::result::Result<Value, Value> {
-    let blob_failure = |err: BlobError| failure(describe_blob_error(&err));
-    let mut staging = create_staging(None, Some(ws_id)).map_err(blob_failure)?;
-
-    let (path, workspace) = (staging.path().to_path_buf(), ws_id.to_string());
-    let written = tokio::task::spawn_blocking(move || write(&workspace, &path)).await;
-    match written {
-        Ok(Ok(())) => {}
-        Ok(Err(error)) => {
-            staging.discard();
-            return Err(failure(error));
-        }
-        Err(join) => {
-            staging.discard();
-            return Err(failure(join.to_string()));
-        }
-    }
-
-    let size = match std::fs::metadata(staging.path()) {
-        Ok(meta) => meta.len(),
-        Err(err) => {
-            staging.discard();
-            return Err(failure(err.to_string()));
-        }
+    let Some(render) = entry.exporter else {
+        return failure(format!("\"{}\" is a format Bifurc imports. An export is Bifurc JSON.", entry.label));
     };
-    let suggested_name = requested_name.map(str::to_string).unwrap_or_else(|| default_name_for(kind, entry));
-    match staging.commit(&suggested_name, mime_type, now_ms()) {
-        Ok(committed) => Ok(json!({
-            "ok": true,
-            "blobId": committed["blobId"],
-            "suggestedName": suggested_name,
-            "size": size,
-            "mimeType": mime_type,
-            "sha256": committed["sha256"],
-        })),
-        Err(err) => {
-            staging.discard();
-            Err(blob_failure(err))
-        }
+    let requested_name = opt_str(params, "filename").filter(|name| !name.is_empty());
+    let ExportFile { content, suggested_name } = match render(ws_id) {
+        Ok(file) => file,
+        Err(error) => return failure(error),
+    };
+    match publish_artifact_checked(&content, requested_name.unwrap_or(suggested_name), "application/json", Some(ws_id)) {
+        Ok(artifact) => artifact,
+        Err(err) => failure(describe_blob_error(&err)),
     }
 }
 
 /// The uploaded blob as text, with the filename the client gave it.
 fn read_source(blob_id: &str, ws_id: &str, filename: &str) -> std::result::Result<ImportSource, String> {
     let bytes = read_blob_bytes(blob_id, Some(ws_id)).map_err(|e| describe_blob_error(&e))?;
-    Ok(ImportSource { content: String::from_utf8_lossy(&bytes).into_owned(), filename: filename.to_string() })
+    Ok(ImportSource { content: String::from_utf8_lossy(&bytes).into_owned(), filename: filename.to_string(), bytes })
 }
 
 fn import_preflight(params: &Value) -> Value {
@@ -184,7 +103,7 @@ async fn import_commit(params: &Value) -> Value {
 
 pub fn register(registry: &mut CommandRegistry) {
     registry.register_sync("export.formats", |_, _| Ok(all_formats()));
-    registry.register("export.create", |params, _| async move { Result::Ok(export_create(&params).await) });
+    registry.register_sync("export.create", |params, _| Ok(export_create(&params)));
     registry.register_sync("import.preflight", |params, _| Ok(import_preflight(&params)));
     registry.register("import.commit", |params, _| async move { Result::Ok(import_commit(&params).await) });
 }
@@ -245,7 +164,7 @@ mod tests {
         let ws = root.ws_id;
         let (registry, ctx) = engine();
         let formats = registry.invoke("export.formats", json!({}), ctx.clone()).await.unwrap();
-        assert_eq!(formats["mocks"][1]["id"], "mocks-json");
+        assert_eq!(formats["mocks"][0]["id"], "mocks-json");
 
         let mock = json!({ "id": "m1", "name": "M", "method": "GET", "urlPattern": "/x", "useRegex": false,
             "enabled": true, "responseStatus": 200, "responseHeaders": {}, "responseBody": "ok", "createdAt": 1,
@@ -317,29 +236,96 @@ mod tests {
         assert!(missing["error"].as_str().unwrap().starts_with("blob-"), "{missing}");
     }
 
+    /// Imports every file of the directory `BIFURC_IMPORT_SAMPLES` names through the commands, and prints what
+    /// each became. A file's format is the start of its name: `postman-…`, `insomnia-…`, `openapi-…`,
+    /// `swagger…`, `har-…`, `curl-…`. Run with `cargo test --lib real_exports -- --ignored --nocapture`.
     #[tokio::test]
-    async fn the_zip_export_is_a_staged_blob() {
+    #[ignore = "needs a directory of real exports"]
+    async fn real_exports_of_other_tools_import() {
+        let Ok(dir) = std::env::var("BIFURC_IMPORT_SAMPLES") else { return };
+        let mut files: Vec<_> = std::fs::read_dir(dir).unwrap().flatten().map(|entry| entry.path()).collect();
+        files.sort();
+        let mut failed = Vec::new();
+        for file in files {
+            let name = file.file_name().unwrap().to_string_lossy().into_owned();
+            let (kind, format) = match name.split(['-', '.']).next().unwrap_or("") {
+                "postman" if name.contains("env") => ("environments", "environments-postman"),
+                "postman" => ("requests", "requests-postman"),
+                "insomnia" => ("requests", "requests-insomnia"),
+                "openapi" | "swagger" | "swagger2" => ("requests", "requests-openapi"),
+                "har" => ("requests", "requests-har"),
+                "curl" => ("requests", "requests-curl"),
+                "wiremock" => ("mocks", "mocks-wiremock"),
+                _ => continue,
+            };
+            let root = scratch_data_root();
+            let ws = root.ws_id;
+            let (registry, ctx) = engine();
+            let bytes = std::fs::read(&file).unwrap();
+            let staged = put_blob(&name, "application/octet-stream", bytes.len() as i64, &STANDARD.encode(&bytes), now_ms(), Some(ws)).unwrap();
+            let payload = json!({ "kind": kind, "format": format, "workspaceId": ws, "blobId": staged["blobId"] });
+            let pre = registry.invoke("import.preflight", payload.clone(), ctx.clone()).await.unwrap();
+            let done = registry.invoke("import.commit", payload, ctx.clone()).await.unwrap();
+            let mut counts = Vec::new();
+            for (store_kind, ty) in crate::workspace::tree::Scope::Requests.types() {
+                let stored = read_all_entities(ws, store_kind);
+                if !stored.is_empty() {
+                    counts.push(format!("{ty}={}", stored.len()));
+                }
+                for request in &stored {
+                    if str_of(request, "name").is_empty() {
+                        failed.push(format!("{name}: a {ty} request without a name: {request}"));
+                    }
+                }
+                if std::env::var("BIFURC_IMPORT_DUMP").is_ok_and(|wanted| name.contains(&wanted)) {
+                    println!("{}", serde_json::to_string_pretty(&stored).unwrap());
+                }
+            }
+            let folders = crate::workspace::tree::folders(ws, crate::workspace::tree::Scope::Requests).len();
+            let variables = crate::workspace::fs::read_entity(ws, "environments", "__global__")
+                .map_or(0, |global| crate::utils::json::array_of(&global, "variables").len());
+            println!("{name}: preflight={} done={done} [{}] folders={folders} variables={variables}", pre["itemCount"], counts.join(" "));
+            if pre["ok"] != true || done["ok"] != true || pre["itemCount"] != done["imported"] {
+                failed.push(format!("{name}: preflight {pre}, commit {done}"));
+            }
+        }
+        assert!(failed.is_empty(), "{}", failed.join("\n"));
+    }
+
+    #[tokio::test]
+    async fn a_format_of_another_tool_is_imported_but_not_exported() {
         let root = scratch_data_root();
         let ws = root.ws_id;
         let (registry, ctx) = engine();
-        let out = registry
-            .invoke("export.create", json!({ "kind": "workspace", "format": "workspace-zip", "workspaceId": ws }), ctx)
+        for (kind, format) in [("requests", "requests-postman"), ("workspace", "workspace-zip"), ("mocks", "mocks-wiremock")] {
+            let out = registry
+                .invoke("export.create", json!({ "kind": kind, "format": format, "workspaceId": ws }), ctx.clone())
+                .await
+                .unwrap();
+            assert_eq!(out["ok"], false, "{format}: {out}");
+            assert!(out["error"].as_str().unwrap().contains("An export is Bifurc JSON"), "{out}");
+        }
+
+        // A Postman collection goes in as requests of their types, and comes out as Bifurc JSON.
+        let collection = json!({ "info": { "name": "C", "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json" },
+            "item": [{ "name": "Ping", "request": { "method": "GET", "url": "http://h/ping" } },
+                { "name": "Feed", "request": { "method": "GET", "url": "ws://h/feed" } }] })
+        .to_string();
+        let blob = upload(ws, "c.json", &collection);
+        let payload = json!({ "kind": "requests", "format": "requests-postman", "workspaceId": ws, "blobId": blob });
+        let pre = registry.invoke("import.preflight", payload.clone(), ctx.clone()).await.unwrap();
+        assert_eq!(pre, json!({ "ok": true, "itemCount": 2, "collisionIds": [] }));
+        let done = registry.invoke("import.commit", payload, ctx.clone()).await.unwrap();
+        assert_eq!(done, json!({ "ok": true, "imported": 2 }));
+
+        let artifact = registry
+            .invoke("export.create", json!({ "kind": "requests", "format": "requests-json", "workspaceId": ws }), ctx)
             .await
             .unwrap();
-        assert_eq!(out["ok"], true, "{out}");
-        assert_eq!(out["suggestedName"], "workspace-export.zip");
-        assert_eq!(out["mimeType"], "application/zip");
-        assert!(out["size"].as_u64().unwrap() > 0);
-        let bytes = read_blob_bytes(out["blobId"].as_str().unwrap(), Some(ws)).unwrap();
-        assert_eq!(&bytes[..2], b"PK");
-        assert_eq!(out["sha256"], crate::workspace::blob::sha256_of(&bytes));
-    }
-
-    #[test]
-    fn default_names_are_kebab_cased() {
-        let entry = get_entry("proxyRules", "proxyrules-json").unwrap();
-        assert_eq!(default_name_for("proxyRules", entry), "proxy-rules-export.json");
-        assert_eq!(mime_type_for(get_entry("requests", "requests-curl").unwrap()), "text/plain");
-        assert_eq!(mime_type_for(get_entry("requests", "requests-har").unwrap()), "application/json");
+        assert_eq!(artifact["suggestedName"], "requests-export.json");
+        let exported = String::from_utf8(STANDARD.decode(artifact["inline"].as_str().unwrap()).unwrap()).unwrap();
+        let file: Value = serde_json::from_str(&exported).unwrap();
+        let types: Vec<&str> = file["requests"].as_array().unwrap().iter().map(|r| str_of(r, "type")).collect();
+        assert_eq!(types, ["rest", "websocket"]);
     }
 }
