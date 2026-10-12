@@ -20,7 +20,7 @@ use crate::{
 /// `entity.changed` is only sent when a REST request or mock is *created*; an update, a delete, or any other
 /// kind of entity is announced by `sync.entityStatus` alone (the engine sends it after every entity
 /// write). Both therefore mean "re-read the workspace".
-const EVENTS: [&str; 26] = [
+const EVENTS: [&str; 27] = [
     "event.flow.progress",
     "event.flow.finished",
     "event.account.changed",
@@ -31,6 +31,7 @@ const EVENTS: [&str; 26] = [
     "event.entity.changed",
     "event.sync.entityStatus",
     "event.vault.changed",
+    "event.cookies.changed",
     "event.sync.status",
     "event.settings.changed",
     "event.server.error",
@@ -183,6 +184,8 @@ pub enum ModelEvent {
     AccountChanged(Value),
     /// `event.companions.changed`: a browser extension connected or disconnected.
     CompanionsChanged,
+    /// `event.cookies.changed`: a response set or removed cookies, or the jar was cleared or reconfigured.
+    CookiesChanged,
     /// The engine was stopped and started again: anything that lived only in the old one is gone.
     EngineRestarted,
     /// A short message for the user: a failed command, a lost connection.
@@ -425,6 +428,7 @@ impl AppModel {
                     cx.emit(ModelEvent::AccountChanged(event.payload));
                 }
                 "event.companions.changed" => cx.emit(ModelEvent::CompanionsChanged),
+                "event.cookies.changed" => cx.emit(ModelEvent::CookiesChanged),
                 "event.update.changed" => {
                     self.update = UpdateStatus::from_value(&event.payload);
                     cx.notify();

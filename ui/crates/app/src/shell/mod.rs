@@ -200,6 +200,7 @@ impl Shell {
             | ModelEvent::SyncStatus
             | ModelEvent::AccountChanged(_)
             | ModelEvent::CompanionsChanged
+            | ModelEvent::CookiesChanged
             | ModelEvent::EngineRestarted
             | ModelEvent::EntityReverted(_) => {}
         }
