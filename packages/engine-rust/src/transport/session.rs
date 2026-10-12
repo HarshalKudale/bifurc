@@ -297,11 +297,11 @@ impl Session {
         tokio::spawn(async move {
             let registry = session.inner.opts.registry.clone();
             let client = ctx.session.as_ref().and_then(|s| s.client_name.clone());
-            let described = crate::analytics::describe(&action, &payload);
+            let command = crate::analytics::describe(&action, &payload);
             let result = registry.invoke(&action, payload, ctx).await;
             if let Some(client) = client.filter(|_| registry.is_registered(&action)) {
                 let outcome = result.as_ref().map_err(|error| error.code.as_str());
-                crate::analytics::record_command(described, &action, &client, outcome);
+                crate::analytics::record_command(command, &action, &client, outcome);
             }
             let reply = match result {
                 Ok(data) => success(&id, data),

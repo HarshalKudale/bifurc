@@ -54,6 +54,7 @@ pub(super) fn singular_kind(kind: &str) -> String {
         "mappings" => "mapping",
         "rules" => "rule",
         "environments" => "environment",
+        "flows" => "flow",
         other => other,
     }
     .to_string()

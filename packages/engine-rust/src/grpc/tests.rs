@@ -114,7 +114,7 @@ impl tower_service::Service<http::Request<Body>> for Echo {
 }
 
 /// Serves the echo service, with reflection when asked, and returns its `host:port`.
-async fn serve(with_reflection: bool) -> String {
+pub(crate) async fn serve(with_reflection: bool) -> String {
     let pool = proto::compile("echo.proto", vec![("echo.proto".into(), ECHO_PROTO.into())]).unwrap();
     let incoming = TcpIncoming::bind("127.0.0.1:0".parse().unwrap()).unwrap();
     let address = incoming.local_addr().unwrap().to_string();

@@ -27,6 +27,8 @@ pub enum Place {
     Operand,
     /// `--<option> <value>`.
     Option(&'static str),
+    /// `--<option> <value>`, and `--<option> <default>` when the argument is left out.
+    OptionOr(&'static str, &'static str),
     /// `--<on>` when true; when false `--<off>`, or nothing when the command has no such switch.
     Switch(&'static str, Option<&'static str>),
     /// An object of names to values: `--<option> "<name><separator><value>"` for each.
@@ -674,6 +676,55 @@ pub fn catalog() -> Vec<Tool> {
             scoped: true,
             params: vec![operand("check", "The id or name of the check to run. Default: all of them.")],
         },
+        // -- Flows --------------------------------------------------------------------------------------------
+        Row {
+            name: "flows_list",
+            words: &["flows", "list"],
+            summary: "List the saved flows: chains of requests, each node's output feeding the next.",
+            details: "Flows are made in the desktop app.",
+            effect: Effect::Reads,
+            upfront: true,
+            scoped: true,
+            params: vec![],
+        },
+        Row {
+            name: "flows_show",
+            words: &["flows", "show"],
+            summary: "Show a flow: its inputs, its nodes with the request each runs, and what is wrong with it.",
+            details: "",
+            effect: Effect::Reads,
+            upfront: false,
+            scoped: true,
+            params: vec![operand("flow", "The flow's id or name.").required()],
+        },
+        Row {
+            name: "flows_run",
+            words: &["flows", "run"],
+            summary: "Run a flow and return how each node did, the tests that failed and the run's status.",
+            details: "The result is an error when the run fails or a test does. A run is stopped after `timeout` \
+                seconds (default 120).",
+            effect: Effect::Runs,
+            upfront: true,
+            scoped: true,
+            params: vec![
+                operand("flow", "The flow's id or name.").required(),
+                Param {
+                    name: "inputs",
+                    about: "Values for the inputs the flow declares, by name.",
+                    ty: Type::TextMap,
+                    place: Place::Pairs("input", "="),
+                    required: false,
+                },
+                Param {
+                    name: "timeout",
+                    about: "Seconds before the run is stopped. Default 120; 0 is no limit.",
+                    ty: Type::Number,
+                    place: Place::OptionOr("timeout", "120"),
+                    required: false,
+                },
+                typed("max_events", "max-events", Type::Integer, "Stop after this many messages of a stream node."),
+            ],
+        },
         // -- Workspaces ---------------------------------------------------------------------------------------
         Row {
             name: "workspaces_list",
@@ -834,7 +885,8 @@ mod tests {
             assert!(
                 !["delete", "remove", "rm", "unset", "logout", "login", "stop", "restart", "call", "run"]
                     .contains(&verb)
-                    || tool.name == "health_run",
+                    || tool.name == "health_run"
+                    || tool.name == "flows_run",
                 "{}",
                 tool.name
             );
@@ -876,6 +928,8 @@ mod tests {
                 "mocks_create",
                 "mappings_list",
                 "mappings_create",
+                "flows_list",
+                "flows_run",
                 "services_list",
             ]
         );

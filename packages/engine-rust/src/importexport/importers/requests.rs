@@ -561,7 +561,20 @@ mod tests {
         let keys: Vec<_> = inside.as_object().unwrap().keys().collect();
         assert_eq!(
             keys,
-            ["type", "id", "name", "method", "url", "headers", "body", "postScript", "createdAt", "workspaceId", "folderId"]
+            [
+                "type",
+                "engineVersion",
+                "id",
+                "name",
+                "method",
+                "url",
+                "headers",
+                "body",
+                "postScript",
+                "createdAt",
+                "workspaceId",
+                "folderId"
+            ]
         );
         let top = all.iter().find(|r| r["name"] == "Top").unwrap();
         assert_eq!(top["folderId"], default_folder_id(&ws));
