@@ -213,10 +213,13 @@ pub fn log_row(
                 .text_color(theme.muted_foreground);
             this.child(div().size_4().flex_none().child(arrow))
         })
-        .child(div().w_20().flex_none().child(if row.outline {
-            Tag::secondary().small().outline().child(row.tag.clone())
-        } else {
-            Tag::secondary().small().child(row.tag.clone())
+        .child(div().min_w_20().max_w_64().flex_none().child({
+            let name = div().min_w_0().truncate().child(row.tag.clone());
+            if row.outline {
+                Tag::secondary().small().outline().child(name)
+            } else {
+                Tag::secondary().small().child(name)
+            }
         }))
         .child(div().w_20().flex_none().text_xs().text_color(theme.muted_foreground).child(clock_utc(row.ts)))
         .child(
