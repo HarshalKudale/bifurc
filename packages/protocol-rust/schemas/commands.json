@@ -352,6 +352,7 @@
     "kind": {
      "type": "string",
      "enum": [
+      "flow",
       "mock",
       "request",
       "rule"
@@ -382,6 +383,7 @@
     "kind": {
      "type": "string",
      "enum": [
+      "flow",
       "mock",
       "request",
       "rule"
@@ -406,6 +408,7 @@
     "kind": {
      "type": "string",
      "enum": [
+      "flow",
       "mock",
       "request",
       "rule"
@@ -433,6 +436,7 @@
     "kind": {
      "type": "string",
      "enum": [
+      "flow",
       "mock",
       "request",
       "rule"
@@ -456,6 +460,7 @@
     "kind": {
      "type": "string",
      "enum": [
+      "flow",
       "mock",
       "request",
       "rule"
@@ -479,6 +484,7 @@
     "kind": {
      "type": "string",
      "enum": [
+      "flow",
       "mock",
       "request",
       "rule"

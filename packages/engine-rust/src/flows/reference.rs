@@ -88,6 +88,21 @@ pub fn lookup(path: &str, scope: &Scope) -> Option<Value> {
     steps.try_fold(root, |value, segment| step(value, &segment)).map(Cow::into_owned)
 }
 
+/// The part of `value` a wire takes: `path` is the keys and indexes that lead to it, and an empty one is all
+/// of it. Text that holds JSON is read on the way down, as [`lookup`] does.
+pub fn pick(value: &Value, path: &[Value]) -> Option<Value> {
+    let mut at = Cow::Borrowed(value);
+    for part in path {
+        let segment = match part {
+            Value::String(key) => Segment::Key(key),
+            Value::Number(index) => Segment::Index(index.as_u64()? as usize),
+            _ => return None,
+        };
+        at = step(at, &segment)?;
+    }
+    Some(at.into_owned())
+}
+
 fn pattern() -> Regex {
     Regex::new(r"\{\{\s*((?:input|nodes|flow)(?:\.[\w-]+|\[\d+\])*)\s*\}\}").expect("a valid pattern")
 }
@@ -150,6 +165,10 @@ mod tests {
         assert_eq!(lookup("nodes.login.body.token", &scope), Some(json!("t-1")));
         assert_eq!(lookup("flow.user", &scope), Some(json!("42")));
         assert_eq!(lookup("input", &scope), Some(input.clone()));
+        assert_eq!(pick(&input, &[json!("body"), json!("items"), json!(1), json!("id")]), Some(json!("b")));
+        assert_eq!(pick(&input, &[]), Some(input.clone()));
+        assert_eq!(pick(&input, &[json!("body"), json!("items"), json!(2)]), None);
+        assert_eq!(pick(&json!({ "a.b": 1 }), &[json!("a.b")]), Some(json!(1)), "a key is taken whole");
         for missing in
             ["input.body.items[2]", "input.nope", "nodes.other.body", "env.host", "input..x", "input.body[x]"]
         {
