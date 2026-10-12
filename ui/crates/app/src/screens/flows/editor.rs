@@ -20,12 +20,14 @@ use gpui_kit::component::{
     input::{Input, InputEvent, InputState},
     menu::{DropdownMenu as _, PopupMenuItem},
     searchable_list::{SearchableGroup, SearchableListItem, SearchableVec},
+    select::{Select, SelectEvent, SelectState},
     switch::Switch,
     v_flex,
 };
 use gpui_kit::{
-    AnyElement, App, AppContext as _, Context, ElementId, Entity, EventEmitter, IntoElement, ParentElement as _,
-    Render, SharedString, Styled as _, Subscription, Window, div, px, rems,
+    AnyElement, App, AppContext as _, Context, ElementId, Entity, EventEmitter, InteractiveElement as _, IntoElement,
+    ParentElement as _, Render, SharedString, StatefulInteractiveElement as _, Styled as _, Subscription, Window, div,
+    rems,
 };
 use serde_json::{Value, json};
 
@@ -38,7 +40,7 @@ use crate::{
         ConfigSnapshot, RequestKind,
         config::RequestStub,
         flow::{Branch, FlowNode, NodeKind, Pair, Rule},
-        mcp::{McpArgument, McpItem, McpView},
+        mcp::{ArgumentInput, McpArgument, McpItem, McpView},
         socket::SocketState,
         tree::folder_choices,
     },
@@ -135,6 +137,26 @@ impl SearchableListItem for RequestItem {
 }
 
 type RequestList = SearchableVec<SearchableGroup<RequestItem>>;
+
+/// What the server of an MCP node declares, by name alone: what one does is said under the one chosen.
+type ToolList = SearchableVec<SharedString>;
+
+/// How an argument of an MCP node is given: typed, or chosen from the values the server limits it to.
+enum ArgumentField {
+    Text(Entity<InputState>),
+    Choice { state: Entity<SelectState<Vec<String>>>, required: bool },
+}
+
+/// The values an argument is chosen from, when it is one that is chosen: those its schema limits it to, or
+/// true and false. What is held and is not one of them (a `{{reference}}`) stays typed, so it is not lost.
+fn argument_choices(argument: &McpArgument, held: &str) -> Option<Vec<String>> {
+    let choices = match argument.input() {
+        ArgumentInput::Choice => argument.choices.clone(),
+        ArgumentInput::Flag => vec!["true".to_owned(), "false".to_owned()],
+        ArgumentInput::Json | ArgumentInput::Text => return None,
+    };
+    (held.is_empty() || choices.iter().any(|choice| choice == held)).then_some(choices)
+}
 
 /// The saved requests a node of `kind` can run, under the folder each is kept in: the folders in the order
 /// of their paths, the requests of a folder by name.
@@ -328,9 +350,13 @@ pub struct NodeEditor {
     /// The saved requests the node can run, and the list as it was last handed to the picker.
     requests: Entity<ComboboxState<RequestList>>,
     listed: Vec<(String, Vec<RequestItem>)>,
+    /// What the node's server declares of the kind the node calls, and the names as they were last handed to
+    /// the picker.
+    tools: Entity<ComboboxState<ToolList>>,
+    tools_listed: Vec<SharedString>,
     /// The field of each argument of an MCP node, by the argument's name. The canvas draws each in the row
     /// of the input it is.
-    arguments: Vec<(String, Entity<InputState>)>,
+    arguments: Vec<(String, ArgumentField)>,
     /// What the MCP server of the node declares, and the saved request it was asked of.
     mcp: McpView,
     mcp_of: String,
@@ -371,6 +397,7 @@ impl NodeEditor {
             Number::ALL.iter().map(|number| (*number, field("0", window, cx))).collect();
         let requests =
             cx.new(|cx| ComboboxState::new(RequestList::new(Vec::new()), vec![], window, cx).searchable(true));
+        let tools = cx.new(|cx| ComboboxState::new(ToolList::new(Vec::new()), vec![], window, cx).searchable(true));
         let variables = cx.new(|cx| KeyValueTable::new("Variable", "Value", window, cx));
         let inputs = cx.new(|cx| KeyValueTable::new("Input", "Default value", window, cx));
 
@@ -399,6 +426,14 @@ impl NodeEditor {
                 }
             },
         ));
+        subscriptions.push(cx.subscribe_in(&tools, window, |this, _, event: &ComboboxEvent<ToolList>, window, cx| {
+            if let ComboboxEvent::Change(chosen) = event
+                && let Some(name) = chosen.first()
+                && this.node.as_ref().is_some_and(|node| node.target != name.as_ref())
+            {
+                this.call_item(name.to_string(), window, cx);
+            }
+        }));
         subscriptions.push(cx.subscribe_in(&model, window, |this, _, event: &ModelEvent, window, cx| {
             if let ModelEvent::McpStatus(payload) = event
                 && !this.mcp_of.is_empty()
@@ -430,6 +465,8 @@ impl NodeEditor {
             numbers,
             requests,
             listed: Vec::new(),
+            tools,
+            tools_listed: Vec::new(),
             arguments: Vec::new(),
             mcp: McpView::default(),
             mcp_of: String::new(),
@@ -454,11 +491,21 @@ impl NodeEditor {
         &self.name
     }
 
-    /// The field the value of an input of the selected node is typed in, for the inputs that have one: the
-    /// arguments of an MCP node.
-    pub fn input_field(&self, input_id: &str) -> Option<&Entity<InputState>> {
+    /// What the value of an input of the selected node is given in, for the inputs that have one: the
+    /// arguments of an MCP node. One the server limits to certain values is chosen from them.
+    pub fn input_control(&self, input_id: &str) -> Option<AnyElement> {
         let name = input_id.strip_prefix("arg:")?;
-        self.arguments.iter().find(|(known, _)| known == name).map(|(_, field)| field)
+        let (_, field) = self.arguments.iter().find(|(known, _)| known == name)?;
+        Some(match field {
+            ArgumentField::Text(field) => Input::new(field).xsmall().into_any_element(),
+            ArgumentField::Choice { state, required } => Select::new(state)
+                .xsmall()
+                .w_full()
+                .placeholder(if *required { "Choose one" } else { "Not set" })
+                // An argument that need not be sent can be put back to nothing chosen.
+                .cleanable(!required)
+                .into_any_element(),
+        })
     }
 
     /// Show `node` in the controls, as the flow has it. `inputs` are the flow's, which the start node edits.
@@ -498,7 +545,25 @@ impl NodeEditor {
             self.list_requests(true, window, cx);
         }
         self.attach_mcp(window, cx);
+        self.list_tools(true, window, cx);
         cx.notify();
+    }
+
+    /// Hand the picker what the node's server declares of the kind the node calls, with what the node calls
+    /// chosen. Unless `anew`, a list that did not change is left alone, as a search may be typed in it.
+    fn list_tools(&mut self, anew: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(node) = self.node.as_ref().filter(|node| node.kind == NodeKind::Mcp) else { return };
+        let names: Vec<SharedString> = self.mcp_items(&node.call).iter().map(|item| item.name.clone().into()).collect();
+        let chosen = self.tools.read(cx).selected_value().unwrap_or_default();
+        if !anew && names == self.tools_listed && chosen.as_ref() == node.target {
+            return;
+        }
+        let target = [SharedString::from(node.target.clone())];
+        self.tools_listed = names.clone();
+        self.tools.update(cx, |picker, cx| {
+            picker.set_items(ToolList::new(names), window, cx);
+            picker.set_selected_values(&target, window, cx);
+        });
     }
 
     /// What the node's server declares of the kind the node calls.
@@ -554,6 +619,7 @@ impl NodeEditor {
     /// The server said what it declares: the node takes the arguments of what it calls.
     fn declared(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         cx.notify();
+        self.list_tools(false, window, cx);
         let Some(node) = self.node.as_ref().filter(|node| node.kind == NodeKind::Mcp) else { return };
         let Some(item) = self.mcp_items(&node.call).iter().find(|item| item.name == node.target) else { return };
         let arguments = arguments_for(item, &node.arguments);
@@ -582,6 +648,7 @@ impl NodeEditor {
         let arguments = item.map(|item| arguments_for(item, &node.arguments)).unwrap_or_default();
         self.target.update(cx, |state, cx| state.set_value(name, window, cx));
         self.take_arguments(arguments, window, cx);
+        self.list_tools(false, window, cx);
     }
 
     /// Fresh fields for the arguments of the node, each saying what the server takes for it.
@@ -594,6 +661,18 @@ impl NodeEditor {
         let mut fields = Vec::new();
         for pair in held {
             let argument = item.as_ref().and_then(|item| item.arguments.iter().find(|a| a.name == pair.name));
+            if let Some(choices) = argument.and_then(|argument| argument_choices(argument, &pair.value)) {
+                let state = cx.new(|cx| SelectState::new(choices, None, window, cx));
+                if !pair.value.is_empty() {
+                    state.update(cx, |state, cx| state.set_selected_value(&pair.value, window, cx));
+                }
+                subscriptions.push(cx.subscribe(&state, |this: &mut Self, _, _: &SelectEvent<Vec<String>>, cx| {
+                    this.changed(cx)
+                }));
+                let required = argument.is_some_and(|argument| argument.required);
+                fields.push((pair.name, ArgumentField::Choice { state, required }));
+                continue;
+            }
             let hint = argument.map(argument_hint).filter(|hint| !hint.is_empty()).unwrap_or_else(|| "value".to_owned());
             let field = cx.new(|cx| InputState::new(window, cx).placeholder(hint).default_value(pair.value));
             subscriptions.push(cx.subscribe(&field, |this: &mut Self, _, event: &InputEvent, cx| {
@@ -601,7 +680,7 @@ impl NodeEditor {
                     this.changed(cx);
                 }
             }));
-            fields.push((pair.name, field));
+            fields.push((pair.name, ArgumentField::Text(field)));
         }
         self.arguments = fields;
         self._argument_subscriptions = subscriptions;
@@ -687,12 +766,16 @@ impl NodeEditor {
         match node.kind {
             NodeKind::Mcp => {
                 for pair in &mut node.arguments {
-                    if let Some((_, field)) = self.arguments.iter().find(|(name, _)| *name == pair.name) {
-                        pair.value = read(field);
-                    }
+                    pair.value = match self.arguments.iter().find(|(name, _)| *name == pair.name) {
+                        Some((_, ArgumentField::Text(field))) => read(field),
+                        Some((_, ArgumentField::Choice { state, .. })) => {
+                            state.read(cx).selected_value().cloned().unwrap_or_default()
+                        }
+                        None => continue,
+                    };
                 }
             }
-            NodeKind::Evaluate => node.variables = to_pairs(self.variables.read(cx).pairs(cx)),
+            NodeKind::Evaluate | NodeKind::If => node.variables = to_pairs(self.variables.read(cx).pairs(cx)),
             NodeKind::Data => node.value = data_value(self.data_type, &read(&self.data), &node.value),
             _ => {}
         }
@@ -755,7 +838,7 @@ impl NodeEditor {
     }
 
     /// What the node calls: chosen from what its server declares, or typed while the server is not reached.
-    fn render_mcp_target(&self, node: &FlowNode, cx: &mut Context<Self>) -> AnyElement {
+    fn render_mcp_target(&self, node: &FlowNode, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let theme = cx.theme().clone();
         let what = match node.call.as_str() {
             "tool" => "tool",
@@ -764,10 +847,9 @@ impl NodeEditor {
         };
         let note = |text: String| div().text_color(theme.muted_foreground).child(text).into_any_element();
         if node.request_id.is_empty() {
-            return note(format!("Choose the saved MCP request whose server has the {what}."));
+            return vec![note(format!("Choose the saved MCP request whose server has the {what}."))];
         }
-        let items: Vec<(String, String)> =
-            self.mcp_items(&node.call).iter().map(|item| (item.name.clone(), item.summary().to_owned())).collect();
+        let items = self.mcp_items(&node.call);
         if items.is_empty() {
             let state = match (self.mcp.state, &self.mcp.error) {
                 (SocketState::Connected, _) => format!("Its server declares no {what}."),
@@ -775,27 +857,28 @@ impl NodeEditor {
                 (_, Some(error)) => format!("Its server was not reached: {error}"),
                 _ => "Its server is not connected.".to_owned(),
             };
-            return v_flex().gap_1().child(Input::new(&self.target).small()).child(note(state)).into_any_element();
+            return vec![v_flex().gap_1().child(Input::new(&self.target).small()).child(note(state)).into_any_element()];
         }
-        let this = cx.weak_entity();
-        let current = node.target.clone();
-        let label = if current.is_empty() { format!("Choose a {what}") } else { current.clone() };
-        Button::new("flow-mcp-target")
+        // The list is of names alone; what the one chosen does is said under it.
+        let description = items.iter().find(|item| item.name == node.target).map(|item| item.description.trim().to_owned());
+        let picker = Combobox::new(&self.tools)
             .small()
-            .outline()
+            .placeholder(format!("Choose a {what}"))
+            .search_placeholder(format!("Search the {what}s"))
             .w_full()
-            .label(label)
-            .icon(IconName::ChevronDown)
-            .dropdown_menu(move |menu, _, _| {
-                items.iter().fold(menu.max_h(px(320.0)).scrollable(true), |menu, (name, summary)| {
-                    let (this, chosen) = (this.clone(), name.clone());
-                    let label = if summary.is_empty() { name.clone() } else { format!("{name} · {summary}") };
-                    menu.item(PopupMenuItem::new(label).checked(*name == current).on_click(move |_, window, cx| {
-                        this.update(cx, |this, cx| this.call_item(chosen.clone(), window, cx)).ok();
-                    }))
-                })
-            })
-            .into_any_element()
+            .into_any_element();
+        let described = description.filter(|text| !text.is_empty()).map(|text| {
+            div()
+                .id("flow-mcp-description")
+                // Not to be shrunk: the pickers ask for all the height there is, and what can scroll gives way.
+                .flex_none()
+                .max_h(rems(6.0))
+                .overflow_y_scroll()
+                .text_color(theme.muted_foreground)
+                .child(text)
+                .into_any_element()
+        });
+        [picker].into_iter().chain(described).collect()
     }
 
     fn render_numbers(&self, numbers: &[Number], cx: &Context<Self>) -> AnyElement {
@@ -850,7 +933,7 @@ impl NodeEditor {
                 .text_color(theme.muted_foreground)
                 .child("Run the flow once, or put a Sample response node before this one, to choose from what it is handed.")
                 .into_any_element(),
-            false => json_tree("choose", &self.handed, &self.open, toggle, Some(pick), cx),
+            false => json_tree("choose", &self.handed, &self.open, toggle, Some(pick), cx).into_any_element(),
         };
         v_flex()
             .rounded(theme.radius)
@@ -1147,7 +1230,7 @@ impl Render for NodeEditor {
                         this.call_item(String::new(), window, cx);
                     }
                 }));
-                sections.push(self.render_mcp_target(&node, cx));
+                sections.extend(self.render_mcp_target(&node, cx));
                 sections.push(self.render_numbers(&[Number::Retries, Number::RetryDelay], cx));
             }
             NodeKind::Condition => sections.push(self.render_branches(&node, cx)),
@@ -1155,9 +1238,12 @@ impl Render for NodeEditor {
                 sections.push(Self::label("Every check must hold", cx));
                 sections.extend(self.render_rules(None, &node.rules, cx));
             }
-            NodeKind::Evaluate => {
+            NodeKind::Evaluate | NodeKind::If => {
                 sections.push(Self::labelled(
-                    "JavaScript over input, what the node is handed, and vars",
+                    match node.kind {
+                        NodeKind::If => "JavaScript over input and vars: what holds leaves by True, anything else by False",
+                        _ => "JavaScript over input, what the node is handed, and vars",
+                    },
                     Input::new(&self.expression).small(),
                     cx,
                 ));
@@ -1281,6 +1367,22 @@ mod tests {
         assert_eq!(arguments_for(echo, &[pair("count", "3"), pair("gone", "x")]), [pair("message", ""), pair("count", "3")]);
         let hints: Vec<String> = echo.arguments.iter().map(argument_hint).collect();
         assert_eq!(hints, ["string, required", "integer, default 1"]);
+    }
+
+    #[test]
+    fn an_argument_the_server_limits_is_chosen_unless_what_is_held_is_not_a_choice() {
+        let mut view = McpView::default();
+        view.apply_status_event(&json!({ "status": "connected", "tools": [{ "name": "list", "inputSchema": {
+            "properties": {
+                "type": { "type": "string", "enum": ["rest", "grpc"] },
+                "all": { "type": "boolean" },
+                "name": { "type": "string" } } } }] }));
+        let tool = &view.tools[0];
+        let of = |name: &str, held: &str| argument_choices(tool.arguments.iter().find(|a| a.name == name).unwrap(), held);
+        let choices = |values: &[&str]| Some(values.iter().map(|value| value.to_string()).collect::<Vec<_>>());
+        assert_eq!((of("type", ""), of("type", "grpc")), (choices(&["rest", "grpc"]), choices(&["rest", "grpc"])));
+        assert_eq!(of("type", "{{input.kind}}"), None, "a reference stays typed");
+        assert_eq!((of("all", "true"), of("name", "")), (choices(&["true", "false"]), None));
     }
 
     #[test]
