@@ -294,7 +294,7 @@ pub fn register(registry: &mut CommandRegistry) {
         )
         .await;
         if succeeded(&result) && bool_of(&params, "syncAll", false) {
-            let synced = sync_workspace(ws_id).await;
+            let synced = sync_workspace(ws_id, None).await;
             if !succeeded(&synced) {
                 result["ok"] = json!(false);
                 result["error"] = json!(format!(
