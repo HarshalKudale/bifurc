@@ -325,7 +325,7 @@ pub fn workspace_for_repo(repo: &str) -> Option<String> {
 }
 
 /// A workspace id is a directory name; one read from a repository is not trusted to be a plain one.
-fn is_plain_id(id: &str) -> bool {
+pub(super) fn is_plain_id(id: &str) -> bool {
     !id.is_empty() && id.len() <= 64 && id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_')
 }
 
@@ -516,8 +516,8 @@ async fn import(account_id: &str, repo_name: &str) -> Result<Value, Refusal> {
     .map_err(|e| format!("Couldn't clone {}: {e}", repo.full_name))?;
 
     // What landed is what counts: it has to be the workspace the repository said it was.
-    let cloned = read_json(&temp.0.join(WORKSPACE_FILE)).as_ref().and_then(workspace_identity);
-    let Some((_, name)) = cloned.filter(|(cloned_id, _)| *cloned_id == id) else {
+    let info = read_json(&temp.0.join(WORKSPACE_FILE));
+    let Some((_, name)) = info.as_ref().and_then(workspace_identity).filter(|(cloned_id, _)| *cloned_id == id) else {
         return Err(not_a_workspace().into());
     };
     let name = if name.is_empty() { repo.name.clone() } else { name };
@@ -530,14 +530,19 @@ async fn import(account_id: &str, repo_name: &str) -> Result<Value, Refusal> {
     std::fs::rename(&temp.0, &dir).map_err(|e| format!("Couldn't move the workspace into place: {e}"))?;
     init_workspace_dir(&id, &name).map_err(|e| e.to_string())?;
 
-    let workspace = json!({
+    let mut workspace = json!({
         "id": id, "name": name, "activeEnvironmentId": null, "accountId": account.id,
         "syncConfig": sync_config_for(&repo, access),
         "syncMeta": sync_meta_value(None, Some(now_ms()), None),
     });
+    // Whose it is comes with the workspace, so it is known even when the console cannot be asked.
+    if let Some(organization) = info.as_ref().and_then(|info| organization::declared(info, &account)) {
+        workspace["organization"] = organization;
+    }
     settings.workspaces_mut().push(workspace.clone());
     settings.set("activeWorkspaceId", json!(id));
     save_settings(&settings).map_err(|e| e.to_string())?;
+    crate::analytics::policies_changed();
     apply_commit_identity(&id).await.map_err(|e| e.to_string())?;
     // Whose it is is known before anything is done in it: an organization's analytics are its own from the start.
     organization::refresh_for(&id, &account, repo.id).await;
