@@ -3587,6 +3587,12 @@
    "required": [],
    "additionalProperties": false
   },
+  "setup.allowLowPorts": {
+   "type": "object",
+   "properties": {},
+   "required": [],
+   "additionalProperties": false
+  },
   "account.login.start": {
    "type": "object",
    "properties": {},
