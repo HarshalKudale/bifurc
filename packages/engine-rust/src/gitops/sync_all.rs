@@ -58,11 +58,12 @@ pub async fn track_untracked_workspaces() -> Vec<String> {
     tracked
 }
 
-/// Commit everything in the workspace that is new or modified, an entity at a time, then push. Returns
+/// Commit everything in the workspace that is new or modified, an entity at a time, then push. A `message`
+/// is the subject of every one of those commits. Returns
 /// `{ ok, initialized, total, synced, pushed, pendingDeletions, failed: [{ path, error }], error? }`.
-pub async fn sync_workspace(ws_id: &str) -> Value {
+pub async fn sync_workspace(ws_id: &str, message: Option<String>) -> Value {
     let _guard = workspace_lock(ws_id).lock_owned().await;
-    let result = match sync_locked(ws_id).await {
+    let result = match sync_locked(ws_id, message).await {
         Ok(result) => result,
         Err(e) => json!({ "ok": false, "error": e.0 }),
     };
@@ -80,7 +81,7 @@ pub async fn sync_workspace(ws_id: &str) -> Value {
     result
 }
 
-async fn sync_locked(ws_id: &str) -> Result<Value, GitError> {
+async fn sync_locked(ws_id: &str, message: Option<String>) -> Result<Value, GitError> {
     if load_settings().workspace(ws_id).is_none() {
         return Err(GitError("No such workspace.".to_string()));
     }
@@ -119,7 +120,7 @@ async fn sync_locked(ws_id: &str) -> Result<Value, GitError> {
     let mut failed = Vec::new();
     for (index, path) in paths.into_iter().enumerate() {
         progress(ws_id, "syncing", format!("Syncing {} of {total}…", index + 1));
-        let opts = PublishOptions { ws_id: ws_id.to_string(), paths: vec![path.clone()], message: None };
+        let opts = PublishOptions { ws_id: ws_id.to_string(), paths: vec![path.clone()], message: message.clone() };
         match commit_paths(&opts).await {
             Ok(result) if result.get("ok") == Some(&Value::Bool(true)) => synced += 1,
             Ok(result) => failed.push(json!({ "path": path, "error": str_of(&result, "error") })),

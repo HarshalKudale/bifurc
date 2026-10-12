@@ -1,5 +1,5 @@
 //! The `sync.*`, `git.*`, `entity.publish`, `folder.publish`, `entity.restore`, `audit.diff` and `history.*`
-//! commands.
+//! commands. A `message` given to a command that commits is the subject of what it commits.
 
 use serde_json::{Map, Value, json};
 
@@ -23,7 +23,7 @@ use crate::{
         config::load_config,
         entity_paths::load_entity_path_maps,
         fs::sanitize_dir_name,
-        git_store::{get_commit_changed_files, get_entity_at_commit, is_repo},
+        git_store::{commit_patch, get_commit_changed_files, get_entity_at_commit, is_repo},
     },
 };
 
@@ -73,7 +73,7 @@ pub fn register(registry: &mut CommandRegistry) {
     // that was plain files becomes a repository first. Progress arrives as `sync.status`.
     registry.register("sync.all", |params, _| async move {
         let ws_id = str_of(&params, "workspaceId");
-        let result = sync_workspace(ws_id).await;
+        let result = sync_workspace(ws_id, opt_str(&params, "message").map(str::to_string)).await;
         if result.get("initialized") == Some(&Value::Bool(true)) {
             notify_config_changed();
         }
@@ -160,7 +160,7 @@ pub fn register(registry: &mut CommandRegistry) {
             }
             None => format!("{kind}/"),
         };
-        let result = sync_changes(ws_id, &[folder_path], None).await;
+        let result = sync_changes(ws_id, &[folder_path], opt_str(&params, "message").map(str::to_string)).await;
         after_publish(ws_id).await;
         Ok(result)
     });
@@ -192,6 +192,14 @@ pub fn register(registry: &mut CommandRegistry) {
             optional_int(&params, "offset"),
         )
         .await)
+    });
+
+    // What a commit changed, as a patch a diff view reads; `filePath` narrows it to that entity's file.
+    registry.register("history.patch", |params, _| async move {
+        let patch =
+            commit_patch(str_of(&params, "workspaceId"), str_of(&params, "commitHash"), opt_str(&params, "filePath"))
+                .await?;
+        Ok(json!({ "patch": patch }))
     });
 
     registry.register("history.diff", |params, _| async move {
