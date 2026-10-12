@@ -83,12 +83,15 @@ pub fn command_line(tool: &Tool, arguments: &Map<String, Value>) -> Result<Vec<S
             if param.required {
                 return Err(format!("{}: missing \"{}\" ({})", tool.name, param.name, param.about));
             }
+            if let Place::OptionOr(option, default) = param.place {
+                line.extend([format!("--{option}"), default.to_string()]);
+            }
             continue;
         };
         checked(tool, param.name, param.ty, value)?;
         match param.place {
             Place::Operand => operands.push(word(value)),
-            Place::Option(option) => line.extend([format!("--{option}"), word(value)]),
+            Place::Option(option) | Place::OptionOr(option, _) => line.extend([format!("--{option}"), word(value)]),
             Place::Switch(on, off) => match (value.as_bool(), off) {
                 (Some(true), _) => line.push(format!("--{on}")),
                 (_, Some(off)) => line.push(format!("--{off}")),
@@ -262,6 +265,15 @@ mod tests {
     }
 
     #[test]
+    fn a_flow_run_is_always_bounded() {
+        assert_eq!(line("flows_run", json!({"flow": "f1"})).unwrap(), ["flows", "run", "--timeout", "120", "--", "f1"]);
+        assert_eq!(
+            line("flows_run", json!({"flow": "f1", "timeout": 0, "inputs": {"a": "b"}})).unwrap(),
+            ["flows", "run", "--input", "a=b", "--timeout", "0", "--", "f1"]
+        );
+    }
+
+    #[test]
     fn a_null_is_an_argument_left_out() {
         assert_eq!(line("health_run", json!({"check": null})).unwrap(), ["health", "run"]);
     }
@@ -401,6 +413,9 @@ mod tests {
             ("health_create", with(json!({"name": "Users", "url": "http://x/health", "auto": true}))),
             ("health_update", with(json!({"check": "h1", "name": "N", "url": "http://y", "auto": false}))),
             ("health_run", with(json!({"check": "h1"}))),
+            ("flows_list", all.clone()),
+            ("flows_show", with(json!({"flow": "f1"}))),
+            ("flows_run", with(json!({"flow": "f1", "inputs": {"user": "bob"}, "timeout": 30, "max_events": 5}))),
             ("workspaces_list", json!({"json": true})),
             ("workspaces_show", json!({"workspace": "w1", "json": true})),
             ("workspaces_create", json!({"name": "Mine", "account": "octocat", "json": true})),

@@ -764,6 +764,48 @@ impl SettingsScreen {
                 }),
             ));
         let origin = if engine.started_here() { "Started by this app" } else { "Already running" };
+        // A workspace of an organization: its analytics are the organization's, shown here and changed nowhere
+        // on this device.
+        let managed: Vec<SettingItem> = self
+            .model
+            .read(cx)
+            .config()
+            .workspaces
+            .iter()
+            .filter_map(|workspace| {
+                let organization = workspace.organization.as_ref()?;
+                let owner = if organization.name.is_empty() {
+                    "its organization".to_owned()
+                } else {
+                    organization.name.clone()
+                };
+                let (state, description) = if organization.analytics {
+                    (
+                        "On",
+                        format!(
+                            "Managed by the owner of {owner}. What kind of thing you do in this workspace is reported to them with your GitHub account, never its content. The switch above does not change this."
+                        ),
+                    )
+                } else {
+                    (
+                        "Off",
+                        format!(
+                            "Managed by the owner of {owner}, who has not turned usage analytics on. Nothing done in this workspace is reported."
+                        ),
+                    )
+                };
+                Some(
+                    SettingItem::new(
+                        format!("Usage analytics for {}", workspace.name),
+                        SettingField::render(move |_, _, cx| {
+                            div().text_color(cx.theme().muted_foreground).child(state)
+                        }),
+                    )
+                    .description(description)
+                    .keywords(["telemetry", "tracking", "organization"]),
+                )
+            })
+            .collect();
         SettingPage::new("About").icon(IconName::Info).groups(vec![
             SettingGroup::new().title("Bifurc").items(vec![
                 fact("Desktop app", format!("Version {}", env!("CARGO_PKG_VERSION"))),
@@ -786,10 +828,11 @@ impl SettingsScreen {
                         ),
                     )
                     .description(
-                        "On by default. What kind of thing you do, never its content. Off, only that Bifurc was installed on this device is reported, once.",
+                        "On by default. What kind of thing you do in the app and in your own workspaces, never its content. Off, only that Bifurc was installed on this device is reported, once.",
                     )
                     .keywords(["telemetry", "tracking", "posthog"]),
                 )
+                .items(managed)
                 .item(
                     SettingItem::new(
                         "Terms of service",
@@ -812,7 +855,7 @@ impl SettingsScreen {
                     )
                     .layout(Axis::Horizontal),
                 )
-                .footer(|_, _| "Turning analytics back on applies when the engine next starts."),
+                .footer(|_, _| "A workspace that belongs to an organization follows that organization's setting, not this one."),
             updates,
         ])
     }

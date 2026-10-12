@@ -18,7 +18,7 @@ use gpui_kit::component::{
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    AppContext as _, ClipboardItem, Context, Entity, InteractiveElement as _, IntoElement, ParentElement as _, Render,
+    AppContext as _, ClipboardItem, Context, Div, Entity, InteractiveElement as _, IntoElement, ParentElement as _, Render,
     StatefulInteractiveElement as _, Styled as _, Subscription, Window, div, px,
 };
 use serde_json::json;
@@ -271,70 +271,47 @@ impl RightSidebar {
     fn render_variables(&self, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
         let theme = cx.theme().clone();
         let config = self.model.read(cx).config();
-        let active = config.active_environment().filter(|env| !env.is_global());
-        let global = config.global_environment();
-        let overridden = |key: &str| active.is_some_and(|env| env.variables.iter().any(|v| v.key == key));
-
-        let section = |title: String, rows: Vec<(String, String, bool)>, empty: &'static str| {
-            v_flex()
-                .gap_2()
-                .child(page::section_label(title, cx))
-                .children(rows.is_empty().then(|| div().text_sm().text_color(theme.muted_foreground).child(empty)))
-                .children(rows.into_iter().map(|(key, value, shadowed)| {
-                    v_flex()
-                        .gap_0p5()
-                        .text_sm()
-                        .child(
-                            h_flex()
-                                .gap_2()
-                                .child(
-                                    div().font_family(theme.mono_font_family.clone()).child(format!("{{{{{key}}}}}")),
-                                )
-                                .children(shadowed.then(|| Tag::secondary().small().child("Overridden"))),
-                        )
-                        .child(
-                            div()
-                                .text_color(theme.muted_foreground)
-                                .overflow_hidden()
-                                .text_ellipsis()
-                                .child(if value.is_empty() { "(empty)".to_owned() } else { value }),
-                        )
-                }))
-        };
-
-        let active_rows = active
-            .map(|env| env.variables.iter().map(|v| (v.key.clone(), v.value.clone(), false)).collect::<Vec<_>>())
-            .unwrap_or_default();
-        let global_rows = global
-            .map(|env| {
-                env.variables.iter().map(|v| (v.key.clone(), v.value.clone(), overridden(&v.key))).collect::<Vec<_>>()
-            })
-            .unwrap_or_default();
-
+        let rows = config.resolved_variables();
+        if rows.is_empty() {
+            return page::empty("No variables", "Add variables on the Environments screen to use them as {{name}}.");
+        }
         v_flex()
-            .id("variables")
             .size_full()
-            .overflow_y_scroll()
-            .p_3()
-            .gap_6()
-            .child(match active {
-                Some(env) => {
-                    section(env.name.clone(), active_rows, "This environment has no variables.").into_any_element()
-                }
-                None => v_flex()
-                    .gap_2()
-                    .child(page::section_label("Environment", cx))
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(theme.muted_foreground)
-                            .child("No environment is selected. Choose one in the title bar."),
-                    )
-                    .into_any_element(),
-            })
-            .child(section("Global".to_owned(), global_rows, "There are no global variables."))
+            .child(table_header(["Variable", "Value", "From"], cx))
+            .child(v_flex().id("variables").flex_1().min_h_0().overflow_y_scroll().children(rows.into_iter().map(
+                |(variable, env)| {
+                    table_row(cx)
+                        .child(cell(variable.key.clone()).font_family(theme.mono_font_family.clone()))
+                        .child(cell(variable.value.clone()))
+                        .child(cell(env.name.clone()).text_color(theme.muted_foreground))
+                },
+            )))
             .into_any_element()
     }
+}
+
+/// The header of the Variables and Vault tables; its cells are as wide as the rows' ([`cell`]).
+fn table_header(labels: [&'static str; 3], cx: &gpui_kit::App) -> Div {
+    let theme = cx.theme();
+    h_flex()
+        .flex_none()
+        .gap_3()
+        .px_3()
+        .py_2()
+        .text_xs()
+        .text_color(theme.muted_foreground)
+        .border_b_1()
+        .border_color(theme.border)
+        .children(labels.map(cell))
+}
+
+fn table_row(cx: &gpui_kit::App) -> Div {
+    h_flex().w_full().gap_3().px_3().py_1p5().text_sm().border_b_1().border_color(cx.theme().border)
+}
+
+/// One column's share of a table row: the columns are equally wide, and a long value is cut short.
+fn cell(content: impl IntoElement) -> Div {
+    div().flex_1().min_w_0().overflow_hidden().text_ellipsis().child(content)
 }
 
 impl RightSidebar {
@@ -343,42 +320,30 @@ impl RightSidebar {
     fn render_vault(&self, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
         let theme = cx.theme().clone();
         let vaults = self.model.read(cx).vaults().to_vec();
-        if vaults.is_empty() {
-            return page::empty("No vaults", "Create a vault on the Vaults screen to keep secrets out of your files.");
+        if vaults.iter().all(|vault| vault.secrets.is_empty()) {
+            return page::empty("No secrets", "Add secrets to a vault on the Vaults screen to keep them out of your files.");
+        }
+        let mut rows = Vec::new();
+        for vault in &vaults {
+            let sealed = vault.state == VaultState::Sealed;
+            for secret in &vault.secrets {
+                let copy = vault.reference(secret);
+                rows.push(
+                    table_row(cx)
+                        .id(gpui_kit::ElementId::Name(format!("vault-ref-{}-{secret}", vault.id).into()))
+                        .when(sealed, |this| this.text_color(theme.muted_foreground))
+                        .child(cell(secret.clone()).font_family(theme.mono_font_family.clone()))
+                        .child(cell(vault.name.clone()))
+                        .child(cell(vault.state.label()).text_color(theme.muted_foreground))
+                        // A click copies the reference, `{{vault.SECRET}}`.
+                        .on_click(move |_, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(copy.clone()))),
+                );
+            }
         }
         v_flex()
-            .id("vault-secrets")
             .size_full()
-            .overflow_y_scroll()
-            .p_3()
-            .gap_6()
-            .children(vaults.into_iter().map(|vault| {
-                let sealed = vault.state == VaultState::Sealed;
-                v_flex()
-                    .gap_2()
-                    .child(
-                        h_flex()
-                            .gap_2()
-                            .child(div().flex_1().min_w_0().child(page::section_label(vault.name.clone(), cx)))
-                            .child(Tag::secondary().small().child(vault.state.label())),
-                    )
-                    .children(vault.secrets.is_empty().then(|| {
-                        div().text_sm().text_color(theme.muted_foreground).child("This vault has no secrets.")
-                    }))
-                    .children(vault.secrets.iter().map(|secret| {
-                        let reference = vault.reference(secret);
-                        let copy = reference.clone();
-                        div()
-                            .id(gpui_kit::ElementId::Name(format!("vault-ref-{}-{secret}", vault.id).into()))
-                            .text_sm()
-                            .font_family(theme.mono_font_family.clone())
-                            .overflow_hidden()
-                            .text_ellipsis()
-                            .when(sealed, |this| this.text_color(theme.muted_foreground))
-                            .child(reference)
-                            .on_click(move |_, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(copy.clone())))
-                    }))
-            }))
+            .child(table_header(["Secret", "Vault", "State"], cx))
+            .child(v_flex().id("vault-secrets").flex_1().min_h_0().overflow_y_scroll().children(rows))
             .into_any_element()
     }
 }

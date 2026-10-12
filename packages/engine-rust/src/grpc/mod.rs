@@ -9,7 +9,7 @@ mod proto;
 mod reflection;
 mod stream;
 #[cfg(test)]
-mod tests;
+pub(crate) mod tests;
 
 use prost_reflect::{DescriptorPool, MethodDescriptor};
 use serde_json::{Map, Value, json};

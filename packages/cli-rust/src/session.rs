@@ -5,6 +5,7 @@
 //! broadcast events the engine sends meanwhile are skipped.
 
 use std::{
+    collections::VecDeque,
     io::{Read, Write},
     path::Path,
 };
@@ -26,6 +27,9 @@ pub trait Engine {
     fn info(&self) -> &RuntimeInfo;
     /// Send `command` and return its `data`; a refusal is a [`CliError::Engine`].
     fn request(&mut self, command: &str, payload: Value) -> Result<Value>;
+    /// The next event the engine sends on its own, waiting for it; `None` when the connection is closed.
+    /// Only events subscribed to with the `subscribe` command arrive.
+    fn next_event(&mut self) -> Result<Option<Value>>;
 }
 
 /// Encode one frame: the length, then the JSON.
@@ -92,15 +96,31 @@ fn engine_error(raw: &Value) -> CliError {
 pub struct Session<S: Read + Write> {
     stream: S,
     next_id: u64,
+    /// Events that arrived while a call waited for its response, for [`Session::next_event`].
+    pending: VecDeque<Value>,
 }
 
 impl<S: Read + Write> Session<S> {
     /// Wrap a connected stream. Nothing is sent until [`Session::hello`] or [`Session::call`].
     pub fn new(stream: S) -> Self {
-        Self { stream, next_id: 1 }
+        Self { stream, next_id: 1, pending: VecDeque::new() }
     }
 
-    /// Send `action` and wait for its response, skipping events.
+    /// The next event, from those a call set aside first; `None` when the engine closed the connection.
+    pub fn next_event(&mut self) -> Result<Option<Value>> {
+        if let Some(event) = self.pending.pop_front() {
+            return Ok(Some(event));
+        }
+        loop {
+            match read_frame(&mut self.stream)? {
+                None => return Ok(None),
+                Some(record) if record.get("event").is_some_and(Value::is_string) => return Ok(Some(record)),
+                Some(_) => {}
+            }
+        }
+    }
+
+    /// Send `action` and wait for its response; events that arrive meanwhile are kept for [`Session::next_event`].
     pub fn call(&mut self, action: &str, payload: Value) -> Result<Value> {
         let id = format!("cli-{}", self.next_id);
         self.next_id += 1;
@@ -110,9 +130,11 @@ impl<S: Read + Write> Session<S> {
             let Some(record) = read_frame(&mut self.stream)? else {
                 return Err(CliError::msg("the connection to the engine is closed"));
             };
-            if record.get("event").is_some_and(Value::is_string)
-                || record.get("id").and_then(Value::as_str) != Some(&id)
-            {
+            if record.get("event").is_some_and(Value::is_string) {
+                self.pending.push_back(record);
+                continue;
+            }
+            if record.get("id").and_then(Value::as_str) != Some(&id) {
                 continue;
             }
             return match record.get("ok").and_then(Value::as_bool) {
@@ -186,6 +208,10 @@ impl Engine for EngineConnection {
 
     fn request(&mut self, command: &str, payload: Value) -> Result<Value> {
         self.session.call(command, payload)
+    }
+
+    fn next_event(&mut self) -> Result<Option<Value>> {
+        self.session.next_event()
     }
 }
 

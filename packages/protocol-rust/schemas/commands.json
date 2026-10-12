@@ -19,6 +19,7 @@
       "mcpRequests",
       "soapRequests",
       "environments",
+      "flows",
       "graphqlSchemas",
       "protoFiles",
       "wsdls"
@@ -58,6 +59,7 @@
       "mcpRequests",
       "soapRequests",
       "environments",
+      "flows",
       "graphqlSchemas",
       "protoFiles",
       "wsdls"
@@ -94,6 +96,7 @@
       "mcpRequests",
       "soapRequests",
       "environments",
+      "flows",
       "graphqlSchemas",
       "protoFiles",
       "wsdls"
@@ -128,7 +131,8 @@
       "socketioRequests",
       "mcpRequests",
       "soapRequests",
-      "environments"
+      "environments",
+      "flows"
      ]
     },
     "id": {
@@ -160,7 +164,8 @@
       "socketioRequests",
       "mcpRequests",
       "soapRequests",
-      "environments"
+      "environments",
+      "flows"
      ]
     },
     "id": {
@@ -193,6 +198,7 @@
       "mcpRequests",
       "soapRequests",
       "environments",
+      "flows",
       "graphqlSchemas",
       "protoFiles",
       "wsdls"
@@ -229,6 +235,7 @@
       "mcpRequests",
       "soapRequests",
       "environments",
+      "flows",
       "graphqlSchemas",
       "protoFiles",
       "wsdls"
@@ -266,6 +273,7 @@
       "mcpRequests",
       "soapRequests",
       "environments",
+      "flows",
       "graphqlSchemas",
       "protoFiles",
       "wsdls"
@@ -344,6 +352,7 @@
     "kind": {
      "type": "string",
      "enum": [
+      "flow",
       "mock",
       "request",
       "rule"
@@ -374,6 +383,7 @@
     "kind": {
      "type": "string",
      "enum": [
+      "flow",
       "mock",
       "request",
       "rule"
@@ -398,6 +408,7 @@
     "kind": {
      "type": "string",
      "enum": [
+      "flow",
       "mock",
       "request",
       "rule"
@@ -425,6 +436,7 @@
     "kind": {
      "type": "string",
      "enum": [
+      "flow",
       "mock",
       "request",
       "rule"
@@ -448,6 +460,7 @@
     "kind": {
      "type": "string",
      "enum": [
+      "flow",
       "mock",
       "request",
       "rule"
@@ -471,6 +484,7 @@
     "kind": {
      "type": "string",
      "enum": [
+      "flow",
       "mock",
       "request",
       "rule"
@@ -1487,6 +1501,9 @@
     "socketId": {
      "type": "string"
     },
+    "id": {
+     "type": "string"
+    },
     "url": {
      "type": "string"
     },
@@ -1503,6 +1520,93 @@
    "required": [
     "workspaceId",
     "socketId"
+   ],
+   "additionalProperties": false
+  },
+  "flow.validate": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "id": {
+     "type": "string"
+    },
+    "flow": {
+     "type": "object",
+     "propertyNames": {
+      "type": "string"
+     },
+     "additionalProperties": {}
+    }
+   },
+   "required": [
+    "workspaceId"
+   ],
+   "additionalProperties": false
+  },
+  "flow.run": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "id": {
+     "type": "string"
+    },
+    "inputs": {
+     "type": "object",
+     "propertyNames": {
+      "type": "string"
+     },
+     "additionalProperties": {
+      "type": "string"
+     }
+    },
+    "timeoutMs": {
+     "type": "integer",
+     "minimum": 0
+    },
+    "maxEvents": {
+     "type": "integer",
+     "minimum": 1
+    }
+   },
+   "required": [
+    "workspaceId",
+    "id"
+   ],
+   "additionalProperties": false
+  },
+  "flow.cancel": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "id": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "workspaceId",
+    "id"
+   ],
+   "additionalProperties": false
+  },
+  "flow.status": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "id": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "workspaceId",
+    "id"
    ],
    "additionalProperties": false
   },
@@ -2936,6 +3040,17 @@
       },
       "id": {
        "type": "string"
+      },
+      "skipScripts": {
+       "type": "array",
+       "items": {
+        "type": "string",
+        "enum": [
+         "pre",
+         "post",
+         "test"
+        ]
+       }
       }
      },
      "required": [

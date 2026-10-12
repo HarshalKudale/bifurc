@@ -19,6 +19,7 @@ use gpui_kit::{
 
 use crate::{
     app_model::{AppModel, Deleted},
+    commands::ShowSettings,
     model::git::FileState,
 };
 
@@ -220,6 +221,37 @@ pub fn resolve_deleted(
                             move |_, window, cx| {
                                 confirm_model.update(cx, |model, cx| model.confirm_delete(confirm_target.clone(), cx));
                                 window.close_dialog(cx);
+                            },
+                        )),
+                )
+        });
+    });
+}
+
+/// Opened in place of something a newer Bifurc than this one last saved: it can't be opened, changed or
+/// deleted here until this install is `version` or later. Settings is where an update is found.
+pub fn needs_update(name: impl Into<SharedString>, version: impl Into<SharedString>, window: &mut Window, cx: &mut App) {
+    let (name, version) = (name.into(), version.into());
+    window.defer(cx, move |window, cx| {
+        window.open_alert_dialog(cx, move |alert, _, _| {
+            alert
+                .title(format!("“{name}” needs Bifurc {version}"))
+                .description(
+                    "A newer Bifurc than this one last saved it. It stays as it is, and is not used, until you \
+                     update.",
+                )
+                .footer(
+                    DialogFooter::new()
+                        .child(
+                            Button::new("needs-update-cancel")
+                                .outline()
+                                .label("Cancel")
+                                .on_click(|_, window, cx| window.close_dialog(cx)),
+                        )
+                        .child(Button::new("needs-update-settings").primary().label("Open Settings").on_click(
+                            |_, window, cx| {
+                                window.close_dialog(cx);
+                                window.dispatch_action(Box::new(ShowSettings), cx);
                             },
                         )),
                 )

@@ -59,6 +59,7 @@ fn noun(kind: &str) -> Option<(&'static str, Option<&'static str>)> {
         "proxyRules" | "rules" => ("proxy rule", None),
         "mappings" => ("mapping", None),
         "environments" => ("environment", None),
+        "flows" => ("flow", None),
         "requests" => ("request", Some("rest")),
         "graphqlRequests" => ("request", Some("graphql")),
         "soapRequests" => ("request", Some("soap")),
@@ -174,6 +175,18 @@ fn sent(request_type: &str, params: &Value, streaming: bool) -> Option<Event> {
     event("request sent", properties)
 }
 
+/// The workspace a command is about, by its id on this device: what its payload names as `workspaceId`, and
+/// for the commands on a workspace itself the workspace they name. `None` for a command that belongs to no
+/// workspace, and for one that only makes a workspace (there is none yet to be anyone's).
+pub fn workspace_of<'a>(action: &str, params: &'a Value) -> Option<&'a str> {
+    let named = |key: &str| opt_str(params, key).filter(|id| !id.is_empty());
+    match action {
+        "workspace.rename" | "workspace.delete" | "workspace.setActive" => named("id"),
+        "workspace.add" | "workspace.import" => None,
+        _ => named("workspaceId"),
+    }
+}
+
 /// Whether `action` is something a user does. A read is what an interface does to draw itself (status polls,
 /// lists, variable resolution), apart from the few a user asks for by hand; switching an entity on or off and
 /// the steps of a transfer are not counted either.
@@ -216,6 +229,7 @@ pub fn describe(action: &str, params: &Value) -> Option<Event> {
         "ws.connect" =>event("request sent", json!({ "request_type": "websocket", "saved": true })),
         "request.replay" => event("request replayed", json!({ "method": http_method(str_of(params, "method")) })),
         "runner.start" => event("runner started", json!({})),
+        "flow.run" => event("flow started", json!({})),
 
         "workspace.add" => event("workspace created", json!({ "with_account": has_text(params, "accountId") })),
         "workspace.import" => event("workspace imported", json!({})),
@@ -427,6 +441,20 @@ mod tests {
             assert!(is_user_action(action), "{action}");
         }
         assert!(describe("entity.setEnabled", &json!({ "kind": "mocks", "id": "m", "enabled": true })).is_none());
+    }
+
+    #[test]
+    fn a_command_is_about_the_workspace_it_names() {
+        assert_eq!(workspace_of("request.send", &json!({ "workspaceId": "w", "id": "r" })), Some("w"));
+        assert_eq!(workspace_of("entity.create", &json!({ "workspaceId": "w", "kind": "mocks" })), Some("w"));
+        assert_eq!(workspace_of("workspace.delete", &json!({ "id": "w" })), Some("w"));
+        assert_eq!(workspace_of("workspace.rename", &json!({ "id": "w", "name": "n" })), Some("w"));
+        // Nothing to be anyone's yet, and nothing to do with a workspace.
+        assert_eq!(workspace_of("workspace.add", &json!({ "name": "n", "accountId": "a" })), None);
+        assert_eq!(workspace_of("workspace.import", &json!({ "accountId": "a", "repo": "octo/team" })), None);
+        assert_eq!(workspace_of("account.logout", &json!({ "id": "github.com:7" })), None);
+        assert_eq!(workspace_of("request.send", &json!({ "workspaceId": "" })), None);
+        assert_eq!(workspace_of("request.send", &json!({ "workspaceId": 7 })), None);
     }
 
     #[test]

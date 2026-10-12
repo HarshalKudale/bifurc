@@ -19,7 +19,7 @@ use crate::{
         NewFolder, NewGraphQlRequest, NewGrpcRequest, NewHealthCheck, NewMapping, NewMcpRequest, NewMock, NewMockFolder,
         NewProxyRule, NewRestRequest, NewSoapRequest, NewSocketIoRequest, NewSseRequest, NewWebSocketRequest,
         NewWorkspace, PublishChanges, RefreshServices, ReloadWorkspace, RenameWorkspace, RestartForwardProxy,
-        RevertRequest, RunRequest, SaveRequest, ShowAuditLog, ShowCapture, ShowEnvironments, ShowHealthBar,
+        RevertRequest, RunRequest, SaveRequest, ShowAuditLog, ShowCapture, ShowEnvironments, ShowFlows, ShowHealthBar,
         ShowMappings, ShowMocks, ShowProxyRules, ShowRequests, ShowServices, ShowSettings, ShowVaults, ShowWorkspaceConfig,
         SyncEntity, SyncWorkspace, ToggleCapturePaused, ToggleFolderTree, ToggleForwardProxy, ToggleInspector,
         ToggleSidebar,
@@ -123,6 +123,7 @@ fn command_groups() -> Vec<(&'static str, Vec<CommandRow>)> {
                 ("Go to Capture", Screen::Capture.icon(), Box::new(ShowCapture)),
                 ("Go to Requests", Screen::Requests.icon(), Box::new(ShowRequests)),
                 ("Go to Mocks", Screen::Mocks.icon(), Box::new(ShowMocks)),
+                ("Go to Flows", Screen::Flows.icon(), Box::new(ShowFlows)),
                 ("Go to Environments", Screen::Environments.icon(), Box::new(ShowEnvironments)),
                 ("Go to Vaults", Screen::Vaults.icon(), Box::new(ShowVaults)),
                 ("Go to Workspace config", Screen::WorkspaceConfig.icon(), Box::new(ShowWorkspaceConfig)),
@@ -230,7 +231,7 @@ impl Shell {
         let requests: Vec<Entry> = config
             .requests
             .iter()
-            .filter(|r| !r.deleted)
+            .filter(|r| !r.deleted && r.locked.is_none())
             .map(|r| {
                 let label = if r.name.is_empty() { r.target.clone() } else { r.name.clone() };
                 Entry {
@@ -243,7 +244,7 @@ impl Shell {
         let mocks: Vec<Entry> = config
             .mocks
             .iter()
-            .filter(|m| !m.deleted)
+            .filter(|m| !m.deleted && m.locked.is_none())
             .map(|m| {
                 let label = if m.name.is_empty() { m.url_pattern.clone() } else { m.name.clone() };
                 let method = if m.method == "*" { "ANY" } else { m.method.as_str() };

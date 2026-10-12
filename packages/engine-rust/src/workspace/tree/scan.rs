@@ -18,7 +18,7 @@ use crate::{
         id::{generate_id, now_ms},
         json::{read_json, str_of},
     },
-    workspace::kinds::kind_name_entry,
+    workspace::{kinds::kind_name_entry, stamp},
 };
 
 /// Files in a tree that are not entities.
@@ -79,11 +79,15 @@ pub fn type_of(scope: Scope, entity: &Value) -> &'static str {
     scope.types().iter().find(|(_, ty)| *ty == named).unwrap_or(&scope.types()[0]).1
 }
 
-/// What the index keeps of `entity`, and the lower-case text a search looks through.
+/// What the index keeps of `entity`, and the lower-case text a search looks through. Of an entity a newer
+/// engine wrote that is its name alone: what its other fields mean is not this engine's to say.
 pub fn describe(scope: Scope, id: &str, entity: &Value, folder_id: Option<String>, path: String, file: &Path) -> (Entry, String) {
     let ty = type_of(scope, entity);
     let kind = scope.kind_of_type(ty).unwrap_or(scope.dir());
-    let details = kind_name_entry(kind, entity).unwrap_or_else(|| serde_json::json!({}));
+    let details = match stamp::lock_of(entity) {
+        Some(_) => serde_json::json!({ "name": str_of(entity, "name") }),
+        None => kind_name_entry(kind, entity).unwrap_or_else(|| serde_json::json!({})),
+    };
     let mut search = String::new();
     for value in details.as_object().into_iter().flat_map(|fields| fields.values()) {
         if let Some(text) = value.as_str() {
@@ -101,6 +105,10 @@ pub fn describe(scope: Scope, id: &str, entity: &Value, folder_id: Option<String
         path,
         mtime,
         size,
+        engine_version: entity.get(stamp::VERSION_FIELD).filter(|stamp| !stamp.is_null()).map(|stamp| match stamp {
+            Value::String(version) => version.clone(),
+            other => other.to_string(),
+        }),
     };
     (entry, search)
 }
