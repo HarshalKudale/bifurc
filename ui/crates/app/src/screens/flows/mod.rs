@@ -339,7 +339,7 @@ impl FlowsScreen {
                 doc.edges.retain(|edge| edge.from != node.id || kept(&edge.port));
             }
             if let Some(slot) = doc.node_mut(&node.id) {
-                (node.x, node.y) = (slot.x, slot.y);
+                (node.x, node.y, node.width, node.height) = (slot.x, slot.y, slot.width, slot.height);
                 *slot = node;
             }
         });
@@ -357,6 +357,11 @@ impl FlowsScreen {
             CanvasEvent::Moved { id, x, y } => self.edit(cx, |doc| {
                 if let Some(node) = doc.node_mut(&id) {
                     (node.x, node.y) = (x, y);
+                }
+            }),
+            CanvasEvent::Resized { id, width, height } => self.edit(cx, |doc| {
+                if let Some(node) = doc.node_mut(&id) {
+                    (node.width, node.height) = (width, height);
                 }
             }),
             CanvasEvent::Connect { from, port, to } => self.edit(cx, |doc| {
