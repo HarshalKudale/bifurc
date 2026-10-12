@@ -326,6 +326,8 @@ impl FolderRunner {
             .requests
             .iter()
             .filter(|r| r.kind == RequestKind::Rest && r.folder_id.as_deref() == Some(self.folder_id.as_str()))
+            // One a newer Bifurc saved is not this engine's to send.
+            .filter(|r| r.locked.is_none())
             .collect();
         // Stable, so the requests the saved order does not name stay in the workspace's order.
         rows.sort_by_key(|request| rank(&request.id));

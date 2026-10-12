@@ -13,5 +13,6 @@ pub mod git_store;
 pub mod kinds;
 pub mod paths;
 pub mod settings;
+pub mod stamp;
 pub mod status_cache;
 pub mod tree;

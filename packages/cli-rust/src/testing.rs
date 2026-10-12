@@ -22,11 +22,16 @@ struct Fake {
     info: RuntimeInfo,
     answers: Vec<Answer>,
     calls: Calls,
+    events: std::collections::VecDeque<Value>,
 }
 
 impl Engine for Fake {
     fn info(&self) -> &RuntimeInfo {
         &self.info
+    }
+
+    fn next_event(&mut self) -> Result<Option<Value>> {
+        Ok(self.events.pop_front())
     }
 
     fn request(&mut self, command: &str, payload: Value) -> Result<Value> {
@@ -65,12 +70,29 @@ pub fn run(
     answers: Vec<Answer>,
     f: impl FnOnce(&mut Context) -> Result<String>,
 ) -> (Result<String>, Vec<(String, Value)>) {
+    run_with_events(argv, answers, vec![], f)
+}
+
+/// [`run`] for a command that listens: the engine also sends `events` (frames with `event` and `payload`), in
+/// order, and then closes the connection.
+pub fn run_with_events(
+    argv: &[&str],
+    answers: Vec<Answer>,
+    events: Vec<Value>,
+    f: impl FnOnce(&mut Context) -> Result<String>,
+) -> (Result<String>, Vec<(String, Value)>) {
     let args = parse_args(&argv.iter().map(|a| a.to_string()).collect::<Vec<_>>()).unwrap();
     let calls: Calls = Rc::default();
     let recorded = Rc::clone(&calls);
     let mut answers = Some(answers);
+    let mut events = Some(events);
     let connector: Connector = Box::new(move || {
-        let fake = Fake { info: info(), answers: answers.take().expect("opened once"), calls: Rc::clone(&recorded) };
+        let fake = Fake {
+            info: info(),
+            answers: answers.take().expect("opened once"),
+            calls: Rc::clone(&recorded),
+            events: events.take().expect("opened once").into(),
+        };
         Ok(Box::new(fake) as Box<dyn Engine>)
     });
     let mut ctx = Context::new(&args, connector);

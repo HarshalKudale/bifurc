@@ -9,7 +9,7 @@ use super::{
 use crate::{
     kernel::CommandRegistry,
     protocol::EngineError,
-    utils::json::{is_truthy, opt_str, str_of},
+    utils::json::{array_of, is_truthy, opt_str, str_of},
     workspace::config::load_entity,
 };
 
@@ -42,7 +42,15 @@ pub fn register(registry: &mut CommandRegistry) {
             let entity = load_entity(&ws_id, "requests", id).ok_or_else(|| {
                 EngineError::not_found(format!("No saved requests entity \"{id}\" in workspace \"{ws_id}\"."))
             })?;
-            let scripts = scripts_of(&entity, "preScript", "postScript", "testScript");
+            let mut scripts = scripts_of(&entity, "preScript", "postScript", "testScript");
+            for skipped in array_of(&params, "skipScripts") {
+                match skipped.as_str() {
+                    Some("pre") => scripts.pre = None,
+                    Some("post") => scripts.post = None,
+                    Some("test") => scripts.test = None,
+                    _ => {}
+                }
+            }
             (request_from_entity(&entity), scripts)
         } else {
             let inline = params.get("request").cloned().unwrap_or(Value::Null);
