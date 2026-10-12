@@ -15,7 +15,7 @@ use crate::{
     rest::test_server,
     testing::{ScratchRoot, scratch_data_root},
     utils::json::{array_of, str_of},
-    workspace::fs::{create_folder, read_entity, write_entity, write_flat_entity},
+    workspace::fs::{create_folder, find_entity_file, read_entity, write_entity, write_flat_entity},
 };
 
 const WS: &str = "ws1";
@@ -76,7 +76,7 @@ impl Store {
     fn flow(&self, id: &str, mut flow: Value) {
         flow["id"] = json!(id);
         flow["name"] = json!(id);
-        write_flat_entity(WS, "flows", id, &flow).unwrap();
+        write_entity(WS, "flows", id, &flow, None).unwrap();
     }
 }
 
@@ -179,12 +179,18 @@ async fn a_flow_is_saved_listed_and_deleted_like_any_entity() {
     let created =
         registry.invoke("entity.create", json!({ "kind": "flows", "entity": entity }), ctx.clone()).await.unwrap();
     let id = str_of(&created, "id").to_string();
-    assert!(crate::workspace::fs::entity_dir(WS, "flows").join(format!("{id}.json")).exists());
-    let listed = crate::workspace::config::load_config()["flows"].clone();
+    assert!(find_entity_file(WS, "flows", &id).is_some());
+    let config = crate::workspace::config::load_config();
+    let listed = config["flows"].clone();
     assert_eq!(
         (listed[0]["id"].as_str(), &listed[0]["name"], listed[0].get("nodes")),
         (Some(id.as_str()), &json!("Checkout"), None)
     );
+    // A flow is kept in a folder of the flows tree, like a request in the request tree.
+    assert_eq!(config["flowFolders"][0]["id"], listed[0]["folderId"]);
+    let folder = json!({ "kind": "flow", "name": "Auth", "parentId": null, "workspaceId": WS });
+    let folder = registry.invoke("folder.add", folder, ctx.clone()).await.unwrap();
+    assert_eq!(array_of(&crate::workspace::config::load_config(), "flowFolders").len(), 2, "{folder}");
     let loaded = registry
         .invoke("entity.load", json!({ "workspaceId": WS, "kind": "flows", "id": id }), ctx.clone())
         .await
@@ -202,7 +208,7 @@ async fn a_flow_is_saved_listed_and_deleted_like_any_entity() {
     }
 
     registry.invoke("entity.delete", json!({ "kind": "flows", "id": id }), ctx).await.unwrap();
-    assert!(!crate::workspace::fs::entity_dir(WS, "flows").join(format!("{id}.json")).exists());
+    assert!(find_entity_file(WS, "flows", &id).is_none());
 }
 
 #[tokio::test]
@@ -357,7 +363,7 @@ async fn what_a_script_sets_stays_in_the_run_unless_the_flow_keeps_it() {
     assert_eq!(echoed(&report, "user")["headers"]["authorization"], "Bearer t-9");
     assert!(!on_disk(), "a run keeps what its scripts set to itself");
 
-    store.flow("silent", flow(json!({}), request("login", "r-login", json!({ "runPostScript": false }))));
+    store.flow("silent", flow(json!({}), request("login", "r-login", json!({ "executeScripts": false }))));
     let report = run("silent").await;
     assert_eq!(echoed(&report, "user")["headers"]["authorization"], "Bearer {{token}}", "the script did not run");
 
@@ -367,7 +373,7 @@ async fn what_a_script_sets_stays_in_the_run_unless_the_flow_keeps_it() {
 }
 
 #[tokio::test]
-async fn a_node_runs_its_own_script_or_the_requests_post_script_never_both() {
+async fn a_node_says_whether_its_requests_scripts_and_tests_run() {
     let store = store();
     let canned =
         HashMap::from([("/login".to_string(), ("application/json".to_string(), r#"{"token":"t-9"}"#.to_string()))]);
@@ -376,39 +382,173 @@ async fn a_node_runs_its_own_script_or_the_requests_post_script_never_both() {
         "r-login",
         format!("{base}/login"),
         json!({
-            "preScript": "throw new Error('a pre script ran');",
+            "preScript": "lp.environment.set('seen', 'pre');",
             "postScript": "lp.environment.set('token', 'from-post');",
-            "testScript": "test('answered', () => expect(lp.response.status).to.equal(200));",
+            "testScript": "test('is created', () => expect(lp.response.status).to.equal(201));",
         }),
     );
-    store.request("r-user", format!("{base}/me"), json!({ "headers": { "Authorization": "Bearer {{token}}" } }));
+    store.request(
+        "r-user",
+        format!("{base}/me"),
+        json!({ "headers": { "Authorization": "Bearer {{token}}", "X-Seen": "{{seen}}" } }),
+    );
     let flow = |login: Value| {
         json!({
-            "inputs": [{ "name": "suffix", "value": "!" }],
             "nodes": [start(), request("login", "r-login", login), request("user", "r-user", json!({}))],
             "edges": [edge("start", "out", "login"), edge("login", "success", "user")],
         })
     };
-    let own = "lp.environment.set('token', JSON.parse(lp.output.body).token + lp.flow.suffix); lp.output = { status: lp.output.status, from: lp.input.suffix };";
 
-    store.flow("post", flow(json!({ "afterExecute": own })));
-    let report = run("post").await;
-    assert_eq!(report["status"], "succeeded", "the pre script is not run for a node: {report}");
-    assert_eq!(echoed(&report, "user")["headers"]["authorization"], "Bearer from-post");
-    assert_eq!(node(&report, "login")["output"]["body"], r#"{"token":"t-9"}"#, "the node's own script did not run");
+    store.flow("strict", flow(json!({})));
+    let report = run("strict").await;
+    assert_eq!((&report["status"], &report["error"]), (&json!("failed"), &json!("login: 1 of 1 tests failed")));
+    assert_eq!(node(&report, "login")["tests"][0]["name"], "is created");
 
-    store.flow("own", flow(json!({ "runPostScript": false, "afterExecute": own })));
-    let report = run("own").await;
-    assert_eq!(echoed(&report, "user")["headers"]["authorization"], "Bearer t-9!");
-    assert_eq!(node(&report, "login")["output"], json!({ "status": 200, "from": "!" }), "the next node is handed this");
-    assert_eq!(node(&report, "user")["input"], json!({ "status": 200, "from": "!" }));
-    assert_eq!((&report["totalTests"], &report["failedTests"]), (&json!(1), &json!(0)), "the tests always run");
+    store.flow("lenient", flow(json!({ "ignoreTestErrors": true })));
+    let report = run("lenient").await;
+    assert_eq!(report["status"], "succeeded", "{report}");
+    let sent = echoed(&report, "user");
+    assert_eq!((&sent["headers"]["authorization"], &sent["headers"]["x-seen"]), (&json!("Bearer from-post"), &json!("pre")));
+    assert_eq!((&report["totalTests"], &report["failedTests"]), (&json!(1), &json!(1)));
 
-    store.flow("thrown", flow(json!({ "runPostScript": false, "afterExecute": "throw new Error('nope');" })));
-    let report = run("thrown").await;
+    store.flow("untested", flow(json!({ "executeTests": false })));
+    let report = run("untested").await;
+    assert_eq!((&report["status"], &report["totalTests"]), (&json!("succeeded"), &json!(0)));
+
+    store.flow("unscripted", flow(json!({ "executeScripts": false, "ignoreTestErrors": true })));
+    let report = run("unscripted").await;
+    assert_eq!(echoed(&report, "user")["headers"]["authorization"], "Bearer {{token}}", "neither script ran");
+    assert_eq!(report["totalTests"], 1, "the tests are not the scripts");
+}
+
+fn wire(from: &str, port: &str, to: &str, input: &str, path: Value) -> Value {
+    json!({ "id": format!("{from}>{to}.{input}"), "from": from, "port": port, "to": to, "input": input, "path": path })
+}
+
+#[tokio::test]
+async fn a_wire_carries_a_part_of_an_output_into_an_input() {
+    let store = store();
+    let canned = HashMap::from([(
+        "/login".to_string(),
+        ("application/json".to_string(), r#"{"token":"t-1","user":{"ids":[5,7]}}"#.to_string()),
+    )]);
+    let base = test_server::start(canned).await;
+    store.request("r-login", format!("{base}/login"), json!({}));
+    store.request(
+        "r-user",
+        format!("{base}/users/{{{{id}}}}"),
+        json!({ "headers": { "Authorization": "Bearer {{token}}", "X-Stage": "{{stage}}" } }),
+    );
+    let flow = |wires: Vec<Value>| {
+        let mut edges = vec![edge("start", "out", "login"), edge("login", "success", "user")];
+        edges.extend(wires);
+        json!({
+            "nodes": [
+                start(),
+                request("login", "r-login", json!({})),
+                request("user", "r-user", json!({ "variables": [{ "name": "id", "value": "typed" }] })),
+                { "id": "stage", "type": "data", "value": "staging" },
+            ],
+            "edges": edges,
+        })
+    };
+
+    store.flow(
+        "wired",
+        flow(vec![
+            wire("login", "success", "user", "var:id", json!(["body", "user", "ids", 1])),
+            wire("login", "success", "user", "var:token", json!(["body", "token"])),
+            wire("stage", "out", "user", "var:stage", json!([])),
+        ]),
+    );
+    let report = run("wired").await;
+    assert_eq!(report["status"], "succeeded", "{report}");
+    let sent = echoed(&report, "user");
+    assert_eq!(sent["path"], "/users/7", "what is wired wins over what was typed");
+    assert_eq!((&sent["headers"]["authorization"], &sent["headers"]["x-stage"]), (&json!("Bearer t-1"), &json!("staging")));
+    assert_eq!(node(&report, "user")["inputs"], json!({ "var:id": 7, "var:token": "t-1", "var:stage": "staging" }));
+    assert_eq!(node(&report, "user")["runs"], 1, "wires carry values: only the connection runs the node");
+    assert_eq!((taken(&report, "login>user.var:id"), taken(&report, "stage>user.var:stage")), (1, 1));
+
+    store.flow("missing", flow(vec![wire("login", "success", "user", "var:id", json!(["body", "nope"]))]));
+    let report = run("missing").await;
     assert_eq!(report["status"], "failed");
-    assert_eq!(report["error"], "login: The after-execute script failed: Error: nope");
-    assert_eq!(node(&report, "login")["output"]["status"], 200, "what the request answered is kept");
+    assert_eq!(
+        report["error"],
+        "user: \"id\" is wired to body.nope of \"login\", which has no value in this run."
+    );
+}
+
+#[tokio::test]
+async fn a_sample_is_checked_looped_over_and_worked_out() {
+    let store = store();
+    let base = test_server::start(HashMap::new()).await;
+    store.request("r-item", format!("{base}/items/{{{{n}}}}"), json!({}));
+    let sample = json!({ "status": 200, "body": r#"{"items":[{"id":"a"},{"id":"b"}],"total":2}"# });
+    let flow = |status: &str| {
+        json!({
+            "nodes": [
+                start(),
+                { "id": "sample", "type": "sample", "value": sample },
+                { "id": "checks", "type": "validate", "rules": [
+                    { "path": "input.status", "op": "equals", "value": status },
+                    { "path": "input.body.items", "op": "isType", "value": "array" },
+                ] },
+                { "id": "each", "type": "forEach", "path": "input.body.items" },
+                request("item", "r-item", json!({})),
+                { "id": "sum", "type": "evaluate", "expression": "vars.total * 10 + JSON.parse(input.body).items.length",
+                  "variables": [{ "name": "total", "value": "" }] },
+                { "id": "show", "type": "display" },
+            ],
+            "edges": [
+                edge("start", "out", "sample"), edge("sample", "out", "checks"), edge("checks", "pass", "each"),
+                edge("each", "each", "item"), edge("each", "done", "sum"), edge("sum", "out", "show"),
+                wire("each", "each", "item", "var:n", json!(["item", "id"])),
+                wire("sample", "out", "sum", "var:total", json!(["body", "total"])),
+            ],
+        })
+    };
+
+    store.flow("blocks", flow("200"));
+    let report = run("blocks").await;
+    assert_eq!(report["status"], "succeeded", "{report}");
+    assert_eq!((&node(&report, "item")["runs"], &echoed(&report, "item")["path"]), (&json!(2), &json!("/items/b")));
+    assert_eq!(node(&report, "each")["port"], "done");
+    assert_eq!(node(&report, "each")["outputs"]["each"], json!({ "index": 1, "item": { "id": "b" } }));
+    assert_eq!(node(&report, "each")["outputs"]["done"]["status"], 200, "each port keeps what last left by it");
+    assert_eq!((&node(&report, "sum")["output"], &node(&report, "show")["output"]), (&json!(22), &json!(22)));
+    assert_eq!(node(&report, "checks")["tests"].as_array().unwrap().len(), 2);
+    assert_eq!((&report["totalTests"], &report["failedTests"]), (&json!(2), &json!(0)));
+
+    store.flow("strict", flow("404"));
+    let report = run("strict").await;
+    assert_eq!((&report["status"], &report["error"]), (&json!("failed"), &json!("checks: 1 of 2 checks failed")));
+    assert_eq!(report["failedTests"], 1);
+}
+
+#[tokio::test]
+async fn an_or_node_lets_the_first_arrival_of_each_turn_through() {
+    let store = store();
+    let wait = |id: &str, ms: u64| json!({ "id": id, "type": "delay", "delayMs": ms });
+    store.flow(
+        "either",
+        json!({
+            "nodes": [
+                start(), { "id": "thrice", "type": "repeat", "count": 3 }, wait("quick", 1), wait("slow", 15),
+                { "id": "any", "type": "or" }, wait("after", 0), wait("end", 0),
+            ],
+            "edges": [
+                edge("start", "out", "thrice"), edge("thrice", "each", "quick"), edge("thrice", "each", "slow"),
+                edge("quick", "out", "any"), edge("slow", "out", "any"), edge("any", "out", "after"),
+                edge("thrice", "done", "end"),
+            ],
+        }),
+    );
+    let report = run("either").await;
+    assert_eq!(report["status"], "succeeded", "{report}");
+    let runs = |id: &str| node(&report, id)["runs"].as_u64().unwrap();
+    assert_eq!((runs("quick"), runs("slow"), runs("any"), runs("after"), runs("end")), (3, 3, 3, 3, 1));
+    assert_eq!(node(&report, "after")["input"], json!({ "index": 2 }), "each turn is handed its index");
 }
 
 #[tokio::test]
@@ -496,9 +636,23 @@ async fn a_stream_hands_on_every_message_until_it_ends() {
     let report = run_with("stream", json!({ "maxEvents": 1 })).await;
     assert_eq!((taken(&report, "events.message-item"), &report["status"]), (1, &json!("succeeded")));
 
-    let tenfold = "lp.output = { data: { n: JSON.parse(lp.output.data).n * 10 } };";
-    store.flow("scripted", flow(stream(json!({ "afterExecute": tenfold, "maxMessages": 1 }))));
-    assert_eq!(echoed(&run("scripted").await, "item")["path"], "/items/10", "each message goes through the script");
+    // A request node over the same stream answers with its first message and disconnects.
+    store.flow(
+        "first",
+        json!({
+            "nodes": [
+                start(),
+                { "id": "events", "type": "request", "requestKind": "sseRequests", "requestId": "s-events" },
+                request("item", "r-item", json!({})),
+            ],
+            "edges": [
+                edge("start", "out", "events"), edge("events", "success", "item"),
+                wire("events", "success", "item", "var:n", json!(["data", "n"])),
+            ],
+        }),
+    );
+    let report = run("first").await;
+    assert_eq!((&node(&report, "events")["port"], &echoed(&report, "item")["path"]), (&json!("success"), &json!("/items/1")));
 
     store.stream("s-refused", "http://127.0.0.1:1/events".to_string());
     store.flow(

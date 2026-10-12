@@ -375,6 +375,7 @@
         produced = v;
       },
       input: input.input,
+      vars: input.vars,
       nodes: input.nodes,
       flow: input.flow,
       environment: envApi,

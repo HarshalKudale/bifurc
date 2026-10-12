@@ -56,6 +56,7 @@ fn tree_of(kind: &str) -> Option<Scope> {
     match kind {
         "request" => Some(Scope::Requests),
         "mock" => Some(Scope::Mocks),
+        "flow" => Some(Scope::Flows),
         _ => None,
     }
 }

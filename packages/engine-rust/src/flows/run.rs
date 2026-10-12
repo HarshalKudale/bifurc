@@ -22,9 +22,9 @@ use tokio_util::sync::CancellationToken;
 
 use super::{
     condition,
-    model::{Edge, Flow, Node, NodeKind, PORT_ELSE, PORT_ERROR, PORT_OUT},
+    model::{Edge, Flow, Node, NodeKind, PORT_DONE, PORT_EACH, PORT_ELSE, PORT_ERROR, PORT_OUT, PORT_PASS},
     nodes,
-    reference::Scope,
+    reference::{Scope, lookup, pick},
     streams, validate,
 };
 use crate::{
@@ -55,7 +55,13 @@ const PROGRESS_INTERVAL: Duration = Duration::from_millis(50);
 pub struct Token {
     pub input: Arc<Value>,
     pub nodes: Arc<HashMap<String, Arc<Value>>>,
+    /// Which turn of a loop, or which message of a stream, this is part of. An OR node lets the first of
+    /// each through.
+    pub wave: u64,
 }
+
+/// What is wired into a node's inputs for one of its runs: each input (`var:id`) and the value it gets.
+pub type Wired = Vec<(String, Value)>;
 
 /// Something a run connected, and the command that closes it.
 pub struct Live {
@@ -72,7 +78,15 @@ struct NodeState {
     error: Option<String>,
     duration_ms: Option<u64>,
     input: Value,
+    /// What was wired into the node's inputs, by input.
+    inputs: Value,
     output: Value,
+    /// What last left by each of the node's ports.
+    outputs: serde_json::Map<String, Value>,
+    /// How many messages a stream node handed on, or how many turns a loop took.
+    handed_on: u64,
+    /// The tests of a request's answer, or the checks of a validate node: `{ name, passed, error? }` each.
+    tests: Value,
 }
 
 impl Default for NodeState {
@@ -84,8 +98,19 @@ impl Default for NodeState {
             error: None,
             duration_ms: None,
             input: Value::Null,
+            inputs: json!({}),
             output: Value::Null,
+            outputs: serde_json::Map::new(),
+            handed_on: 0,
+            tests: json!([]),
         }
+    }
+}
+
+impl NodeState {
+    fn produced(&mut self, port: &str, output: Value) {
+        self.outputs.insert(port.to_string(), output.clone());
+        self.output = output;
     }
 }
 
@@ -119,6 +144,9 @@ pub struct Run {
     started_at: i64,
     cancel: CancellationToken,
     node_runs: AtomicU64,
+    waves: AtomicU64,
+    /// The OR nodes that let something through, with the wave it was part of.
+    merged: Mutex<HashSet<(String, u64)>>,
     /// The variables scripts set during the run, when they are not written to the environment.
     variables: Mutex<Vec<(String, String)>>,
     live: Mutex<Vec<Live>>,
@@ -179,6 +207,43 @@ impl Run {
         result
     }
 
+    /// `token` as a new turn of a loop or a new message of a stream.
+    pub fn turn(&self, token: &Token) -> Token {
+        Token { wave: self.waves.fetch_add(1, Ordering::Relaxed) + 1, ..token.clone() }
+    }
+
+    /// What is wired into the inputs of `node`: for each wire the part it takes of what its source produced on
+    /// the way here, or of what a data node holds. A wire whose source has nothing to give is an error that
+    /// names it: falling back to the environment would hide the mistake.
+    fn wired(&self, node: &Node, token: &Token) -> std::result::Result<Wired, String> {
+        let mut values = Wired::new();
+        for wire in self.flow.wires_into(&node.id) {
+            let source = self.flow.node(&wire.from);
+            let held = match source {
+                Some(source) if matches!(source.kind, NodeKind::Data | NodeKind::Sample) => Some(&source.value),
+                _ => token.nodes.get(&wire.from).map(Arc::as_ref),
+            };
+            let value = held.and_then(|held| pick(held, &wire.path)).ok_or_else(|| {
+                let name = wire.input.split_once(':').map_or(wire.input.as_str(), |(_, name)| name);
+                let path: Vec<String> = wire.path.iter().map(super::reference::text_of).collect();
+                format!(
+                    "\"{name}\" is wired to {} of \"{}\", which has no value in this run.",
+                    if path.is_empty() { "the output".to_string() } else { path.join(".") },
+                    source.map_or(wire.from.as_str(), Node::label),
+                )
+            })?;
+            values.push((wire.input.clone(), value));
+        }
+        let mut state = self.state.lock();
+        for wire in self.flow.wires_into(&node.id) {
+            *state.edges.entry(wire.id.clone()).or_default() += 1;
+            state.changed_edges.insert(wire.id.clone());
+        }
+        let inputs: serde_json::Map<String, Value> = values.iter().cloned().collect();
+        state.nodes.entry(node.id.clone()).or_default().inputs = preview(&Value::Object(inputs));
+        Ok(values)
+    }
+
     /// Remember something the run connected, to close it when the run ends.
     pub fn keep(&self, live: Live) {
         self.live.lock().push(live);
@@ -208,9 +273,12 @@ impl Run {
 
     /// A stream node received `message`. Its `runs` stay the times the flow reached it: how many messages it
     /// handed on is what its connection counts.
-    pub fn received(&self, node: &Node, message: &Value) {
+    pub fn received(&self, node: &Node, port: &str, message: &Value) {
         let output = preview(message);
-        self.change(node, |state| state.output = output);
+        self.change(node, |state| {
+            state.produced(port, output);
+            state.handed_on += 1;
+        });
     }
 
     /// Something went wrong at a node that does not end it.
@@ -218,13 +286,13 @@ impl Run {
         self.change(node, |state| state.error = Some(error));
     }
 
-    /// Count the tests of a request's answer. They are counted as the request answered, before a script of
-    /// the node may replace what it hands on.
-    fn tally(&self, output: &Value) {
-        let tests = array_of(output, "tests");
+    /// Keep and count the tests of a request's answer, or the checks of a validate node.
+    fn tested(&self, node: &Node, tests: &[Value]) {
         let mut state = self.state.lock();
         state.total_tests += tests.len() as u64;
         state.passed_tests += tests.iter().filter(|test| test["passed"] == true).count() as u64;
+        state.nodes.entry(node.id.clone()).or_default().tests = json!(tests);
+        state.changed_nodes.insert(node.id.clone());
     }
 
     fn settle(&self, node: &Node, port: &str, output: &Value, took: Duration) {
@@ -236,7 +304,7 @@ impl Run {
             state.port = Some(port.to_string());
             state.error = error.or(state.error.take());
             state.duration_ms = Some(took.as_millis() as u64);
-            state.output = shown;
+            state.produced(port, shown);
         });
     }
 
@@ -249,11 +317,14 @@ impl Run {
     fn node_value(node: &Node, state: &NodeState, whole: bool) -> Value {
         let mut out = json!({
             "id": node.id, "name": node.label(), "status": state.status, "runs": state.runs,
-            "port": state.port, "error": state.error, "durationMs": state.duration_ms,
+            "port": state.port, "error": state.error, "durationMs": state.duration_ms, "handedOn": state.handed_on,
         });
         if whole {
             out["input"] = state.input.clone();
+            out["inputs"] = state.inputs.clone();
             out["output"] = state.output.clone();
+            out["outputs"] = json!(state.outputs);
+            out["tests"] = state.tests.clone();
         }
         out
     }
@@ -372,7 +443,7 @@ pub async fn forward(run: &Arc<Run>, node: &Node, port: &str, output: Arc<Value>
     }
     let mut nodes = (*token.nodes).clone();
     nodes.insert(node.id.clone(), output.clone());
-    let next = Token { input: output, nodes: Arc::new(nodes) };
+    let next = Token { input: output, nodes: Arc::new(nodes), wave: token.wave };
     join_all(edges.iter().map(|edge| deliver(run.clone(), edge.to.clone(), next.clone()))).await;
 }
 
@@ -386,7 +457,9 @@ pub async fn fire(run: &Arc<Run>, node: &Node, port: &str, output: Arc<Value>, t
 fn deliver(run: Arc<Run>, node_id: String, token: Token) -> BoxFuture<'static, ()> {
     Box::pin(async move {
         let Some(node) = run.flow.node(&node_id) else { return };
-        if run.is_cancelled() {
+        // A data node only holds a value, and an OR node lets through the first of what reaches it together.
+        let merged = || !run.merged.lock().insert((node.id.clone(), token.wave));
+        if run.is_cancelled() || node.kind == NodeKind::Data || (node.kind == NodeKind::Or && merged()) {
             return;
         }
         if run.node_runs.fetch_add(1, Ordering::Relaxed) >= MAX_NODE_RUNS {
@@ -394,24 +467,78 @@ fn deliver(run: Arc<Run>, node_id: String, token: Token) -> BoxFuture<'static, (
         }
         let started = Instant::now();
         run.begin(node, &token.input);
-        let (port, output) = match node.kind {
-            NodeKind::Start => (PORT_OUT.to_string(), token.input.clone()),
-            NodeKind::Delay => {
+        let failed = |error: String| (PORT_ERROR.to_string(), Arc::new(json!({ "ok": false, "error": error })));
+        let passed_on = |port: &str| (port.to_string(), token.input.clone());
+        let (port, output) = match (run.wired(node, &token), node.kind) {
+            (Err(error), _) => failed(error),
+            (_, NodeKind::Start | NodeKind::Display | NodeKind::Or | NodeKind::Data) => passed_on(PORT_OUT),
+            (_, NodeKind::Sample) => (PORT_OUT.to_string(), Arc::new(node.value.clone())),
+            (_, NodeKind::Delay) => {
                 tokio::time::sleep(Duration::from_millis(node.delay_ms)).await;
-                (PORT_OUT.to_string(), token.input.clone())
+                passed_on(PORT_OUT)
             }
-            NodeKind::Condition => {
+            (_, NodeKind::Condition) => {
                 let scope = run.scope(&token);
                 let taken = node.branches.iter().find(|branch| condition::matches(branch, &scope));
-                (taken.map_or(PORT_ELSE, |branch| branch.id.as_str()).to_string(), token.input.clone())
+                passed_on(taken.map_or(PORT_ELSE, |branch| branch.id.as_str()))
             }
-            NodeKind::Request => {
-                let answered = nodes::request(&run, node, &token).await;
-                run.tally(&answered.1);
-                nodes::after_execute(&run, node, &token, answered).await
+            (_, NodeKind::Validate) => {
+                let scope = run.scope(&token);
+                let checks: Vec<Value> = node
+                    .rules
+                    .iter()
+                    .map(|rule| {
+                        let name = format!("{} {:?} {}", rule.path, rule.op, rule.value);
+                        json!({ "name": name.trim(), "passed": condition::holds(rule, &scope) })
+                    })
+                    .collect();
+                run.tested(node, &checks);
+                match checks.iter().filter(|check| check["passed"] != true).count() {
+                    0 => passed_on(PORT_PASS),
+                    failing => {
+                        let error = format!("{failing} of {} checks failed", checks.len());
+                        (PORT_ERROR.to_string(), Arc::new(json!({ "ok": false, "error": error, "input": *token.input })))
+                    }
+                }
             }
-            NodeKind::Mcp => nodes::after_execute(&run, node, &token, nodes::mcp(&run, node, &token).await).await,
-            NodeKind::Stream => return streams::listen(&run, node, &token, started).await,
+            (Ok(wired), NodeKind::Evaluate) => nodes::evaluate(&run, node, &token, &wired).await,
+            (_, NodeKind::Repeat | NodeKind::ForEach) => {
+                let turns: Option<Vec<Value>> = match node.kind {
+                    NodeKind::Repeat => Some((0..node.count).map(|index| json!({ "index": index })).collect()),
+                    _ => {
+                        let path = if node.path.trim().is_empty() { "input" } else { node.path.as_str() };
+                        lookup(path, &run.scope(&token)).as_ref().and_then(Value::as_array).map(|items| {
+                            items.iter().enumerate().map(|(index, item)| json!({ "index": index, "item": item })).collect()
+                        })
+                    }
+                };
+                match turns {
+                    None => failed(format!("{} is not a list in this run.", node.path)),
+                    Some(turns) => {
+                        // One turn at a time: the next one starts when everything after this one is done.
+                        for turn in turns {
+                            if run.is_cancelled() {
+                                return;
+                            }
+                            run.received(node, PORT_EACH, &turn);
+                            forward(&run, node, PORT_EACH, Arc::new(turn), &run.turn(&token)).await;
+                        }
+                        passed_on(PORT_DONE)
+                    }
+                }
+            }
+            (Ok(wired), NodeKind::Request)
+                if matches!(node.request_kind.as_str(), "sseRequests" | "wsConnections" | "socketioRequests") =>
+            {
+                return streams::listen(&run, node, &token, &wired, started, true).await;
+            }
+            (Ok(wired), NodeKind::Request) => {
+                let answered = nodes::request(&run, node, &token, &wired).await;
+                run.tested(node, array_of(&answered.1, "tests"));
+                answered
+            }
+            (Ok(wired), NodeKind::Mcp) => nodes::mcp(&run, node, &token, &wired).await,
+            (Ok(wired), NodeKind::Stream) => return streams::listen(&run, node, &token, &wired, started, false).await,
         };
         fire(&run, node, &port, output, &token, started.elapsed()).await;
     })
@@ -420,7 +547,7 @@ fn deliver(run: Arc<Run>, node_id: String, token: Token) -> BoxFuture<'static, (
 async fn drive(run: Arc<Run>, timeout: Option<Duration>) {
     {
         let start = run.flow.nodes.iter().find(|node| node.kind == NodeKind::Start).map(|node| node.id.clone());
-        let token = Token { input: Arc::new(run.inputs.clone()), nodes: Arc::default() };
+        let token = Token { input: Arc::new(run.inputs.clone()), nodes: Arc::default(), wave: 0 };
         let work = async {
             if let Some(start) = start {
                 deliver(run.clone(), start, token).await;
@@ -538,6 +665,8 @@ pub fn start(ctx: &CommandContext, params: &Value) -> Result<Value> {
             started_at: now_ms(),
             cancel: CancellationToken::new(),
             node_runs: AtomicU64::new(0),
+            waves: AtomicU64::new(0),
+            merged: Mutex::new(HashSet::new()),
             variables: Mutex::new(Vec::new()),
             live: Mutex::new(Vec::new()),
             state: Mutex::new(State {

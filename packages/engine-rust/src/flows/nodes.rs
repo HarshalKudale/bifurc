@@ -6,14 +6,12 @@ use std::{sync::Arc, time::Duration};
 use serde_json::{Map, Value, json};
 
 use super::{
-    model::{Node, PORT_ERROR, PORT_SUCCESS},
-    reference::render,
-    run::{Live, Run, Token},
+    model::{Node, PORT_ERROR, PORT_OUT, PORT_SUCCESS},
+    reference::{render, text_of},
+    run::{Live, Run, Token, Wired},
     streams::Subscription,
 };
 use crate::{
-    env::load_merged_environment,
-    rest::pipeline::{env_to_map, persist_script_variables},
     scripting::execute_flow_script,
     utils::{
         json::{array_of, opt_str, str_of},
@@ -43,37 +41,45 @@ fn outcome(mut output: Value, error: Option<String>) -> Outcome {
     }
 }
 
-/// The node's variables with their references filled in.
-pub fn bindings(run: &Run, node: &Node, token: &Token) -> Result<Vec<(String, String)>, String> {
-    let scope = run.scope(token);
-    node.variables.iter().map(|pair| Ok((pair.name.clone(), render(&pair.value, &scope)?))).collect()
+/// What is wired into the inputs whose names start with `prefix` (`var:`, `arg:`), by the rest of the name.
+fn named<'a>(wired: &'a Wired, prefix: &'a str) -> impl Iterator<Item = (String, Value)> + 'a {
+    wired.iter().filter_map(move |(input, value)| Some((input.strip_prefix(prefix)?.to_string(), value.clone())))
 }
 
-/// Run the node's after-execute script over what it produced, before that is handed on. The script reads and
-/// replaces `lp.output`, and the variables it sets are the run's. It does not run for a node that failed, nor
-/// when the saved request's own post script is the one chosen; a script that fails sends the node out by its
-/// error port.
-pub async fn after_execute(run: &Run, node: &Node, token: &Token, produced: Outcome) -> Outcome {
-    let (port, output) = produced;
-    if port == PORT_ERROR || node.runs_post_script() || node.after_execute.trim().is_empty() {
-        return (port, output);
+/// The values for the request's `{{variables}}`: what was typed in for the node, its references filled in,
+/// then what is wired, which wins.
+pub fn bindings(run: &Run, node: &Node, token: &Token, wired: &Wired) -> Result<Vec<(String, String)>, String> {
+    let scope = run.scope(token);
+    let mut variables: Vec<(String, String)> = node
+        .variables
+        .iter()
+        .map(|pair| Ok((pair.name.clone(), render(&pair.value, &scope)?)))
+        .collect::<Result<_, String>>()?;
+    variables.extend(named(wired, "var:").map(|(name, value)| (name, text_of(&value))));
+    Ok(variables)
+}
+
+/// Work out an evaluate node's expression: JavaScript over `input`, what the node was handed, and `vars`,
+/// its variables by name (what is wired into each, else what was typed for it). What the expression comes to
+/// is what the node hands on; one that throws sends it out by its error port.
+pub async fn evaluate(run: &Run, node: &Node, token: &Token, wired: &Wired) -> Outcome {
+    let scope = run.scope(token);
+    let mut vars = Map::new();
+    for pair in &node.variables {
+        match render(&pair.value, &scope) {
+            Ok(text) => vars.insert(pair.name.clone(), json!(text)),
+            Err(error) => return failed(error),
+        };
     }
+    vars.extend(named(wired, "var:"));
     let nodes: Map<String, Value> = token.nodes.iter().map(|(id, value)| (id.clone(), (**value).clone())).collect();
-    let data = json!({ "output": *output, "input": *token.input, "nodes": nodes, "flow": run.inputs });
-    let result = run
-        .scoped(Vec::new(), async {
-            let before = env_to_map(load_merged_environment(&run.ws_id).as_ref());
-            let result = execute_flow_script(&node.after_execute, data, before.clone()).await;
-            persist_script_variables(&run.ws_id, &before, &result["envVars"]);
-            result
-        })
-        .await;
+    let data = json!({ "input": *token.input, "vars": vars, "nodes": nodes, "flow": run.inputs });
+    let script =
+        format!("lp.output = (function (input, vars) {{ return (\n{}\n); }})(lp.input, lp.vars);", node.expression);
+    let result = execute_flow_script(&script, data, json!({})).await;
     match opt_str(&result, "error") {
-        Some(error) => {
-            let kept = if output.is_object() { (*output).clone() } else { json!({ "output": *output }) };
-            outcome(kept, Some(format!("The after-execute script failed: {error}")))
-        }
-        None => (port, Arc::new(result["output"].clone())),
+        Some(error) => failed(format!("The expression failed: {error}")),
+        None => (PORT_OUT.to_string(), Arc::new(result["output"].clone())),
     }
 }
 
@@ -108,7 +114,7 @@ fn http_output(node: &Node, answer: &Value) -> Outcome {
         Some(format!("A script of the request failed: {error}"))
     } else if node.fail_on_status && !(200..300).contains(&status) {
         Some(format!("HTTP {status}"))
-    } else if node.fail_on_tests && failing > 0 {
+    } else if !node.ignore_test_errors && failing > 0 {
         Some(format!("{failing} of {} tests failed", tests.len()))
     } else {
         None
@@ -129,16 +135,17 @@ fn grpc_output(node: &Node, answer: &Value) -> Outcome {
     outcome(output, error)
 }
 
-async fn send_once(run: &Run, node: &Node, token: &Token) -> Outcome {
-    let variables = match bindings(run, node, token) {
+async fn send_once(run: &Run, node: &Node, token: &Token, wired: &Wired) -> Outcome {
+    let variables = match bindings(run, node, token, wired) {
         Ok(variables) => variables,
         Err(error) => return failed(error),
     };
     let mut payload = json!({ "workspaceId": run.ws_id, "id": node.request_id });
     let command = match node.request_kind.as_str() {
         "requests" => {
-            // A pre script is never run for a node, and the tests always are.
-            payload["skipScripts"] = if node.runs_post_script() { json!(["pre"]) } else { json!(["pre", "post"]) };
+            let scripts: &[&str] = if node.execute_scripts { &[] } else { &["pre", "post"] };
+            let tests: &[&str] = if node.execute_tests { &[] } else { &["test"] };
+            payload["skipScripts"] = json!([scripts, tests].concat());
             "request.send"
         }
         "graphqlRequests" => "graphql.send",
@@ -154,8 +161,8 @@ async fn send_once(run: &Run, node: &Node, token: &Token) -> Outcome {
 }
 
 /// Send the node's saved request.
-pub async fn request(run: &Arc<Run>, node: &Node, token: &Token) -> Outcome {
-    with_retries(node, || send_once(run, node, token)).await
+pub async fn request(run: &Arc<Run>, node: &Node, token: &Token, wired: &Wired) -> Outcome {
+    with_retries(node, || send_once(run, node, token, wired)).await
 }
 
 /// The id of the connection a run keeps to the MCP server of one saved request.
@@ -197,13 +204,16 @@ async fn mcp_connect(run: &Run, node: &Node, variables: &[(String, String)]) -> 
     Ok(())
 }
 
-async fn call_once(run: &Run, node: &Node, token: &Token) -> Outcome {
+async fn call_once(run: &Run, node: &Node, token: &Token, wired: &Wired) -> Outcome {
     let scope = run.scope(token);
-    let prepared = bindings(run, node, token).and_then(|variables| {
+    let prepared = bindings(run, node, token, wired).and_then(|variables| {
         let mut arguments = Map::new();
-        for pair in &node.arguments {
+        // An argument nothing was typed for is left to the server's default.
+        for pair in node.arguments.iter().filter(|pair| !pair.value.is_empty()) {
             arguments.insert(pair.name.clone(), json!(render(&pair.value, &scope)?));
         }
+        // What is wired wins over what was typed, and keeps its type.
+        arguments.extend(named(wired, "arg:"));
         Ok((variables, render(&node.target, &scope)?, arguments))
     });
     let (variables, target, arguments) = match prepared {
@@ -248,8 +258,8 @@ async fn call_once(run: &Run, node: &Node, token: &Token) -> Outcome {
 }
 
 /// Call the node's tool, prompt or resource on its MCP server.
-pub async fn mcp(run: &Arc<Run>, node: &Node, token: &Token) -> Outcome {
-    with_retries(node, || call_once(run, node, token)).await
+pub async fn mcp(run: &Arc<Run>, node: &Node, token: &Token, wired: &Wired) -> Outcome {
+    with_retries(node, || call_once(run, node, token, wired)).await
 }
 
 #[cfg(test)]
@@ -288,8 +298,9 @@ mod tests {
         assert_eq!(http_output(&node(json!({ "failOnStatus": false })), &answer(404, json!({}))).0, PORT_SUCCESS);
 
         let tests = json!({ "tests": [{ "name": "a", "passed": true }, { "name": "b", "passed": false }] });
-        assert_eq!(http_output(&node(json!({})), &answer(200, tests.clone())).0, PORT_SUCCESS);
-        let (port, output) = http_output(&node(json!({ "failOnTests": true })), &answer(200, tests));
+        let lenient = node(json!({ "ignoreTestErrors": true }));
+        assert_eq!(http_output(&lenient, &answer(200, tests.clone())).0, PORT_SUCCESS);
+        let (port, output) = http_output(&node(json!({})), &answer(200, tests));
         assert_eq!((port.as_str(), &output["error"]), (PORT_ERROR, &json!("1 of 2 tests failed")));
 
         let broken = http_output(&node(json!({})), &answer(200, json!({ "preScriptError": "boom" })));
