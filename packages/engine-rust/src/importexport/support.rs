@@ -3,7 +3,7 @@
 
 use std::collections::{HashMap, HashSet};
 
-use serde_json::{Map, Value, json};
+use serde_json::{Value, json};
 
 use crate::{
     runtime::instances::notify_config_changed,
@@ -13,7 +13,7 @@ use crate::{
     },
     workspace::{
         config::save_config,
-        fs::{create_folder, ensure_default_folder, sync_enabled_set, write_entity},
+        fs::{create_folder, ensure_default_folder, sync_enabled_set},
     },
 };
 
@@ -30,6 +30,15 @@ pub fn io_failure(err: impl std::fmt::Display) -> String {
 /// `JSON.parse`, with the failure `String(err)` would give.
 pub fn parse_json(text: &str) -> Result<Value, String> {
     serde_json::from_str(text).map_err(|err| format!("SyntaxError: {err}"))
+}
+
+/// A file that is JSON or YAML, whichever its text is.
+pub fn parse_any(text: &str) -> Result<Value, String> {
+    let trimmed = text.trim_start_matches(is_js_space);
+    if trimmed.starts_with(['{', '[']) {
+        return parse_json(text);
+    }
+    serde_yaml_ng::from_str::<Value>(text).map_err(|err| format!("YAMLException: {err}"))
 }
 
 /// `JSON.stringify(value, null, 2)`.
@@ -68,13 +77,6 @@ pub fn present<'a>(value: &'a Value, key: &str) -> Option<&'a Value> {
 /// `value[key] ?? default` as text.
 pub fn text_or(value: &Value, key: &str, default: &str) -> String {
     present(value, key).map(js_str).unwrap_or_else(|| default.to_string())
-}
-
-/// Insert `value` under `key` when there is one.
-pub fn put_opt(map: &mut Map<String, Value>, key: &str, value: Option<&Value>) {
-    if let Some(value) = value {
-        map.insert(key.to_string(), value.clone());
-    }
 }
 
 /// The display name of workspace `ws_id` in a config snapshot, or `default`.
@@ -222,16 +224,6 @@ pub fn add_import_folders(
     Ok(made)
 }
 
-/// Write a request into the folder `folder` names by id: the Default one when it names none.
-pub fn store_request(ws_id: &str, request: &Value, folder: Option<&str>) -> Result<(), String> {
-    let id = str_of(request, "id");
-    let folder_id = match folder.filter(|id| !id.is_empty()) {
-        Some(folder_id) => folder_id.to_string(),
-        None => ensure_default_folder(ws_id, "requests").map_err(io_failure)?.0,
-    };
-    write_entity(ws_id, "requests", id, request, Some(&folder_id)).map_err(io_failure)
-}
-
 /// A folder as the config snapshot lists it.
 pub fn new_folder(id: &str, name: &str, parent_id: Option<&str>, created_at: Value, ws_id: &str) -> Value {
     json!({ "id": id, "name": name, "parentId": parent_id, "createdAt": created_at, "workspaceId": ws_id })
@@ -279,20 +271,6 @@ pub fn iso_from_ms(ms: i64) -> Result<String, String> {
         format!("{}{:06}", if year < 0 { '-' } else { '+' }, year.abs())
     };
     Ok(format!("{year}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}.{milli:03}Z"))
-}
-
-/// `new Date(createdAt).toISOString()` for a stored `createdAt`.
-pub fn iso_from_value(value: Option<&Value>) -> Result<String, String> {
-    match value {
-        Some(Value::Number(n)) => match n.as_f64() {
-            Some(f) if f.is_finite() => iso_from_ms(f.trunc() as i64),
-            _ => Err("RangeError: Invalid time value".to_string()),
-        },
-        Some(Value::String(s)) => {
-            ms_from_iso(s).map(iso_from_ms).unwrap_or_else(|| Err("RangeError: Invalid time value".to_string()))
-        }
-        _ => Err("RangeError: Invalid time value".to_string()),
-    }
 }
 
 /// `new Date(text).getTime()` for an ISO 8601 text; `None` where JavaScript would give `NaN`.
@@ -351,7 +329,6 @@ mod tests {
         assert_eq!(ms_from_iso("2023-11-14T23:13:20+01:00"), Some(1_700_000_000_000));
         assert_eq!(ms_from_iso("2023-11-14"), Some(1_699_920_000_000));
         assert_eq!(ms_from_iso("garbage"), None);
-        assert!(iso_from_value(None).is_err());
     }
 
     #[test]
