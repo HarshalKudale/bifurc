@@ -31,6 +31,12 @@
     return StringCtor(e);
   }
 
+  // The response objects scripts hold, so `expect(bc.response)` and `bc.response.to` can assert on one.
+  var responses = new WeakSet();
+  var isResponse = function (v) {
+    return v !== null && typeof v === "object" && responses.has(v);
+  };
+
   function buildExpect() {
     return function expect(actual) {
       function assertionError(msg) {
@@ -61,7 +67,20 @@
           return buildChain(!negated);
         });
 
+        getter("deep", function () {
+          var deep = Object.create(chain);
+          deep.equal = deep.equals = deep.eq = chain.eql;
+          return deep;
+        });
+
+        getter("exist", function () {
+          var pass = actual !== null && actual !== undefined;
+          if (negated ? pass : !pass) throw assertionError("expected " + stringify(actual) + " " + neg + "to exist");
+          return chain;
+        });
+
         getter("ok", function () {
+          if (isResponse(actual)) return chain.status(200);
           var pass = !!actual;
           if (negated ? pass : !pass) {
             throw assertionError("expected " + stringify(actual) + " " + neg + "to be truthy");
@@ -133,10 +152,14 @@
           return chain;
         };
 
-        chain.property = function (key) {
+        chain.property = function (key, value) {
           var pass = typeof actual === "object" && actual !== null && key in actual;
+          if (pass && arguments.length > 1) pass = stringify(actual[key]) === stringify(value);
           if (negated ? pass : !pass) {
-            throw assertionError("expected object " + neg + 'to have property "' + key + '"');
+            throw assertionError(
+              "expected object " + neg + 'to have property "' + key + '"' +
+                (arguments.length > 1 ? " of " + stringify(value) : ""),
+            );
           }
           return chain;
         };
@@ -193,12 +216,55 @@
         };
 
         chain.status = function (code) {
-          var pass = actual === code;
+          var got = isResponse(actual) ? actual.code : actual;
+          var pass = got === code;
           if (negated ? pass : !pass) {
-            throw assertionError("expected status " + actual + " " + neg + "to be " + code);
+            throw assertionError("expected status " + got + " " + neg + "to be " + code);
           }
           return chain;
         };
+
+        // What only a response can be asked: `bc.response.to.have.header(…)`, `.to.be.success` and so on.
+        if (isResponse(actual)) {
+          chain.header = function (name, value) {
+            var pass = actual.headers.has(name) && (value === undefined || actual.headers.get(name) === value);
+            if (negated ? pass : !pass) {
+              throw assertionError(
+                "expected response " + neg + 'to have header "' + name + '"' +
+                  (value === undefined ? "" : ' of "' + value + '"'),
+              );
+            }
+            return chain;
+          };
+          chain.body = function (expected) {
+            var text = actual.text();
+            var pass = text === expected;
+            if (expected === undefined) pass = text.length > 0;
+            else if (expected instanceof RegExpCtor) pass = expected.test(text);
+            if (negated ? pass : !pass) {
+              throw assertionError(
+                "expected response " + neg + "to have body" + (expected === undefined ? "" : " " + expected),
+              );
+            }
+            return chain;
+          };
+          chain.jsonBody = function () {
+            var pass = actual.json() !== null;
+            if (negated ? pass : !pass) throw assertionError("expected response " + neg + "to have a JSON body");
+            return chain;
+          };
+          getter("json", chain.jsonBody);
+          var ranges = { success: [200, 299], clientError: [400, 499], serverError: [500, 599], error: [400, 599] };
+          keys(ranges).forEach(function (name) {
+            getter(name, function () {
+              var pass = actual.code >= ranges[name][0] && actual.code <= ranges[name][1];
+              if (negated ? pass : !pass) {
+                throw assertionError("expected status " + actual.code + " " + neg + "to be " + name);
+              }
+              return chain;
+            });
+          });
+        }
 
         getter("empty", function () {
           var pass = false;
@@ -290,14 +356,24 @@
         var found = findKey(store, key);
         if (found !== undefined) delete store[found];
       };
+      api.add = api.upsert = function (header) {
+        api.set(header.key, header.value);
+      };
+      api.remove = api.unset;
     }
     return api;
   }
 
   function responseApi(res) {
-    return {
+    var api = {
       get status() {
         return res.status;
+      },
+      get code() {
+        return res.status;
+      },
+      get to() {
+        return expectApi(api);
       },
       get body() {
         return res.body;
@@ -319,6 +395,8 @@
         return res.body;
       },
     };
+    responses.add(api);
+    return api;
   }
 
   var envApi = {
@@ -337,7 +415,18 @@
     toObject: function () {
       return copy(vars);
     },
+    replaceIn: function (text) {
+      return StringCtor(text).replace(/\{\{\s*([^{}]+?)\s*\}\}/g, function (all, key) {
+        return key in vars ? vars[key] : all;
+      });
+    },
   };
+
+  // Every scope Postman names reads and writes the one merged environment a request runs with.
+  function scopes(bc) {
+    bc.environment = bc.variables = bc.globals = bc.collectionVariables = envApi;
+    return bc;
+  }
 
   var consoleApi = buildConsoleMock(logs);
   var expectApi = buildExpect();
@@ -356,18 +445,19 @@
         mutableBody = v;
       },
     };
-    var proxyLp = {};
-    proxyLp[mode === "proxyRequest" ? "request" : "response"] = side;
-    globalThis.lp = proxyLp;
+    var proxyBc = {};
+    proxyBc[mode === "proxyRequest" ? "request" : "response"] = side;
+    // `lp` is the name scripts saved before the rename to `bc` still use.
+    globalThis.bc = globalThis.lp = proxyBc;
     result = function (err) {
       var out = { headers: mutableHeaders, body: typeof mutableBody === "string" ? mutableBody : StringCtor(mutableBody) };
       if (err !== undefined) out.error = err;
       return out;
     };
   } else if (mode === "flow") {
-    // A flow node's after-execute script: `lp.output` is what the node produced, to change or replace.
+    // A flow node's after-execute script: `bc.output` is what the node produced, to change or replace.
     var produced = input.output;
-    globalThis.lp = {
+    globalThis.bc = globalThis.lp = scopes({
       get output() {
         return produced;
       },
@@ -378,9 +468,8 @@
       vars: input.vars,
       nodes: input.nodes,
       flow: input.flow,
-      environment: envApi,
       console: consoleApi,
-    };
+    });
     globalThis.console = consoleApi;
     result = function (err) {
       var out = { output: produced === undefined ? null : produced, envVars: vars, logs: logs };
@@ -464,11 +553,49 @@
         if (url === undefined) jar = {};
         cookieOps.push({ op: "clear", url: url });
       },
+      // Postman's jar: the url comes first and the answer goes to a callback, called at once.
+      jar: function () {
+        function done(cb, value) {
+          if (typeof cb === "function") cb(null, value);
+        }
+        return {
+          // shortcut: reads answer for the request's own site whatever `url` says, upgrade when a script
+          // has to read another site's cookies.
+          get: function (url, name, cb) {
+            done(cb, jar[name]);
+          },
+          getAll: function (url, cb) {
+            done(
+              cb,
+              keys(jar).map(function (name) {
+                return { name: name, value: jar[name] };
+              }),
+            );
+          },
+          set: function (url, name, value, cb) {
+            if (name !== null && typeof name === "object") {
+              cb = value;
+              value = name.value;
+              name = name.name;
+            }
+            cookieApi.set(name, value, url);
+            done(cb, { name: name, value: value });
+          },
+          unset: function (url, name, cb) {
+            cookieApi.unset(name, url);
+            done(cb);
+          },
+          clear: function (url, cb) {
+            cookieApi.clear(url);
+            done(cb);
+          },
+        };
+      },
     };
 
-    var lp = { request: requestApi, environment: envApi, cookies: cookieApi };
-    if (res) lp.response = responseApi(res);
-    lp.test = function (name, fn) {
+    var bc = scopes({ request: requestApi, cookies: cookieApi });
+    if (res) bc.response = responseApi(res);
+    bc.test = function (name, fn) {
       var start = now();
       try {
         fn();
@@ -477,11 +604,11 @@
         tests.push({ name: name, passed: false, error: fmt(e), durationMs: now() - start });
       }
     };
-    lp.expect = expectApi;
-    lp.console = consoleApi;
-    globalThis.lp = lp;
+    bc.expect = expectApi;
+    bc.console = consoleApi;
+    globalThis.bc = globalThis.lp = bc;
     globalThis.console = consoleApi;
-    globalThis.test = lp.test;
+    globalThis.test = bc.test;
     globalThis.expect = expectApi;
 
     result = function (err) {

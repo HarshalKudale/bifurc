@@ -32,7 +32,7 @@ fn has_script(script: &Option<String>) -> Option<&str> {
     script.as_deref().filter(|script| !script.trim().is_empty())
 }
 
-/// The flat map the sandbox's `lp.environment` reads.
+/// The flat map the sandbox's `bc.environment` reads.
 pub(crate) fn env_to_map(env: Option<&Value>) -> Value {
     let mut map = Map::new();
     if let Some(env) = env {
