@@ -18,6 +18,7 @@ pub enum NodeKind {
     Stream,
     Mcp,
     Condition,
+    If,
     Validate,
     Evaluate,
     Delay,
@@ -31,10 +32,11 @@ pub enum NodeKind {
 
 impl NodeKind {
     /// The kinds a node can be added as, in the order a menu lists them. A flow has its one start node.
-    pub const ADDABLE: [NodeKind; 13] = [
+    pub const ADDABLE: [NodeKind; 14] = [
         NodeKind::Request,
         NodeKind::Stream,
         NodeKind::Mcp,
+        NodeKind::If,
         NodeKind::Condition,
         NodeKind::Validate,
         NodeKind::Evaluate,
@@ -54,6 +56,7 @@ impl NodeKind {
             NodeKind::Stream => "Stream",
             NodeKind::Mcp => "MCP call",
             NodeKind::Condition => "Condition",
+            NodeKind::If => "If",
             NodeKind::Validate => "Validate",
             NodeKind::Evaluate => "Evaluate",
             NodeKind::Delay => "Delay",
@@ -74,6 +77,7 @@ impl NodeKind {
             NodeKind::Stream => "stream",
             NodeKind::Mcp => "mcp",
             NodeKind::Condition => "condition",
+            NodeKind::If => "if",
             NodeKind::Validate => "validate",
             NodeKind::Evaluate => "evaluate",
             NodeKind::Delay => "delay",
@@ -155,6 +159,11 @@ pub struct FlowNode {
     pub x: f32,
     #[serde(default)]
     pub y: f32,
+    /// Display: how wide the node was made, and how high what it shows. 0 is the size it has by itself.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub width: f32,
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub height: f32,
 
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub request_kind: String,
@@ -232,6 +241,8 @@ impl FlowNode {
             kind,
             x,
             y,
+            width: 0.0,
+            height: 0.0,
             request_kind: String::new(),
             request_id: String::new(),
             variables: Vec::new(),
@@ -271,6 +282,7 @@ impl FlowNode {
             }),
             NodeKind::Validate => node.rules.push(Rule::status_is_200()),
             NodeKind::Evaluate => node.expression = "input".to_owned(),
+            NodeKind::If => node.expression = "input.status === 200".to_owned(),
             NodeKind::Data => node.value = Value::String(String::new()),
             NodeKind::Sample => node.value = serde_json::json!({ "status": 200, "headers": {}, "body": "" }),
             _ => {}
@@ -769,6 +781,7 @@ mod tests {
                 { "id": "login", "type": "request", "name": "Login", "x": 300.0, "y": 120.0, "requestKind": "requests",
                   "requestId": "r1", "failOnStatus": false, "futureField": { "a": 1 } },
                 { "id": "seven", "type": "data", "name": "", "x": 0.0, "y": 0.0, "value": 7 },
+                { "id": "show", "type": "display", "name": "", "x": 0.0, "y": 0.0, "width": 480.0, "height": 320.0 },
             ],
             "edges": [
                 { "id": "e1", "from": "start", "port": "out", "to": "login" },

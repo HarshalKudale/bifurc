@@ -7,8 +7,8 @@ use std::{collections::HashSet, rc::Rc};
 use gpui_kit::component::{ActiveTheme as _, Icon, IconName, Sizable as _, h_flex, v_flex};
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    AnyElement, App, ElementId, InteractiveElement as _, IntoElement, ParentElement as _,
-    StatefulInteractiveElement as _, Styled as _, Window, div, rems,
+    App, Div, ElementId, InteractiveElement as _, ParentElement as _, Stateful, StatefulInteractiveElement as _,
+    Styled as _, Window, div, rems,
 };
 use serde_json::Value;
 
@@ -28,9 +28,11 @@ pub fn open_key(scope: &str, path: &[Value]) -> String {
 /// `value` as a tree. `scope` tells this tree's rows from another's in `open`; `toggle` is told the key of a
 /// row that was opened or closed. With `pick`, a click on a row chooses the part it holds and its arrow
 /// opens it; without, a click anywhere on the row opens it.
-pub fn json_tree(scope: &str, value: &Value, open: &HashSet<String>, toggle: Toggle, pick: Option<Pick>, cx: &App) -> AnyElement {
+/// It scrolls once it is 14 rems high; whoever draws it may give it another height.
+pub fn json_tree(scope: &str, value: &Value, open: &HashSet<String>, toggle: Toggle, pick: Option<Pick>, cx: &App) -> Stateful<Div> {
     let theme = cx.theme();
     let rows = json_rows(value, &|key| open.contains(&format!("{scope}|{key}")), ROW_LIMIT);
+    let tree_id = ElementId::Name(format!("{scope}|tree").into());
     if rows.is_empty() {
         // A single value, or a list or an object with nothing in it.
         let shown = match value {
@@ -39,13 +41,13 @@ pub fn json_tree(scope: &str, value: &Value, open: &HashSet<String>, toggle: Tog
             other => other.to_string(),
         };
         return div()
+            .id(tree_id)
             .px_2()
             .py_1()
             .text_color(theme.muted_foreground)
             .overflow_hidden()
             .text_ellipsis()
-            .child(shown)
-            .into_any_element();
+            .child(shown);
     }
     let cut_short = rows.len() >= ROW_LIMIT;
     let lines = rows.into_iter().map(|row| {
@@ -94,7 +96,7 @@ pub fn json_tree(scope: &str, value: &Value, open: &HashSet<String>, toggle: Tog
             })
     });
     v_flex()
-        .id(ElementId::Name(format!("{scope}|tree").into()))
+        .id(tree_id)
         .max_h(rems(14.0))
         .overflow_y_scroll()
         .py_1()
@@ -102,7 +104,6 @@ pub fn json_tree(scope: &str, value: &Value, open: &HashSet<String>, toggle: Tog
         .when(cut_short, |this| {
             this.child(div().px_2().text_color(theme.muted_foreground).child(format!("The first {ROW_LIMIT} rows are shown.")))
         })
-        .into_any_element()
 }
 
 /// Open the row named `key` in `open` if it is closed, close it if it is open.
