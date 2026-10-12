@@ -23,6 +23,9 @@ pub const PORT_PASS: &str = "pass";
 /// The ports of a loop: `each` once per turn, `done` when the turns are over.
 pub const PORT_EACH: &str = "each";
 pub const PORT_DONE: &str = "done";
+/// The ports of an if node: `true` when its expression holds, `false` when it does not.
+pub const PORT_TRUE: &str = "true";
+pub const PORT_FALSE: &str = "false";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -32,6 +35,7 @@ pub enum NodeKind {
     Stream,
     Mcp,
     Condition,
+    If,
     Validate,
     Evaluate,
     Delay,
@@ -198,7 +202,7 @@ pub struct Node {
     /// Validate: the checks, all of which must hold.
     #[serde(default)]
     pub rules: Vec<Rule>,
-    /// Evaluate: a JavaScript expression over `input` (what the node was handed) and `vars`.
+    /// Evaluate and if: a JavaScript expression over `input` (what the node was handed) and `vars`.
     #[serde(default)]
     pub expression: String,
     /// Repeat: how many turns.
@@ -235,6 +239,7 @@ impl Node {
             NodeKind::Request | NodeKind::Mcp => fixed(&[(PORT_SUCCESS, "Success"), (PORT_ERROR, "Error")]),
             NodeKind::Validate => fixed(&[(PORT_PASS, "Pass"), (PORT_ERROR, "Fail")]),
             NodeKind::Evaluate => fixed(&[(PORT_OUT, "Result"), (PORT_ERROR, "Error")]),
+            NodeKind::If => fixed(&[(PORT_TRUE, "True"), (PORT_FALSE, "False")]),
             NodeKind::Repeat | NodeKind::ForEach => fixed(&[(PORT_EACH, "Each"), (PORT_DONE, "Done")]),
             NodeKind::Stream => fixed(&[(PORT_MESSAGE, "Message"), (PORT_CLOSED, "Closed"), (PORT_ERROR, "Error")]),
             NodeKind::Condition => {

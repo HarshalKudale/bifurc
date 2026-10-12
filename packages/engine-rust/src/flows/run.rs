@@ -22,7 +22,10 @@ use tokio_util::sync::CancellationToken;
 
 use super::{
     condition,
-    model::{Edge, Flow, Node, NodeKind, PORT_DONE, PORT_EACH, PORT_ELSE, PORT_ERROR, PORT_OUT, PORT_PASS},
+    model::{
+        Edge, Flow, Node, NodeKind, PORT_DONE, PORT_EACH, PORT_ELSE, PORT_ERROR, PORT_FALSE, PORT_OUT, PORT_PASS,
+        PORT_TRUE,
+    },
     nodes,
     reference::{Scope, lookup, pick},
     streams, validate,
@@ -33,7 +36,7 @@ use crate::{
     protocol::{EngineError, Result},
     utils::{
         id::{generate_id, now_ms},
-        json::{array_of, opt_str, str_of},
+        json::{array_of, is_truthy, opt_str, str_of},
     },
     workspace::config::load_entity,
 };
@@ -502,6 +505,12 @@ fn deliver(run: Arc<Run>, node_id: String, token: Token) -> BoxFuture<'static, (
                 }
             }
             (Ok(wired), NodeKind::Evaluate) => nodes::evaluate(&run, node, &token, &wired).await,
+            // What it was handed goes on by the port its expression picks. An expression that throws leaves
+            // by a port nothing can be connected to, which ends the run.
+            (Ok(wired), NodeKind::If) => match nodes::evaluate(&run, node, &token, &wired).await {
+                (port, output) if port == PORT_ERROR => (port, output),
+                (_, output) => passed_on(if is_truthy(&output) { PORT_TRUE } else { PORT_FALSE }),
+            },
             (_, NodeKind::Repeat | NodeKind::ForEach) => {
                 let turns: Option<Vec<Value>> = match node.kind {
                     NodeKind::Repeat => Some((0..node.count).map(|index| json!({ "index": index })).collect()),
