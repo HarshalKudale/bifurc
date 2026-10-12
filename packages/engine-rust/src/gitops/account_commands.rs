@@ -209,7 +209,9 @@ pub fn register(registry: &mut CommandRegistry) {
         };
         match github::list_repos(&token).await {
             Ok(repos) => {
-                let repos: Vec<Value> = repos.iter().map(|repo| listed_repo(repo, &account)).collect();
+                // Only the repositories marked as a Bifurc workspace (`github::WORKSPACE_TOPIC`) are offered.
+                let repos: Vec<Value> =
+                    repos.iter().filter(|repo| repo.is_workspace).map(|repo| listed_repo(repo, &account)).collect();
                 Ok(json!({ "ok": true, "repos": repos }))
             }
             Err(message) => Ok(json!({ "ok": false, "error": flag_if_rejected(id, message) })),
