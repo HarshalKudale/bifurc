@@ -78,6 +78,7 @@ rmcp = { version = "3.5", default-features = false, features = [
 ] }
 # Starts an MCP server program so that it ends with everything it started.
 process-wrap = { version = "10", features = ["tokio1"] }
+cookie_store = { version = "0.22.1", default-features = false, features = ["serde_json"] }
 
 [target.'cfg(unix)'.dependencies]
 libc = "0.2"

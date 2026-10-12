@@ -259,7 +259,8 @@ pub fn connect_stream(
     emit(events);
 
     let (prepared, generation) = outcome?;
-    tokio::spawn(run(key, generation, prepared, rx));
+    let workspace_id = workspace_id.to_string();
+    tokio::spawn(async move { crate::cookies::scoped(&workspace_id, run(key, generation, prepared, rx)).await });
     Ok(())
 }
 
@@ -365,7 +366,9 @@ async fn run(key: String, generation: u64, prepared: Prepared, mut stop: Unbound
         Ok(http) => http,
         Err(message) => return record_end(&key, generation, None, Some(message)),
     };
-    let mut request = http.request(prepared.method, prepared.url).headers(prepared.headers);
+    let (url, mut headers) = (prepared.url, prepared.headers);
+    crate::cookies::attach(url.as_str(), &mut headers);
+    let mut request = http.request(prepared.method, url.clone()).headers(headers);
     if let Some(body) = prepared.body.filter(|body| !body.is_empty()) {
         request = request.body(body);
     }
@@ -378,6 +381,7 @@ async fn run(key: String, generation: u64, prepared: Prepared, mut stop: Unbound
         _ = stop.recv() => return record_end(&key, generation, None, None),
     };
     let status = response.status();
+    crate::cookies::collect(url.as_str(), response.headers());
     if !status.is_success() {
         let reason = status.canonical_reason().unwrap_or("");
         return record_end(&key, generation, Some(status.as_u16()), Some(format!("HTTP {} {reason}", status.as_u16()).trim().to_owned()));

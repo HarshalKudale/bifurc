@@ -274,6 +274,28 @@
   },
   "invalid": {}
  },
+ "cookies.clear": {
+  "valid": {
+   "workspaceId": "x",
+   "domain": "x"
+  },
+  "invalid": {}
+ },
+ "cookies.configure": {
+  "valid": {
+   "workspaceId": "x",
+   "clearOnRestart": true
+  },
+  "invalid": {
+   "workspaceId": "x"
+  }
+ },
+ "cookies.list": {
+  "valid": {
+   "workspaceId": "x"
+  },
+  "invalid": {}
+ },
  "curl.buildMock": {
   "valid": {
    "curl": "curl http://x"

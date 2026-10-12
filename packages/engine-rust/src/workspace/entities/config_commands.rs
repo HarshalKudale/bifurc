@@ -108,6 +108,7 @@ pub fn register(registry: &mut CommandRegistry) {
             }
         }
         save_config(&cfg)?;
+        crate::cookies::forget(id);
         notify_config_changed();
         Ok(json!({ "ok": true }))
     });
