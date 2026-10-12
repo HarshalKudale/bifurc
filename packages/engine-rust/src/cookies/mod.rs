@@ -14,7 +14,7 @@ use std::{
     sync::LazyLock,
 };
 
-use cookie_store::{CookieExpiration, CookieStore};
+use cookie_store::{CookieExpiration, CookieStore, RawCookie};
 use http::{
     HeaderMap, HeaderValue,
     header::{COOKIE, SET_COOKIE},
@@ -136,6 +136,45 @@ pub fn collect(url: &str, headers: &HeaderMap) {
         save(&ws_id, jar);
     });
     changed(&ws_id);
+}
+
+/// The jar's cookies for `url` by name: what a request's script reads as `lp.cookies`.
+pub fn for_url(ws_id: &str, url: &str) -> Value {
+    let Some(url) = request_url(url) else { return json!({}) };
+    with_jar(ws_id, |jar| {
+        Value::Object(jar.get_request_values(&url).map(|(name, value)| (name.to_string(), json!(value))).collect())
+    })
+}
+
+/// Carry out what a script did through `lp.cookies`: a list of `{ op: set|unset|clear, name?, value?, url? }`,
+/// each on the site of its own `url`, or else of `url`, the request's.
+pub fn apply(ws_id: &str, url: &str, ops: &Value) {
+    let Some(ops) = ops.as_array().filter(|ops| !ops.is_empty()) else { return };
+    with_jar(ws_id, |jar| {
+        for op in ops {
+            let Some(url) = request_url(opt_str(op, "url").unwrap_or(url)) else { continue };
+            let name = str_of(op, "name");
+            match str_of(op, "op") {
+                // `Path=/`, so the cookie reaches the whole site and not only the addresses beside the request.
+                "set" => {
+                    let _ = jar.insert_raw(&RawCookie::build((name, str_of(op, "value"))).path("/").build(), &url);
+                }
+                kind => {
+                    let doomed: Vec<(String, String, String)> = jar
+                        .matches(&url)
+                        .into_iter()
+                        .filter(|cookie| kind == "clear" || cookie.name() == name)
+                        .map(|cookie| (domain_of(cookie), cookie.path.to_string(), cookie.name().to_string()))
+                        .collect();
+                    for (domain, path, name) in doomed {
+                        jar.remove(&domain, &path, &name);
+                    }
+                }
+            }
+        }
+        save(ws_id, jar);
+    });
+    changed(ws_id);
 }
 
 /// Drop a deleted workspace's jar and its file.
@@ -308,6 +347,38 @@ mod tests {
 
         call("cookies.clear", json!({ "workspaceId": "ws1", "domain": "127.0.0.1" })).await;
         assert_eq!(call("cookies.list", json!({ "workspaceId": "ws1" })).await["domains"], json!([]));
+    }
+
+    #[tokio::test]
+    async fn a_script_puts_a_token_of_the_body_in_the_jar_and_takes_it_out() {
+        let _root = scratch_data_root();
+        forget("ws1");
+        let canned =
+            HashMap::from([("/login".to_string(), ("application/json".to_string(), r#"{"token":"t-9"}"#.to_string()))]);
+        let base = test_server::start(canned).await;
+        let send = |path: &str, scripts: Value| {
+            let request = json!({ "method": "GET", "url": format!("{base}{path}"), "headers": {}, "body": "" });
+            call("request.send", json!({ "workspaceId": "ws1", "request": request, "scripts": scripts }))
+        };
+        let cookie_sent = |answer: Value| {
+            let body = crate::utils::replay::decode_base64_lenient(answer["body"].as_str().unwrap());
+            serde_json::from_slice::<Value>(&body).unwrap()["headers"]["cookie"].clone()
+        };
+
+        let script = "lp.cookies.set('token', lp.response.json().token); lp.cookies.set('far', 1, 'http://other.test/');";
+        send("/login", json!({ "post": script })).await;
+        // A request deep in the site carries it, and its own scripts read it.
+        let answer = send("/api/v1/me", json!({ "test": "test('seen', () => expect(lp.cookies.get('token')).to.equal('t-9'));" })).await;
+        assert_eq!(answer["tests"][0]["passed"], true, "{answer}");
+        assert_eq!(cookie_sent(answer), "token=t-9");
+        assert_eq!(for_url("ws1", "http://other.test/x"), json!({ "far": "1" }));
+
+        // A pre-script's change is in time for its own request.
+        let answer = send("/me", json!({ "pre": "lp.cookies.unset('token'); lp.cookies.set('fresh', lp.cookies.has('token'));" })).await;
+        assert_eq!(cookie_sent(answer), "fresh=false");
+        send("/me", json!({ "post": "lp.cookies.clear();" })).await;
+        assert_eq!(for_url("ws1", &base), json!({}));
+        assert_eq!(for_url("ws1", "http://other.test/"), json!({ "far": "1" }));
     }
 
     #[tokio::test]
