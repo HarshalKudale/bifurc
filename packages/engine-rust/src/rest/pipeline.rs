@@ -127,6 +127,7 @@ where
                 "body": resolved["body"],
             },
             "envVars": env_to_map(effective_env.as_ref()),
+            "cookies": crate::cookies::for_url(ws_id, str_of(&resolved, "url")),
         }))
         .await;
         pre_script_error = opt_str(&pre, "error").map(str::to_string);
@@ -135,6 +136,7 @@ where
             resolved = merged(&resolved, changed);
         }
         effective_env = environment_after_script(effective_env, pre.get("envVars").unwrap_or(&Value::Null));
+        crate::cookies::apply(ws_id, str_of(&resolved, "url"), &pre["cookies"]);
     }
 
     let send_start = Instant::now();
@@ -164,11 +166,13 @@ where
                 "responseTime": duration_ms,
             },
             "envVars": env_to_map(effective_env.as_ref()),
+            "cookies": crate::cookies::for_url(ws_id, str_of(&sent, "url")),
         }))
         .await;
         post_script_error = opt_str(&post, "error").map(str::to_string);
         collect_logs(&post, &mut script_logs);
         effective_env = environment_after_script(effective_env, post.get("envVars").unwrap_or(&Value::Null));
+        crate::cookies::apply(ws_id, str_of(&sent, "url"), &post["cookies"]);
     }
 
     let mut tests = Value::Array(Vec::new());
@@ -185,6 +189,7 @@ where
                 "responseTime": duration_ms,
             },
             "envVars": env_to_map(effective_env.as_ref()),
+            "cookies": crate::cookies::for_url(ws_id, str_of(&sent, "url")),
         }))
         .await;
         if let Some(results) = test.get("testResults").filter(|v| v.is_array()) {
@@ -194,6 +199,7 @@ where
             test_logs = logs.clone();
         }
         effective_env = environment_after_script(effective_env, test.get("envVars").unwrap_or(&Value::Null));
+        crate::cookies::apply(ws_id, str_of(&sent, "url"), &test["cookies"]);
     }
     if let Value::Array(logs) = &mut test_logs {
         script_logs.append(logs);

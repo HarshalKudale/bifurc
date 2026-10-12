@@ -438,7 +438,35 @@
       });
     }
 
-    var lp = { request: requestApi, environment: envApi };
+    // The cookie jar. Reads see the cookies of the request's site; a write is carried out by the host once the
+    // script ends, on the request's site or on that of the `url` it names.
+    var jar = copy(input.cookies || {});
+    var cookieOps = [];
+    var cookieApi = {
+      get: function (name) {
+        return jar[name];
+      },
+      has: function (name) {
+        return name in jar;
+      },
+      toObject: function () {
+        return copy(jar);
+      },
+      set: function (name, value, url) {
+        if (url === undefined) jar[name] = StringCtor(value);
+        cookieOps.push({ op: "set", name: StringCtor(name), value: StringCtor(value), url: url });
+      },
+      unset: function (name, url) {
+        if (url === undefined) delete jar[name];
+        cookieOps.push({ op: "unset", name: StringCtor(name), url: url });
+      },
+      clear: function (url) {
+        if (url === undefined) jar = {};
+        cookieOps.push({ op: "clear", url: url });
+      },
+    };
+
+    var lp = { request: requestApi, environment: envApi, cookies: cookieApi };
     if (res) lp.response = responseApi(res);
     lp.test = function (name, fn) {
       var start = now();
@@ -465,9 +493,9 @@
             logs.push("[ERROR] Uncaught: " + err);
           }
         }
-        return { envVars: vars, testResults: tests, testLogs: logs };
+        return { envVars: vars, cookies: cookieOps, testResults: tests, testLogs: logs };
       }
-      var out = { envVars: vars, logs: logs };
+      var out = { envVars: vars, cookies: cookieOps, logs: logs };
       if (mode === "pre") out.request = req;
       else out.response = res;
       if (err !== undefined) out.error = err;
