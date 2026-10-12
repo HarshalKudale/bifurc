@@ -49,6 +49,40 @@ async fn workspace_summary(ws_id: &str) -> Value {
     json!({ "id": ws_id, "name": name, "repo": repo, "changes": changes, "unpushed": unpushed })
 }
 
+/// Whether this process is refused a listener on `port` for want of permission, as Linux refuses the ports
+/// below 1024. A port that is merely taken is not that.
+fn port_denied(port: u16) -> bool {
+    std::net::TcpListener::bind((std::net::Ipv4Addr::LOCALHOST, port))
+        .is_err_and(|error| error.kind() == std::io::ErrorKind::PermissionDenied)
+}
+
+/// Gives this engine's program the capability to listen on ports below 1024. Only root may give it, so
+/// polkit asks for the password. A program gets its capabilities when it starts: this one has it from its
+/// next start.
+async fn allow_low_ports() -> Result<(), String> {
+    if !cfg!(target_os = "linux") {
+        return Err("Only Linux has this permission to give".to_owned());
+    }
+    let program = std::env::current_exe().map_err(|error| format!("The engine could not find itself. {error}"))?;
+    // Through `sh`, so that setcap is looked for on root's PATH: a user's often has no /sbin.
+    let output = crate::utils::process::hidden_command("pkexec")
+        .args(["sh", "-c", "setcap cap_net_bind_service=+ep \"$1\"", "sh"])
+        .arg(program)
+        .stdin(std::process::Stdio::null())
+        .output()
+        .await
+        .map_err(|error| format!("pkexec: {error}"))?;
+    if output.status.success() {
+        return Ok(());
+    }
+    // 126 is pkexec's own answer for a prompt that was dismissed or a password that was refused.
+    if output.status.code() == Some(126) {
+        return Err("The password prompt was dismissed".to_owned());
+    }
+    let said = String::from_utf8_lossy(&output.stderr);
+    Err(said.lines().map(str::trim).rfind(|line| !line.is_empty()).unwrap_or("pkexec failed without saying why").to_owned())
+}
+
 pub fn register(registry: &mut CommandRegistry) {
     // What a first run has to deal with: is git here, can the user sign in, is there a workspace yet.
     // Asking is also how a git that was installed since is noticed: the workspaces that were plain files
@@ -150,7 +184,25 @@ pub fn register(registry: &mut CommandRegistry) {
             bus().emit("settings.changed", json!({}));
         }
         let started = start_listeners(&settings);
-        Ok(json!({ "ok": true, "forward": started["forward"], "reverse": started["reverse"] }))
+        // Only Linux has a permission the engine can be given (`setup.allowLowPorts`).
+        let denied = cfg!(target_os = "linux")
+            && [settings.port(), settings.forward_proxy_port()].into_iter().any(port_denied);
+        Ok(json!({
+            "ok": true,
+            "forward": started["forward"],
+            "reverse": started["reverse"],
+            "lowPortsDenied": denied,
+        }))
+    });
+
+    // Lets this engine listen on ports below 1024 on Linux, which asks the user for their password. It holds
+    // from the engine's next start, so a client restarts it (`engine.shutdown {restart}`) and starts the
+    // servers again.
+    registry.register("setup.allowLowPorts", |_, _| async move {
+        Ok(match allow_low_ports().await {
+            Ok(()) => json!({ "ok": true }),
+            Err(message) => json!({ "ok": false, "error": message }),
+        })
     });
 
     registry.register("account.login.start", |_, _| async move {
