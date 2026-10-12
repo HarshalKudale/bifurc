@@ -27,10 +27,11 @@ use gpui_kit::component::{
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    AnyElement, App, BorderStyle, Bounds, Context, DismissEvent, Element, ElementId, Entity, EventEmitter,
+    AnyElement, App, BorderStyle, Bounds, Context, DismissEvent, Div, Element, ElementId, Entity, EventEmitter,
     FocusHandle, Focusable as _, GlobalElementId, Hsla, InspectorElementId, InteractiveElement as _, IntoElement,
     KeyDownEvent, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, ParentElement as _, Pixels, Point, Render,
-    ScrollWheelEvent, SharedString, StatefulInteractiveElement as _, Styled as _, Subscription, WeakEntity, Window,
+    ScrollWheelEvent, SharedString, Stateful, StatefulInteractiveElement as _, Styled as _, Subscription, WeakEntity,
+    Window,
     anchored, canvas, deferred, div, point, px, quad, rems, size,
 };
 use serde_json::Value;
@@ -67,6 +68,9 @@ const SNAP_DISTANCE: f32 = 22.0;
 /// How far a node is pulled before it is being moved, and not just picked.
 const DRAG_SLOP: f32 = 3.0;
 
+/// How narrow a display node can be made, and how low what it shows.
+const MIN_SIZE: (f32, f32) = (192.0, 48.0);
+
 const ZOOM_RANGE: (f32, f32) = (0.4, 1.6);
 
 /// One of the three views under a node.
@@ -83,6 +87,8 @@ pub enum CanvasEvent {
     Selected(Option<String>),
     /// A node was dragged to a new place.
     Moved { id: String, x: f32, y: f32 },
+    /// A display node was pulled by its corner to a new size.
+    Resized { id: String, width: f32, height: f32 },
     /// A port was dragged onto a node: that node runs next.
     Connect { from: String, port: String, to: String },
     /// A port was dragged onto an input of a node: what leaves by the port is wired into it.
@@ -112,6 +118,12 @@ enum Gesture {
         pressed: Point<Pixels>,
         moved: bool,
     },
+    /// `start` is the size the node had when its corner was pressed.
+    Resize {
+        id: String,
+        pressed: Point<Pixels>,
+        start: (f32, f32),
+    },
     Connect {
         from: String,
         port: String,
@@ -126,6 +138,7 @@ pub fn kind_icon(kind: NodeKind) -> IconName {
         NodeKind::Stream => IconName::Inbox,
         NodeKind::Mcp => IconName::Bot,
         NodeKind::Condition => IconName::Replace,
+        NodeKind::If => IconName::ChevronsUpDown,
         NodeKind::Validate => IconName::CircleCheck,
         NodeKind::Evaluate => IconName::SquareTerminal,
         NodeKind::Delay => IconName::Pause,
@@ -220,7 +233,7 @@ fn kinds_menu(
         });
         // The nodes that only hold a value come after the ones that do something.
         match kind {
-            NodeKind::Condition | NodeKind::Delay | NodeKind::Display => menu.separator().item(item),
+            NodeKind::If | NodeKind::Delay | NodeKind::Display => menu.separator().item(item),
             _ => menu.item(item),
         }
     })
@@ -343,6 +356,9 @@ pub struct FlowCanvas {
     anchors: Anchors,
     /// The connections as they were last painted, for picking one by a click.
     drawn: Rc<RefCell<Vec<(String, (f32, f32), (f32, f32))>>>,
+    /// How high what each display node shows is in the window, as of the last layout: what pulling its
+    /// corner starts from.
+    heights: Rc<RefCell<HashMap<String, f32>>>,
     /// When each connection was last taken.
     pulses: HashMap<String, Instant>,
     started: Instant,
@@ -377,6 +393,7 @@ impl FlowCanvas {
             viewport: Rc::new(Cell::new(Bounds::default())),
             anchors: Rc::default(),
             drawn: Rc::default(),
+            heights: Rc::default(),
             pulses: HashMap::new(),
             started: Instant::now(),
             details: HashMap::new(),
@@ -388,14 +405,14 @@ impl FlowCanvas {
         }
     }
 
-    /// Draw this flow, with what the engine says of it and its run. A node being dragged keeps the place the
-    /// pointer has it at.
+    /// Draw this flow, with what the engine says of it and its run. A node being dragged or resized keeps
+    /// the place and the size the pointer has it at.
     pub fn set_graph(&mut self, mut doc: Option<FlowDoc>, described: Described, run: Option<RunView>, cx: &mut Context<Self>) {
-        if let Gesture::Move { id, .. } = &self.gesture
+        if let Gesture::Move { id, .. } | Gesture::Resize { id, .. } = &self.gesture
             && let Some(held) = self.doc.as_ref().and_then(|doc| doc.node(id))
             && let Some(node) = doc.as_mut().and_then(|doc| doc.node_mut(id))
         {
-            (node.x, node.y) = (held.x, held.y);
+            (node.x, node.y, node.width, node.height) = (held.x, held.y, held.width, held.height);
         }
         if self.doc != doc || self.described != described || self.run != run {
             (self.doc, self.described, self.run) = (doc, described, run);
@@ -554,6 +571,14 @@ impl FlowCanvas {
                     (node.x, node.y) = ((world.0 - grab.0).round(), (world.1 - grab.1).round());
                 }
             }
+            Gesture::Resize { id, pressed, start } => {
+                let wider = f32::from(event.position.x - pressed.x) / self.zoom;
+                let higher = f32::from(event.position.y - pressed.y) / self.zoom;
+                if let Some(node) = self.doc.as_mut().and_then(|doc| doc.node_mut(id)) {
+                    node.width = (start.0 + wider).max(MIN_SIZE.0).round();
+                    node.height = (start.1 + higher).max(MIN_SIZE.1).round();
+                }
+            }
             Gesture::Connect { to, .. } => *to = event.position,
         }
         cx.notify();
@@ -581,6 +606,11 @@ impl FlowCanvas {
                 // Picked when let go and not when pressed: picking opens the node's controls, which moves
                 // what is under the pointer, and a click is a press and a release on the same thing.
                 self.select(Some(id), cx);
+            }
+            Gesture::Resize { id, .. } => {
+                if let Some(node) = self.doc.as_ref().and_then(|doc| doc.node(&id)) {
+                    cx.emit(CanvasEvent::Resized { id: id.clone(), width: node.width, height: node.height });
+                }
             }
             Gesture::Connect { from, port, to } if inside => self.end_connection(from, port, None, to, window, cx),
             Gesture::Pan { .. } | Gesture::Connect { .. } => {}
@@ -710,7 +740,7 @@ impl FlowCanvas {
     }
 
     fn tree(&self, scope: String, value: &Value, pick: Option<Pick>, cx: &mut Context<Self>) -> AnyElement {
-        json_tree(&scope, value, &self.open, self.toggle(cx), pick, cx)
+        json_tree(&scope, value, &self.open, self.toggle(cx), pick, cx).into_any_element()
     }
 
     /// The dot of a port. It notes where it is each time it is laid out, which is where its connections end.
@@ -795,7 +825,7 @@ impl FlowCanvas {
                 })
                 .collect(),
             NodeKind::Validate => node.rules.iter().map(rule_summary).collect(),
-            NodeKind::Evaluate => vec![node.expression.clone()],
+            NodeKind::Evaluate | NodeKind::If => vec![node.expression.clone()],
             NodeKind::Delay => vec![format!("Waits {} ms", node.delay_ms)],
             NodeKind::Or => vec!["Lets the first arrival through".to_owned()],
             NodeKind::Repeat => {
@@ -812,23 +842,37 @@ impl FlowCanvas {
         }
     }
 
-    /// What a display node shows of what it was handed.
+    /// What a display node shows of what it was handed. More than fits is scrolled, in the height the node
+    /// was given by its corner or the one it has by itself.
     fn render_shown(&self, node: &FlowNode, run: Option<&NodeRun>, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme().clone();
-        let muted = |text: &'static str| div().px_3().pb_2().text_color(theme.muted_foreground).child(text).into_any_element();
-        let Some(value) = run.and_then(|run| run.output("out")) else {
-            return muted("Shows what it is handed once the flow has run.");
+        let shown_id = ElementId::Name(format!("flow-shown-{}", node.id).into());
+        let muted = |text: &'static str| div().px_3().pb_2().text_color(theme.muted_foreground).child(text);
+        let shown = match run.and_then(|run| run.output("out")) {
+            Some(value) => self.render_value(node, value, shown_id, cx),
+            None => muted("Shows what it is handed once the flow has run.").id(shown_id),
         };
+        let (heights, id) = (self.heights.clone(), node.id.clone());
+        let note = canvas(
+            move |bounds: Bounds<Pixels>, _, _| {
+                heights.borrow_mut().insert(id, f32::from(bounds.size.height));
+            },
+            |_, _, _, _| {},
+        )
+        .absolute()
+        .size_full();
+        let height = rems(node.height / REM);
+        shown.when(node.height > 0.0, |this| this.h(height).max_h(height)).child(note).into_any_element()
+    }
+
+    fn render_value(&self, node: &FlowNode, value: &Value, shown_id: ElementId, cx: &mut Context<Self>) -> Stateful<Div> {
+        let theme = cx.theme().clone();
+        let muted = |text: &'static str| div().px_3().pb_2().text_color(theme.muted_foreground).child(text);
         let rows = value.as_array().filter(|rows| node.format == "table" && !rows.is_empty());
         match (node.format.as_str(), rows) {
-            ("text", _) => div()
-                .id(ElementId::Name(format!("flow-shown-{}", node.id).into()))
-                .mx_3()
-                .mb_2()
-                .max_h(rems(10.0))
-                .overflow_y_scroll()
-                .child(one_line(value))
-                .into_any_element(),
+            ("text", _) => {
+                div().id(shown_id).mx_3().mb_2().max_h(rems(10.0)).overflow_y_scroll().child(one_line(value))
+            }
             ("table", Some(rows)) => {
                 // The columns are the first row's keys; a row that is not an object is one cell.
                 let columns: Vec<String> =
@@ -840,15 +884,17 @@ impl FlowCanvas {
                     false => line(columns.iter().map(|column| one_line(&row[column.as_str()])).collect()),
                 });
                 v_flex()
+                    .id(shown_id)
                     .pb_2()
+                    .max_h(rems(14.0))
+                    .overflow_y_scroll()
                     .when(!columns.is_empty(), |this| {
                         this.child(line(columns.clone()).text_color(theme.muted_foreground))
                     })
                     .children(body)
                     .when(rows.len() > 20, |this| this.child(muted("The first 20 rows are shown.")))
-                    .into_any_element()
             }
-            _ => self.tree(format!("{}|shown", node.id), value, None, cx),
+            _ => json_tree(&format!("{}|shown", node.id), value, &self.open, self.toggle(cx), None, cx),
         }
     }
 
@@ -877,10 +923,10 @@ impl FlowCanvas {
         // An input that is typed in is typed in its own row, while its node is picked and nothing is wired
         // into it.
         let picked = self.selected.as_deref() == Some(node.id.as_str());
-        let field = self.editor.read(cx).input_field(&input.id).filter(|_| picked && wire.is_none()).cloned();
+        let field = (picked && wire.is_none()).then(|| self.editor.read(cx).input_control(&input.id)).flatten();
         let typed_here = field.is_some();
         let shown = match field {
-            Some(field) => div().flex_1().min_w_0().child(Input::new(&field).xsmall()),
+            Some(field) => div().flex_1().min_w_0().child(field),
             None => div().flex_1().min_w_0().overflow_hidden().text_ellipsis().text_color(theme.muted_foreground).child(value),
         };
         let row = h_flex()
@@ -1239,6 +1285,28 @@ impl FlowCanvas {
         });
         let ports: Vec<_> = ports.collect();
 
+        // The corner a display node is pulled by to make room for what it shows.
+        let grip = (node.kind == NodeKind::Display).then(|| {
+            let grip_id = id.clone();
+            let width = if node.width > 0.0 { node.width } else { NODE_WIDTH * REM };
+            div()
+                .absolute()
+                .bottom_0()
+                .right_0()
+                .cursor_nwse_resize()
+                .child(Icon::new(IconName::ResizeCorner).xsmall().text_color(theme.muted_foreground))
+                .on_mouse_down(
+                    MouseButton::Left,
+                    cx.listener(move |this, event: &MouseDownEvent, window, cx| {
+                        cx.stop_propagation();
+                        this.focus.focus(window, cx);
+                        let shown = this.heights.borrow().get(&grip_id).copied().unwrap_or_default();
+                        let start = (width, shown / this.zoom);
+                        this.gesture = Gesture::Resize { id: grip_id.clone(), pressed: event.position, start };
+                    }),
+                )
+        });
+
         let card = v_flex()
             .id(named("card"))
             .relative()
@@ -1261,6 +1329,7 @@ impl FlowCanvas {
             .when(selected, |this| this.child(self.editor.clone()))
             .children(inputs)
             .children(self.render_switches(node, cx))
+            .children(grip)
             .children(ports);
 
         // What can be done with the node that is picked, above it.
@@ -1298,9 +1367,16 @@ impl FlowCanvas {
 
         let whole = v_flex()
             .relative()
-            .w(rems(NODE_WIDTH))
+            .w(rems(if node.width > 0.0 { node.width / REM } else { NODE_WIDTH }))
             .gap_1()
             .text_xs()
+            // The wheel over a node scrolls what is in the node, and never moves the canvas under it. With
+            // Ctrl it still zooms.
+            .on_scroll_wheel(|event, _, cx| {
+                if !event.modifiers.secondary() {
+                    cx.stop_propagation();
+                }
+            })
             .on_mouse_down(
                 MouseButton::Left,
                 cx.listener(move |this, event: &MouseDownEvent, window, cx| {
