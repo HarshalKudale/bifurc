@@ -91,6 +91,7 @@ pub fn command_line(tool: &Tool, arguments: &Map<String, Value>) -> Result<Vec<S
         checked(tool, param.name, param.ty, value)?;
         match param.place {
             Place::Operand => operands.push(word(value)),
+            Place::Operands => operands.extend(value.as_array().into_iter().flatten().map(word)),
             Place::Option(option) | Place::OptionOr(option, _) => line.extend([format!("--{option}"), word(value)]),
             Place::Switch(on, off) => match (value.as_bool(), off) {
                 (Some(true), _) => line.push(format!("--{on}")),
@@ -421,18 +422,64 @@ mod tests {
             ("workspaces_create", json!({"name": "Mine", "account": "octocat", "json": true})),
             ("workspaces_update", json!({"workspace": "w1", "name": "New", "json": true})),
             ("workspaces_use", json!({"workspace": "w1", "json": true})),
-            ("workspaces_sync", all.clone()),
+            ("workspaces_sync", with(json!({"message": "Add the login flow"}))),
             ("vault_list", all.clone()),
             ("account_list", json!({"json": true})),
             ("account_repos", json!({"account": "octocat", "json": true})),
             ("services_list", json!({"json": true})),
+            ("folders_list", json!({"tree": "mock", "json": true})),
+            ("env_set", with(json!({"environment": "Dev", "variables": ["HOST=http://x"]}))),
+            ("env_unset", with(json!({"environment": "Dev", "variables": ["HOST"]}))),
+            ("capture_mock", with(json!({"entry": "c1"}))),
+            ("capture_request", with(json!({"entry": "c1"}))),
+            ("runner_run", with(json!({"folder": "f1"}))),
+            ("settings_show", json!({"json": true})),
+            ("health_delete", with(json!({"check": "h1"}))),
         ]
+        .into_iter()
+        .chain(table_examples())
+        .collect()
+    }
+
+    /// Every argument of every tool that is a row of the command line's own table, with a value of its type.
+    fn table_examples() -> Vec<(&'static str, Value)> {
+        let verbs = bifurc_cli::direct::verbs();
+        let example = |ty: Type| match ty {
+            Type::Text => json!("x"),
+            Type::Integer | Type::Number => json!(1),
+            Type::Boolean => json!(true),
+            Type::Choice(words) => json!(words[0]),
+            Type::Json | Type::AnyMap => json!({"a": 1}),
+            Type::TextMap => json!({"a": "b"}),
+            Type::TextList => json!(["a"]),
+        };
+        catalog()
+            .into_iter()
+            .filter(|tool| verbs.iter().any(|verb| verb.words == tool.words))
+            .map(|tool| {
+                let arguments: Map<String, Value> =
+                    tool.params.iter().map(|param| (param.name.to_string(), example(param.ty))).collect();
+                (tool.name, Value::Object(arguments))
+            })
+            .collect()
+    }
+
+    #[test]
+    fn help_is_the_manual_of_the_command_line_and_needs_no_engine() {
+        let dir = tempfile::tempdir().unwrap();
+        let settings =
+            Settings { data_dir: Some(dir.path().to_string_lossy().into_owned()), no_start: true, env_data_dir: None };
+        let overview = run(&tool("help"), &Map::new(), &settings);
+        assert!(!overview.failed && overview.text.starts_with("Usage: bifurc <group> <verb>"), "{}", overview.text);
+        let flows = run(&tool("help"), json!({"group": "flows", "json": true}).as_object().unwrap(), &settings);
+        assert!(flows.text.starts_with("Usage: bifurc flows <verb>") && flows.text.contains("\n  validate <flow>\n"));
+        assert!(flows.text.contains("The JSON of a flow"));
     }
 
     #[test]
     fn the_examples_use_every_parameter_of_every_tool() {
         let examples = examples();
-        for tool in catalog() {
+        for tool in catalog().into_iter().filter(|tool| tool.name != "help") {
             for param in &tool.params {
                 let used =
                     examples.iter().any(|(name, arguments)| *name == tool.name && arguments.get(param.name).is_some());

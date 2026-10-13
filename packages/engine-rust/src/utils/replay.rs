@@ -4,7 +4,7 @@
 //! Every request gets a fresh connection (`connection: close`, no pooling) so a server that answers
 //! `keep-alive` cannot hand a half-closed socket to the next request to the same origin.
 
-use std::sync::OnceLock;
+use std::{sync::OnceLock, time::Duration};
 
 use base64::Engine as _;
 use reqwest::{
@@ -12,12 +12,17 @@ use reqwest::{
     header::{HeaderMap, HeaderName, HeaderValue},
     redirect::Policy,
 };
+use serde_json::{Value, json};
+use tokio::time::Instant;
 
 use crate::{
-    kernel::telemetry::Headers,
+    kernel::{bus, telemetry::Headers},
+    sse::parser::Parser,
     utils::{
+        content_type::is_text_content_type,
         decompress::{decompress_body, strip_content_encoding},
         http::is_hop_by_hop,
+        id::now_ms,
     },
 };
 
@@ -152,6 +157,134 @@ pub async fn replay_request(
     headers: &Headers,
     body_base64: &str,
 ) -> Result<ReplayResponse, String> {
+    replay_streamed(method, url, headers, body_base64, None).await
+}
+
+/// How long text that arrived waits for more before it is reported, so a fast stream is a few events a second
+/// rather than one for every chunk.
+const STREAM_FLUSH: Duration = Duration::from_millis(50);
+
+/// Whether a response is one the server may send in pieces over time: text with no `content-length`.
+fn arrives_in_pieces(headers: &HeaderMap) -> bool {
+    let text = |name: &str| headers.get(name).and_then(|v| v.to_str().ok()).unwrap_or_default().to_ascii_lowercase();
+    // shortcut: a compressed body is not reported while it arrives, decode it per chunk when one needs to be.
+    !headers.contains_key("content-length")
+        && matches!(text("content-encoding").as_str(), "" | "identity")
+        && is_text_content_type(&text("content-type"))
+}
+
+/// How much of `bytes` is whole characters: all of it, unless it ends inside one.
+fn whole_chars(bytes: &[u8]) -> usize {
+    match std::str::from_utf8(bytes) {
+        Err(err) if err.error_len().is_none() => err.valid_up_to(),
+        _ => bytes.len(),
+    }
+}
+
+/// What turns a body that is arriving into the messages of `request.stream` events.
+struct Reporter<'a> {
+    stream_id: &'a str,
+    /// The status and headers, until the first event has carried them.
+    head: Option<(u16, &'a Headers)>,
+    /// Set for a `text/event-stream` body: each of its events is a message. Any other body is a message
+    /// for the text that arrived since the last one.
+    events: Option<Parser>,
+    /// How much of a plain body has become messages.
+    reported: usize,
+    pending: Vec<Value>,
+    count: u64,
+}
+
+impl Reporter<'_> {
+    fn message(&mut self, data: String) -> Value {
+        self.count += 1;
+        json!({ "id": self.count.to_string(), "ts": now_ms(), "data": data })
+    }
+
+    /// Take the bytes that were just added to the body.
+    fn take(&mut self, chunk: &[u8]) {
+        let events = self.events.as_mut().map(|parser| parser.feed(chunk)).unwrap_or_default();
+        for event in events {
+            let mut message = self.message(event.data);
+            message["event"] = json!(event.event);
+            if let Some(id) = event.id {
+                message["eventId"] = json!(id);
+            }
+            self.pending.push(message);
+        }
+    }
+
+    /// Emit the messages there are. `raw` is the body so far; at its `end` the last characters are final.
+    fn flush(&mut self, raw: &[u8], end: bool) {
+        if self.events.is_none() {
+            let rest = &raw[self.reported..];
+            let whole = if end { rest.len() } else { whole_chars(rest) };
+            if whole > 0 {
+                let message = self.message(String::from_utf8_lossy(&rest[..whole]).into_owned());
+                self.pending.push(message);
+                self.reported += whole;
+            }
+        }
+        if self.pending.is_empty() {
+            return;
+        }
+        let mut payload = json!({ "streamId": self.stream_id, "messages": std::mem::take(&mut self.pending) });
+        if let Some((status, headers)) = self.head.take() {
+            payload["status"] = json!(status);
+            payload["headers"] = json!(headers);
+        }
+        bus().emit("request.stream", payload);
+    }
+}
+
+/// Read a body to its end, reporting it as it arrives.
+async fn read_reporting(
+    mut response: reqwest::Response,
+    stream_id: &str,
+    status: u16,
+    headers: &Headers,
+) -> Result<Vec<u8>, String> {
+    let is_events = headers.get("content-type").is_some_and(|t| t.to_ascii_lowercase().contains("text/event-stream"));
+    let mut reporter = Reporter {
+        stream_id,
+        head: Some((status, headers)),
+        events: is_events.then(Parser::new),
+        reported: 0,
+        pending: Vec::new(),
+        count: 0,
+    };
+    let mut raw: Vec<u8> = Vec::new();
+    let mut due: Option<Instant> = None;
+    loop {
+        let chunk = tokio::select! {
+            chunk = response.chunk() => chunk.map_err(|err| root_message(&err))?,
+            _ = tokio::time::sleep_until(due.unwrap_or_else(Instant::now)), if due.is_some() => {
+                due = None;
+                reporter.flush(&raw, false);
+                continue;
+            }
+        };
+        let Some(chunk) = chunk else { break };
+        raw.extend_from_slice(&chunk);
+        reporter.take(&chunk);
+        due.get_or_insert_with(|| Instant::now() + STREAM_FLUSH);
+    }
+    reporter.flush(&raw, true);
+    Ok(raw)
+}
+
+/// `replay_request` for a caller that shows the response while it arrives. With a `stream_id`, a text body
+/// the server sends without a `content-length` is also reported in `request.stream` events as it is read:
+/// `{streamId, messages}`, the first one with the `status` and `headers` too. A message is `{id, ts, data}`:
+/// one event of a `text/event-stream` body (with its `event` name and `eventId`), or the text that arrived
+/// since the last message of any other body. The result is the whole response either way.
+pub async fn replay_streamed(
+    method: &str,
+    url: &str,
+    headers: &Headers,
+    body_base64: &str,
+    stream_id: Option<&str>,
+) -> Result<ReplayResponse, String> {
     let parsed = url::Url::parse(url).map_err(|_| "Invalid URL".to_string())?;
     let host = parsed.host_str().filter(|host| !host.is_empty()).ok_or_else(|| "Invalid URL".to_string())?;
     let https = parsed.scheme() == "https";
@@ -189,7 +322,10 @@ pub async fn replay_request(
     let status = response.status().as_u16();
     crate::cookies::collect(parsed.as_str(), response.headers());
     let mut headers = response_headers(response.headers());
-    let raw = response.bytes().await.map_err(|err| root_message(&err))?;
+    let raw = match stream_id.filter(|_| arrives_in_pieces(response.headers())) {
+        Some(id) => read_reporting(response, id, status, &headers).await?,
+        None => response.bytes().await.map_err(|err| root_message(&err))?.to_vec(),
+    };
 
     let encoding = headers.get("content-encoding").cloned().unwrap_or_default();
     let decompressed = decompress_body(&raw, &encoding);
@@ -297,6 +433,91 @@ mod tests {
         assert_eq!(result.headers.get("location").unwrap(), "/elsewhere");
         assert_eq!(result.body, "");
         assert!(!server.await.unwrap().to_lowercase().contains("content-length"));
+    }
+
+    #[tokio::test]
+    async fn a_body_sent_in_pieces_is_reported_as_it_arrives_and_returned_whole() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        let (go, wait) = tokio::sync::oneshot::channel::<()>();
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 4096];
+            let _ = socket.read(&mut buf).await.unwrap();
+            let head = b"HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\ntransfer-encoding: chunked\r\n\r\n";
+            socket.write_all(head).await.unwrap();
+            // The first piece ends inside the two bytes of "é".
+            socket.write_all(b"6\r\nhello\xc3\r\n").await.unwrap();
+            socket.flush().await.unwrap();
+            // The rest is held back until the first piece has been reported.
+            wait.await.unwrap();
+            socket.write_all(b"7\r\n\xa9 world\r\n0\r\n\r\n").await.unwrap();
+            let _ = socket.shutdown().await;
+        });
+
+        let seen = std::sync::Arc::new(parking_lot::Mutex::new(Vec::new()));
+        let (sink, go) = (seen.clone(), parking_lot::Mutex::new(Some(go)));
+        let listening = bus().on("request.stream", move |payload| {
+            if payload["streamId"] == "s-pieces" {
+                sink.lock().push(payload.clone());
+                if let Some(go) = go.lock().take() {
+                    let _ = go.send(());
+                }
+            }
+        });
+        let result =
+            replay_streamed("GET", &format!("http://{addr}/"), &Headers::new(), "", Some("s-pieces")).await.unwrap();
+        bus().off(listening);
+
+        let seen = seen.lock();
+        assert_eq!(seen.len(), 2, "{seen:?}");
+        assert_eq!(seen[0]["status"], 200);
+        assert_eq!(seen[0]["headers"]["content-type"], "text/plain");
+        assert_eq!(seen[0]["messages"].as_array().unwrap().len(), 1);
+        assert_eq!(seen[0]["messages"][0]["id"], "1");
+        assert_eq!(seen[0]["messages"][0]["data"], "hello");
+        assert!(seen[1].get("status").is_none());
+        assert_eq!(seen[1]["messages"][0]["id"], "2");
+        assert_eq!(seen[1]["messages"][0]["data"], "é world");
+        assert_eq!(base64::engine::general_purpose::STANDARD.decode(&result.body).unwrap(), "helloé world".as_bytes());
+    }
+
+    #[tokio::test]
+    async fn an_event_stream_is_reported_as_its_events() {
+        let response = b"HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ntransfer-encoding: chunked\r\n\r\n\
+            30\r\nevent: delta\nid: 7\ndata: {\"n\":1}\n\ndata: [DONE]\n\n\r\n0\r\n\r\n";
+        let (base, _server) = serve_once(response.to_vec()).await;
+        let seen = std::sync::Arc::new(parking_lot::Mutex::new(Vec::new()));
+        let sink = seen.clone();
+        let listening = bus().on("request.stream", move |payload| {
+            if payload["streamId"] == "s-events" {
+                sink.lock().extend(payload["messages"].as_array().unwrap().clone());
+            }
+        });
+        let result = replay_streamed("GET", &format!("{base}/"), &Headers::new(), "", Some("s-events")).await.unwrap();
+        bus().off(listening);
+
+        let seen = seen.lock();
+        assert_eq!(seen.len(), 2, "{seen:?}");
+        assert_eq!((&seen[0]["event"], &seen[0]["eventId"], &seen[0]["data"]), (&json!("delta"), &json!("7"), &json!("{\"n\":1}")));
+        assert_eq!((&seen[1]["event"], &seen[1]["data"]), (&json!("message"), &json!("[DONE]")));
+        assert!(String::from_utf8(base64::engine::general_purpose::STANDARD.decode(&result.body).unwrap()).unwrap().ends_with("[DONE]\n\n"));
+    }
+
+    #[tokio::test]
+    async fn a_body_of_a_known_length_is_not_reported() {
+        let (base, _server) = serve_once(http_response("200 OK\r\nContent-Type: text/plain", b"hello")).await;
+        let seen = std::sync::Arc::new(parking_lot::Mutex::new(0));
+        let sink = seen.clone();
+        let listening = bus().on("request.stream", move |payload| {
+            if payload["streamId"] == "s-whole" {
+                *sink.lock() += 1;
+            }
+        });
+        let result = replay_streamed("GET", &format!("{base}/"), &Headers::new(), "", Some("s-whole")).await.unwrap();
+        bus().off(listening);
+        assert_eq!(*seen.lock(), 0);
+        assert_eq!(base64::engine::general_purpose::STANDARD.decode(&result.body).unwrap(), b"hello");
     }
 
     #[test]
