@@ -11,6 +11,7 @@ use std::{
     sync::Arc,
 };
 
+use futures::FutureExt as _;
 use parking_lot::Mutex;
 use serde_json::{Value, json};
 use tokio::sync::mpsc::UnboundedSender;
@@ -298,7 +299,11 @@ impl Session {
             let registry = session.inner.opts.registry.clone();
             let client = ctx.session.as_ref().and_then(|s| s.client_name.clone());
             let command = crate::analytics::describe(&action, &payload);
-            let result = registry.invoke(&action, payload, ctx).await;
+            // A handler that panics still answers: the client is not left waiting, and the failure is counted.
+            let result = std::panic::AssertUnwindSafe(registry.invoke(&action, payload, ctx))
+                .catch_unwind()
+                .await
+                .unwrap_or_else(|_| Err(EngineError::engine(format!("\"{action}\" crashed inside the engine"))));
             if let Some(client) = client.filter(|_| registry.is_registered(&action)) {
                 let outcome = result.as_ref().map_err(|error| error.code.as_str());
                 crate::analytics::record_command(command, &action, &client, outcome);

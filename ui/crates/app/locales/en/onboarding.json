@@ -60,7 +60,7 @@
   "terms.link_label": "The full terms:",
   "terms.accept_label": "I have read and accept the terms of service",
 
-  "privacy.body": "Your workspaces, requests and captured traffic stay on this computer. Bifurc sends anonymous usage analytics: what kind of thing you do, from which interface and on which platform. Never a name, a URL, a path or anything you typed. They are on by default once you accept, and you can turn them off at any time in Settings, under About; that Bifurc was installed on this device is still reported, once.",
+  "privacy.body": "Your workspaces, requests and captured traffic stay on this computer. Bifurc sends anonymous usage analytics: what kind of thing you do, from which interface and on which platform, and where in Bifurc's own code it crashed or failed. Never a name, a URL, a path or anything you typed. They are on by default once you accept, and you can turn them off at any time in Settings, under About; that Bifurc was installed on this device is still reported, once.",
   "privacy.link_label": "The full policy:",
   "privacy.accept_label": "I have read and accept the privacy policy",
 

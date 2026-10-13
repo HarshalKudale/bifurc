@@ -60,7 +60,7 @@
   "terms.link_label": "Die vollständigen Bedingungen:",
   "terms.accept_label": "Ich habe die Nutzungsbedingungen gelesen und akzeptiere sie",
 
-  "privacy.body": "Arbeitsbereiche, Anfragen und aufgezeichneter Datenverkehr bleiben auf diesem Computer. Bifurc sendet anonyme Nutzungsanalysen: welche Art von Aktion, über welche Oberfläche und auf welcher Plattform. Niemals einen Namen, eine URL, einen Pfad oder etwas Eingegebenes. Sie sind nach der Zustimmung standardmäßig aktiviert und können jederzeit in den Einstellungen unter „Info“ deaktiviert werden; dass Bifurc auf diesem Gerät installiert wurde, wird dennoch einmalig gemeldet.",
+  "privacy.body": "Arbeitsbereiche, Anfragen und aufgezeichneter Datenverkehr bleiben auf diesem Computer. Bifurc sendet anonyme Nutzungsanalysen: welche Art von Aktion, über welche Oberfläche und auf welcher Plattform, und an welcher Stelle im Code von Bifurc ein Absturz oder Fehler auftrat. Niemals einen Namen, eine URL, einen Pfad oder etwas Eingegebenes. Sie sind nach der Zustimmung standardmäßig aktiviert und können jederzeit in den Einstellungen unter „Info“ deaktiviert werden; dass Bifurc auf diesem Gerät installiert wurde, wird dennoch einmalig gemeldet.",
   "privacy.link_label": "Die vollständige Erklärung:",
   "privacy.accept_label": "Ich habe die Datenschutzerklärung gelesen und akzeptiere sie",
 

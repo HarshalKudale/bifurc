@@ -157,7 +157,7 @@
   "analytics.managed_off": "Managed by the owner of {owner}, who has not turned usage analytics on. Nothing done in this workspace is reported.",
 
   "telemetry.title": "Anonymous usage analytics",
-  "telemetry.description": "On by default. What kind of thing you do in the app and in your own workspaces, never its content. Off, only that Bifurc was installed on this device is reported, once.",
+  "telemetry.description": "On by default. What kind of thing you do in the app and in your own workspaces, and where in Bifurc's own code it crashed or failed, never its content. Off, only that Bifurc was installed on this device is reported, once.",
 
   "privacy.group": "Privacy",
 
