@@ -2737,6 +2737,9 @@
     },
     "body": {
      "type": "string"
+    },
+    "streamId": {
+     "type": "string"
     }
    },
    "required": [
@@ -3063,6 +3066,9 @@
       "id": {
        "type": "string"
       },
+      "streamId": {
+       "type": "string"
+      },
       "skipScripts": {
        "type": "array",
        "items": {
@@ -3085,6 +3091,9 @@
      "type": "object",
      "properties": {
       "workspaceId": {
+       "type": "string"
+      },
+      "streamId": {
        "type": "string"
       },
       "request": {

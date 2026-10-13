@@ -21,7 +21,8 @@ use crate::{
 /// `entity.changed` is only sent when a REST request or mock is *created*; an update, a delete, or any other
 /// kind of entity is announced by `sync.entityStatus` alone (the engine sends it after every entity
 /// write). Both therefore mean "re-read the workspace".
-const EVENTS: [&str; 28] = [
+const EVENTS: [&str; 29] = [
+    "event.request.stream",
     "event.flow.progress",
     "event.flow.finished",
     "event.account.changed",
@@ -155,6 +156,8 @@ pub enum ModelEvent {
     ConfigChanged,
     /// The active workspace is not the one it was; anything open belongs to the previous one.
     WorkspaceSwitched,
+    /// `event.request.stream`: text of a REST response that is still arriving.
+    RequestStream(Value),
     /// `event.ws.status`, as the engine sent it.
     SocketStatus(Value),
     /// `event.ws.message`, as the engine sent it.
@@ -452,6 +455,7 @@ impl AppModel {
                     cx.notify();
                 }
                 "event.server.error" => self.refresh_proxy(cx),
+                "event.request.stream" => cx.emit(ModelEvent::RequestStream(event.payload)),
                 "event.ws.status" => cx.emit(ModelEvent::SocketStatus(event.payload)),
                 "event.ws.message" => cx.emit(ModelEvent::SocketMessage(event.payload)),
                 "event.grpc.stream.status" => cx.emit(ModelEvent::GrpcStatus(event.payload)),

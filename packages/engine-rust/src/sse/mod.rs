@@ -2,7 +2,7 @@
 //! keeps the event log and reports status and events as `sse.status` / `sse.message` events.
 
 mod commands;
-mod parser;
+pub mod parser;
 mod registry;
 
 use crate::kernel::CommandRegistry;

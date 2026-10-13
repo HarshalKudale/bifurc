@@ -9,8 +9,8 @@ use crate::{
     rest::from_curl::{curl_to_mock, curl_to_request},
     utils::{
         curl::parse_curl,
-        json::{str_of, string_map},
-        replay::replay_request,
+        json::{opt_str, str_of, string_map},
+        replay::replay_streamed,
     },
 };
 
@@ -18,10 +18,15 @@ pub fn register(registry: &mut CommandRegistry) {
     // The result carries no `durationMs` although the protocol declares it; clients time the call themselves.
     registry.register("request.replay", |params: Value, _| async move {
         let headers: Headers = string_map(&params, "headers").into_iter().collect();
-        let response =
-            replay_request(str_of(&params, "method"), str_of(&params, "url"), &headers, str_of(&params, "body"))
-                .await
-                .map_err(EngineError::engine)?;
+        let response = replay_streamed(
+            str_of(&params, "method"),
+            str_of(&params, "url"),
+            &headers,
+            str_of(&params, "body"),
+            opt_str(&params, "streamId"),
+        )
+        .await
+        .map_err(EngineError::engine)?;
         Ok(json!({ "status": response.status, "headers": response.headers, "body": response.body }))
     });
 
