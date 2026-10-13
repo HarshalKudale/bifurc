@@ -555,25 +555,6 @@ mod tests {
         }
     }
 
-    #[test]
-    fn nothing_is_removed_from_the_command_line() {
-        for group in ["mappings", "rules", "mocks"] {
-            let argv = [group, "remove", "x1"];
-            let (out, calls) = run(&argv, vec![], |c| match group {
-                "mappings" => mappings(c, sub(&argv)),
-                "rules" => rules(c, sub(&argv)),
-                _ => mocks(c, sub(&argv)),
-            });
-            assert_eq!(
-                out.unwrap_err(),
-                CliError::msg(format!(
-                    "unknown: {group} remove; deleting is done in the desktop app (see: bifurc {group} --help)"
-                ))
-            );
-            assert!(calls.is_empty());
-        }
-    }
-
     fn rule() -> Value {
         json!({"id": "r1", "name": "Users", "pattern": "api.example.com/users", "useRegex": false,
                "targetType": "mapping", "targetMappingId": "m1", "targetExternal": "",

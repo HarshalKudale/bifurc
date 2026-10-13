@@ -118,6 +118,17 @@ pub fn health(ctx: &mut Context, sub: Option<&str>) -> Result<String> {
             save(ctx, &workspace, &all)?;
             Ok(ctx.print(&check, || format!("Updated health check {id}")))
         }
+        "delete" => {
+            ctx.accept(&[], 1)?;
+            let wanted = need(args.positional(2), "health check id or name")?;
+            let workspace = workspace_id(ctx)?;
+            let mut all = checks(ctx, &workspace)?;
+            let check = find_one(&all, &wanted, &["name"], "health check", "health")?.clone();
+            let id = id_of(&check);
+            all.retain(|other| id_of(other) != id);
+            save(ctx, &workspace, &all)?;
+            Ok(ctx.print(&check, || format!("Deleted health check {id}")))
+        }
         "run" => {
             ctx.accept(&[], 1)?;
             let workspace = workspace_id(ctx)?;
@@ -130,8 +141,9 @@ pub fn health(ctx: &mut Context, sub: Option<&str>) -> Result<String> {
             for check in &wanted {
                 rows.push(run_check(ctx, &workspace, check)?);
             }
-            let report =
-                ctx.print(&Value::Array(rows.clone()), || table(&rows, &["name", "result", "status", "ms", "url", "error"]));
+            let report = ctx.print(&Value::Array(rows.clone()), || {
+                table(&rows, &["name", "result", "status", "ms", "url", "error"])
+            });
             if rows.iter().all(|row| row.get("healthy").is_some_and(truthy)) {
                 Ok(report)
             } else {
@@ -278,13 +290,10 @@ mod tests {
     }
 
     #[test]
-    fn nothing_is_removed_from_the_command_line() {
-        let argv = ["health", "delete", "hb1"];
-        let (out, calls) = run(&argv, vec![], |c| health(c, sub(&argv)));
-        assert_eq!(
-            out.unwrap_err(),
-            CliError::msg("unknown: health delete; deleting is done in the desktop app (see: bifurc health --help)")
-        );
-        assert!(calls.is_empty());
+    fn delete_saves_the_list_without_the_check() {
+        let argv = ["health", "delete", "users api"];
+        let (out, calls) = run(&argv, engine(up()), |c| health(c, sub(&argv)));
+        assert_eq!(out.unwrap(), "Deleted health check hb1");
+        assert_eq!(payloads(&calls, "healthbar.saveServices")[0]["services"], json!([saved()[1]]));
     }
 }

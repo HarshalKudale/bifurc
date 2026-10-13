@@ -59,18 +59,19 @@ pub fn register(registry: &mut CommandRegistry) {
         };
 
         let jar = ws_id.clone();
+        let stream_id = params.get("streamId").filter(|id| id.is_string()).cloned();
         let result = run_request_pipeline(&ws_id, &request, &scripts, |resolved| async move {
             let encoded = encode_request_body(&resolved);
-            let sent = ctx.registry.invoke(
-                "request.replay",
-                json!({
-                    "method": resolved["method"],
-                    "url": resolved["url"],
-                    "headers": encoded.headers,
-                    "body": encoded.body_base64,
-                }),
-                ctx.clone(),
-            );
+            let mut replay = json!({
+                "method": resolved["method"],
+                "url": resolved["url"],
+                "headers": encoded.headers,
+                "body": encoded.body_base64,
+            });
+            if let Some(id) = stream_id {
+                replay["streamId"] = id;
+            }
+            let sent = ctx.registry.invoke("request.replay", replay, ctx.clone());
             crate::cookies::scoped(&jar, sent).await
         })
         .await?;

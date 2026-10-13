@@ -2,9 +2,11 @@
 //!
 //! A row says which command it runs and where each of its arguments goes on that command's line (an operand,
 //! an option, a switch). Nothing here knows what a command does: `invoke.rs` writes the command line and the
-//! CLI's own code runs it, so a tool can never do what the command line cannot. In particular there is no
-//! tool that deletes, none that reads a secret and none that stops the engine.
+//! CLI's own code runs it, so a tool can never do what the command line cannot. Most rows are not written
+//! here: they are the rows of the command line's own table of verbs (`bifurc_cli::direct`). There is no tool
+//! that reads or takes a secret or a passphrase, none that signs in and none that stops the engine.
 
+use bifurc_cli::direct::{self, Scope, Take, Verb};
 use serde_json::{Map, Value, json};
 
 /// What running a tool does, as an MCP client is told (`annotations`).
@@ -18,6 +20,8 @@ pub enum Effect {
     Changes,
     /// Runs something that reaches outside the engine: sends a request, checks a URL, pushes to a remote.
     Runs,
+    /// Removes something.
+    Deletes,
 }
 
 /// Where an argument goes on the command line.
@@ -25,6 +29,8 @@ pub enum Effect {
 pub enum Place {
     /// The command's next operand, in the order the parameters are listed.
     Operand,
+    /// A list: each value is an operand, after the others.
+    Operands,
     /// `--<option> <value>`.
     Option(&'static str),
     /// `--<option> <value>`, and `--<option> <default>` when the argument is left out.
@@ -82,7 +88,7 @@ pub struct Tool {
     /// One line: what a search result shows.
     pub summary: &'static str,
     /// What else the model needs to use it well; may be empty.
-    pub details: &'static str,
+    pub details: String,
     pub effect: Effect,
     /// Whether it is listed by `tools/list`; the others are found with `search_tools` and run with `call_tool`.
     pub upfront: bool,
@@ -178,7 +184,7 @@ impl Row {
             name: self.name,
             words: self.words,
             summary: self.summary,
-            details: self.details,
+            details: self.details.to_string(),
             effect: self.effect,
             upfront: self.upfront,
             params,
@@ -436,7 +442,7 @@ pub fn catalog() -> Vec<Tool> {
             words: &["requests", "create"],
             summary: "Save a new request of any type.",
             details: "Give `url` and the options of the type, or `curl` to save the request a cURL command describes. \
-                Scripts and tests are written in the desktop app.",
+                Scripts, tests and any other field are set with requests_patch.",
             effect: Effect::Adds,
             upfront: false,
             scoped: true,
@@ -453,7 +459,7 @@ pub fn catalog() -> Vec<Tool> {
             name: "requests_update",
             words: &["requests", "update"],
             summary: "Change a saved request; only what is given changes.",
-            details: "Its scripts and tests are left as they are.",
+            details: "Its scripts and tests are left as they are; requests_patch sets them.",
             effect: Effect::Changes,
             upfront: false,
             scoped: true,
@@ -552,8 +558,7 @@ pub fn catalog() -> Vec<Tool> {
         name: "rules_create",
         words: &["rules", "create"],
         summary: "Create a forward-proxy rule: requests whose URL matches a pattern go to a mapping or another server.",
-        details: "Give one of `mapping` and `target`. A rule's request and response scripts are written in the \
-            desktop app.",
+        details: "Give one of `mapping` and `target`. A rule's request and response scripts are set with rules_patch.",
         effect: Effect::Adds,
         upfront: false,
         scoped: true,
@@ -570,7 +575,7 @@ pub fn catalog() -> Vec<Tool> {
         name: "rules_update",
         words: &["rules", "update"],
         summary: "Change a forward-proxy rule; only what is given changes.",
-        details: "Its scripts are left as they are.",
+        details: "Its scripts are left as they are; rules_patch sets them.",
         effect: Effect::Changes,
         upfront: false,
         scoped: true,
@@ -681,7 +686,7 @@ pub fn catalog() -> Vec<Tool> {
             name: "flows_list",
             words: &["flows", "list"],
             summary: "List the saved flows: chains of requests, each node's output feeding the next.",
-            details: "Flows are made in the desktop app.",
+            details: "A flow is written as JSON with flows_create and flows_update; help with group flows describes it.",
             effect: Effect::Reads,
             upfront: true,
             scoped: true,
@@ -750,7 +755,7 @@ pub fn catalog() -> Vec<Tool> {
             name: "workspaces_create",
             words: &["workspaces", "create"],
             summary: "Create a local workspace and make it the active one.",
-            details: "Publishing it to a repository is done in the desktop app.",
+            details: "workspaces_publish gives it a GitHub repository.",
             effect: Effect::Adds,
             upfront: false,
             scoped: false,
@@ -786,20 +791,21 @@ pub fn catalog() -> Vec<Tool> {
             name: "workspaces_sync",
             words: &["workspaces", "sync"],
             summary: "Sync a workspace with git: commit everything that was never synced, one commit per item, and push.",
-            details: "Pushes when the workspace has a remote. Deletions are left to the desktop app, where each one \
-                is confirmed or reverted.",
+            details: "Pushes when the workspace has a remote. Pending deletions are left: sync_confirm commits one, \
+                sync_restore undoes it.",
             effect: Effect::Runs,
             upfront: false,
             scoped: true,
-            params: vec![],
+            params: vec![text("message", "message", "The commit message. Default: one the engine writes.")],
         },
         // -- The rest -----------------------------------------------------------------------------------------
         Row {
             name: "vault_list",
             words: &["vault", "list"],
             summary: "List the secret vaults, whether each is sealed, and the names of their secrets (never the values).",
-            details: "A secret is used in a request as {{vault.SECRET}}. Creating a vault, setting a secret and \
-                unsealing take a passphrase and are done by the user, in the desktop app or with the bifurc command.",
+            details: "A secret is used in a request as {{vault.SECRET}}. Creating a vault, setting a secret, unsealing \
+                and changing the passphrase take a secret, so the user does them: in the desktop app or with the \
+                bifurc command (bifurc vault --help).",
             effect: Effect::Reads,
             upfront: false,
             scoped: true,
@@ -809,7 +815,7 @@ pub fn catalog() -> Vec<Tool> {
             name: "account_list",
             words: &["account", "list"],
             summary: "List the GitHub accounts signed in to Bifurc.",
-            details: "Signing in and out are done by the user.",
+            details: "Signing in shows a code to enter on GitHub, so the user does it: bifurc account login.",
             effect: Effect::Reads,
             upfront: false,
             scoped: false,
@@ -835,8 +841,174 @@ pub fn catalog() -> Vec<Tool> {
             scoped: false,
             params: vec![],
         },
+        // -- The verbs beside the command line's table that take more than one engine command -----------------
+        Row {
+            name: "help",
+            words: &["help"],
+            summary: "Show the manual of the bifurc commands these tools run: every group, or one group's verbs and options.",
+            details: "A tool is named <group>_<verb> and takes that verb's arguments. The manual of the group flows \
+                describes the JSON of a flow: its nodes, their ports and the connections between them.",
+            effect: Effect::Reads,
+            upfront: true,
+            scoped: false,
+            params: vec![operand("group", "The group, e.g. flows, requests, sync. Default: the overview of them all.")],
+        },
+        Row {
+            name: "folders_list",
+            words: &["folders", "list"],
+            summary: "List the folders of the request, mock, flow or rule tree of the active workspace.",
+            details: "A folder's id is what folders_*, runner_* and an item's folderId take.",
+            effect: Effect::Reads,
+            upfront: false,
+            scoped: false,
+            params: vec![typed("tree", "tree", Type::Choice(TREES), "Which tree.").required()],
+        },
+        Row {
+            name: "env_set",
+            words: &["env", "set"],
+            summary: "Set variables of one environment, adding the ones it does not have.",
+            details: "The environment that is always applied is named Global.",
+            effect: Effect::Changes,
+            upfront: false,
+            scoped: true,
+            params: vec![
+                operand("environment", "The environment's id or name.").required(),
+                Param {
+                    name: "variables",
+                    about: "The variables, each as KEY=VALUE.",
+                    ty: Type::TextList,
+                    place: Place::Operands,
+                    required: true,
+                },
+            ],
+        },
+        Row {
+            name: "env_unset",
+            words: &["env", "unset"],
+            summary: "Remove variables of one environment.",
+            details: "",
+            effect: Effect::Deletes,
+            upfront: false,
+            scoped: true,
+            params: vec![
+                operand("environment", "The environment's id or name.").required(),
+                Param {
+                    name: "variables",
+                    about: "The names of the variables.",
+                    ty: Type::TextList,
+                    place: Place::Operands,
+                    required: true,
+                },
+            ],
+        },
+        Row {
+            name: "capture_mock",
+            words: &["capture", "mock"],
+            summary: "Save a mock that answers as a captured exchange did.",
+            details: "",
+            effect: Effect::Adds,
+            upfront: false,
+            scoped: true,
+            params: vec![operand("entry", "The captured entry's id (see capture_list).").required()],
+        },
+        Row {
+            name: "capture_request",
+            words: &["capture", "request"],
+            summary: "Save a request like a captured one.",
+            details: "",
+            effect: Effect::Adds,
+            upfront: false,
+            scoped: true,
+            params: vec![operand("entry", "The captured entry's id (see capture_list).").required()],
+        },
+        Row {
+            name: "runner_run",
+            words: &["runner", "run"],
+            summary: "Send every request of a folder in order, with scripts and tests, and return how each did.",
+            details: "The result is an error when a request fails or a test does.",
+            effect: Effect::Runs,
+            upfront: false,
+            scoped: true,
+            params: vec![operand("folder", "The id of a folder of the request tree (see folders_list).").required()],
+        },
+        Row {
+            name: "settings_show",
+            words: &["settings", "show"],
+            summary: "Show the engine's ports and whether HTTPS, telemetry and the update check are on.",
+            details: "",
+            effect: Effect::Reads,
+            upfront: false,
+            scoped: false,
+            params: vec![],
+        },
+        Row {
+            name: "health_delete",
+            words: &["health", "delete"],
+            summary: "Delete a health check.",
+            details: "",
+            effect: Effect::Deletes,
+            upfront: false,
+            scoped: true,
+            params: vec![operand("check", "The health check's id or name.").required()],
+        },
     ]);
-    rows.into_iter().map(Row::tool).collect()
+    let mut tools: Vec<Tool> = rows.into_iter().map(Row::tool).collect();
+    tools.extend(direct::verbs().iter().map(of_verb));
+    tools
+}
+
+const TREES: &[&str] = &["request", "mock", "flow", "rule"];
+
+/// The tool of a verb that is a row of the command line's own table.
+fn of_verb(verb: &Verb) -> Tool {
+    let mut params: Vec<Param> = verb
+        .args
+        .iter()
+        .map(|arg| Param {
+            name: arg.name,
+            about: arg.about,
+            ty: match arg.take {
+                Take::Int => Type::Integer,
+                Take::Bool => Type::Boolean,
+                Take::Choice(words) => Type::Choice(words),
+                Take::Json => Type::Json,
+                Take::List => Type::TextList,
+                _ => Type::Text,
+            },
+            place: match (arg.operand, arg.take) {
+                (true, Take::List) => Place::Operands,
+                (true, _) => Place::Operand,
+                (false, _) => Place::Option(arg.name),
+            },
+            required: arg.required,
+        })
+        .collect();
+    if verb.out {
+        params.push(text("out", "out", "The file to write. Default: the content is returned."));
+    }
+    if verb.confirm {
+        params.push(switch("yes", "yes", None, "Must be true: what this does cannot be undone.").required());
+    }
+    if verb.scope == Scope::Workspace {
+        params.push(workspace());
+    }
+    params.push(json_switch());
+    Tool {
+        // The catalog is built once per server, so the name lives as long as the process.
+        name: Box::leak(verb.words.join("_").into_boxed_str()),
+        words: verb.words,
+        summary: verb.about,
+        details: verb.notes(),
+        effect: match verb.effect {
+            direct::Effect::Reads => Effect::Reads,
+            direct::Effect::Adds => Effect::Adds,
+            direct::Effect::Changes => Effect::Changes,
+            direct::Effect::Runs => Effect::Runs,
+            direct::Effect::Deletes => Effect::Deletes,
+        },
+        upfront: false,
+        params,
+    }
 }
 
 #[cfg(test)]
@@ -879,19 +1051,28 @@ mod tests {
     }
 
     #[test]
-    fn nothing_deletes_reads_a_secret_or_manages_the_engine() {
+    fn nothing_takes_a_secret_signs_in_or_manages_the_engine() {
         for tool in catalog() {
-            let verb = tool.words.last().copied().unwrap_or_default();
-            assert!(
-                !["delete", "remove", "rm", "unset", "logout", "login", "stop", "restart", "call", "run"]
-                    .contains(&verb)
-                    || tool.name == "health_run"
-                    || tool.name == "flows_run",
+            assert!(!["engine", "call", "commands"].contains(&tool.words[0]), "{}", tool.name);
+            assert!(tool.name != "account_login", "{}", tool.name);
+            // The vault verbs that ask for a passphrase or a value, or hand the secrets to a program.
+            let secret = ["create", "set", "unseal", "passphrase", "run"].contains(tool.words.last().unwrap());
+            assert!(tool.words[0] != "vault" || !secret, "{}", tool.name);
+        }
+    }
+
+    #[test]
+    fn every_verb_of_the_command_lines_table_is_a_tool_and_what_cannot_be_undone_says_so() {
+        let tools = catalog();
+        for verb in direct::verbs() {
+            let tool = tools.iter().find(|tool| tool.words == verb.words).unwrap_or_else(|| panic!("{:?}", verb.words));
+            assert_eq!(
+                tool.params.iter().any(|param| param.name == "yes" && param.required),
+                verb.confirm,
                 "{}",
                 tool.name
             );
-            assert!(tool.words[0] != "engine" && tool.words[0] != "call", "{}", tool.name);
-            assert!(tool.words[0] != "vault" || tool.name == "vault_list", "{}", tool.name);
+            assert_eq!(tool.effect == Effect::Deletes, verb.effect == direct::Effect::Deletes, "{}", tool.name);
         }
     }
 
@@ -931,6 +1112,7 @@ mod tests {
                 "flows_list",
                 "flows_run",
                 "services_list",
+                "help",
             ]
         );
     }

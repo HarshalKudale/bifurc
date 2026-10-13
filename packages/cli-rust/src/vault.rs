@@ -18,6 +18,7 @@ use crate::{
 };
 
 const PASSPHRASE_ENV: &str = "BIFURC_VAULT_PASSPHRASE";
+const NEW_PASSPHRASE_ENV: &str = "BIFURC_VAULT_NEW_PASSPHRASE";
 const PROMPT_ATTEMPTS: usize = 3;
 
 /// The vault named `name` (any case) in a `vault.list` answer.
@@ -133,10 +134,8 @@ pub fn vaults(ctx: &mut Context, sub: Option<&str>) -> Result<String> {
             let name = need(ctx.args.positional(2), "vault name")?;
             let workspace = workspace_id(ctx)?;
             let passphrase = new_passphrase(ctx.args, &name)?;
-            let created = ctx.request(
-                "vault.create",
-                json!({ "workspaceId": workspace, "name": name, "passphrase": passphrase }),
-            )?;
+            let created = ctx
+                .request("vault.create", json!({ "workspaceId": workspace, "name": name, "passphrase": passphrase }))?;
             Ok(ctx.print(&created, || format!("Created vault {name}. It is unsealed until the engine restarts.")))
         }
         // The value is typed hidden (or piped with --value-stdin) and goes straight to the engine.
@@ -177,6 +176,28 @@ pub fn vaults(ctx: &mut Context, sub: Option<&str>) -> Result<String> {
             let sealed = ctx.request("vault.seal", json!({ "workspaceId": workspace, "id": vault["id"] }))?;
             let name = vault["name"].as_str().unwrap_or_default();
             Ok(ctx.print(&sealed, || format!("Sealed vault {name}")))
+        }
+        "passphrase" => {
+            ctx.accept(&["passphrase-stdin"], 1)?;
+            let (workspace, vault) = named(ctx)?;
+            let name = vault["name"].as_str().unwrap_or_default();
+            let current = passphrase(ctx.args, name, 0)?;
+            // The new one cannot come the way the current one does: its own variable, or typed twice.
+            let new = match std::env::var(NEW_PASSPHRASE_ENV).ok().filter(|p| !p.is_empty()) {
+                Some(from_env) => from_env,
+                None => {
+                    let first = prompt::secret(&format!("New passphrase for {name} (at least 8 characters): "))?;
+                    if first != prompt::secret("Repeat the passphrase: ")? {
+                        return Err(CliError::msg("the passphrases differ"));
+                    }
+                    first
+                }
+            };
+            let changed = ctx.request(
+                "vault.changePassphrase",
+                json!({ "workspaceId": workspace, "id": vault["id"], "passphrase": current, "newPassphrase": new }),
+            )?;
+            Ok(ctx.print(&changed, || format!("Changed the passphrase of vault {name}")))
         }
         // With a command after `--` this is `run` below; here there was none.
         "run" => {
