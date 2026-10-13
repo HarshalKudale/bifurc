@@ -8,6 +8,7 @@
 mod canvas;
 mod editor;
 mod json_view;
+mod load;
 mod tree;
 
 use gpui_kit::component::{
@@ -19,8 +20,8 @@ use gpui_kit::component::{
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    AnyElement, AppContext as _, Context, Entity, IntoElement, ParentElement as _, Render, SharedString, Styled as _,
-    Subscription, Window, div,
+    AnyElement, AppContext as _, Context, Entity, InteractiveElement as _, IntoElement, ParentElement as _, Render,
+    SharedString, StatefulInteractiveElement as _, Styled as _, Subscription, Window, div,
 };
 use serde_json::{Map, Value, json};
 
@@ -39,7 +40,7 @@ use crate::{
     engine::{call, call_in, failure, patch_entity},
     i18n::{t, t_with},
     model::{
-        flow::{Described, FlowDoc, FlowNode, NodeKind, RunView},
+        flow::{Described, FlowDoc, FlowNode, LoadView, NodeKind, RunView},
         tree::{TreeKey, folder_path},
     },
     shell::ActiveTarget,
@@ -63,6 +64,11 @@ pub struct FlowsScreen {
     validating: bool,
     validate_again: bool,
     run: Option<RunView>,
+    /// The flow's latest load test, and whether it is shown in place of the canvas.
+    load: Option<LoadView>,
+    show_load: bool,
+    /// How many runs Run starts at once. More than one is a load test.
+    instances: Entity<InputState>,
     selected_node: Option<String>,
     tree: Entity<FlowTree>,
     canvas: Entity<FlowCanvas>,
@@ -73,6 +79,7 @@ pub struct FlowsScreen {
 impl FlowsScreen {
     pub fn new(model: Entity<AppModel>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let name = cx.new(|cx| InputState::new(window, cx).placeholder(t("flows.name.placeholder")));
+        let instances = cx.new(|cx| InputState::new(window, cx).default_value("1"));
         let tree = cx.new(|cx| FlowTree::new(model.clone(), window, cx));
         let editor = cx.new(|cx| NodeEditor::new(model.clone(), window, cx));
         let canvas = cx.new(|cx| FlowCanvas::new(editor.clone(), cx));
@@ -103,6 +110,9 @@ impl FlowsScreen {
             validating: false,
             validate_again: false,
             run: None,
+            load: None,
+            show_load: false,
+            instances,
             selected_node: None,
             tree,
             canvas,
@@ -131,7 +141,7 @@ impl FlowsScreen {
             .folder_of(&id, cx)
             .map(|folder| folder_path(&self.model.read(cx).config().flow_folder_rows(), &folder))
             .unwrap_or_default();
-        Some(ActiveTarget { title, entity_id: Some(id), request: None, name: None, kind: None, folders })
+        Some(ActiveTarget { folders, ..ActiveTarget::named(title, Some(id), self.name.clone()) })
     }
 
     fn report(&mut self, what: &str, message: String, cx: &mut Context<Self>) {
@@ -155,6 +165,7 @@ impl FlowsScreen {
     fn close(&mut self, cx: &mut Context<Self>) {
         self.autosave.cancel();
         (self.selected, self.doc, self.run, self.selected_node) = (None, None, None, None);
+        (self.load, self.show_load) = (None, false);
         self.baseline = Value::Null;
         self.described = Described::default();
         self.tree.update(cx, |tree, cx| tree.reveal(None, cx));
@@ -191,6 +202,15 @@ impl FlowsScreen {
             if report.get("flowId").and_then(Value::as_str) == this.selected.as_deref() && this.run.is_none() {
                 this.run = RunView::from_report(&report);
                 this.sync_views(cx);
+            }
+        });
+        let status = json!({ "workspaceId": workspace_id, "id": self.selected });
+        call(&client, cx, "flow.loadtest.status", status, |this, outcome, cx| {
+            let report = outcome.unwrap_or(Value::Null);
+            if report.get("flowId").and_then(Value::as_str) == this.selected.as_deref() && this.load.is_none() {
+                this.take_load(&report, cx);
+                // A load test that is going on is what there is to see.
+                this.show_load = this.is_load_running();
             }
         });
     }
@@ -459,6 +479,10 @@ impl FlowsScreen {
                 self.run = RunView::from_report(payload.get("report").unwrap_or(&Value::Null));
                 self.sync_views(cx);
             }
+            ModelEvent::FlowLoadProgress(payload) if about_open_flow(payload, self, cx) => self.take_load(payload, cx),
+            ModelEvent::FlowLoadFinished(payload) if about_open_flow(payload, self, cx) => {
+                self.take_load(payload.get("report").unwrap_or(&Value::Null), cx);
+            }
             ModelEvent::EntityReverted(id) if self.selected.as_deref() == Some(id.as_str()) => {
                 // An edit waiting to be written belongs to the version that was just replaced.
                 self.autosave.cancel();
@@ -480,6 +504,41 @@ impl FlowsScreen {
         self.run.as_ref().is_some_and(RunView::is_running)
     }
 
+    /// A flow that calls an MCP server runs one instance at a time: the engine refuses it a load test.
+    fn calls_mcp(&self) -> bool {
+        self.doc.as_ref().is_some_and(|doc| doc.nodes.iter().any(|node| node.kind == NodeKind::Mcp))
+    }
+
+    fn is_load_running(&self) -> bool {
+        self.load.as_ref().is_some_and(LoadView::is_running)
+    }
+
+    /// Take in what the engine says of the flow's load test: a progress report, or a whole one.
+    fn take_load(&mut self, told: &Value, cx: &mut Context<Self>) {
+        let load_id = told.get("loadId").and_then(Value::as_str).unwrap_or_default();
+        if self.load.as_ref().is_none_or(|load| load.load_id() != load_id) {
+            self.load = Some(LoadView::default());
+        }
+        if let Some(load) = self.load.as_mut() {
+            load.apply(told);
+        }
+        cx.notify();
+    }
+
+    /// Start as many runs of the flow at once as the bar asks for, counted by the engine and shown as a list.
+    fn start_load(&mut self, flow_id: String, instances: u64, cx: &mut Context<Self>) {
+        let model = self.model.read(cx);
+        let client = model.client().clone();
+        let payload = json!({ "workspaceId": model.workspace_id(), "id": flow_id, "instances": instances });
+        call(&client, cx, "flow.loadtest.start", payload, |this, outcome, cx| match failure(&outcome) {
+            Some(message) => this.report(t("flows.error.run"), message, cx),
+            None => {
+                this.show_load = true;
+                cx.notify();
+            }
+        });
+    }
+
     /// Run the flow as it is saved. An edit that is not written yet is written first.
     fn start_run(&mut self, cx: &mut Context<Self>) {
         let Some(flow_id) = self.selected.clone() else { return };
@@ -488,6 +547,12 @@ impl FlowsScreen {
             self.autosave.cancel();
             return self.save(cx);
         }
+        // The engine says what is too many; what is not a number is one run.
+        let instances = self.instances.read(cx).value().trim().parse::<u64>().unwrap_or(1);
+        if instances > 1 && !self.calls_mcp() {
+            return self.start_load(flow_id, instances, cx);
+        }
+        self.show_load = false;
         let model = self.model.read(cx);
         let client = model.client().clone();
         let payload = json!({ "workspaceId": model.workspace_id(), "id": flow_id });
@@ -510,7 +575,8 @@ impl FlowsScreen {
         let model = self.model.read(cx);
         let client = model.client().clone();
         let payload = json!({ "workspaceId": model.workspace_id(), "id": flow_id });
-        call(&client, cx, "flow.cancel", payload, |this, outcome, cx| {
+        let command = if self.is_load_running() { "flow.loadtest.cancel" } else { "flow.cancel" };
+        call(&client, cx, command, payload, |this, outcome, cx| {
             if let Some(message) = failure(&outcome) {
                 this.report(t("flows.error.stop"), message, cx);
             }
@@ -761,7 +827,7 @@ impl FlowsScreen {
     /// The bar over the canvas: the flow's name, how it is saved, its last run, and Run or Stop.
     fn render_bar(&self, doc: &FlowDoc, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
-        let running = self.is_running();
+        let running = self.is_running() || self.is_load_running();
         let errors: Vec<String> =
             self.described.problems.iter().filter(|problem| problem.is_error).map(|problem| {
                 let node = problem.node_id.as_deref().and_then(|id| doc.node(id)).map(FlowNode::title);
@@ -799,10 +865,9 @@ impl FlowsScreen {
             .py_1p5()
             .border_b_1()
             .border_color(theme.border)
-            .child(div().w_72().flex_none().child(Input::new(&self.name).small()))
             .child(div().flex_none().text_xs().text_color(theme.muted_foreground).child(saved))
             .child(div().flex_1())
-            .when_some(self.run_summary(), |this, (text, bad)| {
+            .when_some(self.run_summary().filter(|_| !self.show_load), |this, (text, bad)| {
                 let color = if bad { theme.danger } else { theme.muted_foreground };
                 this.child(div().min_w_0().text_sm().text_color(color).overflow_hidden().text_ellipsis().child(text))
             })
@@ -827,6 +892,30 @@ impl FlowsScreen {
                         })),
                 )
             })
+            .when(self.load.is_some(), |this| {
+                let label = if self.show_load { t("flows.load.canvas") } else { t("flows.load.show") };
+                this.child(Button::new("flow-load-view").small().ghost().label(label).on_click(cx.listener(
+                    |this, _, _, cx| {
+                        this.show_load = !this.show_load;
+                        cx.notify();
+                    },
+                )))
+            })
+            .child({
+                // A flow that cannot have instances still shows the field, and says why it is off.
+                let refused = self.calls_mcp();
+                h_flex()
+                    .id("flow-instances")
+                    .flex_none()
+                    .gap_3()
+                    .child(div().text_xs().text_color(theme.muted_foreground).child(t("flows.load.instances")))
+                    .child(div().w_20().child(Input::new(&self.instances).small().disabled(running || refused)))
+                    .when(refused, |this| {
+                        this.tooltip(|window, cx| {
+                            gpui_kit::component::tooltip::Tooltip::new(t("flows.load.instances_mcp")).build(window, cx)
+                        })
+                    })
+            })
             .child(run)
     }
 
@@ -848,7 +937,10 @@ impl FlowsScreen {
         v_flex()
             .size_full()
             .child(self.render_bar(doc, cx))
-            .child(div().flex_1().min_h_0().child(self.canvas.clone()))
+            .child(match self.load.clone().filter(|_| self.show_load) {
+                Some(shown) => div().flex_1().min_h_0().child(load::render(&shown, cx)),
+                None => div().flex_1().min_h_0().child(self.canvas.clone()),
+            })
             .child(entity_bar(bar, cx, |this, action, window, cx| this.entity_action(action, window, cx)))
             .into_any_element()
     }

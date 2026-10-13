@@ -1610,6 +1610,77 @@
    ],
    "additionalProperties": false
   },
+  "flow.loadtest.start": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "id": {
+     "type": "string"
+    },
+    "instances": {
+     "type": "integer",
+     "minimum": 1,
+     "maximum": 10000
+    },
+    "inputs": {
+     "type": "object",
+     "propertyNames": {
+      "type": "string"
+     },
+     "additionalProperties": {
+      "type": "string"
+     }
+    },
+    "timeoutMs": {
+     "type": "integer",
+     "minimum": 0
+    },
+    "maxEvents": {
+     "type": "integer",
+     "minimum": 1
+    }
+   },
+   "required": [
+    "workspaceId",
+    "id",
+    "instances"
+   ],
+   "additionalProperties": false
+  },
+  "flow.loadtest.cancel": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "id": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "workspaceId",
+    "id"
+   ],
+   "additionalProperties": false
+  },
+  "flow.loadtest.status": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "id": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "workspaceId",
+    "id"
+   ],
+   "additionalProperties": false
+  },
   "ws.disconnect": {
    "type": "object",
    "properties": {

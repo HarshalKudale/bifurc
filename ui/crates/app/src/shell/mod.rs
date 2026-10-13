@@ -218,6 +218,8 @@ impl Shell {
             | ModelEvent::RunnerFinished(_)
             | ModelEvent::FlowProgress(_)
             | ModelEvent::FlowFinished(_)
+            | ModelEvent::FlowLoadProgress(_)
+            | ModelEvent::FlowLoadFinished(_)
             | ModelEvent::SyncStatus
             | ModelEvent::HistoryChanged
             | ModelEvent::AccountChanged(_)
