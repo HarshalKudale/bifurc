@@ -57,7 +57,7 @@ pub struct Language {
 }
 
 /// The first one is the fallback for keys another language lacks.
-pub const LANGUAGES: &[Language] = &[language!("en", "English")];
+pub const LANGUAGES: &[Language] = &[language!("en", "English"), language!("de", "Deutsch"), language!("ja", "日本語")];
 
 /// Values live for the whole run (leaked once when the bundles load), so `t` can hand out `&'static str` and
 /// the helpers that already return one keep their signatures.
