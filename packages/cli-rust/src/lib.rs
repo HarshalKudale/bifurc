@@ -7,9 +7,11 @@
 pub mod args;
 pub mod cli;
 pub mod commands;
+pub mod direct;
 pub mod discovery;
 pub mod entities;
 pub mod error;
+pub mod extras;
 pub mod flows;
 pub mod format;
 pub mod health;
@@ -22,8 +24,8 @@ pub mod session;
 pub mod socketio;
 pub mod stream;
 pub mod supervisor;
-pub mod update;
 #[cfg(test)]
 pub(crate) mod testing;
+pub mod update;
 pub mod usage;
 pub mod vault;
