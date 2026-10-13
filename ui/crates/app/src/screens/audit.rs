@@ -488,7 +488,7 @@ impl AuditScreen {
             .text_color(theme.muted_foreground)
             .font_family(theme.mono_font_family.clone())
             .child(format!("commit {} · {} · {}", entry.commit, entry.actor, absolute_time(entry.ts)));
-        let body = self.diffs.read(cx).render(&entry.commit, cx);
+        let body = CommitDiffs::render(&self.diffs, &entry.commit, cx);
         v_flex()
             .w_full()
             .gap_2()
