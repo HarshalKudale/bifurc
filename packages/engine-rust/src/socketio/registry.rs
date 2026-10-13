@@ -377,7 +377,7 @@ pub fn connect_connection(workspace_id: &str, connection_id: &str, target: &Targ
     emit(events);
 
     let (prepared, generation) = outcome?;
-    let workspace_id = workspace_id.to_string();
+    let workspace_id = crate::cookies::jar_of(workspace_id);
     tokio::spawn(async move { crate::cookies::scoped(&workspace_id, run(key, generation, prepared, rx)).await });
     Ok(())
 }

@@ -369,6 +369,15 @@ pub fn verbs() -> Vec<Verb> {
             Take::Named(&["flows"]),
             "Its id or name.",
         )]),
+        verb(
+            &["flows", "loadstatus"],
+            "flow.loadtest.status",
+            Effect::Reads,
+            "Show the flow's load test: the one going on, or the last report.",
+        )
+        .args(vec![operand("flow", "id", Take::Named(&["flows"]), "Its id or name.")]),
+        verb(&["flows", "loadcancel"], "flow.loadtest.cancel", Effect::Changes, "Stop the load test of a flow.")
+            .args(vec![operand("flow", "id", Take::Named(&["flows"]), "Its id or name.")]),
         // -- Environments -------------------------------------------------------------------------------------
         verb(&["env", "create"], "entity.create", Effect::Adds, "Create an environment with no variables.")
             .details("Fill it with `env set`.")
