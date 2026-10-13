@@ -19,7 +19,7 @@ use gpui_kit::{
 };
 
 use super::Syntax;
-use crate::model::http::pretty_json;
+use crate::{i18n::t, model::http::pretty_json};
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum BodyView {
@@ -140,12 +140,12 @@ impl BodyPane {
                         .on_click(cx.listener(|this, ix: &usize, window, cx| {
                             this.set_view(if *ix == 0 { BodyView::Pretty } else { BodyView::Raw }, window, cx)
                         }))
-                        .child(Tab::new().label("Pretty"))
-                        .child(Tab::new().label("Raw")),
+                        .child(Tab::new().label(t("components.body_pane.pretty")))
+                        .child(Tab::new().label(t("components.body_pane.raw"))),
                 )
             })
             .child(div().flex_1())
-            .child(Button::new("copy-body").ghost().small().icon(IconName::Copy).label("Copy").on_click(cx.listener(
+            .child(Button::new("copy-body").ghost().small().icon(IconName::Copy).label(t("components.body_pane.copy")).on_click(cx.listener(
                 |this, _, _, cx| {
                     let text = this.editor.read(cx).value().to_string();
                     cx.write_to_clipboard(ClipboardItem::new_string(text));

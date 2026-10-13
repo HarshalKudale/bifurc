@@ -29,6 +29,7 @@ use serde_json::{Map, Value, json};
 
 use crate::{
     app_model::{AppModel, ModelEvent},
+    i18n::{t, t_with},
     components::{
         Syntax,
         dialogs::{PromptField, confirm_danger, prompt},
@@ -124,11 +125,11 @@ impl HealthBarScreen {
             .iter()
             .filter(|service| matches!(self.results.get(&text(service, "id")), Some(Outcome::Done { ok: true, .. })))
             .count();
-        format!("{healthy} of {} healthy", self.services.len())
+        t_with("healthbar.status_line", &[("healthy", &healthy), ("total", &self.services.len())])
     }
 
     fn report(&mut self, what: &str, message: String, cx: &mut Context<Self>) {
-        self.model.update(cx, |model, cx| model.notice(format!("{what} {message}"), cx));
+        self.model.update(cx, |model, cx| model.notice(t_with("healthbar.report", &[("what", &what), ("message", &message)]), cx));
     }
 
     fn reload(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -149,7 +150,7 @@ impl HealthBarScreen {
                     // The first look at the list checks everything once.
                     this.check_matching(|_| true, false, window, cx);
                 }
-                Err(error) => this.report("Couldn't read the health checks.", describe(&error), cx),
+                Err(error) => this.report(t("healthbar.error_read"), describe(&error), cx),
             }
             cx.notify();
         });
@@ -197,9 +198,9 @@ impl HealthBarScreen {
             cx.weak_entity(),
             window,
             cx,
-            "Revert the health checks?",
-            "Go back to the last synced list. Checks that were never synced are removed.",
-            "Revert",
+            t("healthbar.revert_title"),
+            t("healthbar.revert_body"),
+            t("healthbar.revert"),
             move |this, _, cx| this.model.update(cx, |model, cx| model.revert_paths(paths.clone(), cx)),
         );
     }
@@ -211,7 +212,7 @@ impl HealthBarScreen {
         let payload = json!({ "workspaceId": model.workspace_id(), "services": self.services });
         call_in(&client, window, cx, "healthbar.saveServices", payload, |this, outcome, window, cx| {
             if let Some(message) = failure(&outcome) {
-                this.report("Couldn't save the health checks.", message, cx);
+                this.report(t("healthbar.error_save"), message, cx);
                 this.reload(window, cx);
             }
         });
@@ -292,9 +293,9 @@ impl HealthBarScreen {
             cx.weak_entity(),
             window,
             cx,
-            "New health check",
-            "Create",
-            vec![PromptField::new("Name", "Users API"), PromptField::new("URL", "{{HOST}}/health")],
+            t("healthbar.new_health_check"),
+            t("healthbar.create"),
+            vec![PromptField::new(t("healthbar.name"), t("healthbar.name_example")), PromptField::new(t("healthbar.url"), "{{HOST}}/health")],
             |this, values, window, cx| {
                 let id = format!("hb{:x}", now_ms());
                 let service = json!({
@@ -315,11 +316,11 @@ impl HealthBarScreen {
             cx.weak_entity(),
             window,
             cx,
-            format!("Edit “{}”", text(&service, "name")),
-            "Save",
+            t_with("healthbar.edit_title", &[("name", &text(&service, "name"))]),
+            t("healthbar.save"),
             vec![
-                PromptField::new("Name", "Users API").initial(text(&service, "name")),
-                PromptField::new("URL", "{{HOST}}/health").initial(text(&service, "url")),
+                PromptField::new(t("healthbar.name"), t("healthbar.name_example")).initial(text(&service, "name")),
+                PromptField::new(t("healthbar.url"), "{{HOST}}/health").initial(text(&service, "url")),
             ],
             move |this, values, window, cx| {
                 if let Some(service) = this.services.iter_mut().find(|s| text(s, "id") == id) {
@@ -338,9 +339,9 @@ impl HealthBarScreen {
             cx.weak_entity(),
             window,
             cx,
-            format!("Delete health check “{name}”?"),
-            "It will no longer be checked.",
-            "Delete",
+            t_with("healthbar.delete_title", &[("name", &name)]),
+            t("healthbar.delete_body"),
+            t("healthbar.delete"),
             move |this, window, cx| {
                 this.services.retain(|service| text(service, "id") != id);
                 this.results.remove(&id);
@@ -383,14 +384,16 @@ impl HealthBarScreen {
 
     fn state_tag(outcome: Option<&Outcome>) -> Tag {
         match outcome {
-            None => Tag::secondary().small().child("Not checked"),
-            Some(Outcome::Checking) => Tag::secondary().small().child("Checking…"),
-            Some(Outcome::Done { ok: true, status, .. }) => {
-                Tag::success().small().child(status.map_or("Healthy".to_owned(), |s| format!("Healthy · {s}")))
-            }
-            Some(Outcome::Done { ok: false, status, .. }) => {
-                Tag::danger().small().child(status.map_or("Failing".to_owned(), |s| format!("Failing · {s}")))
-            }
+            None => Tag::secondary().small().child(t("healthbar.not_checked")),
+            Some(Outcome::Checking) => Tag::secondary().small().child(t("healthbar.checking")),
+            Some(Outcome::Done { ok: true, status, .. }) => Tag::success().small().child(status.map_or(
+                t("healthbar.state_healthy").to_owned(),
+                |s| t_with("healthbar.state_healthy_status", &[("status", &s)]),
+            )),
+            Some(Outcome::Done { ok: false, status, .. }) => Tag::danger().small().child(status.map_or(
+                t("healthbar.state_failing").to_owned(),
+                |s| t_with("healthbar.state_failing_status", &[("status", &s)]),
+            )),
         }
     }
 
@@ -405,7 +408,10 @@ impl HealthBarScreen {
                 let outcome = self.results.get(&id);
                 let (timing, checked) = match outcome {
                     Some(Outcome::Done { duration_ms, checked_at, .. }) => {
-                        (format!("{duration_ms} ms"), format!("{} UTC", clock_utc(*checked_at)))
+                        (
+                            t_with("healthbar.timing", &[("ms", &duration_ms)]),
+                            t_with("healthbar.checked_at", &[("time", &clock_utc(*checked_at))]),
+                        )
                     }
                     _ => (String::new(), String::new()),
                 };
@@ -443,14 +449,14 @@ impl HealthBarScreen {
                                 Switch::new(key("auto"))
                                     .checked(is_auto(service))
                                     .small()
-                                    .label("Auto")
-                                    .tooltip("Check every 30 seconds")
+                                    .label(t("healthbar.auto"))
+                                    .tooltip(t("healthbar.auto_tooltip"))
                                     .on_change(cx.listener(move |this, checked: &bool, window, cx| {
                                         cx.stop_propagation();
                                         this.set_auto(&auto_id, *checked, window, cx);
                                     })),
                             )
-                            .child(Button::new(key("check")).small().label("Check").on_click(cx.listener(
+                            .child(Button::new(key("check")).small().label(t("healthbar.check")).on_click(cx.listener(
                                 move |this, _, window, cx| {
                                     cx.stop_propagation();
                                     this.check(&check_id, true, window, cx);
@@ -460,13 +466,13 @@ impl HealthBarScreen {
                                 move |menu, _, _| {
                                     let (edit_view, delete_view) = (menu_view.clone(), menu_view.clone());
                                     let (edit_id, delete_id) = (edit_id.clone(), delete_id.clone());
-                                    menu.item(PopupMenuItem::new("Edit…").on_click(move |_, window, cx| {
+                                    menu.item(PopupMenuItem::new(t("healthbar.edit_menu")).on_click(move |_, window, cx| {
                                         let id = edit_id.clone();
                                         edit_view.update(cx, |this, cx| this.prompt_edit(id, window, cx)).ok();
                                     }))
                                     .separator()
                                     .item(
-                                        PopupMenuItem::new("Delete…").on_click(move |_, window, cx| {
+                                        PopupMenuItem::new(t("healthbar.delete_menu")).on_click(move |_, window, cx| {
                                             let id = delete_id.clone();
                                             delete_view.update(cx, |this, cx| this.confirm_delete(id, window, cx)).ok();
                                         }),
@@ -486,13 +492,13 @@ impl HealthBarScreen {
         let name = self.services.iter().find(|s| text(s, "id") == id).map(|s| text(s, "name")).unwrap_or_default();
         let outcome = self.results.get(id);
         let content = match outcome {
-            None => page::empty("Not checked yet", "Run the check to see what the URL answers."),
-            Some(Outcome::Checking) => page::loading("Checking…"),
+            None => page::empty(t("healthbar.not_checked_yet"), t("healthbar.not_checked_yet_body")),
+            Some(Outcome::Checking) => page::loading(t("healthbar.checking")),
             Some(Outcome::Done { error: Some(error), body, .. }) if body.is_empty() => {
-                page::empty("The check failed", error.clone())
+                page::empty(t("healthbar.check_failed"), error.clone())
             }
             Some(Outcome::Done { body, .. }) if body.is_empty() => {
-                page::empty("Empty body", "The URL answered without a body.")
+                page::empty(t("healthbar.empty_body"), t("healthbar.empty_body_text"))
             }
             Some(Outcome::Done { .. }) => Editor::new(&self.body).bordered(false).h_full().into_any_element(),
         };
@@ -514,7 +520,7 @@ impl HealthBarScreen {
                             .text_sm()
                             .overflow_hidden()
                             .text_ellipsis()
-                            .child(format!("Last response · {name}")),
+                            .child(t_with("healthbar.last_response", &[("name", &name)])),
                     )
                     .child(Self::state_tag(outcome))
                     .child(
@@ -522,7 +528,7 @@ impl HealthBarScreen {
                             .ghost()
                             .small()
                             .icon(IconName::Close)
-                            .tooltip("Close the response")
+                            .tooltip(t("healthbar.close_response_tooltip"))
                             .on_click(cx.listener(|this, _, window, cx| this.select(None, window, cx))),
                     ),
             )
@@ -538,15 +544,15 @@ impl Render for HealthBarScreen {
         let busy = model.is_publishing();
         let (sync_paths, revert_paths) = (changed.clone(), changed.clone());
         let header = page::header(
-            "Health bar",
-            "URLs the engine checks on demand, or every 30 seconds when set to Auto. {{variables}} are resolved.",
+            t("healthbar.title"),
+            t("healthbar.description"),
             h_flex()
                 .gap_2()
                 .child(
                     Button::new("health-revert")
                         .small()
-                        .label("Revert")
-                        .tooltip("Put the health checks back to their last synced version")
+                        .label(t("healthbar.revert"))
+                        .tooltip(t("healthbar.revert_tooltip"))
                         .disabled(changed.is_empty() || busy)
                         .on_click(cx.listener(move |this, _, window, cx| {
                             this.confirm_revert(revert_paths.clone(), window, cx)
@@ -555,8 +561,8 @@ impl Render for HealthBarScreen {
                 .child(
                     Button::new("health-sync")
                         .small()
-                        .label("Sync")
-                        .tooltip("Commit the health checks (and push them, when there is a remote)")
+                        .label(t("healthbar.sync"))
+                        .tooltip(t("healthbar.sync_tooltip"))
                         .loading(busy)
                         .disabled(changed.is_empty() || busy)
                         .on_click(cx.listener(move |this, _, _, cx| this.sync(sync_paths.clone(), cx))),
@@ -565,27 +571,27 @@ impl Render for HealthBarScreen {
                     Button::new("health-check-all")
                         .small()
                         .icon(IconName::RefreshCw)
-                        .label("Check all")
+                        .label(t("healthbar.check_all"))
                         .on_click(cx.listener(|this, _, window, cx| this.check_matching(|_| true, true, window, cx))),
                 )
                 .child(
                     Button::new("health-new")
                         .small()
                         .icon(IconName::Plus)
-                        .label("New check")
+                        .label(t("healthbar.new_check"))
                         .on_click(cx.listener(|this, _, window, cx| this.prompt_new(window, cx))),
                 ),
             cx,
         );
         if !self.loaded {
-            return page::screen(header, page::loading("Loading health checks…"), cx);
+            return page::screen(header, page::loading(t("healthbar.loading_checks")), cx);
         }
         if self.services.is_empty() {
             let empty = page::empty_with_action(
-                "No health checks",
-                "Add the URLs you want to keep an eye on, such as each service's /health.",
+                t("healthbar.no_checks"),
+                t("healthbar.no_checks_body"),
                 Button::new("health-empty-new")
-                    .label("New check")
+                    .label(t("healthbar.new_check"))
                     .on_click(cx.listener(|this, _, window, cx| this.prompt_new(window, cx))),
             );
             return page::screen(header, empty, cx);

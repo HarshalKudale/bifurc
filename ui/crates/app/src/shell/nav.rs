@@ -15,7 +15,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{Context, IntoElement, ParentElement as _, Styled as _, Window, div};
 
 use super::Shell;
-use crate::{model::ConfigSnapshot, preferences::Preferences};
+use crate::{i18n::t, model::ConfigSnapshot, preferences::Preferences};
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
 pub enum Screen {
@@ -36,21 +36,21 @@ pub enum Screen {
 
 impl Screen {
     pub fn label(self) -> &'static str {
-        match self {
-            Screen::Services => "Services",
-            Screen::HealthBar => "Health bar",
-            Screen::Mappings => "Mappings",
-            Screen::ProxyRules => "Proxy rules",
-            Screen::Capture => "Capture",
-            Screen::Requests => "Requests",
-            Screen::Mocks => "Mocks",
-            Screen::Flows => "Flows",
-            Screen::Environments => "Environments",
-            Screen::Vaults => "Vaults",
-            Screen::WorkspaceConfig => "Config",
-            Screen::AuditLog => "Audit log",
-            Screen::Settings => "Settings",
-        }
+        t(match self {
+            Screen::Services => "shell.screen.services",
+            Screen::HealthBar => "shell.screen.health_bar",
+            Screen::Mappings => "shell.screen.mappings",
+            Screen::ProxyRules => "shell.screen.proxy_rules",
+            Screen::Capture => "shell.screen.capture",
+            Screen::Requests => "shell.screen.requests",
+            Screen::Mocks => "shell.screen.mocks",
+            Screen::Flows => "shell.screen.flows",
+            Screen::Environments => "shell.screen.environments",
+            Screen::Vaults => "shell.screen.vaults",
+            Screen::WorkspaceConfig => "shell.screen.config",
+            Screen::AuditLog => "shell.screen.audit_log",
+            Screen::Settings => "shell.screen.settings",
+        })
     }
 
     pub fn icon(self) -> IconName {
@@ -110,10 +110,10 @@ impl Screen {
 
 /// The sidebar's groups, in order. Settings is not here: it is pinned to the foot.
 const GROUPS: [(&str, &[Screen]); 4] = [
-    ("Applications", &[Screen::Services, Screen::HealthBar]),
-    ("Routing", &[Screen::Mappings, Screen::ProxyRules, Screen::Capture]),
-    ("API", &[Screen::Requests, Screen::Mocks, Screen::Flows]),
-    ("Workspace", &[Screen::Environments, Screen::Vaults, Screen::WorkspaceConfig, Screen::AuditLog]),
+    ("shell.group.applications", &[Screen::Services, Screen::HealthBar]),
+    ("shell.group.routing", &[Screen::Mappings, Screen::ProxyRules, Screen::Capture]),
+    ("shell.group.api", &[Screen::Requests, Screen::Mocks, Screen::Flows]),
+    ("shell.group.workspace", &[Screen::Environments, Screen::Vaults, Screen::WorkspaceConfig, Screen::AuditLog]),
 ];
 
 impl Shell {
@@ -136,7 +136,7 @@ impl Shell {
     fn render_workspace_switcher(&self, collapsed: bool, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
         let config = self.model.read(cx).config();
-        let name = config.active_workspace().map(|w| w.name.clone()).unwrap_or_else(|| "Workspace".to_owned());
+        let name = config.active_workspace().map(|w| w.name.clone()).unwrap_or_else(|| t("shell.workspace.default_name").to_owned());
         let active_id = config.active_workspace_id.clone();
         let workspaces: Vec<(String, String)> =
             config.workspaces.iter().map(|w| (w.id.clone(), w.name.clone())).collect();
@@ -168,7 +168,7 @@ impl Shell {
                             v_flex()
                                 .min_w_0()
                                 .child(div().text_sm().font_medium().overflow_hidden().text_ellipsis().child(name))
-                                .child(div().text_xs().text_color(theme.muted_foreground).child("Workspace")),
+                                .child(div().text_xs().text_color(theme.muted_foreground).child(t("shell.workspace.caption"))),
                         )
                     }),
             )
@@ -189,10 +189,15 @@ impl Shell {
                     }
                 };
                 menu.separator()
-                    .item(PopupMenuItem::new("Add workspace…").on_click(on(&shell, Shell::prompt_new_workspace)))
-                    .item(PopupMenuItem::new("Rename workspace…").on_click(on(&shell, Shell::prompt_rename_workspace)))
                     .item(
-                        PopupMenuItem::new("Delete workspace…")
+                        PopupMenuItem::new(t("shell.workspace.add")).on_click(on(&shell, Shell::prompt_new_workspace)),
+                    )
+                    .item(
+                        PopupMenuItem::new(t("shell.workspace.rename"))
+                            .on_click(on(&shell, Shell::prompt_rename_workspace)),
+                    )
+                    .item(
+                        PopupMenuItem::new(t("shell.workspace.delete"))
                             .disabled(!can_delete)
                             .on_click(on(&shell, Shell::confirm_delete_workspace)),
                     )
@@ -209,7 +214,7 @@ impl Shell {
         let groups: Vec<SidebarGroup<SidebarMenu>> = GROUPS
             .iter()
             .map(|(label, screens)| {
-                SidebarGroup::new(*label).child(
+                SidebarGroup::new(t(label)).child(
                     SidebarMenu::new().children(screens.iter().map(|screen| self.nav_item(*screen, &config, cx))),
                 )
             })

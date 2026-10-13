@@ -20,6 +20,7 @@ use gpui_kit::{
 use crate::{
     app_model::{AppModel, Deleted},
     commands::ShowSettings,
+    i18n::{t, t_with},
     model::git::FileState,
 };
 
@@ -91,7 +92,7 @@ pub fn prompt<V: 'static>(
             let missing = inputs.iter().zip(&values).any(|((_, optional, _, _), value)| !optional && value.is_empty());
             if missing {
                 window.push_notification(
-                    Notification::warning("Fill in the required fields.").title("Can't continue yet"),
+                    Notification::warning(t("components.dialogs.fill_required")).title(t("components.dialogs.cant_continue")),
                     cx,
                 );
                 return false;
@@ -132,7 +133,7 @@ pub fn prompt<V: 'static>(
                             .child(
                                 Button::new("prompt-cancel")
                                     .outline()
-                                    .label("Cancel")
+                                    .label(t("components.cancel"))
                                     .on_click(|_, window, cx| window.close_dialog(cx)),
                             )
                             .child(Button::new("prompt-confirm").primary().label(confirm).on_click(
@@ -170,14 +171,13 @@ pub fn confirm_danger<V: 'static>(
 pub fn delete_consequence(state: Option<FileState>) -> &'static str {
     match state {
         // Never synced: nothing has a copy of it.
-        Some(FileState::New) | None => "It was never synced, so this can't be undone.",
-        Some(_) => "It stays in the list, struck through, until you confirm the delete or revert it.",
+        Some(FileState::New) | None => t("components.dialogs.never_synced"),
+        Some(_) => t("components.dialogs.stays_struck"),
     }
 }
 
 /// What deleting a folder does, for the dialog that asks first.
-pub const FOLDER_DELETE_CONSEQUENCE: &str = "Everything in it is deleted. What was synced stays in the list, \
-     struck through, until you confirm the delete or revert it. What was never synced can't be brought back.";
+pub const FOLDER_DELETE_CONSEQUENCE: &str = "components.dialogs.folder_delete_consequence";
 
 /// Opened in place of something that is deleted: it can't be opened, only brought back or deleted for good.
 pub fn resolve_deleted(
@@ -194,30 +194,27 @@ pub fn resolve_deleted(
             let (revert_model, revert_target) = (model.clone(), target.clone());
             let (confirm_model, confirm_target) = (model.clone(), target.clone());
             alert
-                .title(format!("“{name}” is deleted"))
+                .title(t_with("components.dialogs.deleted_title", &[("name", &name)]))
                 .description(if folder {
-                    "This folder was deleted here and the deletion is not synced yet. Revert the delete to bring \
-                     back the folder and what was synced in it, or confirm it to sync the deletion and remove \
-                     them for good."
+                    t("components.dialogs.deleted_folder")
                 } else {
-                    "It was deleted here and the deletion is not synced yet. Revert the delete to bring back \
-                     the last synced version, or confirm it to sync the deletion and remove it for good."
+                    t("components.dialogs.deleted_item")
                 })
                 .footer(
                     DialogFooter::new()
                         .child(
                             Button::new("deleted-cancel")
                                 .outline()
-                                .label("Cancel")
+                                .label(t("components.cancel"))
                                 .on_click(|_, window, cx| window.close_dialog(cx)),
                         )
-                        .child(Button::new("deleted-revert").outline().label("Revert delete").on_click(
+                        .child(Button::new("deleted-revert").outline().label(t("components.dialogs.revert_delete")).on_click(
                             move |_, window, cx| {
                                 revert_model.update(cx, |model, cx| model.revert_delete(revert_target.clone(), cx));
                                 window.close_dialog(cx);
                             },
                         ))
-                        .child(Button::new("deleted-confirm").danger().label("Confirm delete").on_click(
+                        .child(Button::new("deleted-confirm").danger().label(t("components.dialogs.confirm_delete")).on_click(
                             move |_, window, cx| {
                                 confirm_model.update(cx, |model, cx| model.confirm_delete(confirm_target.clone(), cx));
                                 window.close_dialog(cx);
@@ -235,20 +232,17 @@ pub fn needs_update(name: impl Into<SharedString>, version: impl Into<SharedStri
     window.defer(cx, move |window, cx| {
         window.open_alert_dialog(cx, move |alert, _, _| {
             alert
-                .title(format!("“{name}” needs Bifurc {version}"))
-                .description(
-                    "A newer Bifurc than this one last saved it. It stays as it is, and is not used, until you \
-                     update.",
-                )
+                .title(t_with("components.dialogs.needs_update_title", &[("name", &name), ("version", &version)]))
+                .description(t("components.dialogs.needs_update"))
                 .footer(
                     DialogFooter::new()
                         .child(
                             Button::new("needs-update-cancel")
                                 .outline()
-                                .label("Cancel")
+                                .label(t("components.cancel"))
                                 .on_click(|_, window, cx| window.close_dialog(cx)),
                         )
-                        .child(Button::new("needs-update-settings").primary().label("Open Settings").on_click(
+                        .child(Button::new("needs-update-settings").primary().label(t("components.dialogs.open_settings")).on_click(
                             |_, window, cx| {
                                 window.close_dialog(cx);
                                 window.dispatch_action(Box::new(ShowSettings), cx);

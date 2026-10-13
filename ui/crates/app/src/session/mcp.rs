@@ -46,6 +46,7 @@ use super::{
     mcp_connection::{McpConnection, McpEvent},
 };
 use crate::{
+    i18n::{t, t_with},
     app_model::{AppModel, ModelEvent},
     components::{Autosave, KeyValueEvent, KeyValueTable, Syntax, VarEditor, page, request_bar},
     engine::{call, call_in, describe},
@@ -84,11 +85,11 @@ impl Section {
     }
 
     fn command(self) -> &'static str {
-        match self {
-            Section::Tools => "Call tool",
-            Section::Prompts => "Get prompt",
-            Section::Resources | Section::Headers => "Read resource",
-        }
+        t(match self {
+            Section::Tools => "session.mcp.call_tool",
+            Section::Prompts => "session.mcp.get_prompt",
+            Section::Resources | Section::Headers => "session.mcp.read_resource",
+        })
     }
 }
 
@@ -183,11 +184,11 @@ impl McpSession {
     ) -> Self {
         let workspace_id = model.read(cx).workspace_id().to_owned();
         let connection_id = saved_id.clone().unwrap_or_else(|| format!("draft-{}", cx.entity_id().as_u64()));
-        let name = cx.new(|cx| InputState::new(window, cx).placeholder("Request name"));
+        let name = cx.new(|cx| InputState::new(window, cx).placeholder(t("session.rest.name_placeholder")));
         let transport = cx.new(|cx| SelectState::new(TRANSPORTS.to_vec(), Some(IndexPath::default()), window, cx));
         let url = VarEditor::line("npx -y some-mcp-server   or   https://example.test/mcp", window, cx);
-        let headers = cx.new(|cx| KeyValueTable::new("Name", "Value", window, cx));
-        let resource = VarEditor::line("The URI of the resource to read", window, cx);
+        let headers = cx.new(|cx| KeyValueTable::new(t("session.protocol.column_name"), t("session.rest.column_value"), window, cx));
+        let resource = VarEditor::line(t("session.mcp.resource_placeholder"), window, cx);
         let connection = cx.new(|cx| McpConnection::new(window, cx));
 
         let mut subscriptions = Vec::new();
@@ -307,7 +308,7 @@ impl McpSession {
                 v.get("entity")
                     .and_then(Value::as_object)
                     .cloned()
-                    .ok_or_else(|| "The request no longer exists.".to_owned())
+                    .ok_or_else(|| t("session.rest.gone").to_owned())
             }) {
                 Ok(entity) => {
                     this.adopt_entity(entity, window, cx);
@@ -381,7 +382,7 @@ impl McpSession {
             return None;
         }
         let fields = self.fields(cx);
-        (fields != self.baseline && fields.url.is_empty()).then(|| "Not saved. Enter a command or an address.".into())
+        (fields != self.baseline && fields.url.is_empty()).then(|| t("session.mcp.problem_no_address").into())
     }
 
     /// A saved request is written a moment after each change; a draft waits for Save.
@@ -560,8 +561,7 @@ impl McpSession {
         if fields.url.is_empty() {
             if mode == SaveMode::Explicit {
                 window.push_notification(
-                    Notification::warning("Enter the command that starts the server, or its address, before saving.")
-                        .title("Can't save yet"),
+                    Notification::warning(t("session.mcp.save_no_address")).title(t("session.rest.save_no_url_title")),
                     cx,
                 );
             }
@@ -609,7 +609,7 @@ impl McpSession {
                         }
                     }
                     None => window
-                        .push_notification(Notification::error("The engine did not return the saved request."), cx),
+                        .push_notification(Notification::error(t("session.rest.engine_no_saved")), cx),
                 },
                 Ok(_) => {
                     this.entity = this.edited_entity(&fields);
@@ -618,7 +618,7 @@ impl McpSession {
                 }
                 Err(error) => {
                     window.push_notification(
-                        Notification::error(describe(&error)).title("Couldn't save the request"),
+                        Notification::error(describe(&error)).title(t("session.rest.save_failed_title")),
                         cx,
                     );
                     cx.emit(SessionEvent::Changed);
@@ -638,8 +638,7 @@ impl McpSession {
         let fields = self.fields(cx);
         if fields.url.is_empty() {
             window.push_notification(
-                Notification::warning("Enter the command that starts the server, or its address.")
-                    .title("Nothing to connect to"),
+                Notification::warning(t("session.mcp.connect_no_address")).title(t("session.connection.connect_no_url_title")),
                 cx,
             );
             return;
@@ -660,8 +659,8 @@ impl McpSession {
         };
         let client = self.model.read(cx).client().clone();
         call_in(&client, window, cx, "mcp.connect", payload, move |_this, outcome, window, cx| {
-            if let Some(message) = refusal(outcome, "The connection could not be opened.") {
-                window.push_notification(Notification::error(message).title("Couldn't connect"), cx);
+            if let Some(message) = refusal(outcome, t("session.websocket.open_failed")) {
+                window.push_notification(Notification::error(message).title(t("session.connection.connect_failed")), cx);
             }
         });
     }
@@ -671,7 +670,7 @@ impl McpSession {
         let payload = json!({ "workspaceId": self.workspace_id, "connectionId": self.connection_id });
         call(&client, cx, "mcp.disconnect", payload, |_, outcome, cx| {
             if let Err(error) = outcome {
-                cx.emit(SessionEvent::Notice(format!("Couldn't disconnect. {}", describe(&error))));
+                cx.emit(SessionEvent::Notice(t_with("session.connection.disconnect_failed", &[("error", &describe(&error))])));
             }
         });
     }
@@ -753,12 +752,12 @@ impl McpSession {
                     Control::Json(editor)
                 }
                 ArgumentInput::Text => {
-                    let placeholder = match argument.kind.as_str() {
-                        "string" => "Text",
-                        "integer" => "A whole number",
-                        "number" => "A number",
-                        _ => "Text or JSON",
-                    };
+                    let placeholder = t(match argument.kind.as_str() {
+                        "string" => "session.mcp.placeholder_text",
+                        "integer" => "session.mcp.placeholder_integer",
+                        "number" => "session.mcp.placeholder_number",
+                        _ => "session.mcp.placeholder_text_or_json",
+                    });
                     let editor = VarEditor::line(placeholder, window, cx);
                     editor.set_value(held, window, cx);
                     subscriptions.push(cx.subscribe_in(
@@ -876,11 +875,11 @@ impl McpSession {
             payload["arguments"] = Value::Object(arguments);
         }
         call_in(&client, window, cx, "mcp.call", payload, move |_this, outcome, window, cx| {
-            if let Some(message) = refusal(outcome, "The server was not asked.") {
+            if let Some(message) = refusal(outcome, t("session.mcp.not_asked")) {
                 let title = match section {
-                    Section::Tools => "Couldn't call the tool",
-                    Section::Prompts => "Couldn't get the prompt",
-                    Section::Resources | Section::Headers => "Couldn't read the resource",
+                    Section::Tools => t("session.mcp.call_failed"),
+                    Section::Prompts => t("session.mcp.get_failed"),
+                    Section::Resources | Section::Headers => t("session.mcp.read_failed"),
                 };
                 window.push_notification(Notification::error(message).title(title), cx);
             }
@@ -895,15 +894,15 @@ impl McpSession {
             (view.tools.len(), view.prompts.len(), view.resources.len())
         };
         let stdio = self.transport(cx) == "stdio";
-        let counted = |label: &str, count: usize| match count {
-            0 => label.to_owned(),
-            count => format!("{label} · {count}"),
+        let counted = |key: &str, count: usize| match count {
+            0 => t(key).to_owned(),
+            count => t_with("session.mcp.counted", &[("label", &t(key)), ("count", &count)]),
         };
         let labels = [
-            counted("Tools", tools),
-            counted("Prompts", prompts),
-            counted("Resources", resources),
-            (if stdio { "Environment" } else { "Headers" }).to_owned(),
+            counted("session.mcp.tab_tools", tools),
+            counted("session.mcp.tab_prompts", prompts),
+            counted("session.mcp.tab_resources", resources),
+            (if stdio { t("session.mcp.tab_environment") } else { t("session.rest.tab_headers") }).to_owned(),
         ];
         TabBar::new("mcp-sections")
             .underline()
@@ -921,12 +920,17 @@ impl McpSession {
 
     /// What a section shows while the server has declared nothing for it.
     fn render_nothing(&self, what: &'static str, cx: &mut Context<Self>) -> AnyElement {
+        let noun = t(match what {
+            "prompts" => "session.mcp.noun_prompts",
+            "resources" => "session.mcp.noun_resources",
+            _ => "session.mcp.noun_tools",
+        });
         let description = match self.connection.read(cx).state() {
-            SocketState::Connected => format!("The server declares no {what}."),
-            SocketState::Connecting => format!("Waiting for the server to say which {what} it has."),
-            _ => format!("Connect to see the {what} the server declares."),
+            SocketState::Connected => t_with("session.mcp.none_connected", &[("what", &noun)]),
+            SocketState::Connecting => t_with("session.mcp.none_connecting", &[("what", &noun)]),
+            _ => t_with("session.mcp.none_disconnected", &[("what", &noun)]),
         };
-        page::empty(format!("No {what}"), description)
+        page::empty(t_with("session.mcp.none_title", &[("what", &noun)]), description)
     }
 
     /// One row of a list of what the server declares: its name, and under it what it is.
@@ -1026,7 +1030,7 @@ impl McpSession {
             );
             if item.arguments.is_empty() {
                 detail = detail.child(
-                    div().text_sm().text_color(theme.muted_foreground).child("It takes no arguments."),
+                    div().text_sm().text_color(theme.muted_foreground).child(t("session.mcp.no_arguments")),
                 );
             }
             for (index, (argument, control)) in item.arguments.iter().zip(&form.controls).enumerate() {
@@ -1037,7 +1041,7 @@ impl McpSession {
                         .child(
                             Select::new(state)
                                 .h(row_height)
-                                .placeholder(if argument.required { "Choose one" } else { "Not set" })
+                                .placeholder(if argument.required { t("session.mcp.choose_one") } else { t("session.mcp.not_set") })
                                 // An argument that need not be sent can be put back to nothing chosen.
                                 .cleanable(!argument.required),
                         )
@@ -1060,12 +1064,12 @@ impl McpSession {
                                         let value = if *chosen == 0 { "true" } else { "false" };
                                         this.set_input(section, index, value.to_owned(), cx);
                                     }))
-                                    .child("True")
-                                    .child("False"),
+                                    .child(t("session.mcp.true"))
+                                    .child(t("session.mcp.false")),
                             ))
                             // An argument that need not be sent can be put back to neither.
                             .when(!argument.required && !held.is_empty(), |this| {
-                                this.child(Button::new(clear).ghost().small().label("Not set").on_click(cx.listener(
+                                this.child(Button::new(clear).ghost().small().label(t("session.mcp.not_set")).on_click(cx.listener(
                                     move |this, _, _, cx| this.set_input(section, index, String::new(), cx),
                                 )))
                             })
@@ -1082,13 +1086,13 @@ impl McpSession {
                     Control::Text(editor) => editor.line_field(cx).into_any_element(),
                 };
                 let kind = match (argument.input(), argument.kind.as_str()) {
-                    (ArgumentInput::Choice, _) => "one of".to_owned(),
+                    (ArgumentInput::Choice, _) => t("session.mcp.one_of").to_owned(),
                     (_, "") => String::new(),
                     (_, kind) => kind.to_owned(),
                 };
                 let mut hint = argument.description.clone();
                 if let Some(default) = &argument.default {
-                    hint = format!("{hint}  Default: {default}").trim().to_owned();
+                    hint = t_with("session.mcp.with_default", &[("hint", &hint), ("default", default)]).trim().to_owned();
                 }
                 detail = detail.child(
                     v_flex()
@@ -1098,7 +1102,7 @@ impl McpSession {
                                 .gap_2()
                                 .child(page::section_label(argument.name.clone(), cx))
                                 .when(argument.required, |this| {
-                                    this.child(Tag::secondary().small().outline().child("required"))
+                                    this.child(Tag::secondary().small().outline().child(t("session.mcp.required")))
                                 })
                                 .when(!kind.is_empty(), |this| {
                                     this.child(div().text_xs().text_color(theme.muted_foreground).child(kind))
@@ -1153,9 +1157,9 @@ impl McpSession {
     fn render_headers(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme().clone();
         let hint = if self.transport(cx) == "stdio" {
-            "Given to the program as environment variables: where a local server reads its credentials from."
+            t("session.mcp.headers_stdio_hint")
         } else {
-            "Sent as headers with every request to the server, such as Authorization."
+            t("session.mcp.headers_http_hint")
         };
         v_flex()
             .size_full()
@@ -1180,7 +1184,7 @@ impl Render for McpSession {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
         match &self.load {
-            LoadState::Loading => return page::loading("Loading request…"),
+            LoadState::Loading => return page::loading(t("session.rest.loading")),
             LoadState::Failed(message) => {
                 return div()
                     .size_full()
@@ -1188,7 +1192,7 @@ impl Render for McpSession {
                     .bg(theme.background)
                     .child(
                         Alert::error("load-failed", SharedString::from(message.clone()))
-                            .title("Couldn't open the request"),
+                            .title(t("session.rest.open_failed")),
                     )
                     .into_any_element();
             }
@@ -1218,12 +1222,12 @@ impl Render for McpSession {
                 self.url.line_field(cx).disabled(live),
                 if live {
                     Button::new("disconnect-mcp")
-                        .label("Disconnect")
+                        .label(t("session.connection.disconnect"))
                         .on_click(cx.listener(|this, _, _, cx| this.disconnect(cx)))
                 } else {
                     Button::new("connect-mcp")
                         .primary()
-                        .label("Connect")
+                        .label(t("session.connection.connect"))
                         .on_click(cx.listener(|this, _, window, cx| this.connect(window, cx)))
                 },
                 [Button::new("ask-mcp")
