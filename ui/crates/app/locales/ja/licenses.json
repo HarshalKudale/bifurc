@@ -1,0 +1,16 @@
+{
+  "page.title": "ライセンス",
+  "own.license.title": "ライセンス",
+  "own.license.description": "非商用目的であれば、無料で使用、閲覧、改変できます。再販、再パッケージ、商用製品の開発への利用はできません。アプリの動作を確認できるよう、ソースコードを公開しています。",
+  "own.full_text.title": "全文",
+  "own.full_text.description": "ソースリポジトリ内: {url}",
+  "assets.title": "同梱アセット",
+  "assets.keywords": "asset,icon,theme,font,アセット,アイコン,テーマ,フォント",
+  "libraries.title": "オープンソースライブラリ ({count})",
+  "libraries.view_notices": "著作権表示を見る",
+  "libraries.description_one": "{count} 件のライブラリ。{note}",
+  "libraries.description_other": "{count} 件のライブラリ。{note}",
+  "libraries.keywords": "license,notice,open source,third party,library,copyright,ライセンス,著作権,オープンソース,サードパーティ,ライブラリ",
+  "libraries.footer": "複数のライセンスから選べるライブラリは、最も制限の緩いものを表示しています。ライセンスファイルを公開していないライブラリは、そのライセンスの標準的な文面を表示しています。",
+  "notices.close": "閉じる"
+}

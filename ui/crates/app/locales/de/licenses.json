@@ -1,0 +1,16 @@
+{
+  "page.title": "Lizenzen",
+  "own.license.title": "Lizenz",
+  "own.license.description": "Kostenlos nutzbar, lesbar und änderbar für nicht-kommerzielle Zwecke. Sie darf nicht weiterverkauft, neu verpackt oder zum Bau eines kommerziellen Produkts verwendet werden. Der Quellcode ist veröffentlicht, damit nachvollziehbar ist, was die App tut.",
+  "own.full_text.title": "Volltext",
+  "own.full_text.description": "Im Quell-Repository, {url}",
+  "assets.title": "Mitgelieferte Assets",
+  "assets.keywords": "asset,icon,theme,font",
+  "libraries.title": "Open-Source-Bibliotheken ({count})",
+  "libraries.view_notices": "Hinweise anzeigen",
+  "libraries.description_one": "{count} Bibliothek. {note}",
+  "libraries.description_other": "{count} Bibliotheken. {note}",
+  "libraries.keywords": "license,notice,open source,third party,library,copyright",
+  "libraries.footer": "Wo eine Bibliothek mehrere Lizenzen zur Wahl anbietet, wird die freizügigste angezeigt. Bibliotheken ohne veröffentlichte Lizenzdatei werden mit dem Standardtext ihrer Lizenz angezeigt.",
+  "notices.close": "Schließen"
+}
