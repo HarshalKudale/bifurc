@@ -91,7 +91,7 @@ impl Host {
 fn a_host_lists_searches_and_calls_tools() {
     let mut host = Host::start(&[]);
     let names = host.tool_names();
-    assert_eq!(names.len(), 14);
+    assert_eq!(names.len(), 15);
     assert!(names.iter().any(|name| name == "requests_send") && names.iter().any(|name| name == "search_tools"));
     assert!(!names.iter().any(|name| name == "health_create"));
 
@@ -109,6 +109,12 @@ fn a_host_lists_searches_and_calls_tools() {
     assert!(failed && said.starts_with("No engine is running for"), "{said}");
     let (said, failed) = host.call("status", json!({}));
     assert!(failed && said.starts_with("No engine is running for"), "{said}");
+    // The manual needs no engine, and a verb of the command line's table is a tool like the others.
+    let (manual, failed) = host.call("help", json!({ "group": "sync" }));
+    assert!(!failed && manual.contains("\n  discard <path> --yes\n"), "{manual}");
+    let (said, failed) =
+        host.call("call_tool", json!({ "name": "sync_discard", "arguments": { "path": "mocks/a.json" } }));
+    assert!(failed && said.starts_with("sync_discard: missing \"yes\""), "{said}");
 
     // The list is the same after all that: it does not depend on what was asked before.
     assert_eq!(host.tool_names(), names);

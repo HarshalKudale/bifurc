@@ -12,10 +12,11 @@ use serde_json::json;
 use crate::{
     args::{ParsedArgs, parse_args},
     commands::{self, Connector, Context, unknown_verb},
+    direct,
     discovery::{RuntimeInfo, find_running_engine, platform_default_data_dir},
     entities,
     error::{CliError, Result},
-    flows, health,
+    extras, flows, health,
     locate::locate_engine,
     requests,
     session::{Engine, connect},
@@ -107,7 +108,16 @@ fn dispatch(args: &ParsedArgs, data_dir: &Path, stdout: &mut dyn Write) -> Resul
     let mut ctx = context(args, data_dir);
     let group = args.positional(0).unwrap_or_default();
     let sub = args.positional(1);
-    match canonical_group(group) {
+    let group = canonical_group(group);
+    // The verbs that are one engine command, and the few beside them that take more than one.
+    let verb = sub.unwrap_or("list");
+    if let Some(row) = direct::find(group, verb) {
+        return direct::run(&mut ctx, &row);
+    }
+    if let Some(done) = extras::run(&mut ctx, group, verb) {
+        return done;
+    }
+    match group {
         "engine" => engine_command(args, &ctx, data_dir),
         "status" => commands::status(&mut ctx),
         "workspaces" => commands::workspaces(&mut ctx, sub),
@@ -132,6 +142,8 @@ fn dispatch(args: &ParsedArgs, data_dir: &Path, stdout: &mut dyn Write) -> Resul
         "unlock" | "unlock-vault" => Err(CliError::msg(
             "a vault is no longer unlocked for one program: bifurc vault run <vault> -- <command> (see: bifurc vault --help)",
         )),
+        // A group that has only verbs of the tables above.
+        _ if group_usage(group).is_some() => Err(unknown_verb(group, verb)),
         _ => Err(CliError::msg(format!("unknown command \"{group}\"\n\n{USAGE}"))),
     }
 }
@@ -180,7 +192,7 @@ pub fn run_with_env(
     if group.is_none() || args.has("help") || group == Some("help") {
         // `bifurc help mocks` and `bifurc mocks --help` are the help of that group.
         let topic = if group == Some("help") { args.positional(1) } else { group };
-        let _ = writeln!(stdout, "{}", topic.and_then(group_usage).unwrap_or(USAGE));
+        let _ = writeln!(stdout, "{}", topic.and_then(group_usage).unwrap_or_else(|| USAGE.to_string()));
         return 0;
     }
     let data_dir = data_dir_of(&args, env_data_dir);
@@ -354,7 +366,8 @@ mod tests {
             assert_eq!((outcome.code, outcome.stderr.as_str()), (1, example), "{argv:?}");
         }
         // With a command, the vault is what is needed next, so the engine is.
-        let outcome = go(&["vaults", "run", "keys", "--no-start", "--data-dir", path, "--", "npm", "run", "dev", "--help"]);
+        let outcome =
+            go(&["vaults", "run", "keys", "--no-start", "--data-dir", path, "--", "npm", "run", "dev", "--help"]);
         assert_eq!(outcome.code, 1);
         assert!(outcome.stderr.starts_with("bifurc: No engine is running for"), "{}", outcome.stderr);
         assert_eq!(outcome.stdout, "");
@@ -432,9 +445,17 @@ mod tests {
     fn command_aliases_reach_the_same_commands() {
         let dir = empty_dir();
         let path = dir.path().to_str().unwrap();
-        for group in
-            ["workspace", "environment", "environments", "mapping", "request", "rule", "proxy-rules", "mock", "healthchecks"]
-        {
+        for group in [
+            "workspace",
+            "environment",
+            "environments",
+            "mapping",
+            "request",
+            "rule",
+            "proxy-rules",
+            "mock",
+            "healthchecks",
+        ] {
             let outcome = go(&[group, "--no-start", "--data-dir", path]);
             assert!(outcome.stderr.starts_with("bifurc: No engine is running"), "{group}: {}", outcome.stderr);
         }

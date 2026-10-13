@@ -482,11 +482,6 @@ mod tests {
                 vec!["flows", "show", "a", "b"],
                 "unexpected argument \"b\" for \"flows show\" (see: bifurc flows --help)",
             ),
-            (vec!["flows", "create"], "unknown: flows create (see: bifurc flows --help)"),
-            (
-                vec!["flows", "delete", "f1"],
-                "unknown: flows delete; deleting is done in the desktop app (see: bifurc flows --help)",
-            ),
         ] {
             let (out, lines, calls) = go(&argv, engine(), vec![]);
             assert_eq!(out.unwrap_err(), CliError::msg(message), "{argv:?}");
