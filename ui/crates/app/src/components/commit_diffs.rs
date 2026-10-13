@@ -7,8 +7,10 @@
 use std::collections::HashMap;
 
 use gpui_kit::component::{
-    ActiveTheme as _,
-    diff::{Diff, DiffFile, DiffState},
+    ActiveTheme as _, Selectable as _, Sizable as _,
+    button::{Button, ButtonVariants as _},
+    diff::{Diff, DiffFile, DiffMode, DiffState},
+    h_flex, v_flex,
 };
 use gpui_kit::{
     AnyElement, App, AppContext as _, Context, Entity, IntoElement as _, ParentElement as _, Styled as _, div, rems,
@@ -33,6 +35,8 @@ pub struct CommitDiffs {
     model: Entity<AppModel>,
     /// When set, only this entity's file is shown of each commit.
     file_path: Option<String>,
+    /// Side by side or unified: one choice for every diff shown.
+    mode: DiffMode,
     loads: HashMap<String, Load>,
 }
 
@@ -43,12 +47,22 @@ fn rows(files: &[DiffFile]) -> usize {
 
 impl CommitDiffs {
     pub fn new(model: Entity<AppModel>) -> Self {
-        Self { model, file_path: None, loads: HashMap::new() }
+        Self { model, file_path: None, mode: DiffMode::default(), loads: HashMap::new() }
     }
 
     /// Forgets what was loaded: it belonged to another workspace.
     pub fn clear(&mut self) {
         self.loads.clear();
+    }
+
+    fn set_mode(&mut self, mode: DiffMode, cx: &mut Context<Self>) {
+        self.mode = mode;
+        for load in self.loads.values() {
+            if let Load::Ready(state, _) = load {
+                state.update(cx, |state, cx| state.set_mode(mode, cx));
+            }
+        }
+        cx.notify();
     }
 
     /// Narrows every diff to the file at `path`, or shows whole commits with `None`.
@@ -86,7 +100,8 @@ impl CommitDiffs {
                         Ok(files) if files.is_empty() => Load::Empty,
                         Ok(files) => {
                             let rows = rows(&files);
-                            Load::Ready(cx.new(|cx| DiffState::new(files, cx)), rows)
+                            let mode = this.mode;
+                            Load::Ready(cx.new(|cx| DiffState::new(files, cx).with_mode(mode)), rows)
                         }
                         Err(error) => Load::Failed(error.to_string()),
                     }
@@ -98,24 +113,47 @@ impl CommitDiffs {
     }
 
     /// What `commit` changed, or where the answer stands.
-    pub fn render(&self, commit: &str, cx: &App) -> AnyElement {
+    pub fn render(this: &Entity<Self>, commit: &str, cx: &App) -> AnyElement {
+        let diffs = this.read(cx);
         let theme = cx.theme();
         let note = |text: String| div().text_sm().text_color(theme.muted_foreground).child(text).into_any_element();
-        match self.loads.get(commit) {
+        match diffs.loads.get(commit) {
             None | Some(Load::Loading) => note("Loading changes…".to_owned()),
             Some(Load::Failed(message)) => note(format!("Couldn't load the changes. {message}")),
             Some(Load::Empty) => note("No content changed.".to_owned()),
             // The diff scrolls inside its own box, so the box is as tall as a short diff and no taller
             // than leaves the list around it in view.
-            Some(Load::Ready(state, rows)) => div()
-                .w_full()
-                .h(rems((*rows as f32 * 1.4).clamp(6., 28.)))
-                .rounded_md()
-                .border_1()
-                .border_color(theme.border)
-                .overflow_hidden()
-                .child(Diff::new(state).soft_wrap(true).size_full())
-                .into_any_element(),
+            Some(Load::Ready(state, rows)) => {
+                let option = |id: String, label: &'static str, mode: DiffMode| {
+                    let this = this.clone();
+                    Button::new(id)
+                        .label(label)
+                        .ghost()
+                        .xsmall()
+                        .selected(diffs.mode == mode)
+                        .on_click(move |_, _, cx| this.update(cx, |diffs, cx| diffs.set_mode(mode, cx)))
+                };
+                v_flex()
+                    .w_full()
+                    .gap_1()
+                    .child(
+                        h_flex()
+                            .gap_1()
+                            .child(option(format!("diff-unified-{commit}"), "Unified", DiffMode::Unified))
+                            .child(option(format!("diff-split-{commit}"), "Side by side", DiffMode::Split)),
+                    )
+                    .child(
+                        div()
+                            .w_full()
+                            .h(rems((*rows as f32 * 1.4).clamp(6., 28.)))
+                            .rounded_md()
+                            .border_1()
+                            .border_color(theme.border)
+                            .overflow_hidden()
+                            .child(Diff::new(state).soft_wrap(true).size_full()),
+                    )
+                    .into_any_element()
+            }
         }
     }
 }
