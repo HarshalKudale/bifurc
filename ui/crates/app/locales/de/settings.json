@@ -157,7 +157,7 @@
   "analytics.managed_off": "Verwaltet vom Eigentümer von {owner}, der Nutzungsanalysen nicht aktiviert hat. Nichts, was in diesem Arbeitsbereich geschieht, wird gemeldet.",
 
   "telemetry.title": "Anonyme Nutzungsanalysen",
-  "telemetry.description": "Standardmäßig aktiviert. Welche Art von Aktion in der App und in den eigenen Arbeitsbereichen erfolgt, niemals der Inhalt. Bei Deaktivierung wird nur gemeldet, dass Bifurc auf diesem Gerät installiert wurde, einmalig.",
+  "telemetry.description": "Standardmäßig aktiviert. Welche Art von Aktion in der App und in den eigenen Arbeitsbereichen erfolgt und an welcher Stelle im Code von Bifurc ein Absturz oder Fehler auftrat, niemals der Inhalt. Bei Deaktivierung wird nur gemeldet, dass Bifurc auf diesem Gerät installiert wurde, einmalig.",
 
   "privacy.group": "Datenschutz",
 

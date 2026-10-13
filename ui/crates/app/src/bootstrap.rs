@@ -4,7 +4,7 @@
 //! it runs on a background thread while this view shows what is happening. If it fails, the view says why
 //! and offers a retry instead of leaving an empty window.
 
-use bifurc_engine_client::{SidecarConfig, attach_or_start};
+use bifurc_engine_client::{SidecarConfig, attach_or_start, crash};
 use gpui_kit::component::{ActiveTheme as _, TitleBar, alert::Alert, button::Button, h_flex, spinner::Spinner, v_flex};
 use gpui_kit::{AppContext as _, Context, Entity, IntoElement, ParentElement as _, Render, Styled as _, Window, div};
 
@@ -37,7 +37,11 @@ impl Bootstrap {
     fn start(&mut self, config: SidecarConfig, window: &mut Window, cx: &mut Context<Self>) {
         self.phase = Phase::Starting;
         let starting = cx.background_spawn(async move {
-            attach_or_start(&config, env!("CARGO_PKG_VERSION")).map_err(|e| e.to_string())
+            attach_or_start(&config, env!("CARGO_PKG_VERSION")).map_err(|e| {
+                // No engine to tell: the next one that starts finds this and reports it.
+                crash::failure(&config.data_dir, "desktop", env!("CARGO_PKG_VERSION"), "engine_start");
+                e.to_string()
+            })
         });
         cx.spawn_in(window, async move |this, cx| {
             let outcome = starting.await;
