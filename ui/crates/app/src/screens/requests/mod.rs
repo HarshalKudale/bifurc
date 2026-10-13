@@ -313,6 +313,14 @@ impl RequestsScreen {
         cx.notify();
     }
 
+    /// Brings the tab `by` places away from the one in front to the front, wrapping around.
+    pub fn step(&mut self, by: isize, cx: &mut Context<Self>) {
+        let len = self.tabs.len() as isize;
+        if len > 0 {
+            self.set_active(Some((self.active.unwrap_or(0) as isize + by).rem_euclid(len) as usize), cx);
+        }
+    }
+
     pub fn open_node(&mut self, node: &NodeRef, window: &mut Window, cx: &mut Context<Self>) {
         let NodeRef::Request { kind, id } = node else { return };
         // A deleted request has nothing to open: it is brought back or deleted for good.
