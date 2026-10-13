@@ -1,5 +1,7 @@
 //! The text of `bifurc --help` and of each command group's `bifurc <group> --help`.
 
+use crate::direct;
+
 /// The usage text, printed for `--help`, `help` and no command, and appended to an unknown-command error.
 pub const USAGE: &str = "Usage: bifurc <group> <verb> [arguments] [options]
 
@@ -7,21 +9,43 @@ Talks to the Bifurc engine that serves a data directory, over its socket (a name
 The engine is found through <data-dir>/runtime.json. A command that needs the engine starts one in the
 background if none is running; it keeps running with a tray icon after this terminal closes.
 
-Every group of saved items has the same verbs: list, show, create, update, and enable|disable or the verb
-that runs it (send, run) where that applies. Deleting, syncing one item, reverting and scripts are done in
-the desktop app. An item is named by its id or by its name.
+Everything the desktop app does once its first-run setup is done can be done here. Every group of saved
+items has the same verbs: list, show, create, update, patch (set any field from JSON), duplicate, delete,
+and enable|disable or the verb that runs it (send, run) where that applies. An item is named by its id or
+by its name.
 
-Groups (bifurc <group> --help shows the arguments and options of each)
-  workspaces    list | show | create | update | use | sync
-  env           list | show | use
-  mappings      list | show | create | update | enable | disable      <sub>.localhost → target
-  rules         list | show | create | update | enable | disable      Forward-proxy rules
-  mocks         list | show | create | update | enable | disable      Mocked responses
-  requests      list | show | create | update | send | reflect        REST, GraphQL, gRPC, SOAP, WebSocket, SSE, Socket.IO, MCP
-  health        list | show | create | update | run                   Health checks
-  flows         list | show | run                                    Saved chains of requests
-  vault         list | create | set | unseal | seal | run            Encrypted secrets
-  account       list | login | repos                                  GitHub sign-in
+Groups (bifurc <group> --help shows the arguments and options of each verb)
+  workspaces    list | show | create | update | use | sync | publish | import | delete
+  env           list | show | use | create | set | unset | patch | duplicate | delete
+  mappings      list | show | create | update | patch | enable | disable | duplicate | delete
+                                                                      <sub>.localhost → target
+  rules         list | show | create | update | patch | enable | disable | duplicate | delete
+                                                                      Forward-proxy rules
+  mocks         list | show | create | update | patch | enable | disable | duplicate | delete
+                                                                      Mocked responses
+  requests      list | show | create | update | patch | send | reflect | duplicate | delete
+                                                                      REST, GraphQL, gRPC, SOAP, WebSocket, SSE, Socket.IO, MCP
+  folders       list | create | rename | move | delete | confirm | restore
+                                                                      Folders of the request, mock, flow and rule trees
+  runner        run | status | cancel | history | config | configure  Send every request of a folder
+  flows         list | show | create | update | validate | run | status | cancel | duplicate | delete
+                                                                      Saved chains of requests
+  health        list | show | create | update | run | delete          Health checks
+  capture       list | show | mock | request | remove | clear | pause | resume | cache
+                                                                      Traffic the proxies captured
+  cookies       list | clear | configure                              The cookie jar of the workspace's requests
+  sync          status | changes | pull | push | commit | diff | discard | confirm | restore
+                                                                      Git: what changed, and the remote
+  history       log | file | show | export                            The audit log and a file's commits
+  export        formats | create                                      A workspace's items as a file
+  import        check | run                                           A file of Postman, Insomnia, OpenAPI, …
+  vault         list | create | set | unset | unseal | seal | rename | passphrase | delete | run
+                                                                      Encrypted secrets
+  account       list | login | repos | logout                         GitHub sign-in
+  proxy         status | start | stop | restart                       The forward and the reverse proxy
+  settings      show | update                                         Ports, HTTPS, telemetry
+  tls           status | generate | export | importcert | importkey | remove
+                                                                      The root certificate of HTTPS interception
   services      list                                                  Local processes listening on a port
 
 Engine
@@ -30,7 +54,7 @@ Engine
   engine restart                         Stop it and start it again; the interfaces reconnect
   engine status                          Where it runs, without opening a session
   status                                 Engine, proxy and active workspace
-  update [check]                         Whether a newer Bifurc exists and how this install gets it; check asks now
+  update [check | skip <version>]        Whether a newer Bifurc exists and how this install gets it; check asks now
 
 Anything else
   call <command> [<json-payload>]        Any engine command, e.g. call server.status
@@ -46,7 +70,7 @@ Options
   -h, --help
 
 Exit code: 0 when the command succeeded, 1 when it failed or what it ran failed (a request's failed test,
-a failed gRPC call, a health check that does not answer).";
+a failed gRPC call, a health check that does not answer, a flow or a folder run with a failure).";
 
 const WORKSPACES: &str = "Usage: bifurc workspaces <verb>
 
@@ -55,11 +79,9 @@ const WORKSPACES: &str = "Usage: bifurc workspaces <verb>
   create <name> [--account <login>]      A new local workspace, made active; with --account that account owns it
   update <id|name> --name <new name>
   use <id|name>                          Make it the active workspace
-  sync                                   Sync everything that was never synced, one commit per item, then push
-                                         when there is a remote. Deletions are left to the desktop app, where
-                                         each one is confirmed or reverted
-
-Publishing to a new repository, importing one and deleting a workspace are done in the desktop app.";
+  sync [--message <text>]                Sync everything that was never synced, one commit per item, then push
+                                         when there is a remote; --message is the commit message (bifurc sync
+                                         --help has the finer verbs)";
 
 const ENV: &str = "Usage: bifurc env <verb>
 
@@ -68,7 +90,10 @@ without being asked for.
 
   list
   show                                   The merged variables a request resolves against
-  use <id|name>";
+  use <id|name>
+  set <id|name> <KEY=VALUE>...           Set variables of one environment (Global is named Global), adding
+                                         the ones it does not have
+  unset <id|name> <KEY>...               Remove variables of one environment";
 
 const MAPPINGS: &str = "Usage: bifurc mappings <verb>
 
@@ -89,9 +114,7 @@ A rule sends the forward proxy's requests whose URL matches a pattern to a mappi
   create <pattern> (--mapping <id|domain> | --target <url>) [--name <text>] [--regex] [--disabled]
   update <id|name> [--pattern <text>] [--regex | --no-regex] [--mapping <id|domain> | --target <url>]
                    [--name <text>]
-  enable|disable <id|name>               Enabling a rule disables another enabled rule with the same pattern
-
-A rule's request and response scripts are written in the desktop app.";
+  enable|disable <id|name>               Enabling a rule disables another enabled rule with the same pattern";
 
 const MOCKS: &str = "Usage: bifurc mocks <verb>
 
@@ -151,8 +174,9 @@ Options of each type
               [--prompt <name> [--arg <name=value>]...] and [--resource <uri>] and prints the answer, waiting
               [--wait <seconds, default 60>] for it; a value is read as the type the tool declares for it
 
---type is only needed to tell apart two requests of different types with the same name. Scripts and tests
-are written in the desktop app; send runs them.";
+--type is only needed to tell apart two requests of different types with the same name. send runs the
+request's scripts and tests; they are written with patch, as is anything else create and update have no
+option for (bifurc requests show <request> --json prints every field).";
 
 const HEALTH: &str = "Usage: bifurc health <verb>
 
@@ -162,12 +186,53 @@ A health check is a URL, with {{variables}}, that answers or does not.
   show <id|name>
   create <name> <url> [--auto]           --auto: the desktop app re-checks it every 30 seconds
   update <id|name> [--name <text>] [--url <url>] [--auto | --no-auto]
-  run [<id|name>]                        Check one, or all of them; exits 1 when one does not answer";
+  run [<id|name>]                        Check one, or all of them; exits 1 when one does not answer
+  delete <id|name>";
 
 const FLOWS: &str = "Usage: bifurc flows <verb>
 
-A flow is a saved graph of requests: each node's output is the next one's input. Flows are made and edited
-in the desktop app.
+A flow is a saved graph of nodes: each node's output is the next one's input. It is written as JSON
+(create, update) and checked with validate, which names every problem and the ports of each node.
+
+The JSON of a flow
+  {\"name\": \"Login then list\", \"folderId\": \"<folder of the flow tree, optional>\",
+   \"inputs\": [{\"name\": \"user\", \"value\": \"default\"}],
+   \"settings\": {\"timeoutMs\": 60000, \"persistVariables\": false},
+   \"nodes\": [{\"id\": \"start\", \"type\": \"start\", \"name\": \"\", \"x\": 60, \"y\": 120}, …],
+   \"edges\": [{\"id\": \"e1\", \"from\": \"start\", \"port\": \"out\", \"to\": \"login\"}, …]}
+
+  Every node has id, type, name and x, y (where the desktop app draws it). By type, with its output ports:
+  start      (one per flow, where a run begins)                                          out
+  request    requestKind, requestId: the saved request it sends (requestKind is the kind
+             requests list --json shows: requests, graphqlRequests, grpcRequests,
+             soapRequests, sseRequests, wsConnections, socketioRequests); executeScripts,
+             executeTests (default true), ignoreTestErrors, failOnStatus (default true: a
+             non-2xx answer leaves by error), retries, retryDelayMs                      success, error
+  stream     requestKind, requestId of an sse, websocket, socketio or grpc request;
+             message (what is sent), event (socketio), maxMessages, idleTimeoutMs,
+             listenMs                                                                    message, closed, error
+  mcp        requestKind mcpRequests, requestId; call: tool|prompt|resource; target: its
+             name or URI; arguments: [{name, value}]                                     success, error
+  condition  branches: [{id, name, match: all|any, rules: [{path, op, value}]}]          <branch id>…, else
+  if         expression: JavaScript over input and vars                                  true, false
+  validate   rules: [{path, op, value}]                                                  pass, error
+  evaluate   expression: JavaScript over input and vars; its value is the output         out, error
+  delay      delayMs                                                                     out
+  or         (goes on when any one of its inputs arrives)                                out
+  repeat     count                                                                       each, done
+  forEach    path: the list in its input to go through                                   each, done
+  data       value: any JSON, a constant                                                 out
+  sample     value: any JSON, handed on as the output                                    out
+  display    (shows its input in the desktop app)                                        out
+
+  op is one of equals, notEquals, contains, notContains, startsWith, endsWith, matches, greaterThan,
+  greaterOrEqual, lessThan, lessOrEqual, exists, notExists, isEmpty, notEmpty, isType.
+  An edge with no input is a run connection: when `from` leaves by `port`, `to` runs with that output as
+  its input. An edge with input is a wire that fills one value of `to`: input is var:<name> (a variable of
+  the node or of its request), arg:<name> (an mcp argument) or message (a stream's message); path picks a
+  part of the source's output, e.g. [\"body\", \"items\", 0, \"id\"].
+  Text fields may hold {{input.body.id}} (what the node before produced), {{nodes.<id>.headers.location}}
+  (what an earlier node did), {{flow.<input>}} (an input of the run) and {{variables}} of the environment.
 
   list
   show <id|name>                         Inputs with their defaults, the nodes with the request each runs,
@@ -191,13 +256,13 @@ A command that needs a sealed vault asks for the passphrase and unseals it; an u
   set <vault> <SECRET>                   Asks for the value (hidden; or --value-stdin)
   unseal <vault>                         Asks for the passphrase
   seal <vault>
+  passphrase <vault>                     Asks for the passphrase and for a new one (twice)
   run <vault> -- <command…>              Run the command with the vault's secrets as environment variables,
                                          e.g. bifurc vault run api_keys -- npm run dev
                                          Exits with the command's exit code
 
-BIFURC_VAULT_PASSPHRASE or --passphrase-stdin give the passphrase without a prompt.
-
-Removing a secret or a vault is done in the desktop app.";
+BIFURC_VAULT_PASSPHRASE or --passphrase-stdin give the passphrase without a prompt, and
+BIFURC_VAULT_NEW_PASSPHRASE the new one of passphrase.";
 
 const ACCOUNT: &str = "Usage: bifurc account <verb>
 
@@ -205,9 +270,64 @@ GitHub sign-in, per workspace; only needed to sync with a remote.
 
   list
   login                                  Shows a code to enter on GitHub, then waits
-  repos <login>                          Repositories the account owns or was given access to
+  repos <login>                          Repositories the account owns or was given access to";
 
-Signing out removes the account's workspaces from this device; it is done in the desktop app.";
+const FOLDERS: &str = "Usage: bifurc folders <verb>
+
+Requests, mocks, flows and rules are each kept in a tree of folders; --tree says which. A folder is named
+by its id. An item is moved to a folder by setting its folderId: bifurc mocks patch <mock> --data
+'{\"folderId\": \"<id>\"}'.
+
+  list --tree request|mock|flow|rule     The folders of one tree of the active workspace";
+
+const RUNNER: &str = "Usage: bifurc runner <verb>
+
+Sends every request of a folder of the request tree, in order, with its scripts and tests.
+
+  run <folder>                           Run it and print how each request did; exits 1 when a request
+                                         fails or a test does";
+
+const CAPTURE: &str = "Usage: bifurc capture <verb>
+
+What went through the proxies: each exchange with its request and its response.
+
+  mock <entry>                           Save a mock that answers as the captured exchange did
+  request <entry>                        Save a request like the captured one";
+
+const COOKIES: &str = "Usage: bifurc cookies <verb>
+
+The cookies the workspace's requests were given and send back.";
+
+const SYNC: &str = "Usage: bifurc sync <verb>
+
+A workspace is a git repository: every saved item is a file, a sync is a commit and a push. bifurc
+workspaces sync commits and pushes everything at once.";
+
+const HISTORY: &str = "Usage: bifurc history <verb>
+
+Who changed what: the audit log of the workspace, and the commits of one file.";
+
+const EXPORT: &str = "Usage: bifurc export <verb>
+
+An export is Bifurc JSON; bifurc import run reads it back.";
+
+const IMPORT: &str = "Usage: bifurc import <verb>
+
+Reads a file of another tool (Postman, Insomnia, OpenAPI, HAR, …) or a Bifurc export; bifurc export formats
+lists the kinds and the formats of each.";
+
+const PROXY: &str = "Usage: bifurc proxy <verb>
+
+The forward proxy (rules, mocks, capture) and the reverse proxy (<sub>.localhost mappings).";
+
+const SETTINGS: &str = "Usage: bifurc settings <verb>
+
+  show                                   The ports, and whether HTTPS, telemetry and the update check are on";
+
+const TLS: &str = "Usage: bifurc tls <verb>
+
+The root certificate HTTPS interception signs with. HTTPS itself is switched with bifurc settings update
+--https true|false.";
 
 const SERVICES: &str = "Usage: bifurc services list
 
@@ -243,13 +363,21 @@ pub fn canonical_group(group: &str) -> &str {
         "vaults" => "vault",
         "accounts" => "account",
         "service" => "services",
+        "folder" => "folders",
+        "cookie" => "cookies",
+        "git" => "sync",
+        "audit" => "history",
+        "setting" | "config" => "settings",
+        "cert" | "certificate" | "https" => "tls",
         other => other,
     }
 }
 
-/// The help of one command group, when it has its own.
-pub fn group_usage(group: &str) -> Option<&'static str> {
-    Some(match canonical_group(group) {
+/// The help of one command group, when it has its own: what is written here, then the verbs that are rows
+/// of `direct.rs`.
+pub fn group_usage(group: &str) -> Option<String> {
+    let group = canonical_group(group);
+    let own = match group {
         "workspaces" => WORKSPACES,
         "env" => ENV,
         "mappings" => MAPPINGS,
@@ -263,8 +391,21 @@ pub fn group_usage(group: &str) -> Option<&'static str> {
         "services" => SERVICES,
         "engine" => ENGINE,
         "update" => UPDATE,
+        "folders" => FOLDERS,
+        "runner" => RUNNER,
+        "capture" => CAPTURE,
+        "cookies" => COOKIES,
+        "sync" => SYNC,
+        "history" => HISTORY,
+        "export" => EXPORT,
+        "import" => IMPORT,
+        "proxy" => PROXY,
+        "settings" => SETTINGS,
+        "tls" => TLS,
         _ => return None,
-    })
+    };
+    let rows = direct::usage(group);
+    Some(if rows.is_empty() { own.to_string() } else { format!("{own}\n\n{rows}") })
 }
 
 #[cfg(test)]
@@ -273,14 +414,27 @@ mod tests {
 
     #[test]
     fn every_group_of_the_overview_has_its_own_help() {
-        for group in
-            ["workspaces", "env", "mappings", "rules", "mocks", "requests", "health", "flows", "vault", "account", "services"]
-        {
+        let mut groups = vec!["health", "services"];
+        groups.extend(direct::verbs().iter().map(|verb| verb.words[0]).filter(|group| *group != "update"));
+        for group in groups {
             assert!(USAGE.contains(&format!("\n  {group} ")), "{group} is not in the overview");
             let help = group_usage(group).unwrap_or_else(|| panic!("{group} has no help"));
             assert!(help.starts_with(&format!("Usage: bifurc {group} ")), "{group}");
         }
         assert_eq!(group_usage("status"), None);
+    }
+
+    #[test]
+    fn the_overview_names_every_verb_of_the_tables() {
+        for verb in direct::verbs() {
+            let (group, name) = (verb.words[0], verb.words[1]);
+            let line = USAGE
+                .lines()
+                .find(|line| line.starts_with(&format!("  {group} ")))
+                .unwrap_or_else(|| panic!("{group}"));
+            assert!(line.split([' ', '|', '[', ']']).any(|word| word == name), "{group} {name} is not in the overview");
+            assert!(group_usage(group).unwrap().contains(&format!("\n  {name}")), "{group} {name} is not in its help");
+        }
     }
 
     #[test]
