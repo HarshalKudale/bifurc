@@ -203,6 +203,7 @@ impl Shell {
                 );
             }
             ModelEvent::SocketStatus(_)
+            | ModelEvent::RequestStream(_)
             | ModelEvent::SocketMessage(_)
             | ModelEvent::GrpcStatus(_)
             | ModelEvent::GrpcMessage(_)
