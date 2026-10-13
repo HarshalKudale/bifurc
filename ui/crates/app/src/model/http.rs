@@ -6,6 +6,8 @@
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde_json::{Map, Value};
 
+use crate::i18n::{t, t_with};
+
 pub const HTTP_METHODS: [&str; 7] = ["GET", "POST", "PUT", "PATCH", "DELETE", "HEAD", "OPTIONS"];
 
 /// `Name: value` lines to the engine's header map. Blank lines are skipped; a line with no colon is a header
@@ -172,16 +174,16 @@ impl BodyMode {
     ];
 
     pub fn label(self) -> &'static str {
-        match self {
-            BodyMode::None => "None",
-            BodyMode::Json => "JSON",
-            BodyMode::Text => "Text",
-            BodyMode::Xml => "XML",
-            BodyMode::Html => "HTML",
-            BodyMode::Form => "Form",
-            BodyMode::Multipart => "Multipart",
-            BodyMode::File => "File",
-        }
+        t(match self {
+            BodyMode::None => "model.http.body_mode.none",
+            BodyMode::Json => "model.http.body_mode.json",
+            BodyMode::Text => "model.http.body_mode.text",
+            BodyMode::Xml => "model.http.body_mode.xml",
+            BodyMode::Html => "model.http.body_mode.html",
+            BodyMode::Form => "model.http.body_mode.form",
+            BodyMode::Multipart => "model.http.body_mode.multipart",
+            BodyMode::File => "model.http.body_mode.file",
+        })
     }
 
     /// The `Content-Type` this mode sends, or `None` for a request without a body.
@@ -322,7 +324,7 @@ impl HttpResponse {
     /// The body as it should be displayed: JSON is re-indented, everything else is shown as received.
     pub fn display_body(&self) -> String {
         if self.is_binary {
-            return format!("Binary body, {}. It can't be shown as text.", self.body_size_label());
+            return t_with("model.http.binary_body", &[("size", &self.body_size_label())]);
         }
         let looks_json =
             self.content_type().is_some_and(|ct| ct.contains("json")) || self.body.trim_start().starts_with(['{', '[']);
@@ -343,11 +345,11 @@ impl HttpResponse {
     pub fn body_size_label(&self) -> String {
         let bytes = self.size_bytes;
         if bytes < 1024 {
-            format!("{bytes} B")
+            t_with("model.size.bytes", &[("n", &bytes)])
         } else if bytes < 1024 * 1024 {
-            format!("{:.1} KB", bytes as f64 / 1024.0)
+            t_with("model.size.kilobytes", &[("n", &format!("{:.1}", bytes as f64 / 1024.0))])
         } else {
-            format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
+            t_with("model.size.megabytes", &[("n", &format!("{:.1}", bytes as f64 / (1024.0 * 1024.0)))])
         }
     }
 }
@@ -355,25 +357,25 @@ impl HttpResponse {
 /// A short reason phrase for the status line. Only the common ones; the number is the authority.
 pub fn status_text(status: u16) -> &'static str {
     match status {
-        200 => "OK",
-        201 => "Created",
-        202 => "Accepted",
-        204 => "No Content",
-        301 => "Moved Permanently",
-        302 => "Found",
-        304 => "Not Modified",
-        400 => "Bad Request",
-        401 => "Unauthorized",
-        403 => "Forbidden",
-        404 => "Not Found",
-        405 => "Method Not Allowed",
-        409 => "Conflict",
-        422 => "Unprocessable Entity",
-        429 => "Too Many Requests",
-        500 => "Internal Server Error",
-        502 => "Bad Gateway",
-        503 => "Service Unavailable",
-        504 => "Gateway Timeout",
+        200 => t("model.http.status.200"),
+        201 => t("model.http.status.201"),
+        202 => t("model.http.status.202"),
+        204 => t("model.http.status.204"),
+        301 => t("model.http.status.301"),
+        302 => t("model.http.status.302"),
+        304 => t("model.http.status.304"),
+        400 => t("model.http.status.400"),
+        401 => t("model.http.status.401"),
+        403 => t("model.http.status.403"),
+        404 => t("model.http.status.404"),
+        405 => t("model.http.status.405"),
+        409 => t("model.http.status.409"),
+        422 => t("model.http.status.422"),
+        429 => t("model.http.status.429"),
+        500 => t("model.http.status.500"),
+        502 => t("model.http.status.502"),
+        503 => t("model.http.status.503"),
+        504 => t("model.http.status.504"),
         _ => "",
     }
 }

@@ -12,6 +12,7 @@ use serde_json::{Value, json};
 
 use crate::{
     engine::{EngineSession, call, describe, failure},
+    i18n::{t, t_with},
     model::{ConfigSnapshot, config::AccountInfo, git::GitStatus, update::UpdateStatus, vault::VaultInfo},
 };
 
@@ -81,7 +82,7 @@ impl ProxyStatus {
 }
 
 /// What a read-only workspace says when it is asked to sync.
-pub const READ_ONLY_NOTICE: &str = "This workspace is read-only: your account has read access to its repository.      Your changes are saved on this device. Ask the owner for write access to sync them.";
+pub const READ_ONLY_NOTICE: &str = "app.model.read_only_notice";
 
 /// What the engine says about this machine and its accounts (`setup.getState`).
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -280,7 +281,7 @@ impl AppModel {
                 Ok(value) => this.update = UpdateStatus::from_value(&value),
                 Err(error) => {
                     this.update.checking = false;
-                    cx.emit(ModelEvent::Notice(format!("Couldn't check for updates. {}", describe(&error))));
+                    cx.emit(ModelEvent::Notice(t_with("app.model.check_updates_failed", &[("error", &describe(&error))])));
                 }
             }
             cx.notify();
@@ -295,7 +296,7 @@ impl AppModel {
                 this.update = UpdateStatus::from_value(&value);
                 cx.notify();
             }
-            Err(error) => cx.emit(ModelEvent::Notice(format!("Couldn't skip the version. {}", describe(&error)))),
+            Err(error) => cx.emit(ModelEvent::Notice(t_with("app.model.skip_version_failed", &[("error", &describe(&error))]))),
         });
     }
 
@@ -371,7 +372,7 @@ impl AppModel {
     /// Says why nothing is synced, when the workspace is read-only. Returns whether it is.
     fn refuse_read_only(&mut self, cx: &mut Context<Self>) -> bool {
         if self.is_read_only() {
-            cx.emit(ModelEvent::Notice(READ_ONLY_NOTICE.to_owned()));
+            cx.emit(ModelEvent::Notice(t(READ_ONLY_NOTICE).to_owned()));
         }
         self.is_read_only()
     }
@@ -384,7 +385,7 @@ impl AppModel {
                 Ok(incoming) => incoming,
                 Err(error) => {
                     this.update(cx, |_, cx| {
-                        cx.emit(ModelEvent::Notice(format!("Live updates are unavailable: {}", describe(&error))));
+                        cx.emit(ModelEvent::Notice(t_with("app.model.live_updates_unavailable", &[("error", &describe(&error))])));
                     })
                     .ok();
                     return;
@@ -405,7 +406,7 @@ impl AppModel {
             Incoming::Closed if self.restarting_engine => {}
             Incoming::Closed => {
                 self.connection_lost = true;
-                cx.emit(ModelEvent::Notice("The connection to the engine was lost.".to_owned()));
+                cx.emit(ModelEvent::Notice(t("app.engine.connection_lost").to_owned()));
                 cx.notify();
             }
             Incoming::Event(event) => match event.event.as_str() {
@@ -503,7 +504,7 @@ impl AppModel {
                 if self.load == Load::Loading {
                     self.load = Load::Failed(message.clone());
                 }
-                cx.emit(ModelEvent::Notice(format!("Couldn't read the workspace. {message}")));
+                cx.emit(ModelEvent::Notice(t_with("app.model.read_workspace_failed", &[("error", &message)])));
             }
         }
         cx.notify();
@@ -580,7 +581,7 @@ impl AppModel {
         let client = self.engine.client.clone();
         call(&client, cx, action, json!({ "target": "reverse" }), |this, outcome, cx| {
             if let Err(error) = outcome {
-                cx.emit(ModelEvent::Notice(format!("Couldn't change the reverse proxy. {}", describe(&error))));
+                cx.emit(ModelEvent::Notice(t_with("app.model.reverse_proxy_failed", &[("error", &describe(&error))])));
             }
             this.reverse_proxy.busy = false;
             this.refresh_proxy(cx);
@@ -598,7 +599,7 @@ impl AppModel {
             // The engine announces the restart to every client, this one included; the announcement is what
             // starts the wait. A reply lost to the closing connection is the same answer.
             Ok(_) | Err(ClientError::Closed) => this.await_successor(cx),
-            Err(error) => cx.emit(ModelEvent::Notice(format!("Couldn't restart the engine. {}", describe(&error)))),
+            Err(error) => cx.emit(ModelEvent::Notice(t_with("app.model.restart_engine_failed", &[("error", &describe(&error))]))),
         });
     }
 
@@ -633,7 +634,7 @@ impl AppModel {
                     Err(message) => {
                         // The old connection is closed whatever happened, so nothing is live now.
                         this.connection_lost = true;
-                        cx.emit(ModelEvent::Notice(format!("Couldn't restart the engine. {message}")));
+                        cx.emit(ModelEvent::Notice(t_with("app.model.restart_engine_failed", &[("error", &message)])));
                     }
                 }
                 cx.notify();
@@ -664,7 +665,7 @@ impl AppModel {
         let client = self.engine.client.clone();
         call(&client, cx, action, json!({}), |this, outcome, cx| {
             if let Err(error) = outcome {
-                cx.emit(ModelEvent::Notice(format!("Couldn't change the forward proxy. {}", describe(&error))));
+                cx.emit(ModelEvent::Notice(t_with("app.model.forward_proxy_failed", &[("error", &describe(&error))])));
             }
             // Whatever the command said, the status is the authority on what is running now.
             this.proxy.busy = false;
@@ -716,13 +717,13 @@ impl AppModel {
             this.publishing = false;
             let failure = match outcome {
                 Ok(result) if result.get("ok").and_then(Value::as_bool) == Some(false) => {
-                    Some(result.get("error").and_then(Value::as_str).unwrap_or("The engine refused.").to_owned())
+                    Some(result.get("error").and_then(Value::as_str).unwrap_or(t("app.engine.refused")).to_owned())
                 }
                 Ok(_) => None,
                 Err(error) => Some(describe(&error)),
             };
             if let Some(message) = failure {
-                cx.emit(ModelEvent::Notice(format!("Couldn't publish. {message}")));
+                cx.emit(ModelEvent::Notice(t_with("app.model.publish_failed", &[("error", &message)])));
             }
             this.refresh_git(cx);
             cx.notify();
@@ -754,27 +755,30 @@ impl AppModel {
         call(&client, cx, "sync.all", payload, |this, outcome, cx| {
             this.publishing = false;
             let message = match failure(&outcome) {
-                Some(message) => format!("Couldn't sync the workspace. {message}"),
+                Some(message) => t_with("app.model.sync_failed", &[("error", &message)]),
                 None => {
                     let result = outcome.unwrap_or(Value::Null);
                     let count = |key: &str| result.get(key).and_then(Value::as_u64).unwrap_or(0);
                     let pushed = result.get("pushed").and_then(Value::as_bool) == Some(true);
-                    let mut message = match (count("synced"), pushed) {
-                        (0, true) => "Nothing new to commit. Pushed what was waiting.".to_owned(),
-                        (0, false) => "Everything is already synced.".to_owned(),
-                        (1, true) => "Synced 1 change and pushed it.".to_owned(),
-                        (1, false) => "Synced 1 change.".to_owned(),
-                        (synced, true) => format!("Synced {synced} changes and pushed them."),
-                        (synced, false) => format!("Synced {synced} changes."),
+                    let message = match (count("synced"), pushed) {
+                        (0, true) => t("app.model.sync.pushed_waiting").to_owned(),
+                        (0, false) => t("app.model.sync.up_to_date").to_owned(),
+                        (1, true) => t("app.model.sync.synced_one_pushed").to_owned(),
+                        (1, false) => t("app.model.sync.synced_one").to_owned(),
+                        (synced, true) => t_with("app.model.sync.synced_other_pushed", &[("count", &synced)]),
+                        (synced, false) => t_with("app.model.sync.synced_other", &[("count", &synced)]),
                     };
-                    match count("pendingDeletions") {
-                        0 => {}
-                        1 => message.push_str(" 1 deletion still waits to be confirmed or reverted."),
-                        waiting => {
-                            message.push_str(&format!(" {waiting} deletions still wait to be confirmed or reverted."))
+                    let deletions = match count("pendingDeletions") {
+                        0 => None,
+                        1 => Some(t("app.model.sync.deletions_one").to_owned()),
+                        waiting => Some(t_with("app.model.sync.deletions_other", &[("count", &waiting)])),
+                    };
+                    match deletions {
+                        Some(deletions) => {
+                            t_with("app.model.sync.with_deletions", &[("synced", &message), ("deletions", &deletions)])
                         }
+                        None => message,
                     }
-                    message
                 }
             };
             cx.emit(ModelEvent::Notice(message));
@@ -787,7 +791,7 @@ impl AppModel {
     pub fn sync_entity(&mut self, id: &str, cx: &mut Context<Self>) {
         match self.git.entity_path(id).map(str::to_owned) {
             Some(path) => self.publish(vec![path], cx),
-            None => cx.emit(ModelEvent::Notice("Couldn't sync. It has no file in the workspace yet.".to_owned())),
+            None => cx.emit(ModelEvent::Notice(t("app.model.sync_no_file").to_owned())),
         }
     }
 
@@ -797,7 +801,7 @@ impl AppModel {
             return;
         }
         let Some(path) = self.git.entity_path(id).map(str::to_owned) else {
-            cx.emit(ModelEvent::Notice("Couldn't revert. It has no file in the workspace yet.".to_owned()));
+            cx.emit(ModelEvent::Notice(t("app.model.revert_no_file").to_owned()));
             return;
         };
         self.publishing = true;
@@ -808,7 +812,7 @@ impl AppModel {
         call(&client, cx, "git.discard", payload, move |this, outcome, cx| {
             this.publishing = false;
             match failure(&outcome) {
-                Some(message) => cx.emit(ModelEvent::Notice(format!("Couldn't revert. {message}"))),
+                Some(message) => cx.emit(ModelEvent::Notice(t_with("app.model.revert_failed", &[("error", &message)]))),
                 None => cx.emit(ModelEvent::EntityReverted(id)),
             }
             this.refresh(cx);
@@ -844,9 +848,9 @@ impl AppModel {
         let payload = json!({ "workspaceId": self.workspace_id(), "kind": kind, "id": id });
         call(&client, cx, action, payload, move |this, outcome, cx| {
             this.publishing = false;
-            let what = if revert { "revert" } else { "confirm" };
+            let failed = if revert { "app.model.revert_delete_failed" } else { "app.model.confirm_delete_failed" };
             match failure(&outcome) {
-                Some(message) => cx.emit(ModelEvent::Notice(format!("Couldn't {what} the delete. {message}"))),
+                Some(message) => cx.emit(ModelEvent::Notice(t_with(failed, &[("error", &message)]))),
                 None if revert => cx.emit(ModelEvent::EntityReverted(id)),
                 None => {}
             }
@@ -870,7 +874,7 @@ impl AppModel {
         let Some(path) = paths.pop() else {
             self.publishing = false;
             if let Some(message) = first_failure {
-                cx.emit(ModelEvent::Notice(format!("Couldn't revert. {message}")));
+                cx.emit(ModelEvent::Notice(t_with("app.model.revert_failed", &[("error", &message)])));
             }
             self.refresh(cx);
             cx.notify();
@@ -888,7 +892,7 @@ impl AppModel {
         let client = self.engine.client.clone();
         call(&client, cx, "workspace.setActive", json!({ "id": id }), |this, outcome, cx| match outcome {
             Ok(_) => this.refresh(cx),
-            Err(error) => cx.emit(ModelEvent::Notice(format!("Couldn't switch workspace. {}", describe(&error)))),
+            Err(error) => cx.emit(ModelEvent::Notice(t_with("app.model.switch_workspace_failed", &[("error", &describe(&error))]))),
         });
     }
 
@@ -896,7 +900,7 @@ impl AppModel {
         let client = self.engine.client.clone();
         call(&client, cx, "workspace.rename", json!({ "id": id, "name": name }), |this, outcome, cx| match outcome {
             Ok(_) => this.refresh(cx),
-            Err(error) => cx.emit(ModelEvent::Notice(format!("Couldn't rename the workspace. {}", describe(&error)))),
+            Err(error) => cx.emit(ModelEvent::Notice(t_with("app.model.rename_workspace_failed", &[("error", &describe(&error))]))),
         });
     }
 
@@ -904,7 +908,7 @@ impl AppModel {
         let client = self.engine.client.clone();
         call(&client, cx, "workspace.delete", json!({ "id": id }), |this, outcome, cx| match outcome {
             Ok(_) => this.refresh(cx),
-            Err(error) => cx.emit(ModelEvent::Notice(format!("Couldn't delete the workspace. {}", describe(&error)))),
+            Err(error) => cx.emit(ModelEvent::Notice(t_with("app.model.delete_workspace_failed", &[("error", &describe(&error))]))),
         });
     }
 
@@ -913,7 +917,7 @@ impl AppModel {
         let client = self.engine.client.clone();
         call(&client, cx, "env.setActive", json!({ "id": id }), |this, outcome, cx| match outcome {
             Ok(_) => this.refresh(cx),
-            Err(error) => cx.emit(ModelEvent::Notice(format!("Couldn't change environment. {}", describe(&error)))),
+            Err(error) => cx.emit(ModelEvent::Notice(t_with("app.model.environment_failed", &[("error", &describe(&error))]))),
         });
     }
 
@@ -924,7 +928,7 @@ impl AppModel {
         let payload = json!({ "workspaceId": self.workspace_id(), "kind": kind, "id": id, "enabled": enabled });
         call(&client, cx, "entity.setEnabled", payload, |this, outcome, cx| match outcome {
             Ok(_) => this.refresh(cx),
-            Err(error) => cx.emit(ModelEvent::Notice(format!("Couldn't change it. {}", describe(&error)))),
+            Err(error) => cx.emit(ModelEvent::Notice(t_with("app.model.change_failed", &[("error", &describe(&error))]))),
         });
     }
 
@@ -933,7 +937,7 @@ impl AppModel {
         let client = self.engine.client.clone();
         call(&client, cx, "settings.update", patch, |this, outcome, cx| match outcome {
             Ok(_) => this.refresh(cx),
-            Err(error) => cx.emit(ModelEvent::Notice(format!("Couldn't change the setting. {}", describe(&error)))),
+            Err(error) => cx.emit(ModelEvent::Notice(t_with("app.model.setting_failed", &[("error", &describe(&error))]))),
         });
     }
 

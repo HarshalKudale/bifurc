@@ -22,10 +22,11 @@ use super::{Syntax, VarEditor};
 use crate::{
     app_model::AppModel,
     engine::{call, describe},
+    i18n::t,
 };
 
 /// What the tab asking for a command is called until it becomes what the command describes.
-pub const CURL_TAB_TITLE: &str = "Import cURL";
+pub const CURL_TAB_TITLE: &str = "components.curl_import.tab_title";
 pub const CURL_TAB_BADGE: &str = "cURL";
 
 /// What the pasted command becomes.
@@ -44,12 +45,10 @@ impl CurlTarget {
     }
 
     fn hint(self) -> &'static str {
-        match self {
-            CurlTarget::Request => {
-                "Paste a cURL command. This tab becomes the request it describes: REST, GraphQL, SOAP or WebSocket."
-            }
-            CurlTarget::Mock => "Paste a cURL command. This tab becomes a mock of the call it makes.",
-        }
+        t(match self {
+            CurlTarget::Request => "components.curl_import.hint_request",
+            CurlTarget::Mock => "components.curl_import.hint_mock",
+        })
     }
 }
 
@@ -122,7 +121,7 @@ impl CurlImport {
 impl Render for CurlImport {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
-        let error = self.error.clone().map(|message| Alert::error("curl-refused", message).title("Can't import this"));
+        let error = self.error.clone().map(|message| Alert::error("curl-refused", message).title(t("components.curl_import.refused")));
         div().size_full().flex().justify_center().bg(theme.background).child(
             v_flex()
                 .w(rems(52.))
@@ -134,7 +133,7 @@ impl Render for CurlImport {
                     v_flex()
                         .flex_none()
                         .gap_1()
-                        .child(div().font_semibold().child(CURL_TAB_TITLE))
+                        .child(div().font_semibold().child(t(CURL_TAB_TITLE)))
                         .child(div().text_sm().text_color(theme.muted_foreground).child(self.target.hint())),
                 )
                 .child(div().flex_1().min_h(rems(8.)).max_h(rems(24.)).child(Editor::new(self.input.state()).h_full()))
@@ -143,7 +142,7 @@ impl Render for CurlImport {
                     h_flex().flex_none().child(
                         Button::new("curl-import")
                             .primary()
-                            .label("Import")
+                            .label(t("components.curl_import.import"))
                             .loading(self.busy)
                             .on_click(cx.listener(|this, _, _, cx| this.submit(cx))),
                     ),

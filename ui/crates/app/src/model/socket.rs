@@ -6,6 +6,8 @@
 
 use serde_json::Value;
 
+use crate::i18n::t;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum SocketState {
     Connecting,
@@ -26,12 +28,12 @@ impl SocketState {
     }
 
     pub fn label(self) -> &'static str {
-        match self {
-            SocketState::Connecting => "Connecting",
-            SocketState::Connected => "Connected",
-            SocketState::Disconnected => "Disconnected",
-            SocketState::Error => "Failed",
-        }
+        t(match self {
+            SocketState::Connecting => "model.state.connecting",
+            SocketState::Connected => "model.state.connected",
+            SocketState::Disconnected => "model.state.disconnected",
+            SocketState::Error => "model.state.failed",
+        })
     }
 
     /// A connection that is open or opening; the state in which Disconnect is the right command.

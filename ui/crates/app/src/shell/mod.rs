@@ -33,6 +33,7 @@ use crate::{
         EntityAction,
         dialogs::{PromptField, confirm_danger, prompt},
     },
+    i18n::{t, t_with},
     model::{NodeRef, RequestKind, snippet::RequestParts},
     preferences::Preferences,
     screens::{
@@ -185,17 +186,19 @@ impl Shell {
             ModelEvent::AskSyncMessage(scope) => {
                 let scope = scope.clone();
                 let title = match &scope {
-                    SyncScope::Paths(paths) if paths.len() == 1 => "Sync 1 change".to_owned(),
-                    SyncScope::Paths(paths) => format!("Sync {} changes", paths.len()),
-                    SyncScope::All => "Sync the workspace".to_owned(),
+                    SyncScope::Paths(paths) => t_with(
+                        if paths.len() == 1 { "shell.mod.sync_title_one" } else { "shell.mod.sync_title_other" },
+                        &[("count", &paths.len())],
+                    ),
+                    SyncScope::All => t("shell.mod.sync_workspace_title").to_owned(),
                 };
                 prompt(
                     self.model.downgrade(),
                     window,
                     cx,
                     title,
-                    "Sync",
-                    vec![PromptField::new("Message", "Optional. Describes the commit.").optional()],
+                    t("shell.chrome.sync"),
+                    vec![PromptField::new(t("shell.mod.message_label"), t("shell.mod.message_hint")).optional()],
                     move |model, values, _, cx| model.sync_with_message(scope.clone(), &values[0], cx),
                 );
             }
@@ -402,7 +405,7 @@ impl Shell {
     pub fn publish_changes(&mut self, cx: &mut Context<Self>) {
         let rollup = self.model.read(cx).git().rollup(self.screen.git_prefixes());
         if rollup.action.is_none() {
-            self.model.update(cx, |model, cx| model.notice("There is nothing to publish.", cx));
+            self.model.update(cx, |model, cx| model.notice(t("shell.mod.nothing_to_publish"), cx));
             return;
         }
         let paths = rollup.changed.clone();
@@ -461,9 +464,9 @@ impl Shell {
             cx.weak_entity(),
             window,
             cx,
-            format!("Rename “{}”", workspace.name),
-            "Rename",
-            vec![PromptField::new("Name", "Workspace name").initial(workspace.name.clone())],
+            t_with("shell.mod.rename_title", &[("name", &workspace.name)]),
+            t("shell.mod.rename_button"),
+            vec![PromptField::new(t("shell.mod.name_label"), t("shell.mod.name_hint")).initial(workspace.name.clone())],
             move |this, values, _, cx| {
                 this.model.update(cx, |model, cx| model.rename_workspace(&workspace.id, &values[0], cx))
             },
@@ -476,9 +479,9 @@ impl Shell {
             cx.weak_entity(),
             window,
             cx,
-            format!("Delete workspace “{}”?", workspace.name),
-            "Its requests, mocks, mappings and history are deleted from this computer. This can't be undone.",
-            "Delete",
+            t_with("shell.mod.delete_title", &[("name", &workspace.name)]),
+            t("shell.mod.delete_body"),
+            t("shell.mod.delete_button"),
             move |this, _, cx| this.model.update(cx, |model, cx| model.delete_workspace(&workspace.id, cx)),
         );
     }
@@ -500,7 +503,7 @@ impl Render for Shell {
             Some(view) => view.into_any_element(),
             None => crate::components::page::empty(
                 self.screen.label(),
-                "This screen is not part of the desktop UI yet. Use the Electron app or the bifurc CLI for it.",
+                t("shell.mod.screen_not_ready"),
             ),
         };
         let center = v_flex()

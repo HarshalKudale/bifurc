@@ -18,6 +18,7 @@ use gpui_kit::{
 use serde_json::Value;
 
 use crate::{
+    i18n::{t, t_with},
     components::stream_log::{LogRow, LogSearch, OpenRows, found, log_row, nothing_found, search_button},
     model::stream::{StreamMessage, StreamState, StreamView},
 };
@@ -97,7 +98,7 @@ impl SseStream {
             tag: message.event.clone(),
             outline: !message.is_named(),
             way: None,
-            note: message.event_id.as_ref().map(|id| format!("id {id}")),
+            note: message.event_id.as_ref().map(|id| t_with("session.sse.event_id", &[("id", id)])),
             data: message.data.clone(),
         };
         let id = message.id.clone();
@@ -155,11 +156,11 @@ impl Render for SseStream {
                         this.child(div().text_sm().text_color(theme.danger).child(error))
                     })
                     .child(div().flex_1())
-                    .child(div().text_sm().text_color(theme.muted_foreground).child(format!(
-                        "{} event{} · times in UTC",
-                        self.view.messages.len(),
-                        if self.view.messages.len() == 1 { "" } else { "s" }
-                    )))
+                    .child(div().text_sm().text_color(theme.muted_foreground).child(if self.view.messages.len() == 1 {
+                        t_with("session.sse.count_one", &[("count", &self.view.messages.len())])
+                    } else {
+                        t_with("session.sse.count_other", &[("count", &self.view.messages.len())])
+                    }))
                     .child(search_button("search-events").on_click(cx.listener(|this, _, window, cx| {
                         this.search.toggle(window, cx);
                         cx.notify();
@@ -168,7 +169,7 @@ impl Render for SseStream {
                         Button::new("clear-events")
                             .ghost()
                             .small()
-                            .label("Clear")
+                            .label(t("session.connection.clear"))
                             .disabled(self.view.messages.is_empty())
                             .on_click(cx.listener(|_, _, _, cx| cx.emit(StreamEvent::Clear))),
                     ),
@@ -185,11 +186,11 @@ impl Render for SseStream {
                     .border_color(theme.border)
                     .when(self.view.messages.is_empty(), |this| {
                         this.child(Empty::new().header(
-                            EmptyHeader::new().title(EmptyTitle::new().child("No events")).description(
+                            EmptyHeader::new().title(EmptyTitle::new().child(t("session.sse.no_events"))).description(
                                 EmptyDescription::new().child(if state.is_live() {
-                                    "Events the server sends appear here."
+                                    t("session.sse.empty_live")
                                 } else {
-                                    "Connect to start listening."
+                                    t("session.sse.empty_idle")
                                 }),
                             ),
                         ))

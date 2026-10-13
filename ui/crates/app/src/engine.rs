@@ -10,6 +10,8 @@ use bifurc_engine_client::{ClientError, EngineClient, Hello, RuntimeInfo, Sideca
 use gpui_kit::{AppContext as _, AsyncApp, Context, Global, Window};
 use serde_json::Value;
 
+use crate::i18n::t;
+
 /// A connected engine.
 ///
 /// The engine is not this app's to stop: it has its own tray icon and its own lifetime, and this app is one
@@ -59,7 +61,7 @@ pub fn sidecar_config() -> SidecarConfig {
 pub fn describe(error: &ClientError) -> String {
     match error {
         ClientError::Engine(e) => e.message.clone(),
-        ClientError::Closed => "The connection to the engine was lost.".to_owned(),
+        ClientError::Closed => t("app.engine.connection_lost").to_owned(),
         other => other.to_string(),
     }
 }
@@ -85,7 +87,7 @@ pub fn call<V: 'static>(
 pub fn failure(outcome: &Result<Value, ClientError>) -> Option<String> {
     match outcome {
         Ok(result) if result.get("ok").and_then(Value::as_bool) == Some(false) => {
-            Some(result.get("error").and_then(Value::as_str).unwrap_or("The engine refused.").to_owned())
+            Some(result.get("error").and_then(Value::as_str).unwrap_or(t("app.engine.refused")).to_owned())
         }
         Ok(_) => None,
         Err(error) => Some(describe(error)),
@@ -117,7 +119,7 @@ pub fn put_blob<V: 'static>(
             Ok(staged) => staged.get("blobId").and_then(Value::as_str).map(str::to_owned),
             Err(error) => return then(this, Err(describe(&error)), cx),
         };
-        then(this, blob_id.ok_or_else(|| "The engine did not accept the file.".to_owned()), cx)
+        then(this, blob_id.ok_or_else(|| t("app.engine.blob_refused").to_owned()), cx)
     });
 }
 
@@ -163,7 +165,7 @@ pub fn fetch_artifact<V: 'static>(
 ) {
     use base64::{Engine as _, engine::general_purpose::STANDARD};
     if artifact.get("ok").and_then(Value::as_bool) == Some(false) {
-        let message = artifact.get("error").and_then(Value::as_str).unwrap_or("The engine refused.").to_owned();
+        let message = artifact.get("error").and_then(Value::as_str).unwrap_or(t("app.engine.refused")).to_owned();
         return then(this, Err(message), cx);
     }
     let name = artifact.get("suggestedName").and_then(Value::as_str).unwrap_or("export").to_owned();
@@ -176,7 +178,7 @@ pub fn fetch_artifact<V: 'static>(
             let read = ChunkRead { workspace_id: workspace_id.to_owned(), blob: blob.to_owned(), name };
             read_chunks(client.clone(), cx, read, 0, Vec::new(), Box::new(then));
         }
-        None => then(this, Err("The engine returned no data.".to_owned()), cx),
+        None => then(this, Err(t("app.engine.no_data").to_owned()), cx),
     }
 }
 
@@ -221,13 +223,13 @@ fn read_chunks<V: 'static>(
             Some(Ok(decoded)) => decoded,
             _ => {
                 release(cx);
-                return then(this, Err("The engine returned no data.".to_owned()), cx);
+                return then(this, Err(t("app.engine.no_data").to_owned()), cx);
             }
         };
         let eof = chunk.get("eof").and_then(Value::as_bool).unwrap_or(false);
         if decoded.is_empty() && !eof {
             release(cx);
-            return then(this, Err("The engine stopped sending data.".to_owned()), cx);
+            return then(this, Err(t("app.engine.stopped_sending").to_owned()), cx);
         }
         bytes.extend_from_slice(&decoded);
         if eof {
@@ -260,7 +262,7 @@ pub fn patch_entity<V: 'static>(
                     entity.extend(patch);
                     entity
                 }
-                _ => return then(this, Err("It no longer exists.".to_owned()), cx),
+                _ => return then(this, Err(t("app.engine.no_longer_exists").to_owned()), cx),
             },
             Err(error) => return then(this, Err(describe(&error)), cx),
         };

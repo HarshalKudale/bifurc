@@ -28,6 +28,7 @@ use super::{
     sse_stream::{SseStream, StreamEvent},
 };
 use crate::{
+    i18n::{t, t_with},
     app_model::{AppModel, ModelEvent},
     components::{Autosave, KeyValueEvent, KeyValueTable, Syntax, VarEditor, page, request_bar},
     engine::{call, call_in, describe},
@@ -51,8 +52,8 @@ impl Section {
 
     fn label(self) -> &'static str {
         match self {
-            Section::Headers => "Headers",
-            Section::Body => "Body",
+            Section::Headers => t("session.rest.tab_headers"),
+            Section::Body => t("session.rest.tab_body"),
         }
     }
 }
@@ -102,11 +103,11 @@ impl SseSession {
     ) -> Self {
         let workspace_id = model.read(cx).workspace_id().to_owned();
         let stream_id = saved_id.clone().unwrap_or_else(|| format!("draft-{}", cx.entity_id().as_u64()));
-        let name = cx.new(|cx| InputState::new(window, cx).placeholder("Request name"));
+        let name = cx.new(|cx| InputState::new(window, cx).placeholder(t("session.rest.name_placeholder")));
         let method = cx.new(|cx| SelectState::new(HTTP_METHODS.to_vec(), Some(IndexPath::default()), window, cx));
         let url = VarEditor::line("https://example.test/events", window, cx);
-        let headers = cx.new(|cx| KeyValueTable::new("Header", "Value", window, cx));
-        let body = VarEditor::code(Syntax::Json, "Request body (for a POST stream)", window, cx);
+        let headers = cx.new(|cx| KeyValueTable::new(t("session.rest.column_header"), t("session.rest.column_value"), window, cx));
+        let body = VarEditor::code(Syntax::Json, t("session.sse.body_placeholder"), window, cx);
         let stream = cx.new(|cx| SseStream::new(window, cx));
 
         let mut subscriptions = Vec::new();
@@ -211,7 +212,7 @@ impl SseSession {
                 v.get("entity")
                     .and_then(Value::as_object)
                     .cloned()
-                    .ok_or_else(|| "The request no longer exists.".to_owned())
+                    .ok_or_else(|| t("session.rest.gone").to_owned())
             }) {
                 Ok(entity) => {
                     this.adopt_entity(entity, window, cx);
@@ -282,7 +283,7 @@ impl SseSession {
             return None;
         }
         let fields = self.fields(cx);
-        (fields != self.baseline && fields.url.is_empty()).then(|| "Not saved. Enter a URL.".into())
+        (fields != self.baseline && fields.url.is_empty()).then(|| t("session.rest.problem_no_url").into())
     }
 
     /// A saved request is written a moment after each change; a draft waits for Save.
@@ -421,8 +422,10 @@ impl SseSession {
         }
         if fields.url.is_empty() {
             if mode == SaveMode::Explicit {
-                window
-                    .push_notification(Notification::warning("Enter a URL before saving.").title("Can't save yet"), cx);
+                window.push_notification(
+                    Notification::warning(t("session.rest.save_no_url")).title(t("session.rest.save_no_url_title")),
+                    cx,
+                );
             }
             return;
         }
@@ -468,7 +471,7 @@ impl SseSession {
                         }
                     }
                     None => window
-                        .push_notification(Notification::error("The engine did not return the saved request."), cx),
+                        .push_notification(Notification::error(t("session.rest.engine_no_saved")), cx),
                 },
                 Ok(_) => {
                     this.entity = this.edited_entity(&fields);
@@ -477,7 +480,7 @@ impl SseSession {
                 }
                 Err(error) => {
                     window.push_notification(
-                        Notification::error(describe(&error)).title("Couldn't save the request"),
+                        Notification::error(describe(&error)).title(t("session.rest.save_failed_title")),
                         cx,
                     );
                     cx.emit(SessionEvent::Changed);
@@ -496,8 +499,10 @@ impl SseSession {
         }
         let fields = self.fields(cx);
         if fields.url.is_empty() {
-            window
-                .push_notification(Notification::warning("Enter a URL to connect.").title("Nothing to connect to"), cx);
+            window.push_notification(
+                Notification::warning(t("session.connection.connect_no_url")).title(t("session.connection.connect_no_url_title")),
+                cx,
+            );
             return;
         }
         self.stream_id = self.saved_id.clone().unwrap_or_else(|| self.stream_id.clone());
@@ -519,14 +524,14 @@ impl SseSession {
                     result
                         .get("error")
                         .and_then(Value::as_str)
-                        .unwrap_or("The stream could not be opened.")
+                        .unwrap_or(t("session.sse.open_failed"))
                         .to_owned(),
                 ),
                 Ok(_) => None,
                 Err(error) => Some(describe(&error)),
             };
             if let Some(message) = failure {
-                window.push_notification(Notification::error(message).title("Couldn't connect"), cx);
+                window.push_notification(Notification::error(message).title(t("session.connection.connect_failed")), cx);
             }
         });
     }
@@ -536,7 +541,7 @@ impl SseSession {
         let payload = json!({ "workspaceId": self.workspace_id, "streamId": self.stream_id });
         call(&client, cx, "sse.disconnect", payload, |_, outcome, cx| {
             if let Err(error) = outcome {
-                cx.emit(SessionEvent::Notice(format!("Couldn't disconnect. {}", describe(&error))));
+                cx.emit(SessionEvent::Notice(t_with("session.connection.disconnect_failed", &[("error", &describe(&error))])));
             }
         });
     }
@@ -565,7 +570,7 @@ impl Render for SseSession {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
         match &self.load {
-            LoadState::Loading => return page::loading("Loading request…"),
+            LoadState::Loading => return page::loading(t("session.rest.loading")),
             LoadState::Failed(message) => {
                 return div()
                     .size_full()
@@ -573,7 +578,7 @@ impl Render for SseSession {
                     .bg(theme.background)
                     .child(
                         Alert::error("load-failed", SharedString::from(message.clone()))
-                            .title("Couldn't open the request"),
+                            .title(t("session.rest.open_failed")),
                     )
                     .into_any_element();
             }
@@ -600,12 +605,12 @@ impl Render for SseSession {
                 self.url.line_field(cx).disabled(live),
                 if live {
                     Button::new("disconnect-stream")
-                        .label("Disconnect")
+                        .label(t("session.connection.disconnect"))
                         .on_click(cx.listener(|this, _, _, cx| this.disconnect(cx)))
                 } else {
                     Button::new("connect-stream")
                         .primary()
-                        .label("Connect")
+                        .label(t("session.connection.connect"))
                         .on_click(cx.listener(|this, _, window, cx| this.connect(window, cx)))
                 },
                 [],

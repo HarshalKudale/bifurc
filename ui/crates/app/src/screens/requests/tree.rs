@@ -26,6 +26,7 @@ use gpui_kit::{
 use crate::{
     app_model::AppModel,
     components::{CURL_TAB_TITLE, page, tree_drag},
+    i18n::{t, t_with},
     model::{
         ExplorerNode, NodeRef, RequestKind, build_explorer,
         git::FileState,
@@ -110,7 +111,7 @@ impl EventEmitter<RequestTreeEvent> for RequestTree {}
 
 impl RequestTree {
     pub fn new(model: Entity<AppModel>, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let filter = cx.new(|cx| InputState::new(window, cx).placeholder("Filter requests"));
+        let filter = cx.new(|cx| InputState::new(window, cx).placeholder(t("requests.tree.filter_placeholder")));
         let tree = cx.new(|cx| TreeState::new(cx));
 
         let subscriptions = vec![
@@ -224,7 +225,7 @@ impl RequestTree {
                     .icon(IconName::Plus)
                     .ghost()
                     .small()
-                    .tooltip("New request or folder")
+                    .tooltip(t("requests.tree.new_tooltip"))
                     .dropdown_menu(move |menu, window, cx| new_menu(menu, &this, None, window, cx)),
             )
     }
@@ -351,42 +352,42 @@ fn context_menu(
     if is_deleted(model.read(cx), &node) {
         return menu
             .item(
-                PopupMenuItem::new("Revert delete")
+                PopupMenuItem::new(t("requests.tree.menu.revert_delete"))
                     .on_click(emitter(tree, RequestTreeEvent::RevertDelete(node.clone()))),
             )
             .item(
-                PopupMenuItem::new("Confirm delete")
+                PopupMenuItem::new(t("requests.tree.menu.confirm_delete"))
                     .on_click(emitter(tree, RequestTreeEvent::ConfirmDelete(node.clone()))),
             );
     }
     // What a newer Bifurc saved can only be asked about: opening it says which version it needs.
     if locked_to(model.read(cx), &node).is_some() {
         return menu
-            .item(PopupMenuItem::new("Update required…").on_click(emitter(tree, RequestTreeEvent::Open(node.clone()))));
+            .item(PopupMenuItem::new(t("requests.tree.menu.update_required")).on_click(emitter(tree, RequestTreeEvent::Open(node.clone()))));
     }
     match node {
         NodeRef::Request { .. } => menu
-            .item(PopupMenuItem::new("Open").on_click(emitter(tree, RequestTreeEvent::Open(node.clone()))))
-            .item(PopupMenuItem::new("Duplicate").on_click(emitter(tree, RequestTreeEvent::Duplicate(node.clone()))))
+            .item(PopupMenuItem::new(t("requests.common.open")).on_click(emitter(tree, RequestTreeEvent::Open(node.clone()))))
+            .item(PopupMenuItem::new(t("requests.common.duplicate")).on_click(emitter(tree, RequestTreeEvent::Duplicate(node.clone()))))
             .separator()
-            .item(PopupMenuItem::new("Rename…").on_click(emitter(tree, RequestTreeEvent::Rename(node.clone()))))
-            .item(PopupMenuItem::new("Delete…").on_click(emitter(tree, RequestTreeEvent::Delete(node.clone())))),
+            .item(PopupMenuItem::new(t("requests.tree.menu.rename")).on_click(emitter(tree, RequestTreeEvent::Rename(node.clone()))))
+            .item(PopupMenuItem::new(t("requests.tree.menu.delete")).on_click(emitter(tree, RequestTreeEvent::Delete(node.clone())))),
         NodeRef::Folder { ref id } => menu
             // The engine runs the REST requests of a folder; the other types in it have no runner.
-            .item(PopupMenuItem::new("Open as runner").on_click(emitter(tree, RequestTreeEvent::RunFolder(id.clone()))))
+            .item(PopupMenuItem::new(t("requests.tree.menu.open_as_runner")).on_click(emitter(tree, RequestTreeEvent::RunFolder(id.clone()))))
             .separator()
             // A new request starts as REST; its type is changed in the breadcrumb until it is saved.
-            .item(PopupMenuItem::new("New request here").on_click(emitter(
+            .item(PopupMenuItem::new(t("requests.tree.menu.new_request_here")).on_click(emitter(
                 tree,
                 RequestTreeEvent::NewRequest { kind: RequestKind::Rest, folder: Some(id.clone()) },
             )))
             .item(
-                PopupMenuItem::new("New folder here…")
+                PopupMenuItem::new(t("requests.tree.menu.new_folder_here"))
                     .on_click(emitter(tree, RequestTreeEvent::NewFolder { parent: Some(id.clone()) })),
             )
             .separator()
-            .item(PopupMenuItem::new("Rename…").on_click(emitter(tree, RequestTreeEvent::Rename(node.clone()))))
-            .item(PopupMenuItem::new("Delete…").on_click(emitter(tree, RequestTreeEvent::Delete(node.clone())))),
+            .item(PopupMenuItem::new(t("requests.tree.menu.rename")).on_click(emitter(tree, RequestTreeEvent::Rename(node.clone()))))
+            .item(PopupMenuItem::new(t("requests.tree.menu.delete")).on_click(emitter(tree, RequestTreeEvent::Delete(node.clone())))),
     }
 }
 
@@ -401,15 +402,15 @@ pub fn new_menu(
 ) -> PopupMenu {
     let menu = RequestKind::ALL.into_iter().fold(menu, |menu, kind| {
         menu.item(
-            PopupMenuItem::new(format!("{} request", kind.label()))
+            PopupMenuItem::new(t_with("requests.tree.new_menu.kind_request", &[("kind", &kind.label())]))
                 .on_click(emitter(tree, RequestTreeEvent::NewRequest { kind, folder: folder.clone() })),
         )
     });
     let menu = menu
         .separator()
-        .item(PopupMenuItem::new(CURL_TAB_TITLE).on_click(emitter(tree, RequestTreeEvent::ImportCurl)));
+        .item(PopupMenuItem::new(t(CURL_TAB_TITLE)).on_click(emitter(tree, RequestTreeEvent::ImportCurl)));
     menu.separator()
-        .item(PopupMenuItem::new("Folder…").on_click(emitter(tree, RequestTreeEvent::NewFolder { parent: folder })))
+        .item(PopupMenuItem::new(t("requests.tree.new_menu.folder")).on_click(emitter(tree, RequestTreeEvent::NewFolder { parent: folder })))
 }
 
 impl Render for RequestTree {
@@ -440,9 +441,9 @@ impl Render for RequestTree {
             });
 
         let body = if !has_requests {
-            page::empty("No requests yet", "Use + to create the first one.")
+            page::empty(t("requests.tree.empty.title"), t("requests.tree.empty.description"))
         } else if filtering && self.is_tree_empty(cx) {
-            page::empty("No matches", "No request matches the filter.")
+            page::empty(t("requests.tree.no_matches.title"), t("requests.tree.no_matches.description"))
         } else {
             tree(&self.tree, move |ix, entry, selected, _, cx| render_row(ix, entry, selected, &model, &this, cx))
                 .context_menu(move |_, entry, menu, _, cx| context_menu(entry, menu, &menu_tree, &menu_model, cx))

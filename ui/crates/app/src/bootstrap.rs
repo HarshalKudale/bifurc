@@ -11,6 +11,7 @@ use gpui_kit::{AppContext as _, Context, Entity, IntoElement, ParentElement as _
 use crate::{
     app_model::AppModel,
     engine::{EngineSession, sidecar_config},
+    i18n::t,
     shell::Shell,
 };
 
@@ -70,17 +71,17 @@ impl Bootstrap {
                 .gap_3()
                 .items_center()
                 .child(Spinner::new())
-                .child("Starting the Bifurc engine…")
+                .child(t("app.bootstrap.starting"))
                 .child(div().text_sm().text_color(cx.theme().muted_foreground).child(self.data_dir.clone()))
                 .into_any_element(),
             Phase::Failed(message) => v_flex()
                 .gap_3()
                 .max_w_128()
-                .child(Alert::error("engine-failed", message.clone()).title("Couldn't start the engine"))
+                .child(Alert::error("engine-failed", message.clone()).title(t("app.bootstrap.failed_title")))
                 .child(
                     h_flex().justify_end().child(
                         Button::new("retry-engine")
-                            .label("Try again")
+                            .label(t("app.bootstrap.retry"))
                             .on_click(cx.listener(|this, _, window, cx| this.retry(window, cx))),
                     ),
                 )

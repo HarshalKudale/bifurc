@@ -41,6 +41,7 @@ use crate::{
         page,
     },
     engine::{call_in, describe},
+    i18n::{t, t_with},
     model::{
         http::{BodyEncoding, HTTP_METHODS, HttpResponse, header_map, header_pairs, pretty_json},
         media::{self, BodyClass},
@@ -64,7 +65,11 @@ const FRAMING_HEADERS: [&str; 5] = ["connection", "content-length", "transfer-en
 /// The engine's value for "any method"; the editor shows it as a word.
 const ANY_METHOD: &str = "*";
 const ANY_METHOD_LABEL: &str = "ANY";
-const STREAMING: [(&str, &str); 3] = [("none", "All at once"), ("sse", "Server-sent events"), ("chunked", "Chunked")];
+const STREAMING: [(&str, &str); 3] = [
+    ("none", "mocks.editor.streaming.all_at_once"),
+    ("sse", "mocks.editor.streaming.sse"),
+    ("chunked", "mocks.editor.streaming.chunked"),
+];
 
 #[derive(Debug, Clone)]
 pub enum MockEvent {
@@ -193,19 +198,23 @@ impl MockEditor {
         cx: &mut Context<Self>,
     ) -> Self {
         let workspace_id = model.read(cx).workspace_id().to_owned();
-        let name = cx.new(|cx| InputState::new(window, cx).placeholder("Mock name").default_value(DEFAULT_NAME));
+        let name = cx.new(|cx| {
+            InputState::new(window, cx).placeholder(t("mocks.editor.name_placeholder")).default_value(DEFAULT_NAME)
+        });
         let method = cx.new(|cx| SelectState::new(method_options(), Some(IndexPath::default()), window, cx));
-        let pattern = cx.new(|cx| InputState::new(window, cx).placeholder("/api/users or a full URL"));
+        let pattern =
+            cx.new(|cx| InputState::new(window, cx).placeholder(t("mocks.editor.pattern_placeholder")));
         let status = cx.new(|cx| InputState::new(window, cx).placeholder("200").default_value("200"));
         let delay = cx.new(|cx| InputState::new(window, cx).placeholder("0").default_value("0"));
         let chunk_delay = cx.new(|cx| InputState::new(window, cx).placeholder("100").default_value("100"));
         let streaming = cx.new(|cx| {
-            SelectState::new(STREAMING.map(|(_, label)| label).to_vec(), Some(IndexPath::default()), window, cx)
+            SelectState::new(STREAMING.map(|(_, key)| t(key)).to_vec(), Some(IndexPath::default()), window, cx)
         });
         let content_type_select =
             cx.new(|cx| SelectState::new(CONTENT_TYPES.to_vec(), Some(IndexPath::default()), window, cx));
-        let headers = cx.new(|cx| KeyValueTable::new("Header", "Value", window, cx));
-        let body = VarEditor::code(Syntax::Json, "Response body", window, cx);
+        let headers =
+            cx.new(|cx| KeyValueTable::new(t("mocks.editor.table.header"), t("mocks.editor.table.value"), window, cx));
+        let body = VarEditor::code(Syntax::Json, t("mocks.editor.body_label"), window, cx);
 
         let mut subscriptions = Vec::new();
         subscriptions.push(cx.subscribe_in(&name, window, |this, _, event: &InputEvent, window, cx| match event {
@@ -357,7 +366,7 @@ impl MockEditor {
                 v.get("entity")
                     .and_then(Value::as_object)
                     .cloned()
-                    .ok_or_else(|| "The mock no longer exists.".to_owned())
+                    .ok_or_else(|| t("mocks.editor.error.gone").to_owned())
             }) {
                 Ok(entity) => {
                     this.adopt_entity(entity, window, cx);
@@ -409,7 +418,7 @@ impl MockEditor {
         if fields == self.baseline {
             return None;
         }
-        self.edited_entity(&fields).err().map(|reason| format!("Not saved. {reason}").into())
+        self.edited_entity(&fields).err().map(|reason| t_with("mocks.editor.not_saved", &[("reason", &reason)]).into())
     }
 
     /// A saved mock is written a moment after each change; a draft waits for Save.
@@ -447,8 +456,8 @@ impl MockEditor {
     }
 
     fn streaming_value(&self, cx: &gpui_kit::App) -> &'static str {
-        let label = self.streaming.read(cx).selected_value().copied().unwrap_or(STREAMING[0].1);
-        STREAMING.iter().find(|(_, l)| *l == label).map_or(STREAMING[0].0, |(value, _)| value)
+        let label = self.streaming.read(cx).selected_value().copied().unwrap_or(t(STREAMING[0].1));
+        STREAMING.iter().find(|(_, key)| t(key) == label).map_or(STREAMING[0].0, |(value, _)| value)
     }
 
     fn fields(&self, cx: &gpui_kit::App) -> Fields {
@@ -535,7 +544,7 @@ impl MockEditor {
         let Some(url) = probe_url(method, &pattern, self.use_regex) else {
             self.probing = false;
             self.apply_standalone(
-                "There is no real response to start from for this URL, so this mock answers on its own.".into(),
+                t("mocks.editor.probe.no_url").into(),
                 window,
                 cx,
             );
@@ -561,14 +570,12 @@ impl MockEditor {
             let response = outcome.as_ref().ok().and_then(|v| HttpResponse::from_value(v, BodyEncoding::Base64));
             match (outcome, response) {
                 (Err(error), _) => this.apply_standalone(
-                    format!("Couldn't reach the real server ({}). This mock answers on its own.", describe(&error))
-                        .into(),
+                    t_with("mocks.editor.probe.unreachable", &[("error", &describe(&error))]).into(),
                     window,
                     cx,
                 ),
                 (Ok(_), Some(response)) if matches!(response.status, 404 | 410) => this.apply_standalone(
-                    format!("The real server has nothing at this URL ({}). This mock answers on its own.", response.status)
-                        .into(),
+                    t_with("mocks.editor.probe.not_found", &[("status", &response.status)]).into(),
                     window,
                     cx,
                 ),
@@ -581,7 +588,7 @@ impl MockEditor {
                     this.apply_probe(&response, bytes, window, cx);
                 }
                 (Ok(_), None) => this.apply_standalone(
-                    "The real server's answer could not be read. This mock answers on its own.".into(),
+                    t("mocks.editor.probe.unreadable").into(),
                     window,
                     cx,
                 ),
@@ -644,14 +651,12 @@ impl MockEditor {
         self.show_data(cx);
         self.follow_content_type(cx);
         let kind = media::essence(&content_type);
-        self.probe_note = Some(
-            format!(
-                "Started from the real response: {}{}. Nothing is mocked until you switch it on.",
-                response.status,
-                if kind.is_empty() { String::new() } else { format!(" {kind}") }
-            )
-            .into(),
-        );
+        let started = if kind.is_empty() {
+            t_with("mocks.editor.probe.started", &[("status", &response.status)])
+        } else {
+            t_with("mocks.editor.probe.started_with_type", &[("status", &response.status), ("type", &kind)])
+        };
+        self.probe_note = Some(started.into());
         self.pristine = self.response_state(cx);
         self.changed(cx);
     }
@@ -695,8 +700,8 @@ impl MockEditor {
         let name = suggested_file_name(&self.pattern.read(cx).value(), "mock-body", view.content_type());
         save_to_file(view.bytes().to_vec(), name, cx, |this, outcome, cx| {
             this.data_note = Some(match outcome {
-                Ok(path) => format!("Saved to {}", path.display()).into(),
-                Err(error) => format!("Couldn't save the file. {error}").into(),
+                Ok(path) => t_with("mocks.editor.saved_to", &[("path", &path.display())]).into(),
+                Err(error) => t_with("mocks.editor.save_file_failed", &[("error", &error)]).into(),
             });
             cx.notify();
         });
@@ -712,7 +717,8 @@ impl MockEditor {
         let method = text("method").to_uppercase();
         let method = method_options().into_iter().find(|m| *m == method).unwrap_or(ANY_METHOD_LABEL);
         let streaming = text("streamingMode");
-        let streaming = STREAMING.iter().find(|(value, _)| *value == streaming).map_or(STREAMING[0].1, |(_, l)| l);
+        let streaming =
+            STREAMING.iter().find(|(value, _)| *value == streaming).map_or(t(STREAMING[0].1), |(_, key)| t(key));
 
         self.name.update(cx, |s, cx| s.set_value(text("name"), window, cx));
         self.method.update(cx, |s, cx| s.set_selected_value(&method, window, cx));
@@ -775,17 +781,16 @@ impl MockEditor {
     /// The loaded entity with the editor's fields written over it, or what stops it from being saved.
     fn edited_entity(&self, fields: &Fields) -> Result<Map<String, Value>, &'static str> {
         if fields.pattern.is_empty() {
-            return Err("Enter the URL pattern this mock answers.");
+            return Err(t("mocks.editor.error.pattern_required"));
         }
         let status: u16 = fields
             .status
             .parse()
             .ok()
             .filter(|s| (100..=599).contains(s))
-            .ok_or("The status must be a number from 100 to 599.")?;
-        let delay: u64 = fields.delay.parse().map_err(|_| "The delay must be a whole number of milliseconds.")?;
-        let chunk_delay: u64 =
-            fields.chunk_delay.parse().map_err(|_| "The chunk delay must be a whole number of milliseconds.")?;
+            .ok_or(t("mocks.editor.error.status"))?;
+        let delay: u64 = fields.delay.parse().map_err(|_| t("mocks.editor.error.delay"))?;
+        let chunk_delay: u64 = fields.chunk_delay.parse().map_err(|_| t("mocks.editor.error.chunk_delay"))?;
 
         let mut entity = self.entity.clone();
         entity.insert("name".into(), json!(if fields.name.is_empty() { DEFAULT_NAME } else { fields.name.as_str() }));
@@ -827,7 +832,7 @@ impl MockEditor {
             match &fields.data {
                 Some(data) => entity.insert("responseBody".into(), json!(data.as_ref())),
                 None if fields.mock_body => {
-                    return Err("Choose a file for the body: this mock answers with data, not text.");
+                    return Err(t("mocks.editor.error.body_file"));
                 }
                 None => entity.insert("responseBody".into(), json!("")),
             };
@@ -859,7 +864,7 @@ impl MockEditor {
             Ok(entity) => entity,
             Err(reason) => {
                 if mode == SaveMode::Explicit {
-                    window.push_notification(Notification::warning(reason).title("Can't save yet"), cx);
+                    window.push_notification(Notification::warning(reason).title(t("mocks.editor.cant_save_yet")), cx);
                 }
                 return;
             }
@@ -902,7 +907,7 @@ impl MockEditor {
                         }
                     }
                     None => {
-                        window.push_notification(Notification::error("The engine did not return the saved mock."), cx)
+                        window.push_notification(Notification::error(t("mocks.editor.error.no_saved_mock")), cx)
                     }
                 },
                 Ok(_) => {
@@ -911,7 +916,10 @@ impl MockEditor {
                     this.saved_folder = folder.clone();
                 }
                 Err(error) => {
-                    window.push_notification(Notification::error(describe(&error)).title("Couldn't save the mock"), cx);
+                    window.push_notification(
+                        Notification::error(describe(&error)).title(t("mocks.editor.error.save_title")),
+                        cx,
+                    );
                     cx.emit(MockEvent::Changed);
                     cx.notify();
                     return;
@@ -924,14 +932,14 @@ impl MockEditor {
 
     fn placeholder(&self) -> Option<AnyElement> {
         match &self.load {
-            LoadState::Loading => Some(page::loading("Loading mock…")),
+            LoadState::Loading => Some(page::loading(t("mocks.editor.loading"))),
             LoadState::Failed(message) => Some(
                 div()
                     .size_full()
                     .p_4()
                     .child(
                         Alert::error("load-failed", SharedString::from(message.clone()))
-                            .title("Couldn't open the mock"),
+                            .title(t("mocks.editor.error.open_title")),
                     )
                     .into_any_element(),
             ),
@@ -964,7 +972,7 @@ impl MockEditor {
                     .gap_6()
                     .px_3()
                     .pb_3()
-                    .child(Switch::new("mock-enabled").checked(self.enabled).label("Enabled").small().on_change(
+                    .child(Switch::new("mock-enabled").checked(self.enabled).label(t("mocks.editor.enabled")).small().on_change(
                         cx.listener(|this, checked: &bool, _, cx| {
                             this.enabled = *checked;
                             this.changed(cx);
@@ -974,7 +982,7 @@ impl MockEditor {
                         Checkbox::new("mock-regex")
                             .checked(self.use_regex)
                             .small()
-                            .label("Pattern is a regular expression")
+                            .label(t("mocks.editor.regex"))
                             .on_change(cx.listener(|this, checked: &bool, _, cx| {
                                 this.use_regex = *checked;
                                 this.changed(cx);
@@ -983,19 +991,17 @@ impl MockEditor {
                     .child(
                         Switch::new("mock-standalone")
                             .checked(self.standalone)
-                            .label("No real endpoint: this mock is the whole response")
+                            .label(t("mocks.editor.standalone"))
                             .small()
                             .on_change(cx.listener(|this, checked: &bool, window, cx| {
                                 this.set_standalone(*checked, window, cx);
                             })),
                     ),
             )
-            .child(div().px_3().text_sm().text_color(theme.muted_foreground).child(
-                "A request through the proxy with this method whose URL contains the pattern is answered by this mock.",
-            ))
+            .child(div().px_3().text_sm().text_color(theme.muted_foreground).child(t("mocks.editor.rule_help")))
             .children(
                 self.probing
-                    .then(|| "Fetching the real response…".into())
+                    .then(|| t("mocks.editor.probe.fetching").into())
                     .or_else(|| self.probe_note.clone())
                     .map(|note: SharedString| div().px_3().pt_1().text_sm().text_color(theme.info).child(note)),
             )
@@ -1012,8 +1018,8 @@ impl MockEditor {
         Switch::new(id)
             .checked(mocked)
             .small()
-            .label(format!("Replace the {what}"))
-            .tooltip(format!("Off: the real server's {what} is passed through"))
+            .label(t_with("mocks.editor.pass_through.label", &[("what", &what)]))
+            .tooltip(t_with("mocks.editor.pass_through.tooltip", &[("what", &what)]))
             .on_change(cx.listener(move |this, checked: &bool, _, cx| {
                 set(this, *checked);
                 this.changed(cx);
@@ -1026,17 +1032,19 @@ impl MockEditor {
         let theme = cx.theme().clone();
         let is_data = self.is_data(cx);
         let content_type = media::essence(&self.content_type(cx));
-        let unsupported: SharedString = format!(
-            "Response type not supported for mock {}",
-            if content_type.is_empty() { "unknown" } else { content_type.as_str() }
-        )
-        .into();
+        let shown_type = if content_type.is_empty() { t("mocks.editor.unknown_type") } else { content_type.as_str() };
+        let unsupported: SharedString =
+            t_with("mocks.editor.unsupported_type", &[("type", &shown_type)]).into();
         let kind: AnyElement = if self.standalone {
             div().w_56().child(Select::new(&self.content_type_select).small().placeholder(content_type)).into_any_element()
         } else {
             Tag::secondary()
                 .small()
-                .child(if content_type.is_empty() { "No Content-Type header".to_owned() } else { content_type })
+                .child(if content_type.is_empty() {
+                    t("mocks.editor.no_content_type").to_owned()
+                } else {
+                    content_type
+                })
                 .into_any_element()
         };
         let toolbar = h_flex()
@@ -1045,7 +1053,9 @@ impl MockEditor {
             .py_2()
             .gap_3()
             .children((!is_data && !self.standalone).then(|| {
-                Self::pass_through("mock-body", self.mock_body, "body", cx, |this, on| this.mock_body = on)
+                Self::pass_through("mock-body", self.mock_body, t("mocks.editor.part.body"), cx, |this, on| {
+                    this.mock_body = on
+                })
             }))
             .child(kind)
             .child(
@@ -1062,7 +1072,7 @@ impl MockEditor {
                 Button::new("mock-body-save")
                     .ghost()
                     .small()
-                    .label("Save to file…")
+                    .label(t("mocks.editor.save_file"))
                     .on_click(cx.listener(|this, _, _, cx| this.save_data(cx)))
             }));
         let content = match (&self.data_view, is_data) {
@@ -1070,7 +1080,7 @@ impl MockEditor {
             (Some(view), true) => view.render(cx),
             (None, true) => page::empty(
                 unsupported,
-                "The real server's body goes through as it is. The status, the other headers and the delay can still be mocked.",
+                t("mocks.editor.data_help"),
             ),
         };
         v_flex().size_full().child(toolbar).child(div().flex_1().min_h_0().child(content)).into_any_element()
@@ -1091,14 +1101,14 @@ impl MockEditor {
                 .child(
                     v_flex().flex_none().px_3().py_2().text_sm().text_color(theme.muted_foreground).child(
                         if self.standalone {
-                            "Content-Type is the type chosen on the Body tab.".to_owned()
+                            t("mocks.editor.headers.standalone").to_owned()
                         } else if self.locked_content_type.is_empty() {
-                            "Content-Type is locked: it is always the real server's.".to_owned()
+                            t("mocks.editor.headers.locked").to_owned()
                         } else {
-                            format!("Content-Type is locked to the real server's: {}", self.locked_content_type)
+                            t_with("mocks.editor.headers.locked_to", &[("type", &self.locked_content_type)])
                         },
                     ).children((!self.standalone && !self.probed_headers.is_empty()).then(|| {
-                        "A header you change or add replaces the real server's. One left as it is passes through."
+                        t("mocks.editor.headers.help")
                     })),
                 )
                 .child(div().flex_1().min_h_0().child(self.headers.clone()))
@@ -1107,22 +1117,29 @@ impl MockEditor {
                 .size_full()
                 .p_3()
                 .gap_4()
-                .child(v_flex().gap_2().child(page::section_label("Delay before answering (ms)", cx)).child(
+                .child(v_flex().gap_2().child(page::section_label(t("mocks.editor.timing.delay_label"), cx)).child(
                     h_flex().gap_4().child(div().w_32().child(Input::new(&self.delay).small())).children(
                         (!standalone).then(|| {
-                            Self::pass_through("mock-delay", self.mock_delay, "delay", cx, |this, on| {
-                                this.mock_delay = on
-                            })
+                            Self::pass_through(
+                                "mock-delay",
+                                self.mock_delay,
+                                t("mocks.editor.part.delay"),
+                                cx,
+                                |this, on| this.mock_delay = on,
+                            )
                         }),
                     ),
                 ))
                 .child(
-                    v_flex().gap_2().child(page::section_label("How the body is sent", cx)).child(
+                    v_flex().gap_2().child(page::section_label(t("mocks.editor.timing.streaming_label"), cx)).child(
                         h_flex()
                             .gap_4()
                             .child(div().w_56().child(Select::new(&self.streaming).small()))
                             .child(
-                                div().text_sm().text_color(theme.muted_foreground).child("Pause between chunks (ms)"),
+                                div()
+                                    .text_sm()
+                                    .text_color(theme.muted_foreground)
+                                    .child(t("mocks.editor.timing.chunk_label")),
                             )
                             .child(div().w_24().child(Input::new(&self.chunk_delay).small())),
                     ),
@@ -1139,12 +1156,16 @@ impl MockEditor {
                     .gap_4()
                     .px_3()
                     .pt_2()
-                    .child(div().text_sm().text_color(theme.muted_foreground).child("Status"))
+                    .child(div().text_sm().text_color(theme.muted_foreground).child(t("mocks.editor.status")))
                     .child(div().w_24().child(Input::new(&self.status).small()))
                     .children((!standalone).then(|| {
-                        Self::pass_through("mock-status", self.mock_status, "status", cx, |this, on| {
-                            this.mock_status = on
-                        })
+                        Self::pass_through(
+                            "mock-status",
+                            self.mock_status,
+                            t("mocks.editor.part.status"),
+                            cx,
+                            |this, on| this.mock_status = on,
+                        )
                     })),
             )
             .child(
@@ -1157,13 +1178,13 @@ impl MockEditor {
                             this.section = SECTIONS[*ix];
                             cx.notify();
                         }))
-                        .child(Tab::new().label("Body"))
+                        .child(Tab::new().label(t("mocks.editor.tab.body")))
                         .child(Tab::new().label(if headers == 0 {
-                            "Headers".to_owned()
+                            t("mocks.editor.tab.headers").to_owned()
                         } else {
-                            format!("Headers ({headers})")
+                            t_with("mocks.editor.tab.headers_count", &[("count", &headers)])
                         }))
-                        .child(Tab::new().label("Timing")),
+                        .child(Tab::new().label(t("mocks.editor.tab.timing"))),
                 ),
             )
             .child(div().flex_1().min_h_0().child(content))
