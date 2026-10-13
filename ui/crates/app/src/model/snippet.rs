@@ -4,6 +4,8 @@
 //! included; a snippet is something to read and adapt, and substituting values is the engine's job when it
 //! actually sends.
 
+use crate::i18n::t;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum SnippetKind {
     Curl,
@@ -16,12 +18,12 @@ impl SnippetKind {
     pub const ALL: [SnippetKind; 4] = [SnippetKind::Curl, SnippetKind::Fetch, SnippetKind::Axios, SnippetKind::Python];
 
     pub fn label(self) -> &'static str {
-        match self {
-            SnippetKind::Curl => "cURL",
-            SnippetKind::Fetch => "fetch",
-            SnippetKind::Axios => "axios",
-            SnippetKind::Python => "Python",
-        }
+        t(match self {
+            SnippetKind::Curl => "model.snippet.curl",
+            SnippetKind::Fetch => "model.snippet.fetch",
+            SnippetKind::Axios => "model.snippet.axios",
+            SnippetKind::Python => "model.snippet.python",
+        })
     }
 }
 

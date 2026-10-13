@@ -3,6 +3,8 @@
 //! The engine decides how a body is stored and sent; this is only what the views need to pick the right
 //! control for a body (a text editor, an image, a file) and a file name when one is saved.
 
+use crate::i18n::t_with;
+
 /// How a body of some content type is shown and edited.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum BodyClass {
@@ -118,11 +120,11 @@ pub fn short_label(content_type: &str) -> String {
 /// A size in the unit a person would pick.
 pub fn size_label(bytes: usize) -> String {
     if bytes < 1024 {
-        format!("{bytes} B")
+        t_with("model.size.bytes", &[("n", &bytes)])
     } else if bytes < 1024 * 1024 {
-        format!("{:.1} KB", bytes as f64 / 1024.0)
+        t_with("model.size.kilobytes", &[("n", &format!("{:.1}", bytes as f64 / 1024.0))])
     } else {
-        format!("{:.1} MB", bytes as f64 / (1024.0 * 1024.0))
+        t_with("model.size.megabytes", &[("n", &format!("{:.1}", bytes as f64 / (1024.0 * 1024.0)))])
     }
 }
 

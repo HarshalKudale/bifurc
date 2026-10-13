@@ -2,6 +2,8 @@
 
 use serde_json::Value;
 
+use crate::i18n::{t, t_with};
+
 /// What a person does to get an update, which depends on how this copy was installed.
 #[derive(Debug, Clone, PartialEq)]
 pub enum UpdateAction {
@@ -36,7 +38,10 @@ impl AvailableUpdate {
     /// The order to install in, when there is more than one step.
     pub fn steps(&self) -> Option<String> {
         let (first, rest) = self.path.split_first().filter(|(_, rest)| !rest.is_empty())?;
-        Some(format!("This version cannot be updated to {} in one step. Install {first} first, then {}.", self.version, rest.join(", then ")))
+        Some(t_with(
+            "model.update.steps",
+            &[("version", &self.version), ("first", first), ("rest", &rest.join(t("model.update.step_separator")))],
+        ))
     }
 }
 
@@ -98,17 +103,17 @@ impl UpdateStatus {
 
     /// Who updates this copy, in a sentence.
     pub fn channel_note(&self) -> &'static str {
-        match self.channel.as_str() {
-            "store" => "Installed from the Microsoft Store, which updates it on its own.",
-            "winget" => "Installed with winget, which updates it when asked to.",
-            "scoop" => "Installed with Scoop, which updates it when asked to.",
-            "aur" => "Installed from the AUR, and updated with the system's packages.",
-            "deb" => "Installed from a .deb package. A newer one replaces it.",
-            "appimage" => "Running as an AppImage. A newer one replaces it.",
-            "portable" | "tarball" => "Running from an unpacked folder. A newer one replaces it.",
-            "installer" => "Installed with the installer. A newer one replaces it and keeps your workspaces.",
-            _ => "This is a build, not an install: it is not updated.",
-        }
+        t(match self.channel.as_str() {
+            "store" => "model.update.channel.store",
+            "winget" => "model.update.channel.winget",
+            "scoop" => "model.update.channel.scoop",
+            "aur" => "model.update.channel.aur",
+            "deb" => "model.update.channel.deb",
+            "appimage" => "model.update.channel.appimage",
+            "portable" | "tarball" => "model.update.channel.portable",
+            "installer" => "model.update.channel.installer",
+            _ => "model.update.channel.build",
+        })
     }
 }
 

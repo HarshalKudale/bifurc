@@ -11,7 +11,10 @@ use gpui_kit::{
     ParentElement as _, PathPromptOptions, StatefulInteractiveElement as _, Styled as _, StyledImage as _, div, img,
 };
 
-use crate::model::media::{self, BodyClass};
+use crate::{
+    i18n::{t, t_with},
+    model::media::{self, BodyClass},
+};
 
 /// The bytes of a body, with what is needed to show them. Built once when the body arrives, not per frame:
 /// an image is decoded from it.
@@ -97,9 +100,12 @@ impl BinaryBody {
             None => {
                 let shown = self.bytes.len().min(HEX_PREVIEW_BYTES);
                 let note = if shown < self.bytes.len() {
-                    format!("Data, not text · first {} of {} as hex", media::size_label(shown), media::size_label(self.bytes.len()))
+                    t_with(
+                        "components.binary.note_partial",
+                        &[("shown", &media::size_label(shown)), ("total", &media::size_label(self.bytes.len()))],
+                    )
                 } else {
-                    "Data, not text · shown as hex".to_owned()
+                    t("components.binary.note_whole").to_owned()
                 };
                 v_flex()
                     .size_full()

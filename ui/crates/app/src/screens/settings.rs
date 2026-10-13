@@ -32,6 +32,7 @@ use crate::{
     app_model::{AppModel, ModelEvent, ProxyStatus},
     components::{certificate::Certificate, dialogs::confirm_danger},
     engine::{call, call_in, failure},
+    i18n::{self, t, t_with},
     model::{config::AccountInfo, update::UpdateAction},
     preferences::Preferences,
     screens::workspace_setup::{Purpose, open_setup_dialog},
@@ -57,11 +58,11 @@ impl AccountWorkspace {
     /// What would be lost with the workspace, if anything would.
     fn unsynced(&self) -> Option<String> {
         match (&self.repo, self.changes, self.unpushed) {
-            (None, _, _) => Some("never published".to_owned()),
+            (None, _, _) => Some(t("settings.workspace.never_published").to_owned()),
             (_, 0, false) => None,
-            (_, 0, true) => Some("unpushed commits".to_owned()),
-            (_, 1, _) => Some("1 unsynced change".to_owned()),
-            (_, changes, _) => Some(format!("{changes} unsynced changes")),
+            (_, 0, true) => Some(t("settings.workspace.unpushed").to_owned()),
+            (_, 1, _) => Some(t_with("settings.workspace.unsynced_one", &[("count", &1)])),
+            (_, changes, _) => Some(t_with("settings.workspace.unsynced_other", &[("count", &changes)])),
         }
     }
 }
@@ -95,19 +96,19 @@ fn accounts_from(value: &Value) -> Vec<AccountRow> {
 /// What signing the account out does, beyond what the question itself says.
 fn sign_out_consequence(account: &AccountRow) -> String {
     if account.workspaces.is_empty() {
-        return "Bifurc forgets this account on this computer. No workspace uses it.".to_owned();
+        return t("settings.sign_out.none").to_owned();
     }
+    let separator = t("settings.list.separator");
     let names: Vec<String> = account.workspaces.iter().map(|ws| format!("“{}”", ws.name)).collect();
     let lost: Vec<String> = account
         .workspaces
         .iter()
-        .filter_map(|ws| Some(format!("“{}” ({})", ws.name, ws.unsynced()?)))
+        .filter_map(|ws| Some(t_with("settings.sign_out.lost_item", &[("name", &ws.name), ("state", &ws.unsynced()?)])))
         .collect();
-    let removed = format!("Its workspaces are removed from this computer: {}.", names.join(", "));
     if lost.is_empty() {
-        format!("{removed} They stay on GitHub and can be imported again.")
+        t_with("settings.sign_out.removed_kept", &[("names", &names.join(separator))])
     } else {
-        format!("{removed} What was never synced is lost with them: {}.", lost.join(", "))
+        t_with("settings.sign_out.removed_lost", &[("names", &names.join(separator)), ("lost", &lost.join(separator))])
     }
 }
 
@@ -130,7 +131,7 @@ impl CompanionRow {
         match (&self.browser, &self.browser_version) {
             (Some(name), Some(version)) => format!("{name} {version}"),
             (Some(name), None) => name.clone(),
-            _ => "Browser".to_owned(),
+            _ => t("settings.companion.browser").to_owned(),
         }
     }
 
@@ -143,11 +144,13 @@ impl CompanionRow {
         };
         let parts = [
             system,
-            self.extension_version.as_ref().map(|version| format!("Extension {version}")),
-            self.extension_id.as_ref().map(|id| format!("ID {id}")),
+            self.extension_version
+                .as_ref()
+                .map(|version| t_with("settings.companion.extension_version", &[("version", version)])),
+            self.extension_id.as_ref().map(|id| t_with("settings.companion.extension_id", &[("id", id)])),
         ];
         let known: Vec<String> = parts.into_iter().flatten().collect();
-        if known.is_empty() { "No details reported".to_owned() } else { known.join(" · ") }
+        if known.is_empty() { t("settings.companion.no_details").to_owned() } else { known.join(" · ") }
     }
 }
 
@@ -255,13 +258,17 @@ impl SettingsScreen {
                 cx.notify();
             }
             let Some(account) = this.accounts.iter().find(|account| account.info.id == account_id) else { return };
-            let ok_text = if account.workspaces.is_empty() { "Sign out" } else { "Sign out and remove" };
+            let ok_text = if account.workspaces.is_empty() {
+                t("settings.account.sign_out")
+            } else {
+                t("settings.sign_out.confirm_remove")
+            };
             let id = account_id.clone();
             confirm_danger(
                 cx.weak_entity(),
                 window,
                 cx,
-                format!("Sign out @{}?", account.info.login),
+                t_with("settings.sign_out.title", &[("login", &account.info.login)]),
                 sign_out_consequence(account),
                 ok_text,
                 move |this, _, cx| this.sign_out(id.clone(), cx),
@@ -279,7 +286,7 @@ impl SettingsScreen {
         call(&client, cx, "account.logout", json!({ "accountId": account_id }), |this, outcome, cx| {
             this.signing_out = None;
             if let Some(message) = failure(&outcome) {
-                this.report(format!("Couldn't sign out. {message}"), cx);
+                this.report(t_with("settings.sign_out.failed", &[("message", &message)]), cx);
             }
             this.model.update(cx, |model, cx| {
                 model.refresh_setup(cx);
@@ -298,23 +305,29 @@ impl SettingsScreen {
             .into_iter()
             .map(|(name, is_dark)| {
                 // Most themes say which they are in their name; the rest get it appended.
-                let mode = if is_dark { "Dark" } else { "Light" };
-                let label: SharedString =
-                    if name.contains(mode) { name.clone() } else { format!("{name} ({mode})").into() };
+                let (mode, mode_name) =
+                    if is_dark { ("Dark", t("settings.theme.mode.dark")) } else { ("Light", t("settings.theme.mode.light")) };
+                let label: SharedString = if name.contains(mode) {
+                    name.clone()
+                } else {
+                    t_with("settings.theme.mode.label", &[("name", &name), ("mode", &mode_name)]).into()
+                };
                 (name, label)
             })
             .collect();
         let sizes: Vec<(SharedString, SharedString)> = theme::FONT_SIZES
             .iter()
-            .map(|size| (SharedString::from(size.to_string()), SharedString::from(format!("{size} px"))))
+            .map(|size| {
+                (SharedString::from(size.to_string()), SharedString::from(t_with("settings.text.size.option", &[("size", size)])))
+            })
             .collect();
 
-        SettingPage::new("Appearance").icon(IconName::Palette).default_open(true).groups(vec![
+        SettingPage::new(t("settings.page.appearance")).icon(IconName::Palette).default_open(true).groups(vec![
             SettingGroup::new()
-                .title("Theme")
+                .title(t("settings.theme.group"))
                 .item(
                     SettingItem::new(
-                        "Color theme",
+                        t("settings.theme.color.title"),
                         SettingField::scrollable_dropdown(
                             themes,
                             |cx: &App| theme::current(cx),
@@ -325,13 +338,36 @@ impl SettingsScreen {
                             },
                         ),
                     )
-                    .description("The predefined GPUI Kit themes. Each one is light or dark.")
-                    .keywords(["dark", "light", "colors", "mode"]),
+                    .description(t("settings.theme.color.description"))
+                    .keywords([
+                        t("settings.keywords.dark"),
+                        t("settings.keywords.light"),
+                        t("settings.keywords.colors"),
+                        t("settings.keywords.mode"),
+                    ]),
                 )
-                .footer(|_, _| "Applies to this app on this computer only."),
-            SettingGroup::new().title("Text").item(
+                .footer(|_, _| t("settings.theme.footer")),
+            SettingGroup::new().title(t("settings.language.title")).item(
                 SettingItem::new(
-                    "Interface size",
+                    t("settings.language.title"),
+                    SettingField::dropdown(
+                        i18n::LANGUAGES
+                            .iter()
+                            .map(|language| (SharedString::from(language.code), SharedString::from(language.name)))
+                            .collect(),
+                        |_: &App| SharedString::from(i18n::language().code),
+                        |code: SharedString, cx: &mut App| {
+                            i18n::set_language(&code);
+                            Preferences::update(cx, |p| p.language = Some(code.to_string()));
+                            cx.refresh_windows();
+                        },
+                    ),
+                )
+                .description(t("settings.language.description")),
+            ),
+            SettingGroup::new().title(t("settings.text.group")).item(
+                SettingItem::new(
+                    t("settings.text.size.title"),
                     SettingField::dropdown(
                         sizes,
                         |cx: &App| SharedString::from(Preferences::global(cx).font_size.to_string()),
@@ -343,8 +379,8 @@ impl SettingsScreen {
                         },
                     ),
                 )
-                .description("Scales text, spacing and controls together.")
-                .keywords(["zoom", "font"]),
+                .description(t("settings.text.size.description"))
+                .keywords([t("settings.keywords.zoom"), t("settings.keywords.font")]),
             ),
         ])
     }
@@ -390,13 +426,15 @@ impl SettingsScreen {
             let toggle_model = model.clone();
             let state = match (&listener.error, listener.running) {
                 (Some(error), _) => Tag::danger().child(error.clone()),
-                (None, true) => Tag::success().child(format!("Running on port {}", listener.port)),
-                (None, false) => Tag::secondary().child("Stopped"),
+                (None, true) => {
+                    Tag::success().child(t_with("settings.listener.running", &[("port", &listener.port)]))
+                }
+                (None, false) => Tag::secondary().child(t("settings.listener.stopped")),
             };
             h_flex().w_full().gap_2().child(div().flex_1().child(name)).child(state).child(
                 Button::new(id)
                     .with_size(options.size())
-                    .label(if listener.running { "Stop" } else { "Start" })
+                    .label(if listener.running { t("settings.listener.stop") } else { t("settings.listener.start") })
                     .loading(listener.busy)
                     .on_click(move |_, _, cx| toggle_model.update(cx, |m, cx| toggle(m, cx))),
             )
@@ -410,7 +448,7 @@ impl SettingsScreen {
         let theme = cx.theme().clone();
         SettingItem::render(move |_, _, _| {
             let rows: Vec<_> = if companions.is_empty() {
-                vec![div().text_color(theme.muted_foreground).child("No browser extension is connected.").into_any_element()]
+                vec![div().text_color(theme.muted_foreground).child(t("settings.companion.none")).into_any_element()]
             } else {
                 companions
                     .iter()
@@ -425,22 +463,32 @@ impl SettingsScreen {
             };
             v_flex().w_full().gap_2().children(rows)
         })
-        .keywords(["browser", "extension", "connected", "chrome", "firefox", "edge"])
+        .keywords([
+            t("settings.keywords.browser"),
+            t("settings.keywords.extension"),
+            t("settings.keywords.connected"),
+            "chrome",
+            "firefox",
+            "edge",
+        ])
     }
 
     fn servers_page(&self, cx: &Context<Self>) -> SettingPage {
         let engine_model = self.model.clone();
         let companions = self.companions_item(cx);
-        SettingPage::new("Servers").icon(IconName::Network).groups(vec![
+        SettingPage::new(t("settings.page.servers")).icon(IconName::Network).groups(vec![
             SettingGroup::new()
-                .title("Engine runtime")
+                .title(t("settings.engine.runtime_group"))
                 .item(
                     SettingItem::render(move |options, _, cx| {
                         let theme = cx.theme().clone();
                         let model = engine_model.read(cx);
                         let restarting = model.is_restarting_engine();
                         let engine = model.engine();
-                        let detail = format!("Version {} · pid {}", engine.hello.engine_version, engine.info.pid);
+                        let detail = t_with(
+                            "settings.engine.detail",
+                            &[("version", &engine.hello.engine_version), ("pid", &engine.info.pid)],
+                        );
                         let restart_model = engine_model.clone();
                         h_flex()
                             .w_full()
@@ -449,58 +497,66 @@ impl SettingsScreen {
                                 gpui_kit::component::v_flex()
                                     .flex_1()
                                     .min_w_0()
-                                    .child("Engine")
+                                    .child(t("settings.engine.name"))
                                     .child(div().text_xs().text_color(theme.muted_foreground).child(detail)),
                             )
                             .child(
                                 Button::new("restart-engine")
                                     .with_size(options.size())
-                                    .label("Restart")
+                                    .label(t("settings.engine.restart"))
                                     .loading(restarting)
                                     .disabled(restarting)
                                     .on_click(move |_, _, cx| restart_model.update(cx, |m, cx| m.restart_engine(cx))),
                             )
                     })
-                    .keywords(["restart", "kill", "respawn", "runtime", "process"]),
+                    .keywords([
+                        t("settings.keywords.restart"),
+                        t("settings.keywords.kill"),
+                        t("settings.keywords.respawn"),
+                        t("settings.keywords.runtime"),
+                        t("settings.keywords.process"),
+                    ]),
                 )
-                .footer(|_, _| {
-                    "The engine keeps running behind its tray icon after this window closes; quit it from the icon. Restart stops the engine and starts a new one. Connections it holds, such as open WebSockets and captured traffic, are lost."
-                }),
+                .footer(|_, _| t("settings.engine.restart_footer")),
             SettingGroup::new()
-                .title("Proxy")
+                .title(t("settings.proxy.title"))
                 .item(self.listener_item(
                     "proxy-start-stop",
-                    "Forward proxy",
-                    ["start", "stop", "forward"],
+                    t("settings.forward_proxy.title"),
+                    [t("settings.keywords.start"), t("settings.keywords.stop"), t("settings.keywords.forward")],
                     AppModel::proxy,
                     AppModel::toggle_proxy,
                 ))
                 .item(self.port_item(
-                    "Port",
-                    "Point a browser or a tool at this port to route its traffic through the proxy rules, mocks and capture.",
+                    t("settings.port.title"),
+                    t("settings.port.forward_description"),
                     "forwardProxyPort",
                 ))
-                .footer(|_, _| "A new port takes effect at once while the proxy is running."),
+                .footer(|_, _| t("settings.proxy.footer")),
             SettingGroup::new()
-                .title("Reverse proxy")
+                .title(t("settings.reverse_proxy.title"))
                 .item(self.listener_item(
                     "reverse-proxy-start-stop",
-                    "Reverse proxy",
-                    ["start", "stop", "localhost"],
+                    t("settings.reverse_proxy.title"),
+                    [t("settings.keywords.start"), t("settings.keywords.stop"), "localhost"],
                     AppModel::reverse_proxy,
                     AppModel::toggle_reverse_proxy,
                 ))
                 .item(self.port_item(
-                    "Port",
-                    "Where .localhost names are served and sent on to their mappings, over HTTPS while Intercept HTTPS is on. 80 (HTTP) or 443 (HTTPS) lets the names work without a port.",
+                    t("settings.port.title"),
+                    t("settings.port.reverse_description"),
                     "port",
                 ))
-                .footer(|_, _| "A new port takes effect at once while the reverse proxy is running."),
+                .footer(|_, _| t("settings.reverse_proxy.footer")),
             SettingGroup::new()
-                .title("Companion")
-                .item(self.port_item("Port", "The browser extension connects here.", "companionPort"))
+                .title(t("settings.companion.title"))
+                .item(self.port_item(
+                    t("settings.port.title"),
+                    t("settings.port.companion_description"),
+                    "companionPort",
+                ))
                 .item(companions)
-                .footer(|_, _| "The companion server always runs. A new port takes effect after the engine restarts."),
+                .footer(|_, _| t("settings.companion.footer")),
         ])
     }
 
@@ -509,10 +565,10 @@ impl SettingsScreen {
         let tls_write = self.model.clone();
         let control = self.certificate.clone();
         let install_control = control.clone();
-        SettingPage::new("HTTPS").icon(IconName::Globe).groups(vec![
-            SettingGroup::new().title("Interception").item(
+        SettingPage::new(t("settings.page.https")).icon(IconName::Globe).groups(vec![
+            SettingGroup::new().title(t("settings.https.interception")).item(
                 SettingItem::new(
-                    "Intercept HTTPS",
+                    t("settings.https.intercept.title"),
                     SettingField::switch(
                         move |cx: &App| tls_read.read(cx).config().settings.tls_enabled,
                         move |value: bool, cx: &mut App| {
@@ -520,11 +576,11 @@ impl SettingsScreen {
                         },
                     ),
                 )
-                .description("Run Bifurc over HTTPS with its certificate: the reverse proxy serves .localhost names over HTTPS on its port, the forward proxy also accepts HTTPS proxy clients on its port, and HTTPS traffic through it is decrypted so rules, mocks and capture apply.")
-                .keywords(["tls", "ssl", "certificate"]),
+                .description(t("settings.https.intercept.description"))
+                .keywords(["tls", "ssl", t("settings.keywords.certificate")]),
             ),
             SettingGroup::new()
-                .title("Root certificate")
+                .title(t("settings.certificate.root_group"))
                 .item(
                     SettingItem::render(move |options, _, cx| {
                         let theme = cx.theme().clone();
@@ -539,7 +595,11 @@ impl SettingsScreen {
                                     .flex_1()
                                     .min_w_0()
                                     .gap_1()
-                                    .child(if certificate.generated { "Certificate in place" } else { "No certificate" })
+                                    .child(if certificate.generated {
+                                        t("settings.certificate.in_place")
+                                    } else {
+                                        t("settings.certificate.none")
+                                    })
                                     .children(certificate.fingerprint.clone().map(|fingerprint| {
                                         div()
                                             .text_xs()
@@ -553,7 +613,11 @@ impl SettingsScreen {
                             .child(
                                 Button::new("generate-certificate")
                                     .with_size(options.size())
-                                    .label(if certificate.generated { "Regenerate" } else { "Generate" })
+                                    .label(if certificate.generated {
+                                        t("settings.certificate.regenerate")
+                                    } else {
+                                        t("settings.certificate.generate")
+                                    })
                                     .loading(certificate.busy)
                                     .disabled(working)
                                     .on_click(move |_, _, cx| generate.update(cx, |certificate, cx| certificate.generate(cx))),
@@ -561,21 +625,28 @@ impl SettingsScreen {
                             .child(
                                 Button::new("import-certificate")
                                     .with_size(options.size())
-                                    .label("Import…")
+                                    .label(t("settings.certificate.import"))
                                     .loading(certificate.importing)
                                     .disabled(working)
-                                    .tooltip("Use your own certificate and private key instead")
+                                    .tooltip(t("settings.certificate.import_tooltip"))
                                     .on_click(move |_, _, cx| import.update(cx, |certificate, cx| certificate.import(cx))),
                             )
                             .child(
                                 Button::new("remove-certificate")
                                     .with_size(options.size())
-                                    .label("Remove")
+                                    .label(t("settings.certificate.remove"))
                                     .disabled(!certificate.generated || working)
                                     .on_click(move |_, _, cx| remove.update(cx, |certificate, cx| certificate.remove(cx))),
                             )
                     })
-                    .keywords(["ca", "root", "fingerprint", "import", "own", "generate"]),
+                    .keywords([
+                        "ca",
+                        t("settings.keywords.root"),
+                        t("settings.keywords.fingerprint"),
+                        t("settings.keywords.import"),
+                        t("settings.keywords.own"),
+                        t("settings.keywords.generate"),
+                    ]),
                 )
                 .item(
                     SettingItem::render(move |options, _, cx| {
@@ -596,40 +667,41 @@ impl SettingsScreen {
                                     .flex_1()
                                     .min_w_0()
                                     .gap_1()
-                                    .child("Trust on this computer")
+                                    .child(t("settings.certificate.trust"))
                                     .children(note),
                             )
                             .child(
                                 Button::new("install-certificate")
                                     .with_size(options.size())
-                                    .label("Install")
+                                    .label(t("settings.certificate.install"))
                                     .loading(certificate.installing)
                                     .disabled(!certificate.generated || certificate.installing)
-                                    .tooltip("Add the certificate to this computer's trusted roots")
+                                    .tooltip(t("settings.certificate.install_tooltip"))
                                     .on_click(move |_, _, cx| install.update(cx, |certificate, cx| certificate.install(cx))),
                             )
                     })
-                    .keywords(["trust", "install", "keychain", "store"]),
+                    .keywords([
+                        t("settings.keywords.trust"),
+                        t("settings.keywords.install"),
+                        t("settings.keywords.keychain"),
+                        t("settings.keywords.store"),
+                    ]),
                 )
-                .footer(|_, _| {
-                    "The engine signs the sites it intercepts with this certificate, so install it to avoid warnings. Firefox keeps its own store and needs the certificate imported there."
-                }),
+                .footer(|_, _| t("settings.certificate.footer")),
         ])
     }
 
     /// The GitHub accounts signed in on this computer: one group each, with the workspaces that sync as it.
     fn accounts_page(&self, cx: &mut Context<Self>) -> SettingPage {
-        let page = SettingPage::new("Accounts").icon(IconName::Github);
+        let page = SettingPage::new(t("settings.page.accounts")).icon(IconName::Github);
         if self.accounts.is_empty() {
             return page.groups(vec![
                 SettingGroup::new()
-                    .title("GitHub")
+                    .title(t("settings.account.github"))
                     .item(SettingItem::render(|_, _, cx| {
-                        div().text_color(cx.theme().muted_foreground).child("No account is signed in.")
+                        div().text_color(cx.theme().muted_foreground).child(t("settings.account.none"))
                     }))
-                    .footer(|_, _| {
-                        "An account is only needed to sync a workspace with GitHub. Sign in when you add a workspace, or when you publish one from its Config."
-                    }),
+                    .footer(|_, _| t("settings.account.none_footer")),
             ]);
         }
         let groups = self.accounts.iter().enumerate().map(|(index, account)| {
@@ -644,12 +716,15 @@ impl SettingsScreen {
                 let theme = cx.theme().clone();
                 let (this, id, model) = (this.clone(), id.clone(), model.clone());
                 let relogin_id = id.clone();
-                let state =
-                    if signed_in { Tag::success().child("Signed in") } else { Tag::warning().child("Sign-in expired") };
+                let state = if signed_in {
+                    Tag::success().child(t("settings.account.signed_in"))
+                } else {
+                    Tag::warning().child(t("settings.account.sign_in_expired"))
+                };
                 let detail = match count {
-                    0 => format!("{host} · no workspaces"),
-                    1 => format!("{host} · 1 workspace"),
-                    count => format!("{host} · {count} workspaces"),
+                    0 => t_with("settings.account.no_workspaces", &[("host", &host)]),
+                    1 => t_with("settings.account.workspaces_one", &[("host", &host)]),
+                    count => t_with("settings.account.workspaces_other", &[("host", &host), ("count", &count)]),
                 };
                 h_flex()
                     .w_full()
@@ -657,7 +732,11 @@ impl SettingsScreen {
                     .child(div().flex_1().min_w_0().text_color(theme.muted_foreground).child(detail))
                     .child(state)
                     .children((!signed_in).then(|| {
-                        Button::new(("sign-in-again", index)).with_size(options.size()).primary().label("Sign in again").on_click(
+                        Button::new(("sign-in-again", index))
+                            .with_size(options.size())
+                            .primary()
+                            .label(t("settings.account.sign_in_again"))
+                            .on_click(
                             move |_, window, cx| {
                                 let purpose = Purpose::SignIn { account_id: relogin_id.clone() };
                                 open_setup_dialog(model.clone(), purpose, window, cx);
@@ -667,7 +746,7 @@ impl SettingsScreen {
                     .child(
                         Button::new(("sign-out", index))
                             .with_size(options.size())
-                            .label("Sign out")
+                            .label(t("settings.account.sign_out"))
                             .loading(busy)
                             .disabled(blocked)
                             .on_click(move |_, window, cx| {
@@ -675,13 +754,18 @@ impl SettingsScreen {
                             }),
                     )
             })
-            .keywords(["github", "login", "logout", "sign out"]);
+            .keywords([
+                "github",
+                t("settings.keywords.login"),
+                t("settings.keywords.logout"),
+                t("settings.keywords.sign_out"),
+            ]);
             let workspaces = account.workspaces.iter().cloned().map(|workspace| {
                 SettingItem::render(move |_, _, cx| {
                     let theme = cx.theme().clone();
                     let state = match workspace.unsynced() {
                         Some(unsynced) => Tag::warning().child(capitalized(&unsynced)),
-                        None => Tag::secondary().child("Synced"),
+                        None => Tag::secondary().child(t("settings.workspace.synced")),
                     };
                     h_flex()
                         .w_full()
@@ -708,7 +792,7 @@ impl SettingsScreen {
                 .title(format!("@{}", account.info.login))
                 .item(header)
                 .items(workspaces)
-                .footer(|_, _| "Signing out removes the account and its workspaces from this computer.")
+                .footer(|_, _| t("settings.account.footer"))
         });
         page.groups(groups.collect::<Vec<_>>())
     }
@@ -727,14 +811,14 @@ impl SettingsScreen {
             )
         };
         let (update_read, update_write) = (self.model.clone(), self.model.clone());
-        let mut updates = SettingGroup::new().title("Updates").item(self.update_item());
+        let mut updates = SettingGroup::new().title(t("settings.updates.group")).item(self.update_item());
         if let Some(available) = self.available_update_item(cx) {
             updates = updates.item(available);
         }
         let updates = updates
             .item(
                 SettingItem::new(
-                    "Check for updates automatically",
+                    t("settings.updates.automatic_title"),
                     SettingField::switch(
                         move |cx: &App| update_read.read(cx).config().settings.update_check_enabled,
                         move |value: bool, cx: &mut App| {
@@ -744,26 +828,34 @@ impl SettingsScreen {
                         },
                     ),
                 )
-                .description("Once a day. The request carries this app's version and nothing else.")
-                .keywords(["update", "automatic", "network"]),
+                .description(t("settings.updates.automatic_description"))
+                .keywords([
+                    t("settings.keywords.update"),
+                    t("settings.keywords.automatic"),
+                    t("settings.keywords.network"),
+                ]),
             )
             .item(
                 SettingItem::new(
-                    "Releases",
+                    t("settings.updates.releases_title"),
                     SettingField::render(|_, _, _| {
                         Link::new("releases-link").href(RELEASES_URL).child("github.com/HarshalKudale/bifurc-releases")
                     }),
                 )
-                .description("Every version, with its downloads.")
+                .description(t("settings.updates.releases_description"))
                 .layout(Axis::Horizontal),
             )
             .item(SettingItem::new(
-                "Source",
+                t("settings.updates.source_title"),
                 SettingField::render(|_, _, _| {
                     Link::new("repository-link").href(REPOSITORY_URL).child("github.com/HarshalKudale/bifurc")
                 }),
             ));
-        let origin = if engine.started_here() { "Started by this app" } else { "Already running" };
+        let origin = if engine.started_here() {
+            t("settings.engine.started_here")
+        } else {
+            t("settings.engine.already_running")
+        };
         // A workspace of an organization: its analytics are the organization's, shown here and changed nowhere
         // on this device.
         let managed: Vec<SettingItem> = self
@@ -775,49 +867,55 @@ impl SettingsScreen {
             .filter_map(|workspace| {
                 let organization = workspace.organization.as_ref()?;
                 let owner = if organization.name.is_empty() {
-                    "its organization".to_owned()
+                    t("settings.about.organization_owner").to_owned()
                 } else {
                     organization.name.clone()
                 };
                 let (state, description) = if organization.analytics {
                     (
-                        "On",
-                        format!(
-                            "Managed by the owner of {owner}. What kind of thing you do in this workspace is reported to them with your GitHub account, never its content. The switch above does not change this."
-                        ),
+                        t("settings.analytics.on"),
+                        t_with("settings.analytics.managed_on", &[("owner", &owner)]),
                     )
                 } else {
                     (
-                        "Off",
-                        format!(
-                            "Managed by the owner of {owner}, who has not turned usage analytics on. Nothing done in this workspace is reported."
-                        ),
+                        t("settings.analytics.off"),
+                        t_with("settings.analytics.managed_off", &[("owner", &owner)]),
                     )
                 };
                 Some(
                     SettingItem::new(
-                        format!("Usage analytics for {}", workspace.name),
+                        t_with("settings.about.managed_title", &[("name", &workspace.name)]),
                         SettingField::render(move |_, _, cx| {
                             div().text_color(cx.theme().muted_foreground).child(state)
                         }),
                     )
                     .description(description)
-                    .keywords(["telemetry", "tracking", "organization"]),
+                    .keywords([
+                        t("settings.keywords.telemetry"),
+                        t("settings.keywords.tracking"),
+                        t("settings.keywords.organization"),
+                    ]),
                 )
             })
             .collect();
-        SettingPage::new("About").icon(IconName::Info).groups(vec![
+        SettingPage::new(t("settings.page.about")).icon(IconName::Info).groups(vec![
             SettingGroup::new().title("Bifurc").items(vec![
-                fact("Desktop app", format!("Version {}", env!("CARGO_PKG_VERSION"))),
-                fact("Engine", format!("Version {}", engine.hello.engine_version)),
-                fact("Protocol", engine.hello.protocol_version.to_string()),
-                fact("Engine process", format!("pid {} · {origin}", engine.info.pid)),
+                fact(
+                    t("settings.about.desktop_app"),
+                    t_with("settings.version", &[("version", &env!("CARGO_PKG_VERSION"))]),
+                ),
+                fact(t("settings.engine.name"), t_with("settings.version", &[("version", &engine.hello.engine_version)])),
+                fact(t("settings.about.protocol"), engine.hello.protocol_version.to_string()),
+                fact(
+                    t("settings.about.engine_process"),
+                    t_with("settings.engine.process_detail", &[("pid", &engine.info.pid), ("origin", &origin)]),
+                ),
             ]),
             SettingGroup::new()
-                .title("Privacy")
+                .title(t("settings.privacy.group"))
                 .item(
                     SettingItem::new(
-                        "Anonymous usage analytics",
+                        t("settings.telemetry.title"),
                         SettingField::switch(
                             move |cx: &App| telemetry_read.read(cx).config().settings.telemetry_enabled,
                             move |value: bool, cx: &mut App| {
@@ -827,15 +925,17 @@ impl SettingsScreen {
                             },
                         ),
                     )
-                    .description(
-                        "On by default. What kind of thing you do in the app and in your own workspaces, never its content. Off, only that Bifurc was installed on this device is reported, once.",
-                    )
-                    .keywords(["telemetry", "tracking", "posthog"]),
+                    .description(t("settings.telemetry.description"))
+                    .keywords([
+                        t("settings.keywords.telemetry"),
+                        t("settings.keywords.tracking"),
+                        "posthog",
+                    ]),
                 )
                 .items(managed)
                 .item(
                     SettingItem::new(
-                        "Terms of service",
+                        t("settings.about.terms"),
                         SettingField::render(move |_, _, _| {
                             Link::new("terms-link")
                                 .href(terms_url.clone())
@@ -846,7 +946,7 @@ impl SettingsScreen {
                 )
                 .item(
                     SettingItem::new(
-                        "Privacy policy",
+                        t("settings.about.privacy_policy"),
                         SettingField::render(move |_, _, _| {
                             Link::new("privacy-link")
                                 .href(policy_url.clone())
@@ -855,7 +955,7 @@ impl SettingsScreen {
                     )
                     .layout(Axis::Horizontal),
                 )
-                .footer(|_, _| "A workspace that belongs to an organization follows that organization's setting, not this one."),
+                .footer(|_, _| t("settings.about.footer")),
             updates,
         ])
     }
@@ -868,12 +968,14 @@ impl SettingsScreen {
             let status = model.read(cx).update().clone();
             let check_model = model.clone();
             let state = match (&status.available, status.checked) {
-                (Some(update), _) => Tag::warning().child(format!("Version {} available", update.version)),
-                (None, true) => Tag::success().child("Up to date"),
-                (None, false) => Tag::secondary().child("Not checked yet"),
+                (Some(update), _) => {
+                    Tag::warning().child(t_with("settings.update.available", &[("version", &update.version)]))
+                }
+                (None, true) => Tag::success().child(t("settings.update.up_to_date")),
+                (None, false) => Tag::secondary().child(t("settings.update.not_checked")),
             };
-            let unsupported = status.unsupported.then_some("This version is no longer supported.");
-            let failure = status.error.as_ref().map(|error| format!("Couldn't check for updates. {error}"));
+            let unsupported = status.unsupported.then_some(t("settings.update.unsupported"));
+            let failure = status.error.as_ref().map(|error| t_with("settings.update.failed", &[("error", error)]));
             h_flex()
                 .w_full()
                 .gap_2()
@@ -881,7 +983,7 @@ impl SettingsScreen {
                     v_flex()
                         .flex_1()
                         .min_w_0()
-                        .child(format!("Version {}", env!("CARGO_PKG_VERSION")))
+                        .child(t_with("settings.version", &[("version", &env!("CARGO_PKG_VERSION"))]))
                         .child(div().text_xs().text_color(theme.muted_foreground).child(status.channel_note()))
                         .children(unsupported.map(|text| div().text_xs().text_color(theme.warning).child(text)))
                         .children(failure.map(|text| div().text_xs().text_color(theme.danger).child(text))),
@@ -890,13 +992,19 @@ impl SettingsScreen {
                 .child(
                     Button::new("check-for-update")
                         .with_size(options.size())
-                        .label("Check now")
+                        .label(t("settings.update.check"))
                         .loading(status.checking)
                         .disabled(status.checking)
                         .on_click(move |_, _, cx| check_model.update(cx, |model, cx| model.check_for_update(cx))),
                 )
         })
-        .keywords(["update", "upgrade", "version", "release", "latest"])
+        .keywords([
+            t("settings.keywords.update"),
+            t("settings.keywords.upgrade"),
+            t("settings.keywords.version"),
+            t("settings.keywords.release"),
+            t("settings.keywords.latest"),
+        ])
     }
 
     /// The newer version, when there is one: what it brings, the order to install in, and the way this install
@@ -907,15 +1015,15 @@ impl SettingsScreen {
         let model = self.model.clone();
         let item = SettingItem::render(move |options, _, cx| {
             let theme = cx.theme().clone();
-            let security = update.critical.then(|| "It fixes a security problem.".to_owned());
+            let security = update.critical.then(|| t("settings.update.security").to_owned());
             let notes = [update.summary.clone(), update.steps(), security];
             let get = match &action {
                 UpdateAction::Store(url) => {
-                    Link::new("update-store").href(url.clone()).child("Open Microsoft Store").into_any_element()
+                    Link::new("update-store").href(url.clone()).child(t("settings.update.open_store")).into_any_element()
                 }
                 UpdateAction::Download(url) => Link::new("update-download")
                     .href(url.clone())
-                    .child(format!("Download {}", update.next()))
+                    .child(t_with("settings.update.download", &[("version", &update.next())]))
                     .into_any_element(),
                 UpdateAction::Command(command) => {
                     let copied = command.clone();
@@ -926,7 +1034,7 @@ impl SettingsScreen {
                             Button::new("copy-update-command")
                                 .with_size(options.size())
                                 .icon(IconName::Copy)
-                                .label("Copy")
+                                .label(t("settings.update.copy"))
                                 .on_click(move |_, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(copied.clone()))),
                         )
                         .into_any_element()
@@ -935,14 +1043,14 @@ impl SettingsScreen {
             let skip = if update.critical {
                 None
             } else if update.skipped {
-                Some(div().text_xs().text_color(theme.muted_foreground).child("Skipped").into_any_element())
+                Some(div().text_xs().text_color(theme.muted_foreground).child(t("settings.update.skipped")).into_any_element())
             } else {
                 let (skip_model, version) = (model.clone(), update.version.clone());
                 Some(
                     Button::new("skip-update")
                         .ghost()
                         .with_size(options.size())
-                        .label("Skip this version")
+                        .label(t("settings.update.skip"))
                         .on_click(move |_, _, cx| skip_model.update(cx, |model, cx| model.skip_update(&version, cx)))
                         .into_any_element(),
                 )
@@ -950,7 +1058,7 @@ impl SettingsScreen {
             let changes = update
                 .notes_url
                 .clone()
-                .map(|url| Link::new("update-notes").href(url).child("What changed").into_any_element());
+                .map(|url| Link::new("update-notes").href(url).child(t("settings.update.what_changed")).into_any_element());
             h_flex()
                 .w_full()
                 .gap_3()
@@ -958,7 +1066,7 @@ impl SettingsScreen {
                     v_flex()
                         .flex_1()
                         .min_w_0()
-                        .child(format!("Version {}", update.version))
+                        .child(t_with("settings.version", &[("version", &update.version)]))
                         .children(
                             notes.into_iter().flatten().map(|note| div().text_xs().text_color(theme.muted_foreground).child(note)),
                         ),
@@ -967,7 +1075,12 @@ impl SettingsScreen {
                 .children(skip)
                 .child(get)
         })
-        .keywords(["update", "upgrade", "download", "install"]);
+        .keywords([
+            t("settings.keywords.update"),
+            t("settings.keywords.upgrade"),
+            t("settings.keywords.download"),
+            t("settings.keywords.install"),
+        ]);
         Some(item)
     }
 }

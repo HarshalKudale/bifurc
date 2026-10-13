@@ -30,6 +30,7 @@ use serde_json::{Map, Value, json};
 
 use super::{Carry, LoadState, SaveMode, SessionEvent, engine_folder, exchange::Exchange};
 use crate::{
+    i18n::{t, t_with},
     app_model::{AppModel, ModelEvent},
     components::{
         Autosave, FileData, KeyValueEvent, KeyValueTable, Part, PartValue, PartsEvent, PartsTable, Syntax, VarEditor,
@@ -147,16 +148,16 @@ impl RestSession {
         cx: &mut Context<Self>,
     ) -> Self {
         let workspace_id = model.read(cx).workspace_id().to_owned();
-        let name = cx.new(|cx| InputState::new(window, cx).placeholder("Request name").default_value(DEFAULT_NAME));
+        let name = cx.new(|cx| InputState::new(window, cx).placeholder(t("session.rest.name_placeholder")).default_value(DEFAULT_NAME));
         let method = cx.new(|cx| SelectState::new(HTTP_METHODS.to_vec(), Some(IndexPath::default()), window, cx));
         let url = VarEditor::line("https://api.example.test/resource", window, cx);
-        let params = cx.new(|cx| KeyValueTable::new("Parameter", "Value", window, cx));
-        let headers = cx.new(|cx| KeyValueTable::new("Header", "Value", window, cx));
-        let form = cx.new(|cx| KeyValueTable::new("Field", "Value", window, cx));
+        let params = cx.new(|cx| KeyValueTable::new(t("session.rest.column_parameter"), t("session.rest.column_value"), window, cx));
+        let headers = cx.new(|cx| KeyValueTable::new(t("session.rest.column_header"), t("session.rest.column_value"), window, cx));
+        let form = cx.new(|cx| KeyValueTable::new(t("session.rest.column_field"), t("session.rest.column_value"), window, cx));
         let parts = cx.new(|cx| PartsTable::new(window, cx));
-        let body = VarEditor::code(Syntax::Json, "Request body", window, cx);
-        let pre_script = VarEditor::code(Syntax::JavaScript, "// Runs before the request is sent", window, cx);
-        let post_script = VarEditor::code(Syntax::JavaScript, "// Runs after the response arrives", window, cx);
+        let body = VarEditor::code(Syntax::Json, t("session.rest.body_placeholder"), window, cx);
+        let pre_script = VarEditor::code(Syntax::JavaScript, t("session.rest.pre_script_placeholder"), window, cx);
+        let post_script = VarEditor::code(Syntax::JavaScript, t("session.rest.post_script_placeholder"), window, cx);
         let test_script = VarEditor::code(Syntax::JavaScript, "// bc.test(\"status is 200\", () => { ... })", window, cx);
         let exchange = cx.new(|cx| Exchange::new(window, cx));
 
@@ -334,7 +335,7 @@ impl RestSession {
             return None;
         }
         let fields = self.fields(cx);
-        (fields != self.baseline && fields.url.is_empty()).then(|| "Not saved. Enter a URL.".into())
+        (fields != self.baseline && fields.url.is_empty()).then(|| t("session.rest.problem_no_url").into())
     }
 
     /// A saved request is written a moment after each change; a draft waits for Save.
@@ -534,10 +535,12 @@ impl RestSession {
     /// Asks for the file that is the body. It is applied by the next render, which has the window the
     /// header table needs.
     fn choose_file(&mut self, cx: &mut Context<Self>) {
-        pick_file("Choose a file to send", cx, |this, outcome, cx| {
+        pick_file(t("session.rest.choose_file_title"), cx, |this, outcome, cx| {
             match outcome {
                 Ok(file) => this.pending_file = Some(FileData::from_picked(file)),
-                Err(message) => this.file_error = Some(format!("Couldn't read the file: {message}").into()),
+                Err(message) => {
+                    this.file_error = Some(t_with("session.rest.read_file_failed", &[("message", &message)]).into())
+                }
             }
             cx.notify();
         });
@@ -553,7 +556,7 @@ impl RestSession {
         match pretty_json(&self.body.value(cx)) {
             Some(pretty) => self.body.set_value(pretty, window, cx),
             None => window.push_notification(
-                Notification::warning("The body isn't valid JSON, so it was left as it is.").title("Can't format"),
+                Notification::warning(t("session.rest.format_invalid_json")).title(t("session.rest.format_failed_title")),
                 cx,
             ),
         }
@@ -674,8 +677,10 @@ impl RestSession {
         }
         if fields.url.is_empty() {
             if mode == SaveMode::Explicit {
-                window
-                    .push_notification(Notification::warning("Enter a URL before saving.").title("Can't save yet"), cx);
+                window.push_notification(
+                    Notification::warning(t("session.rest.save_no_url")).title(t("session.rest.save_no_url_title")),
+                    cx,
+                );
             }
             return;
         }
@@ -716,7 +721,7 @@ impl RestSession {
                         }
                     }
                     None => window
-                        .push_notification(Notification::error("The engine did not return the saved request."), cx),
+                        .push_notification(Notification::error(t("session.rest.engine_no_saved")), cx),
                 },
                 Ok(_) => {
                     this.entity = this.edited_entity(&fields);
@@ -725,7 +730,7 @@ impl RestSession {
                 }
                 Err(error) => {
                     window.push_notification(
-                        Notification::error(describe(&error)).title("Couldn't save the request"),
+                        Notification::error(describe(&error)).title(t("session.rest.save_failed_title")),
                         cx,
                     );
                     cx.emit(SessionEvent::Changed);
@@ -746,7 +751,7 @@ impl RestSession {
         }
         let fields = self.fields(cx);
         if fields.url.is_empty() {
-            window.push_notification(Notification::warning("Enter a URL to send.").title("Nothing to send"), cx);
+            window.push_notification(Notification::warning(t("session.rest.send_no_url")).title(t("session.rest.send_no_url_title")), cx);
             return;
         }
         let payload = match (&self.saved_id, fields == self.baseline) {
@@ -797,7 +802,9 @@ impl RestSession {
     }
 
     fn render_sections(&self, cx: &mut Context<Self>) -> TabBar {
-        let count = |n: usize, label: &str| if n == 0 { label.to_owned() } else { format!("{label} ({n})") };
+        let count = |n: usize, label: &str, counted: &str| {
+            if n == 0 { t(label).to_owned() } else { t_with(counted, &[("count", &n)]) }
+        };
         let params = self.params.read(cx).pairs(cx).len();
         let headers = self.headers.read(cx).pairs(cx).len();
         let scripts = [&self.pre_script, &self.post_script, &self.test_script]
@@ -812,14 +819,14 @@ impl RestSession {
                 this.section = SECTIONS[*ix];
                 cx.notify();
             }))
-            .child(Tab::new().label(count(params, "Params")))
-            .child(Tab::new().label(count(headers, "Headers")))
+            .child(Tab::new().label(count(params, "session.rest.tab_params", "session.rest.tab_params_count")))
+            .child(Tab::new().label(count(headers, "session.rest.tab_headers", "session.rest.tab_headers_count")))
             .child(Tab::new().label(if self.body_mode == BodyMode::None {
-                "Body".to_owned()
+                t("session.rest.tab_body").to_owned()
             } else {
-                format!("Body · {}", self.body_mode.label())
+                t_with("session.rest.tab_body_mode", &[("mode", &self.body_mode.label())])
             }))
-            .child(Tab::new().label(count(scripts, "Scripts")))
+            .child(Tab::new().label(count(scripts, "session.rest.tab_scripts", "session.rest.tab_scripts_count")))
     }
 
     fn render_body(&self, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
@@ -830,7 +837,7 @@ impl RestSession {
             .on_click(cx.listener(|this, ix: &usize, window, cx| this.set_body_mode(BodyMode::ALL[*ix], window, cx)))
             .children(BodyMode::ALL.map(|mode| Tab::new().label(mode.label())));
         let content = match self.body_mode {
-            BodyMode::None => page::empty("No body", "This request is sent without a body."),
+            BodyMode::None => page::empty(t("session.rest.no_body_title"), t("session.rest.no_body_description")),
             BodyMode::Form => self.form.clone().into_any_element(),
             BodyMode::Multipart => self.parts.clone().into_any_element(),
             BodyMode::File => self.render_file(cx),
@@ -845,7 +852,7 @@ impl RestSession {
                         Button::new("format-body")
                             .ghost()
                             .small()
-                            .label("Format")
+                            .label(t("session.rest.format"))
                             .on_click(cx.listener(|this, _, window, cx| this.format_body(window, cx))),
                     )
                 },
@@ -867,9 +874,9 @@ impl RestSession {
             return v_flex()
                 .size_full()
                 .child(div().flex_1().min_h_0().child(page::empty_with_action(
-                    "No file chosen",
-                    "The file's bytes are sent as the request body.",
-                    choose("Choose file…"),
+                    t("session.rest.no_file_title"),
+                    t("session.rest.no_file_description"),
+                    choose(t("session.rest.choose_file")),
                 )))
                 .children(
                     self.file_error.clone().map(|message| {
@@ -889,19 +896,18 @@ impl RestSession {
                     .items_center()
                     .child(
                         v_flex().flex_1().min_w_0().child(div().truncate().text_sm().child(file.name.clone())).child(
-                            div().text_xs().text_color(theme.muted_foreground).child(format!(
-                                "{} · {}",
-                                size_label(file.size),
-                                file.content_type
+                            div().text_xs().text_color(theme.muted_foreground).child(t_with(
+                                "session.rest.file_meta",
+                                &[("size", &size_label(file.size)), ("type", &file.content_type)],
                             )),
                         ),
                     )
-                    .child(choose("Choose another file…").ghost())
+                    .child(choose(t("session.rest.choose_another_file")).ghost())
                     .child(
                         Button::new("remove-body-file")
                             .ghost()
                             .small()
-                            .label("Remove file")
+                            .label(t("session.rest.remove_file"))
                             .on_click(cx.listener(|this, _, window, cx| this.remove_file(window, cx))),
                     ),
             )
@@ -932,9 +938,9 @@ impl RestSession {
                             this.script = SCRIPTS[*ix];
                             cx.notify();
                         }))
-                        .child(Tab::new().label("Pre-request"))
-                        .child(Tab::new().label("Post-response"))
-                        .child(Tab::new().label("Tests")),
+                        .child(Tab::new().label(t("session.rest.script_pre")))
+                        .child(Tab::new().label(t("session.rest.script_post")))
+                        .child(Tab::new().label(t("session.rest.script_tests"))),
                 ),
             )
             .child(div().flex_1().min_h_0().child(Editor::new(editor.state()).bordered(false).h_full()))
@@ -943,7 +949,7 @@ impl RestSession {
 }
 
 fn entity_of(result: &Value) -> Result<Map<String, Value>, String> {
-    result.get("entity").and_then(Value::as_object).cloned().ok_or_else(|| "The request no longer exists.".to_owned())
+    result.get("entity").and_then(Value::as_object).cloned().ok_or_else(|| t("session.rest.gone").to_owned())
 }
 
 impl Render for RestSession {
@@ -958,14 +964,14 @@ impl Render for RestSession {
         }
         let theme = cx.theme().clone();
         match &self.load {
-            LoadState::Loading => return page::loading("Loading request…"),
+            LoadState::Loading => return page::loading(t("session.rest.loading")),
             LoadState::Failed(message) => {
                 return div()
                     .size_full()
                     .p_4()
                     .child(
                         Alert::error("load-failed", SharedString::from(message.clone()))
-                            .title("Couldn't open the request"),
+                            .title(t("session.rest.open_failed")),
                     )
                     .into_any_element();
             }
@@ -987,7 +993,7 @@ impl Render for RestSession {
                 self.url.line_field(cx),
                 Button::new("send-request")
                     .primary()
-                    .label("Send")
+                    .label(t("session.rest.send"))
                     .loading(self.sending)
                     .on_click(cx.listener(|this, _, window, cx| this.send(window, cx))),
                 [],

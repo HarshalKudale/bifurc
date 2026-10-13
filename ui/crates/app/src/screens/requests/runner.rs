@@ -28,6 +28,7 @@ use crate::{
     app_model::{AppModel, ModelEvent},
     components::page,
     engine::{call, describe, failure},
+    i18n::{t, t_with},
     model::{NodeRef, RequestKind, config::RequestStub},
 };
 
@@ -128,7 +129,7 @@ impl RowResult {
             .iter()
             .filter(|test| test.get("passed").and_then(Value::as_bool) != Some(true))
             .map(|test| {
-                let name = test.get("name").and_then(Value::as_str).unwrap_or("Unnamed test");
+                let name = test.get("name").and_then(Value::as_str).unwrap_or(t("requests.runner.unnamed_test"));
                 match test.get("error").and_then(Value::as_str).filter(|e| !e.is_empty()) {
                     Some(error) => format!("{name}: {error}"),
                     None => name.to_owned(),
@@ -150,7 +151,7 @@ impl RowResult {
                 .iter()
                 .map(|test| {
                     (
-                        test.get("name").and_then(Value::as_str).unwrap_or("Unnamed test").to_owned(),
+                        test.get("name").and_then(Value::as_str).unwrap_or(t("requests.runner.unnamed_test")).to_owned(),
                         test.get("passed").and_then(Value::as_bool) == Some(true),
                         test.get("error").and_then(Value::as_str).filter(|e| !e.is_empty()).map(str::to_owned),
                     )
@@ -163,8 +164,8 @@ impl RowResult {
             duration_ms: value.get("responseTime").and_then(Value::as_f64).map_or(0, |ms| ms.max(0.) as u64),
             errors: [
                 text("error"),
-                text("preScriptError").map(|e| format!("Pre-request script: {e}")),
-                text("postScriptError").map(|e| format!("Post-response script: {e}")),
+                text("preScriptError").map(|e| t_with("requests.runner.pre_script_error", &[("error", &e)])),
+                text("postScriptError").map(|e| t_with("requests.runner.post_script_error", &[("error", &e)])),
             ]
             .into_iter()
             .flatten()
@@ -347,7 +348,7 @@ impl FolderRunner {
         let client = self.model.read(cx).client().clone();
         call(&client, cx, "runner.saveConfig", payload, |this, outcome, cx| {
             if let Some(message) = failure(&outcome) {
-                this.report(format!("Couldn't save the run order. {message}"), cx);
+                this.report(t_with("requests.runner.errors.save_order", &[("message", &message)]), cx);
             }
         });
         cx.notify();
@@ -378,11 +379,13 @@ impl FolderRunner {
             }
             other => {
                 let message = match &other {
-                    Ok(result) => result.get("error").and_then(Value::as_str).unwrap_or("The engine refused.").to_owned(),
+                    Ok(result) => {
+                        result.get("error").and_then(Value::as_str).unwrap_or(t("requests.runner.engine_refused")).to_owned()
+                    }
                     Err(error) => describe(error),
                 };
                 this.set_running(false, cx);
-                this.report(format!("Couldn't start the run. {message}"), cx);
+                this.report(t_with("requests.runner.errors.start", &[("message", &message)]), cx);
             }
         });
     }
@@ -397,7 +400,7 @@ impl FolderRunner {
         call(&client, cx, "runner.cancel", self.scope(cx), |this, outcome, cx| {
             if let Some(message) = failure(&outcome) {
                 this.cancelling = false;
-                this.report(format!("Couldn't stop the run. {message}"), cx);
+                this.report(t_with("requests.runner.errors.stop", &[("message", &message)]), cx);
                 cx.notify();
             }
         });
@@ -405,25 +408,42 @@ impl FolderRunner {
 
     /// One line about the run: how far it is, or how it went.
     fn summary(&self, count: usize) -> String {
-        let requests = format!("{count} request{}", if count == 1 { "" } else { "s" });
         if self.results.is_empty() && !self.running {
-            return format!("{requests}, sent in this order.");
+            return if count == 1 {
+                t_with("requests.runner.idle_one", &[("count", &count)])
+            } else {
+                t_with("requests.runner.idle_other", &[("count", &count)])
+            };
         }
         let failed = self.results.values().filter(|result| result.is_failure()).count();
         let tests: usize = self.results.values().map(|result| result.passed + result.failed.len()).sum();
         let tests_failed: usize = self.results.values().map(|result| result.failed.len()).sum();
-        let mut line = if self.running {
-            format!("Running: {} of {} sent", self.completed, self.total)
+        let progress = if self.running {
+            t_with(
+                "requests.runner.summary_running",
+                &[("done", &self.completed), ("total", &self.total)],
+            )
         } else if self.completed < self.total {
-            format!("Stopped after {} of {}", self.completed, self.total)
+            t_with(
+                "requests.runner.summary_stopped",
+                &[("done", &self.completed), ("total", &self.total)],
+            )
         } else {
-            format!("{} sent", self.completed)
+            t_with("requests.runner.summary_done", &[("done", &self.completed)])
         };
-        line.push_str(&format!(" · {failed} failed"));
         if tests > 0 {
-            line.push_str(&format!(" · {}/{tests} tests passed", tests - tests_failed));
+            t_with(
+                "requests.runner.summary_tests",
+                &[
+                    ("progress", &progress),
+                    ("failed", &failed),
+                    ("passed", &(tests - tests_failed)),
+                    ("total", &tests),
+                ],
+            )
+        } else {
+            t_with("requests.runner.summary_failed", &[("progress", &progress), ("failed", &failed)])
         }
-        line
     }
 
     fn render_result(&self, ix: usize, id: &str, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
@@ -439,7 +459,7 @@ impl FolderRunner {
         let status = match result.status {
             Some(status) if status < 400 => Tag::success().small().child(status.to_string()),
             Some(status) => Tag::danger().small().child(status.to_string()),
-            None => Tag::danger().small().child("No response"),
+            None => Tag::danger().small().child(t("requests.runner.no_response")),
         };
         let tests = result.passed + result.failed.len();
         h_flex()
@@ -447,14 +467,14 @@ impl FolderRunner {
             .text_xs()
             .text_color(theme.muted_foreground)
             .children((tests > 0).then(|| {
-                let text = format!("{}/{tests} tests", result.passed);
+                let text = t_with("requests.runner.tests_count", &[("passed", &result.passed), ("total", &tests)]);
                 if result.failed.is_empty() {
                     Tag::success().small().child(text)
                 } else {
                     Tag::danger().small().child(text)
                 }
             }))
-            .child(format!("{} ms", result.duration_ms))
+            .child(t_with("requests.runner.duration", &[("ms", &result.duration_ms)]))
             .child(status)
             .into_any_element()
     }
@@ -492,7 +512,7 @@ impl FolderRunner {
                             .icon(if open { IconName::ChevronDown } else { IconName::ChevronRight })
                             .ghost()
                             .xsmall()
-                            .tooltip(if open { "Hide details" } else { "Show scripts, tests and the response" })
+                            .tooltip(if open { t("requests.runner.hide_details") } else { t("requests.runner.show_details") })
                             .on_click({
                                 let id = id.clone();
                                 cx.listener(move |this, _, _, cx| {
@@ -514,7 +534,7 @@ impl FolderRunner {
                                     .icon(IconName::ChevronUp)
                                     .ghost()
                                     .xsmall()
-                                    .tooltip("Run earlier")
+                                    .tooltip(t("requests.runner.move_up"))
                                     .disabled(self.running || ix == 0)
                                     .on_click(cx.listener(move |this, _, _, cx| this.move_row(ix, true, cx))),
                             )
@@ -523,7 +543,7 @@ impl FolderRunner {
                                     .icon(IconName::ChevronDown)
                                     .ghost()
                                     .xsmall()
-                                    .tooltip("Run later")
+                                    .tooltip(t("requests.runner.move_down"))
                                     .disabled(self.running || ix == last)
                                     .on_click(cx.listener(move |this, _, _, cx| this.move_row(ix, false, cx))),
                             ),
@@ -609,12 +629,12 @@ impl FolderRunner {
             return div()
                 .text_sm()
                 .text_color(theme.muted_foreground)
-                .child("This request has no script here, so nothing ran.")
+                .child(t("requests.runner.no_script"))
                 .into_any_element();
         };
         let outcome = match error {
-            Some(_) => Tag::danger().small().child("Failed"),
-            None => Tag::success().small().child("Ran"),
+            Some(_) => Tag::danger().small().child(t("requests.common.failed")),
+            None => Tag::success().small().child(t("requests.runner.script_ran")),
         };
         let tint = Some(if error.is_some() { theme.danger } else { theme.success });
         v_flex()
@@ -631,7 +651,7 @@ impl FolderRunner {
     fn render_tests(&self, id: &str, result: &RowResult, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
         let theme = cx.theme().clone();
         if result.tests.is_empty() {
-            return div().text_sm().text_color(theme.muted_foreground).child("No tests ran.").into_any_element();
+            return div().text_sm().text_color(theme.muted_foreground).child(t("requests.runner.no_tests")).into_any_element();
         }
         let picked = self.picked.get(id).copied().filter(|ix| *ix < result.tests.len()).unwrap_or(0);
         let list = v_flex().w_64().flex_none().gap_1().children(result.tests.iter().enumerate().map(|(ix, (name, ok, _))| {
@@ -659,7 +679,7 @@ impl FolderRunner {
             .test_script
             .as_deref()
             .map(|script| test_source(script, name).unwrap_or_else(|| script.to_owned()))
-            .unwrap_or_else(|| "The test script is not available.".to_owned());
+            .unwrap_or_else(|| t("requests.runner.no_test_script").to_owned());
         let detail = v_flex()
             .flex_1()
             .min_w_0()
@@ -667,7 +687,11 @@ impl FolderRunner {
             .child(
                 h_flex()
                     .gap_2()
-                    .child(if *ok { Tag::success().small().child("Passed") } else { Tag::danger().small().child("Failed") })
+                    .child(if *ok {
+                        Tag::success().small().child(t("requests.common.passed"))
+                    } else {
+                        Tag::danger().small().child(t("requests.common.failed"))
+                    })
                     .child(div().text_sm().child(name.clone())),
             )
             .children(error.as_ref().map(|error| {
@@ -682,7 +706,7 @@ impl FolderRunner {
             .children((!result.logs.is_empty()).then(|| {
                 v_flex()
                     .gap_1()
-                    .child(self.label("Console", cx))
+                    .child(self.label(t("requests.runner.console"), cx))
                     .child(self.block(format!("test-logs-{id}"), result.logs.join("\n"), None, cx))
             }));
         h_flex().w_full().gap_4().items_start().child(list).child(detail).into_any_element()
@@ -692,7 +716,11 @@ impl FolderRunner {
     fn render_response(&self, id: &str, result: &RowResult, cx: &Context<Self>) -> gpui_kit::AnyElement {
         let theme = cx.theme().clone();
         let Some(status) = result.status else {
-            let reason = if result.errors.is_empty() { "No response came back.".to_owned() } else { result.errors.join("\n") };
+            let reason = if result.errors.is_empty() {
+                t("requests.runner.no_response_came_back").to_owned()
+            } else {
+                result.errors.join("\n")
+            };
             return self.block(format!("response-error-{id}"), reason, Some(theme.danger), cx);
         };
         let tag = if status < 400 { Tag::success() } else { Tag::danger() };
@@ -704,11 +732,16 @@ impl FolderRunner {
                 h_flex()
                     .gap_3()
                     .child(tag.small().child(status.to_string()))
-                    .child(div().text_sm().text_color(theme.muted_foreground).child(format!("{} ms", result.duration_ms))),
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(theme.muted_foreground)
+                            .child(t_with("requests.runner.duration", &[("ms", &result.duration_ms)])),
+                    ),
             )
-            .child(self.label("Headers", cx))
+            .child(self.label(t("requests.common.headers"), cx))
             .child(self.block(format!("response-headers-{id}"), headers, None, cx))
-            .child(self.label("Body", cx))
+            .child(self.label(t("requests.common.body"), cx))
             .child(self.block(format!("response-body-{id}"), result.response_body.clone(), None, cx))
             .into_any_element()
     }
@@ -738,13 +771,15 @@ impl FolderRunner {
                         this.tabs.insert(key.clone(), *ix);
                         cx.notify();
                     }))
-                    .child(Tab::new().label("Response"))
-                    .child(Tab::new().label("Pre script"))
-                    .child(Tab::new().label("Post script"))
-                    .child(Tab::new().label(format!(
-                        "Tests {}/{}",
-                        result.tests.iter().filter(|(_, ok, _)| *ok).count(),
-                        result.tests.len()
+                    .child(Tab::new().label(t("requests.common.response")))
+                    .child(Tab::new().label(t("requests.runner.tab_pre_script")))
+                    .child(Tab::new().label(t("requests.runner.tab_post_script")))
+                    .child(Tab::new().label(t_with(
+                        "requests.runner.tab_tests",
+                        &[
+                            ("passed", &result.tests.iter().filter(|(_, ok, _)| *ok).count()),
+                            ("total", &result.tests.len()),
+                        ],
                     ))),
             )
             .child(content)
@@ -788,11 +823,11 @@ impl FolderRunner {
         let elapsed: u64 = self.results.values().map(|result| result.duration_ms).sum();
         let percent = |part: usize, whole: usize| if whole == 0 { 0. } else { part as f32 * 100. / whole as f32 };
         let state = if self.running {
-            "running"
+            t("requests.runner.state_running")
         } else if self.completed < self.total {
-            "stopped early"
+            t("requests.runner.state_stopped")
         } else {
-            "done"
+            t("requests.runner.state_done")
         };
         h_flex()
             .flex_none()
@@ -803,7 +838,7 @@ impl FolderRunner {
             .border_color(theme.border)
             .child(self.stat_card(
                 "stat-sent",
-                "Requests sent",
+                t("requests.runner.stat.sent"),
                 format!("{}/{}", self.completed, self.total),
                 theme.foreground,
                 state.to_owned(),
@@ -812,28 +847,32 @@ impl FolderRunner {
             ))
             .child(self.stat_card(
                 "stat-failed",
-                "Failed requests",
+                t("requests.runner.stat.failed"),
                 failed.to_string(),
                 if failed > 0 { theme.danger } else { theme.success },
-                format!("of {} sent", self.completed),
+                t_with("requests.runner.stat.failed_note", &[("count", &self.completed)]),
                 Some(percent(failed, self.completed)),
                 cx,
             ))
             .child(self.stat_card(
                 "stat-tests",
-                "Tests passed",
+                t("requests.runner.stat.tests"),
                 format!("{passed}/{tests}"),
                 if tests == passed { theme.success } else { theme.danger },
-                if tests == 0 { "no tests ran".to_owned() } else { format!("{} failed", tests - passed) },
+                if tests == 0 {
+                    t("requests.runner.stat.no_tests").to_owned()
+                } else {
+                    t_with("requests.runner.stat.tests_failed", &[("count", &(tests - passed))])
+                },
                 Some(percent(passed, tests)),
                 cx,
             ))
             .child(self.stat_card(
                 "stat-time",
-                "Response time",
-                format!("{elapsed} ms"),
+                t("requests.runner.stat.time"),
+                t_with("requests.runner.duration", &[("ms", &elapsed)]),
                 theme.foreground,
-                "all responses together".to_owned(),
+                t("requests.runner.stat.time_note").to_owned(),
                 None,
                 cx,
             ))
@@ -848,7 +887,7 @@ impl Render for FolderRunner {
         let last = rows.len().saturating_sub(1);
         let action = if self.running {
             Button::new("cancel-run")
-                .label("Stop")
+                .label(t("requests.runner.stop"))
                 .loading(self.cancelling)
                 .disabled(self.cancelling)
                 .on_click(cx.listener(|this, _, _, cx| this.cancel(cx)))
@@ -856,12 +895,12 @@ impl Render for FolderRunner {
             Button::new("start-run")
                 .primary()
                 .icon(IconName::Play)
-                .label("Run folder")
+                .label(t("requests.runner.run"))
                 .disabled(rows.is_empty())
                 .on_click(cx.listener(|this, _, _, cx| this.run(cx)))
         };
         let body = if rows.is_empty() {
-            page::empty("Nothing to run", "This folder has no requests in it. Folders inside it are run on their own.")
+            page::empty(t("requests.runner.empty.title"), t("requests.runner.empty.description"))
         } else {
             let rows = v_flex()
                 .id("run-rows")

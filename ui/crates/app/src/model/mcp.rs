@@ -11,6 +11,7 @@
 use serde_json::Value;
 
 use super::socket::SocketState;
+use crate::i18n::{t, t_with};
 
 /// One argument a tool or a prompt takes.
 #[derive(Debug, Clone, PartialEq)]
@@ -226,14 +227,14 @@ impl LineKind {
     }
 
     pub fn label(self) -> &'static str {
-        match self {
-            LineKind::Tool => "tool",
-            LineKind::Prompt => "prompt",
-            LineKind::Resource => "resource",
-            LineKind::Notification => "notice",
-            LineKind::Request => "request",
-            LineKind::Stderr => "stderr",
-        }
+        t(match self {
+            LineKind::Tool => "model.mcp.line.tool",
+            LineKind::Prompt => "model.mcp.line.prompt",
+            LineKind::Resource => "model.mcp.line.resource",
+            LineKind::Notification => "model.mcp.line.notice",
+            LineKind::Request => "model.mcp.line.request",
+            LineKind::Stderr => "model.mcp.line.stderr",
+        })
     }
 
     /// Whether the line is something this side asked for.
@@ -301,18 +302,18 @@ impl McpLine {
             return None;
         }
         Some(match (self.status, self.duration_ms) {
-            (CallStatus::Pending, _) => "waiting…".to_owned(),
-            (CallStatus::Ok, Some(took)) => format!("{took} ms"),
-            (CallStatus::Ok, None) => "ok".to_owned(),
-            (CallStatus::Error, Some(took)) => format!("failed · {took} ms"),
-            (CallStatus::Error, None) => "failed".to_owned(),
+            (CallStatus::Pending, _) => t("model.mcp.waiting").to_owned(),
+            (CallStatus::Ok, Some(took)) => t_with("model.mcp.took", &[("ms", &took)]),
+            (CallStatus::Ok, None) => t("model.mcp.ok").to_owned(),
+            (CallStatus::Error, Some(took)) => t_with("model.mcp.failed_took", &[("ms", &took)]),
+            (CallStatus::Error, None) => t("model.mcp.failed").to_owned(),
         })
     }
 
     /// What the line opens to: the answer of a call, or what was sent.
     pub fn shown(&self) -> String {
         match (self.kind.is_call(), self.status) {
-            (true, CallStatus::Pending) => "The server has not answered yet.".to_owned(),
+            (true, CallStatus::Pending) => t("model.mcp.not_answered").to_owned(),
             _ => self.text.clone(),
         }
     }

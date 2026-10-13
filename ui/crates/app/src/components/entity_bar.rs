@@ -24,6 +24,7 @@ use gpui_kit::{App, ClickEvent, Context, IntoElement, ParentElement as _, Shared
 
 use crate::{
     app_model::AppModel,
+    i18n::t,
     model::{
         git::FileState,
         tree::{FolderRow, folder_choices},
@@ -108,26 +109,26 @@ impl EntityBar {
 
     fn status(&self) -> (SharedString, bool) {
         if self.saving {
-            return ("Saving…".into(), false);
+            return (t("components.entity_bar.status.saving").into(), false);
         }
         if let Some(problem) = &self.problem {
             return (problem.clone(), true);
         }
         if self.draft {
-            return ("Draft. Save to create it.".into(), false);
+            return (t("components.entity_bar.status.draft").into(), false);
         }
         if self.unsaved {
-            return ("Saving…".into(), false);
+            return (t("components.entity_bar.status.saving").into(), false);
         }
-        let text = match self.git {
+        let text = t(match self.git {
             Some(FileState::New | FileState::Modified | FileState::Deleted) if self.read_only => {
-                "Saved on this device. The workspace is read-only."
+                "components.entity_bar.status.saved_read_only"
             }
-            Some(FileState::New) => "Saved. Not synced yet.",
-            Some(FileState::Modified) | Some(FileState::Deleted) => "Saved. Changes not synced.",
-            Some(FileState::Clean) => "Saved and synced.",
-            None => "Saved.",
-        };
+            Some(FileState::New) => "components.entity_bar.status.saved_not_synced",
+            Some(FileState::Modified) | Some(FileState::Deleted) => "components.entity_bar.status.saved_changes_not_synced",
+            Some(FileState::Clean) => "components.entity_bar.status.saved_and_synced",
+            None => "components.entity_bar.status.saved",
+        });
         (text.into(), false)
     }
 }
@@ -155,7 +156,7 @@ fn folder_button<V: 'static>(picker: FolderPicker, on: &OnAction<V>, cx: &mut Co
         .small()
         .icon(IconName::Folder)
         .label(label)
-        .tooltip("The folder this is kept in. Choose another to move it.")
+        .tooltip(t("components.entity_bar.folder.tooltip"))
         .dropdown_menu(move |menu, _, _| {
             let item = |label: SharedString, target: Option<String>| {
                 let (view, on) = (view.clone(), on.clone());
@@ -182,11 +183,11 @@ pub fn entity_bar<V: 'static>(
     let (status, is_problem) = bar.status();
     let pending = matches!(bar.git, Some(FileState::New | FileState::Modified | FileState::Deleted));
     let settled = !bar.draft && !bar.busy && !bar.saving && !bar.unsaved;
-    let sync_tooltip = match (bar.read_only, bar.has_remote) {
-        (true, _) => "Read-only workspace: your account has read access to its repository",
-        (false, true) => "Commit this version and push it",
-        (false, false) => "Commit this version",
-    };
+    let sync_tooltip = t(match (bar.read_only, bar.has_remote) {
+        (true, _) => "components.entity_bar.sync.tooltip_read_only",
+        (false, true) => "components.entity_bar.sync.tooltip_push",
+        (false, false) => "components.entity_bar.sync.tooltip_commit",
+    });
 
     h_flex()
         .flex_none()
@@ -212,7 +213,11 @@ pub fn entity_bar<V: 'static>(
                 .ghost()
                 .small()
                 .icon(IconName::Delete)
-                .label(if bar.draft { "Discard" } else { "Delete" })
+                .label(t(if bar.draft {
+                    "components.entity_bar.delete.discard"
+                } else {
+                    "components.entity_bar.delete.delete"
+                }))
                 .disabled(!bar.deletable)
                 .on_click(listener(&on, EntityAction::Delete, cx)),
         )
@@ -220,8 +225,8 @@ pub fn entity_bar<V: 'static>(
             Button::new("entity-revert")
                 .ghost()
                 .small()
-                .label("Revert")
-                .tooltip("Go back to the last synced version")
+                .label(t("components.entity_bar.revert.label"))
+                .tooltip(t("components.entity_bar.revert.tooltip"))
                 .disabled(!settled || bar.git != Some(FileState::Modified))
                 .on_click(listener(&on, EntityAction::Revert, cx)),
         )
@@ -229,14 +234,14 @@ pub fn entity_bar<V: 'static>(
             Button::new("entity-sync")
                 .outline()
                 .small()
-                .label("Sync")
+                .label(t("components.entity_bar.sync.label"))
                 .tooltip(sync_tooltip)
                 .loading(bar.busy)
                 .disabled(!settled || !pending || bar.read_only)
                 .on_click(listener(&on, EntityAction::Sync, cx)),
         )
         .when(bar.closable, |this| {
-            this.child(Button::new("entity-close").ghost().small().label("Close").on_click(listener(
+            this.child(Button::new("entity-close").ghost().small().label(t("components.entity_bar.close")).on_click(listener(
                 &on,
                 EntityAction::Close,
                 cx,
@@ -246,8 +251,12 @@ pub fn entity_bar<V: 'static>(
             Button::new("entity-save")
                 .primary()
                 .small()
-                .label("Save")
-                .tooltip(if bar.draft { "Create it" } else { "Changes are saved as you make them" })
+                .label(t("components.entity_bar.save.label"))
+                .tooltip(t(if bar.draft {
+                    "components.entity_bar.save.tooltip_draft"
+                } else {
+                    "components.entity_bar.save.tooltip_autosave"
+                }))
                 .loading(bar.draft && bar.saving)
                 .disabled(!bar.draft || bar.saving)
                 .on_click(listener(&on, EntityAction::Save, cx)),
