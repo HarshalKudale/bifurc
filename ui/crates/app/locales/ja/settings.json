@@ -161,6 +161,11 @@
 
   "privacy.group": "プライバシー",
 
+  "review.group": "レビュー",
+  "review.title": "Bifurc を評価する",
+  "review.link": "Microsoft Store でレビューする",
+  "review.description": "感想をお寄せください。1分ほどで完了し、とても助けになります。",
+
   "updates.group": "更新",
   "updates.automatic_title": "更新を自動的に確認",
   "updates.automatic_description": "1 日 1 回確認します。リクエストにはこのアプリのバージョンのみが含まれます。",
