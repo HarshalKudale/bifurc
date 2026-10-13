@@ -17,6 +17,9 @@ use crate::{
 /// The events a run reports through.
 const EVENTS: [&str; 2] = ["event.flow.progress", "event.flow.finished"];
 
+/// The events a load test reports through.
+const LOAD_EVENTS: [&str; 2] = ["event.flow.loadtest.progress", "event.flow.loadtest.finished"];
+
 /// `flows list|show|run`. A run writes a line to `out` as each node finishes: a flow can take minutes, and
 /// what it has done so far should not wait for its end.
 pub fn flows(ctx: &mut Context, sub: Option<&str>, out: &mut dyn Write) -> Result<String> {
@@ -41,10 +44,18 @@ pub fn flows(ctx: &mut Context, sub: Option<&str>, out: &mut dyn Write) -> Resul
             let checked = ctx.request("flow.validate", json!({ "workspaceId": workspace, "id": id }))?;
             Ok(describe_flow(&flow, &checked))
         }
-        "run" => {
-            ctx.accept(&["input", "timeout", "max-events"], 1)?;
+        verb @ ("run" | "loadtest") => {
+            let load = verb == "loadtest";
+            ctx.accept(&["input", "timeout", "max-events", "instances"][..if load { 4 } else { 3 }], 1)?;
             let wanted = need(args.positional(2), "flow id or name")?;
             let mut payload = json!({});
+            if load {
+                let instances = need(args.flag("instances"), "--instances")?;
+                let instances: u64 = instances.parse().ok().filter(|n| (1..=10_000).contains(n)).ok_or_else(|| {
+                    CliError::msg(format!("--instances must be a whole number from 1 to 10000, not \"{instances}\""))
+                })?;
+                payload["instances"] = json!(instances);
+            }
             let mut inputs = serde_json::Map::new();
             for raw in args.flags("input") {
                 let Some((name, value)) = raw.split_once('=').filter(|(name, _)| !name.is_empty()) else {
@@ -72,7 +83,7 @@ pub fn flows(ctx: &mut Context, sub: Option<&str>, out: &mut dyn Write) -> Resul
             let id = find_flow(ctx, &workspace, &wanted)?;
             payload["workspaceId"] = json!(workspace);
             payload["id"] = json!(id);
-            run_flow(ctx, payload, out)
+            if load { load_test(ctx, payload, out) } else { run_flow(ctx, payload, out) }
         }
         other => Err(unknown_verb("flows", other)),
     }
@@ -154,20 +165,114 @@ fn node_line(node: &Value) -> Option<String> {
     }
 }
 
+/// The engine's answer to a start it refused, as the command's failure: the error and the flow's problems.
+fn refused(started: &Value) -> Result<()> {
+    if started.get("ok").and_then(Value::as_bool) != Some(false) {
+        return Ok(());
+    }
+    let mut lines = vec![js_template(started.get("error"))];
+    let problems = started.get("problems").and_then(Value::as_array).map(Vec::as_slice).unwrap_or_default();
+    lines.extend(problems.iter().map(|p| {
+        let at = p.get("nodeId").and_then(Value::as_str).filter(|id| !id.is_empty()).unwrap_or("flow");
+        format!("  {at}: {}", js_template(p.get("message")))
+    }));
+    Err(CliError::Failed(lines.join("\n")))
+}
+
+/// Start the load test `payload` asks for and follow it to its end; the summary is the answer.
+fn load_test(ctx: &mut Context, payload: Value, out: &mut dyn Write) -> Result<String> {
+    ctx.request("subscribe", json!({ "events": LOAD_EVENTS }))?;
+    let started = ctx.request("flow.loadtest.start", payload.clone())?;
+    refused(&started)?;
+    let load_id = started.get("loadId").cloned().unwrap_or(Value::Null);
+    let count = |from: &Value, key: &str| from.get(key).and_then(Value::as_u64).unwrap_or(0);
+
+    let mut tenths = 0;
+    let report = loop {
+        let event = match ctx.engine()?.next_event() {
+            Ok(Some(event)) => event,
+            // The connection ended before the finish was seen: the engine still holds the report.
+            Ok(None) | Err(_) => {
+                let target = json!({ "workspaceId": payload["workspaceId"], "id": payload["id"] });
+                let latest = ctx.request("flow.loadtest.status", target)?;
+                if latest.get("loadId") == Some(&load_id) && latest.get("finishedAt").is_some_and(|at| !at.is_null()) {
+                    break latest;
+                }
+                return Err(CliError::msg("the connection to the engine ended before the load test finished"));
+            }
+        };
+        let told = event.get("payload").unwrap_or(&Value::Null);
+        if told.get("loadId") != Some(&load_id) {
+            continue;
+        }
+        match event.get("event").and_then(Value::as_str) {
+            Some("event.flow.loadtest.progress") => {
+                let (all, running) = (count(told, "instances").max(1), count(told, "running"));
+                // A line for each tenth of the instances that is done, not one for each report.
+                let done = (all - running.min(all)) * 10 / all;
+                if done > tenths && !ctx.json {
+                    let _ = writeln!(out, "  {} of {all} done, {} failed", all - running, count(told, "failed"));
+                }
+                tenths = tenths.max(done);
+            }
+            Some("event.flow.loadtest.finished") => break told.get("report").cloned().unwrap_or(Value::Null),
+            _ => {}
+        }
+    };
+    let clean = report.get("status").and_then(Value::as_str) == Some("finished") && count(&report, "failed") == 0;
+    let summary = ctx.print(&report, || summarize_load(&report));
+    if clean { Ok(summary) } else { Err(CliError::Failed(summary)) }
+}
+
+/// The end of a load test: the counts, how long an instance took, each node's times, and what failed how often.
+fn summarize_load(report: &Value) -> String {
+    let ms = |key: &str| js_template(report.get(key));
+    let mut lines = vec![
+        format!(
+            "{}: {}  ({} instances, {} passed, {} failed, {:.1} per second)",
+            js_template(report.get("flowName")),
+            js_template(report.get("status")),
+            ms("instances"),
+            ms("passed"),
+            ms("failed"),
+            report.get("perSecond").and_then(Value::as_f64).unwrap_or(0.0),
+        ),
+        format!(
+            "ms per instance: min {}, avg {}, p50 {}, p95 {}, p99 {}, max {}",
+            ms("minMs"),
+            ms("avgMs"),
+            ms("p50Ms"),
+            ms("p95Ms"),
+            ms("p99Ms"),
+            ms("maxMs")
+        ),
+    ];
+    let list = |key: &str| report.get(key).and_then(Value::as_array).map(Vec::as_slice).unwrap_or_default();
+    lines.push(table(list("nodes"), &["name", "runs", "failed", "avgMs", "maxMs"]));
+    // The same failure of many instances is one line.
+    let mut failures: Vec<(String, u64)> = Vec::new();
+    for row in list("rows") {
+        let status = js_template(row.get("status"));
+        let what = match row.get("error").and_then(Value::as_str) {
+            Some(error) => error.to_string(),
+            None if status != "succeeded" => format!("{status} at {}", js_template(row.get("at"))),
+            None => continue,
+        };
+        match failures.iter_mut().find(|(seen, _)| *seen == what) {
+            Some((_, times)) => *times += 1,
+            None => failures.push((what, 1)),
+        }
+    }
+    lines.extend(failures.iter().map(|(what, times)| format!("  FAIL x{times}: {what}")));
+    lines.join("\n")
+}
+
 /// Start the run `payload` asks for and follow it to its end; the summary is the answer.
 fn run_flow(ctx: &mut Context, payload: Value, out: &mut dyn Write) -> Result<String> {
     // Subscribe first: the run's events are not replayed to a session that comes late.
     ctx.request("subscribe", json!({ "events": EVENTS }))?;
     let started = ctx.request("flow.run", payload.clone())?;
-    if started.get("ok").and_then(Value::as_bool) == Some(false) {
-        let mut lines = vec![js_template(started.get("error"))];
-        let problems = started.get("problems").and_then(Value::as_array).map(Vec::as_slice).unwrap_or_default();
-        lines.extend(problems.iter().map(|p| {
-            let at = p.get("nodeId").and_then(Value::as_str).filter(|id| !id.is_empty()).unwrap_or("flow");
-            format!("  {at}: {}", js_template(p.get("message")))
-        }));
-        return Err(CliError::Failed(lines.join("\n")));
-    }
+    refused(&started)?;
     let run_id = js_template(started.get("runId"));
     let mine = |event: &Value| {
         let p = event.get("payload").unwrap_or(&Value::Null);
@@ -486,6 +591,68 @@ mod tests {
             let (out, lines, calls) = go(&argv, engine(), vec![]);
             assert_eq!(out.unwrap_err(), CliError::msg(message), "{argv:?}");
             assert!(lines.is_empty() && calls.is_empty(), "{argv:?}");
+        }
+    }
+
+    #[test]
+    fn a_load_test_prints_how_far_it_is_and_what_failed_how_often() {
+        let told = |name: &str, load_id: &str, payload: Value| {
+            let mut body = json!({"workspaceId": "w1", "flowId": "f1", "loadId": load_id});
+            body.as_object_mut().unwrap().extend(payload.as_object().unwrap().clone());
+            json!({"event": name, "seq": 1, "payload": body})
+        };
+        let progress = |load_id: &str, running: u64, failed: u64| {
+            told("event.flow.loadtest.progress", load_id, json!({"instances": 20, "running": running, "failed": failed}))
+        };
+        let finished = |failed: u64| {
+            let row = |status: &str, error: Value| json!({"status": status, "at": "Login", "error": error, "failedTests": 0});
+            let mut rows = vec![row("succeeded", Value::Null); (20 - failed) as usize];
+            rows.extend(vec![row("failed", json!("Login: HTTP 503")); failed as usize]);
+            let report = json!({"flowName": "Checkout", "loadId": "l1", "status": "finished", "instances": 20,
+                "passed": 20 - failed, "failed": failed, "perSecond": 12.34, "minMs": 5, "avgMs": 8, "p50Ms": 7,
+                "p95Ms": 11, "p99Ms": 12, "maxMs": 12, "rows": rows,
+                "nodes": [{"id": "n2", "name": "Login", "runs": 20, "failed": failed, "avgMs": 6, "maxMs": 9}]});
+            told("event.flow.loadtest.finished", "l1", json!({"report": report}))
+        };
+        let mut answers = engine();
+        answers.push(("flow.loadtest.start", Ok(json!({"ok": true, "loadId": "l1", "instances": 20}))));
+
+        let events = vec![progress("other", 0, 20), progress("l1", 19, 0), progress("l1", 10, 0), progress("l1", 9, 1), finished(0)];
+        let argv = ["flows", "loadtest", "Checkout", "--instances", "20", "--input", "user=bob", "--timeout", "2"];
+        let (out, lines, calls) = go(&argv, answers.clone(), events);
+        assert_eq!(lines, ["  10 of 20 done, 0 failed"]);
+        assert_eq!(
+            out.unwrap(),
+            "Checkout: finished  (20 instances, 20 passed, 0 failed, 12.3 per second)\n\
+             ms per instance: min 5, avg 8, p50 7, p95 11, p99 12, max 12\n\
+             NAME   RUNS  FAILED  AVGMS  MAXMS\n\
+             Login  20    0       6      9"
+        );
+        assert_eq!(
+            payloads(&calls, "flow.loadtest.start"),
+            [json!({"instances": 20, "inputs": {"user": "bob"}, "timeoutMs": 2000, "workspaceId": "w1", "id": "f1"})]
+        );
+
+        // An instance that failed fails the command, and the same failure is told once.
+        let argv = ["flows", "loadtest", "f1", "--instances", "20"];
+        let (out, _, _) = go(&argv, answers.clone(), vec![finished(3)]);
+        let CliError::Failed(report) = out.unwrap_err() else { panic!("a failed instance is a failed command") };
+        assert!(report.ends_with("\n  FAIL x3: Login: HTTP 503"), "{report}");
+
+        for (argv, message) in [
+            (vec!["flows", "loadtest", "f1"], "missing --instances"),
+            (
+                vec!["flows", "loadtest", "f1", "--instances", "0"],
+                "--instances must be a whole number from 1 to 10000, not \"0\"",
+            ),
+            (
+                vec!["flows", "run", "f1", "--instances", "2"],
+                "unknown option --instances for \"flows run\" (see: bifurc flows --help)",
+            ),
+        ] {
+            let (out, _, calls) = go(&argv, answers.clone(), vec![]);
+            assert_eq!(out.unwrap_err(), CliError::msg(message), "{argv:?}");
+            assert!(calls.is_empty(), "{argv:?}");
         }
     }
 

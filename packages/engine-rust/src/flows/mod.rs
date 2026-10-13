@@ -5,6 +5,7 @@
 //! `flow.progress` and `flow.finished` events.
 
 mod condition;
+mod loadtest;
 pub mod model;
 mod nodes;
 mod reference;
@@ -60,5 +61,15 @@ pub fn register(registry: &mut CommandRegistry) {
 
     registry.register_sync("flow.status", |params, _| {
         Ok(run::status(str_of(&params, "workspaceId"), str_of(&params, "id")).unwrap_or(Value::Null))
+    });
+
+    registry.register_sync("flow.loadtest.start", |params, ctx| loadtest::start(ctx, &params));
+
+    registry.register_sync("flow.loadtest.cancel", |params, _| {
+        Ok(loadtest::cancel(str_of(&params, "workspaceId"), str_of(&params, "id")))
+    });
+
+    registry.register_sync("flow.loadtest.status", |params, _| {
+        Ok(loadtest::status(str_of(&params, "workspaceId"), str_of(&params, "id")).unwrap_or(Value::Null))
     });
 }
