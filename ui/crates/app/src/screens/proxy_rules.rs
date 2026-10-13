@@ -399,6 +399,18 @@ impl ProxyRulesScreen {
         }
     }
 
+    /// Selects the rule `by` places away from the selected one, wrapping around.
+    pub fn step(&mut self, by: isize, window: &mut Window, cx: &mut Context<Self>) {
+        let len = self.rules.len() as isize;
+        if len == 0 {
+            return;
+        }
+        let at = self.saved_id().and_then(|id| self.rules.iter().position(|r| text(r, "id") == id));
+        let next = at.map_or(0, |ix| (ix as isize + by).rem_euclid(len) as usize);
+        let id = text(&self.rules[next], "id");
+        self.go_to(Selection::Saved(id), window, cx);
+    }
+
     /// Starts a rule that Save will create.
     pub fn new_rule(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.go_to(Selection::Draft, window, cx);

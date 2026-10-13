@@ -209,6 +209,17 @@ impl FlowsScreen {
         self.sync_views(cx);
     }
 
+    /// Selects the flow `by` places away from the open one, wrapping around.
+    pub fn step(&mut self, by: isize, window: &mut Window, cx: &mut Context<Self>) {
+        let ids: Vec<String> = self.model.read(cx).config().flows.iter().map(|flow| flow.id.clone()).collect();
+        if ids.is_empty() {
+            return;
+        }
+        let at = ids.iter().position(|id| Some(id) == self.selected.as_ref());
+        let next = at.map_or(0, |ix| (ix as isize + by).rem_euclid(ids.len() as isize) as usize);
+        self.select(ids[next].clone(), window, cx);
+    }
+
     pub fn select(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
         if self.selected.as_deref() == Some(id.as_str()) {
             return;
