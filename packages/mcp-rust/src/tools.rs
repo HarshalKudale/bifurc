@@ -730,6 +730,36 @@ pub fn catalog() -> Vec<Tool> {
                 typed("max_events", "max-events", Type::Integer, "Stop after this many messages of a stream node."),
             ],
         },
+        Row {
+            name: "flows_loadtest",
+            words: &["flows", "loadtest"],
+            summary: "Load test an API: run a flow many times at once and return how the instances did.",
+            details: "Returns how many instances passed and failed, the times (p50, p95, p99), each node's times and \
+                what failed how often. It sends real traffic: every instance sends every request of the flow. The result is an \
+                error when an instance fails. An instance is stopped after `timeout` seconds (default 120).",
+            effect: Effect::Runs,
+            upfront: false,
+            scoped: true,
+            params: vec![
+                operand("flow", "The flow's id or name.").required(),
+                typed("instances", "instances", Type::Integer, "How many runs to start together, 1 to 10000.")
+                    .required(),
+                Param {
+                    name: "inputs",
+                    about: "Values for the inputs the flow declares, by name; every instance gets the same.",
+                    ty: Type::TextMap,
+                    place: Place::Pairs("input", "="),
+                    required: false,
+                },
+                Param {
+                    name: "timeout",
+                    about: "Seconds before an instance is stopped. Default 120; 0 is no limit.",
+                    ty: Type::Number,
+                    place: Place::OptionOr("timeout", "120"),
+                    required: false,
+                },
+            ],
+        },
         // -- Workspaces ---------------------------------------------------------------------------------------
         Row {
             name: "workspaces_list",

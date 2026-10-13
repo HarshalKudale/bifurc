@@ -36,11 +36,36 @@ tokio::task_local! {
     static WORKSPACE: String;
 }
 
+tokio::task_local! {
+    static PRIVATE: String;
+}
+
 static JARS: LazyLock<Mutex<HashMap<String, CookieStore>>> = LazyLock::new(Default::default);
 
 /// Run `work` with `ws_id`'s jar in reach of every request it sends on this task.
 pub async fn scoped<F: Future>(ws_id: &str, work: F) -> F::Output {
     WORKSPACE.scope(ws_id.to_string(), work).await
+}
+
+/// Run `work` with jars of its own, named `owner`, in place of the workspaces': what one user among many at
+/// once has. Such a jar starts empty, is never written or announced, and is gone when `work` is done.
+pub async fn private<F: Future>(owner: &str, work: F) -> F::Output {
+    let out = PRIVATE.scope(owner.to_string(), work).await;
+    JARS.lock().retain(|key, _| key.split_once('#').is_none_or(|(_, of)| of != owner));
+    out
+}
+
+/// The jar a request of `ws_id` sent from this task uses: the workspace's, or the task's own under
+/// [`private`]. A task spawned to send takes it along, as it takes the workspace: `scoped(&jar_of(ws_id), …)`.
+pub fn jar_of(ws_id: &str) -> String {
+    match PRIVATE.try_with(String::clone) {
+        Ok(owner) if !is_private(ws_id) => format!("{ws_id}#{owner}"),
+        _ => ws_id.to_string(),
+    }
+}
+
+fn is_private(jar: &str) -> bool {
+    jar.contains('#')
 }
 
 fn jar_file(ws_id: &str) -> PathBuf {
@@ -53,9 +78,10 @@ fn clears_on_restart(ws_id: &str) -> bool {
 
 /// The workspace's jar, read from its file the first time it is asked for when the workspace keeps cookies.
 fn with_jar<T>(ws_id: &str, work: impl FnOnce(&mut CookieStore) -> T) -> T {
+    let key = jar_of(ws_id);
     let mut jars = JARS.lock();
-    let jar = jars.entry(ws_id.to_string()).or_insert_with(|| {
-        if clears_on_restart(ws_id) {
+    let jar = jars.entry(key.clone()).or_insert_with(|| {
+        if is_private(&key) || clears_on_restart(ws_id) {
             return CookieStore::default();
         }
         std::fs::File::open(jar_file(ws_id))
@@ -69,7 +95,7 @@ fn with_jar<T>(ws_id: &str, work: impl FnOnce(&mut CookieStore) -> T) -> T {
 /// Write the jar when the workspace keeps cookies. Session cookies are kept too: the engine has no "browser
 /// closed" moment other than the restart the user chose to keep them through.
 fn save(ws_id: &str, jar: &CookieStore) {
-    if clears_on_restart(ws_id) {
+    if is_private(&jar_of(ws_id)) || clears_on_restart(ws_id) {
         return;
     }
     let mut out = Vec::new();
@@ -81,6 +107,9 @@ fn save(ws_id: &str, jar: &CookieStore) {
 }
 
 fn changed(ws_id: &str) {
+    if is_private(&jar_of(ws_id)) {
+        return;
+    }
     bus().emit("cookies.changed", json!({ "workspaceId": ws_id }));
 }
 

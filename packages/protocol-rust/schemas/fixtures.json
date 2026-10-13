@@ -499,6 +499,36 @@
    "workspaceId": "ws1"
   }
  },
+ "flow.loadtest.cancel": {
+  "valid": {
+   "workspaceId": "ws1",
+   "id": "f1"
+  },
+  "invalid": {
+   "workspaceId": "ws1"
+  }
+ },
+ "flow.loadtest.start": {
+  "valid": {
+   "workspaceId": "ws1",
+   "id": "f1",
+   "instances": 500
+  },
+  "invalid": {
+   "workspaceId": "ws1",
+   "id": "f1",
+   "instances": 0
+  }
+ },
+ "flow.loadtest.status": {
+  "valid": {
+   "workspaceId": "ws1",
+   "id": "f1"
+  },
+  "invalid": {
+   "workspaceId": "ws1"
+  }
+ },
  "flow.run": {
   "valid": {
    "workspaceId": "ws1",
