@@ -123,6 +123,7 @@ impl ListenerCore {
         let message = bind_error_message(err, port);
         self.state.lock().error = Some(message.clone());
         emit_server_error(&message);
+        crate::analytics::failed("listener_bind");
     }
 
     async fn rebind(&self, port: u16, generation: u64, handler: ConnectionHandler) {

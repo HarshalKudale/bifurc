@@ -23,6 +23,7 @@ use bootstrap::Bootstrap;
 use preferences::Preferences;
 
 fn main() {
+    bifurc_engine_client::crash::install("desktop", env!("CARGO_PKG_VERSION"), SidecarConfig::default().data_dir);
     gpui_kit::application().with_assets(gpui_kit::assets::Assets).run(|cx| {
         gpui_kit::init(cx);
 
