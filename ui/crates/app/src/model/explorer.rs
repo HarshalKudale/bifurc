@@ -11,6 +11,7 @@ use super::{
     config::{ConfigSnapshot, RequestStub},
     kind::RequestKind,
 };
+use crate::i18n::t;
 
 /// Identity of a tree row. Stable across refreshes, which is what keeps selection and expansion in place.
 #[derive(Debug, Clone, PartialEq, Eq, Hash)]
@@ -67,7 +68,7 @@ fn display_name(stub: &RequestStub) -> String {
     } else if !stub.target.is_empty() {
         stub.target.clone()
     } else {
-        "Untitled".to_owned()
+        t("model.explorer.untitled").to_owned()
     }
 }
 

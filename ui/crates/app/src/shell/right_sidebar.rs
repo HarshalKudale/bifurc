@@ -30,6 +30,7 @@ use crate::{
     app_model::{AppModel, ModelEvent},
     components::{Syntax, commit_diffs::CommitDiffs, page},
     engine::{call, describe},
+    i18n::{t, t_with},
     model::{
         git::{FileState, HistoryEntry, date_time_utc, parse_history},
         snippet::{SnippetKind, snippet},
@@ -50,10 +51,10 @@ const PANELS: [Panel; 4] = [Panel::History, Panel::Snippet, Panel::Variables, Pa
 impl Panel {
     fn label(self) -> &'static str {
         match self {
-            Panel::History => "History",
-            Panel::Snippet => "Snippet",
-            Panel::Variables => "Variables",
-            Panel::Vault => "Vault",
+            Panel::History => t("shell.right_sidebar.panel_history"),
+            Panel::Snippet => t("shell.right_sidebar.panel_snippet"),
+            Panel::Variables => t("shell.right_sidebar.panel_variables"),
+            Panel::Vault => t("shell.right_sidebar.panel_vault"),
         }
     }
 }
@@ -207,25 +208,29 @@ impl RightSidebar {
     fn render_history(&self, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
         let theme = cx.theme().clone();
         let Some(target) = &self.target else {
-            return page::empty("Nothing open", "Open a request to see the commits that changed it.");
+            return page::empty(t("shell.right_sidebar.nothing_open"), t("shell.right_sidebar.open_for_commits"));
         };
         let state = target.entity_id.as_deref().and_then(|id| self.model.read(cx).git().entity_state(id));
         if target.entity_id.is_none() {
-            return page::empty("Not saved yet", "History starts when the request is saved and published.");
+            return page::empty(t("shell.right_sidebar.not_saved_yet"), t("shell.right_sidebar.history_starts"));
         }
         let entries = match &self.history {
-            History::Idle => return page::empty("No history", "This item is not tracked in the workspace repository."),
-            History::Loading => return page::loading("Loading history…"),
-            History::Failed(message) => return page::empty("Couldn't load the history", message.clone()),
+            History::Idle => {
+                return page::empty(t("shell.right_sidebar.no_history"), t("shell.right_sidebar.not_tracked"));
+            }
+            History::Loading => return page::loading(t("shell.right_sidebar.loading_history")),
+            History::Failed(message) => {
+                return page::empty(t("shell.right_sidebar.history_failed"), message.clone());
+            }
             History::Loaded(entries) => entries,
         };
         if entries.is_empty() {
             return page::empty(
-                "No commits yet",
+                t("shell.right_sidebar.no_commits"),
                 if state == Some(FileState::New) {
-                    "Publish this item from the footer to record its first commit."
+                    t("shell.right_sidebar.publish_first_commit")
                 } else {
-                    "No commit has touched this item."
+                    t("shell.right_sidebar.no_commit_touched")
                 },
             );
         }
@@ -265,7 +270,7 @@ impl RightSidebar {
                                     .font_family(theme.mono_font_family.clone())
                                     .child(entry.short_commit().to_owned()),
                             )
-                            .child(format!("{} UTC", date_time_utc(entry.ts)))
+                            .child(t_with("shell.right_sidebar.utc_time", &[("time", &date_time_utc(entry.ts))]))
                             .child(entry.actor.clone()),
                     );
                 v_flex()
@@ -284,8 +289,8 @@ impl RightSidebar {
         let has_request = self.target.as_ref().is_some_and(|target| target.request.is_some());
         if !has_request {
             return match &self.target {
-                None => page::empty("Nothing open", "Open a request to get it as code."),
-                Some(_) => page::empty("No snippet", "This kind of request can't be written as an HTTP call."),
+                None => page::empty(t("shell.right_sidebar.nothing_open"), t("shell.right_sidebar.open_for_code")),
+                Some(_) => page::empty(t("shell.right_sidebar.no_snippet"), t("shell.right_sidebar.no_http_call")),
             };
         }
         let selected = SnippetKind::ALL.iter().position(|kind| *kind == self.snippet_kind).unwrap_or(0);
@@ -311,7 +316,7 @@ impl RightSidebar {
                         ),
                     )
                     .child(div().flex_none().child(
-                        Button::new("copy-snippet").ghost().small().icon(IconName::Copy).tooltip("Copy").on_click(
+                        Button::new("copy-snippet").ghost().small().icon(IconName::Copy).tooltip(t("shell.right_sidebar.copy")).on_click(
                             cx.listener(|this, _, _, cx| {
                                 let text = this.snippet.read(cx).value().to_string();
                                 cx.write_to_clipboard(ClipboardItem::new_string(text));
@@ -328,11 +333,18 @@ impl RightSidebar {
         let config = self.model.read(cx).config();
         let rows = config.resolved_variables();
         if rows.is_empty() {
-            return page::empty("No variables", "Add variables on the Environments screen to use them as {{name}}.");
+            return page::empty(t("shell.right_sidebar.no_variables"), t("shell.right_sidebar.add_variables"));
         }
         v_flex()
             .size_full()
-            .child(table_header(["Variable", "Value", "From"], cx))
+            .child(table_header(
+                [
+                    t("shell.right_sidebar.col_variable"),
+                    t("shell.right_sidebar.col_value"),
+                    t("shell.right_sidebar.col_from"),
+                ],
+                cx,
+            ))
             .child(v_flex().id("variables").flex_1().min_h_0().overflow_y_scroll().children(
                 rows.into_iter().enumerate().map(|(ix, (variable, env))| {
                     table_row(cx)
@@ -369,7 +381,7 @@ fn copy_button(id: impl Into<gpui_kit::ElementId>, reference: String) -> Button 
         .ghost()
         .small()
         .icon(IconName::Copy)
-        .tooltip("Copy the reference")
+        .tooltip(t("shell.right_sidebar.copy_reference"))
         .on_click(move |_, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(reference.clone())))
 }
 
@@ -389,7 +401,7 @@ impl RightSidebar {
         let theme = cx.theme().clone();
         let vaults = self.model.read(cx).vaults().to_vec();
         if vaults.iter().all(|vault| vault.secrets.is_empty()) {
-            return page::empty("No secrets", "Add secrets to a vault on the Vaults screen to keep them out of your files.");
+            return page::empty(t("shell.right_sidebar.no_secrets"), t("shell.right_sidebar.add_secrets"));
         }
         let mut rows = Vec::new();
         for vault in &vaults {
@@ -411,7 +423,14 @@ impl RightSidebar {
         }
         v_flex()
             .size_full()
-            .child(table_header(["Secret", "Vault", "State"], cx))
+            .child(table_header(
+                [
+                    t("shell.right_sidebar.col_secret"),
+                    t("shell.right_sidebar.panel_vault"),
+                    t("shell.right_sidebar.col_state"),
+                ],
+                cx,
+            ))
             .child(v_flex().id("vault-secrets").flex_1().min_h_0().overflow_y_scroll().children(rows))
             .into_any_element()
     }

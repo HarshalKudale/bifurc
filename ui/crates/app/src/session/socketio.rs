@@ -37,6 +37,7 @@ use super::{
     socketio_connection::{SocketIoConnection, SocketIoEvent},
 };
 use crate::{
+    i18n::{t, t_with},
     app_model::{AppModel, ModelEvent},
     components::{Autosave, KeyValueEvent, KeyValueTable, Syntax, VarEditor, page, request_bar},
     engine::{call, call_in, describe},
@@ -65,11 +66,11 @@ impl Section {
 
     fn label(self) -> &'static str {
         match self {
-            Section::Message => "Message",
-            Section::Listeners => "Listeners",
-            Section::Headers => "Headers",
-            Section::Auth => "Auth",
-            Section::Settings => "Settings",
+            Section::Message => t("session.websocket.tab_message"),
+            Section::Listeners => t("session.socketio.tab_listeners"),
+            Section::Headers => t("session.rest.tab_headers"),
+            Section::Auth => t("session.socketio.tab_auth"),
+            Section::Settings => t("session.socketio.tab_settings"),
         }
     }
 }
@@ -142,20 +143,15 @@ impl SocketIoSession {
     ) -> Self {
         let workspace_id = model.read(cx).workspace_id().to_owned();
         let connection_id = saved_id.clone().unwrap_or_else(|| format!("draft-{}", cx.entity_id().as_u64()));
-        let name = cx.new(|cx| InputState::new(window, cx).placeholder("Request name"));
+        let name = cx.new(|cx| InputState::new(window, cx).placeholder(t("session.rest.name_placeholder")));
         let url = VarEditor::line("https://example.test", window, cx);
-        let headers = cx.new(|cx| KeyValueTable::new("Header", "Value", window, cx));
-        let namespace = VarEditor::line("/  (the main namespace)", window, cx);
+        let headers = cx.new(|cx| KeyValueTable::new(t("session.rest.column_header"), t("session.rest.column_value"), window, cx));
+        let namespace = VarEditor::line(t("session.socketio.namespace_placeholder"), window, cx);
         let path = VarEditor::line("/socket.io", window, cx);
-        let listeners = cx.new(|cx| KeyValueTable::new("Event", "Description", window, cx));
-        let auth = VarEditor::code(Syntax::Json, "{ \"token\": \"…\" }  (sent when the connection opens)", window, cx);
-        let event = VarEditor::line("Event name", window, cx);
-        let args = VarEditor::code(
-            Syntax::Json,
-            "Arguments: a JSON array is one argument per element, anything else is one argument",
-            window,
-            cx,
-        );
+        let listeners = cx.new(|cx| KeyValueTable::new(t("session.socketio.column_event"), t("session.socketio.column_description"), window, cx));
+        let auth = VarEditor::code(Syntax::Json, t("session.socketio.auth_placeholder"), window, cx);
+        let event = VarEditor::line(t("session.socketio.event_placeholder"), window, cx);
+        let args = VarEditor::code(Syntax::Json, t("session.socketio.args_placeholder"), window, cx);
         let connection = cx.new(|cx| SocketIoConnection::new(window, cx));
 
         let mut subscriptions = Vec::new();
@@ -289,7 +285,7 @@ impl SocketIoSession {
                 v.get("entity")
                     .and_then(Value::as_object)
                     .cloned()
-                    .ok_or_else(|| "The request no longer exists.".to_owned())
+                    .ok_or_else(|| t("session.rest.gone").to_owned())
             }) {
                 Ok(entity) => {
                     this.adopt_entity(entity, window, cx);
@@ -361,7 +357,7 @@ impl SocketIoSession {
             return None;
         }
         let fields = self.fields(cx);
-        (fields != self.baseline && fields.url.is_empty()).then(|| "Not saved. Enter a URL.".into())
+        (fields != self.baseline && fields.url.is_empty()).then(|| t("session.rest.problem_no_url").into())
     }
 
     /// A saved request is written a moment after each change; a draft waits for Save.
@@ -509,8 +505,8 @@ impl SocketIoSession {
             }
             let client = self.model.read(cx).client().clone();
             call(&client, cx, "socketio.listen", payload, |_, outcome, cx| {
-                if let Some(message) = refusal(outcome, "The listeners were not changed.") {
-                    cx.emit(SessionEvent::Notice(format!("Couldn't change the listeners. {message}")));
+                if let Some(message) = refusal(outcome, t("session.socketio.listeners_not_changed")) {
+                    cx.emit(SessionEvent::Notice(t_with("session.socketio.listeners_failed", &[("message", &message)])));
                 }
             });
         }
@@ -560,8 +556,10 @@ impl SocketIoSession {
         }
         if fields.url.is_empty() {
             if mode == SaveMode::Explicit {
-                window
-                    .push_notification(Notification::warning("Enter a URL before saving.").title("Can't save yet"), cx);
+                window.push_notification(
+                    Notification::warning(t("session.rest.save_no_url")).title(t("session.rest.save_no_url_title")),
+                    cx,
+                );
             }
             return;
         }
@@ -607,7 +605,7 @@ impl SocketIoSession {
                         }
                     }
                     None => window
-                        .push_notification(Notification::error("The engine did not return the saved request."), cx),
+                        .push_notification(Notification::error(t("session.rest.engine_no_saved")), cx),
                 },
                 Ok(_) => {
                     this.entity = this.edited_entity(&fields);
@@ -616,7 +614,7 @@ impl SocketIoSession {
                 }
                 Err(error) => {
                     window.push_notification(
-                        Notification::error(describe(&error)).title("Couldn't save the request"),
+                        Notification::error(describe(&error)).title(t("session.rest.save_failed_title")),
                         cx,
                     );
                     cx.emit(SessionEvent::Changed);
@@ -635,8 +633,10 @@ impl SocketIoSession {
         }
         let fields = self.fields(cx);
         if fields.url.is_empty() {
-            window
-                .push_notification(Notification::warning("Enter a URL to connect.").title("Nothing to connect to"), cx);
+            window.push_notification(
+                Notification::warning(t("session.connection.connect_no_url")).title(t("session.connection.connect_no_url_title")),
+                cx,
+            );
             return;
         }
         self.connection_id = self.saved_id.clone().unwrap_or_else(|| self.connection_id.clone());
@@ -665,8 +665,8 @@ impl SocketIoSession {
         };
         let client = self.model.read(cx).client().clone();
         call_in(&client, window, cx, "socketio.connect", payload, move |_this, outcome, window, cx| {
-            if let Some(message) = refusal(outcome, "The connection could not be opened.") {
-                window.push_notification(Notification::error(message).title("Couldn't connect"), cx);
+            if let Some(message) = refusal(outcome, t("session.websocket.open_failed")) {
+                window.push_notification(Notification::error(message).title(t("session.connection.connect_failed")), cx);
             }
         });
     }
@@ -676,7 +676,7 @@ impl SocketIoSession {
         let payload = json!({ "workspaceId": self.workspace_id, "connectionId": self.connection_id });
         call(&client, cx, "socketio.disconnect", payload, |_, outcome, cx| {
             if let Err(error) = outcome {
-                cx.emit(SessionEvent::Notice(format!("Couldn't disconnect. {}", describe(&error))));
+                cx.emit(SessionEvent::Notice(t_with("session.connection.disconnect_failed", &[("error", &describe(&error))])));
             }
         });
     }
@@ -698,8 +698,8 @@ impl SocketIoSession {
             "event": self.event.line_value(cx), "args": self.args.value(cx), "ack": self.ack,
         });
         call_in(&client, window, cx, "socketio.emit", payload, |_this, outcome, window, cx| {
-            if let Some(message) = refusal(outcome, "The event was not sent.") {
-                window.push_notification(Notification::error(message).title("Couldn't send the event"), cx);
+            if let Some(message) = refusal(outcome, t("session.socketio.send_failed")) {
+                window.push_notification(Notification::error(message).title(t("session.socketio.send_failed_title")), cx);
             }
         });
     }
@@ -737,14 +737,14 @@ impl SocketIoSession {
             .p_3()
             .gap_4()
             .child(field(
-                "Namespace",
-                "Left empty, the path of the URL names it (https://host/admin joins /admin); otherwise the main namespace.",
+                t("session.socketio.namespace"),
+                t("session.socketio.namespace_hint"),
                 &self.namespace,
                 cx,
             ))
             .child(field(
-                "Path",
-                "Where the server listens. Left empty, /socket.io.",
+                t("session.socketio.path"),
+                t("session.socketio.path_hint"),
                 &self.path,
                 cx,
             ))
@@ -767,7 +767,7 @@ impl Render for SocketIoSession {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
         match &self.load {
-            LoadState::Loading => return page::loading("Loading request…"),
+            LoadState::Loading => return page::loading(t("session.rest.loading")),
             LoadState::Failed(message) => {
                 return div()
                     .size_full()
@@ -775,7 +775,7 @@ impl Render for SocketIoSession {
                     .bg(theme.background)
                     .child(
                         Alert::error("load-failed", SharedString::from(message.clone()))
-                            .title("Couldn't open the request"),
+                            .title(t("session.rest.open_failed")),
                     )
                     .into_any_element();
             }
@@ -799,7 +799,7 @@ impl Render for SocketIoSession {
                             Checkbox::new("socketio-ack")
                                 .checked(self.ack)
                                 .small()
-                                .label("Ask for an acknowledgement")
+                                .label(t("session.socketio.ack"))
                                 .on_change(cx.listener(|this, checked: &bool, _, cx| {
                                     this.ack = *checked;
                                     this.changed(cx);
@@ -822,7 +822,7 @@ impl Render for SocketIoSession {
                         Checkbox::new("socketio-listen-all")
                             .checked(self.listen_all)
                             .small()
-                            .label("Listen to every event the server sends")
+                            .label(t("session.socketio.listen_all"))
                             .on_change(cx.listener(|this, checked: &bool, _, cx| {
                                 this.listen_all = *checked;
                                 this.listening_changed(cx);
@@ -843,17 +843,17 @@ impl Render for SocketIoSession {
                 self.url.line_field(cx).disabled(live),
                 if live {
                     Button::new("disconnect-socketio")
-                        .label("Disconnect")
+                        .label(t("session.connection.disconnect"))
                         .on_click(cx.listener(|this, _, _, cx| this.disconnect(cx)))
                 } else {
                     Button::new("connect-socketio")
                         .primary()
-                        .label("Connect")
+                        .label(t("session.connection.connect"))
                         .on_click(cx.listener(|this, _, window, cx| this.connect(window, cx)))
                 },
                 [Button::new("send-socketio-event")
                     .primary()
-                    .label("Send message")
+                    .label(t("session.protocol.send_message"))
                     .disabled(!can_send)
                     .on_click(cx.listener(|this, _, window, cx| this.send_event(window, cx)))],
                 cx,

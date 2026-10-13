@@ -22,7 +22,10 @@ use gpui_kit::{
 use serde_json::{Value, json};
 
 use super::{binary::PickedFile, var_editor::VarEditor};
-use crate::model::media::size_label;
+use crate::{
+    i18n::{t, t_with},
+    model::media::size_label,
+};
 
 /// A file attached to a field, or chosen as a whole body.
 #[derive(Debug, Clone, PartialEq)]
@@ -146,8 +149,10 @@ impl PartsTable {
     ) {
         let id = self.next_id;
         self.next_id += 1;
-        let name_state = cx.new(|cx| InputState::new(window, cx).placeholder("Name").default_value(name.to_owned()));
-        let value_editor = VarEditor::line("Value", window, cx);
+        let name_state = cx.new(|cx| {
+            InputState::new(window, cx).placeholder(t("components.parts_table.name")).default_value(name.to_owned())
+        });
+        let value_editor = VarEditor::line(t("components.parts_table.value"), window, cx);
         value_editor.set_value(text.to_owned(), window, cx);
         let subscriptions = [
             cx.subscribe_in(&name_state, window, |this, _, event: &InputEvent, window, cx| {
@@ -235,7 +240,7 @@ impl PartsTable {
     /// Asks for a file and attaches it to the row. The row is found again by its id: rows may come and go
     /// while the dialog is open.
     fn choose_file(&mut self, id: u64, cx: &mut Context<Self>) {
-        super::binary::pick_file("Choose a file to send", cx, move |this, outcome, cx| {
+        super::binary::pick_file(t("components.parts_table.pick_file"), cx, move |this, outcome, cx| {
             match outcome {
                 Ok(file) => {
                     this.last_error = None;
@@ -244,7 +249,9 @@ impl PartsTable {
                         cx.emit(PartsEvent::Changed);
                     }
                 }
-                Err(message) => this.last_error = Some(format!("Couldn't read the file: {message}").into()),
+                Err(message) => {
+                    this.last_error = Some(t_with("components.parts_table.read_failed", &[("message", &message)]).into())
+                }
             }
             cx.notify();
         });
@@ -270,7 +277,7 @@ impl PartsTable {
                     Button::new(("remove-file", id))
                         .ghost()
                         .xsmall()
-                        .label("Remove file")
+                        .label(t("components.parts_table.remove_file"))
                         .on_click(cx.listener(move |this, _, _, cx| this.remove_file(id, cx))),
                 )
                 .into_any_element(),
@@ -299,8 +306,8 @@ impl Render for PartsTable {
                     .gap_2()
                     .text_xs()
                     .text_color(theme.muted_foreground)
-                    .child(div().w_1_4().child("Name"))
-                    .child(div().flex_1().child("Value"))
+                    .child(div().w_1_4().child(t("components.parts_table.name")))
+                    .child(div().flex_1().child(t("components.parts_table.value")))
                     // The lanes the file and remove buttons occupy in the rows below.
                     .child(div().w_32().flex_none())
                     .child(div().w_6().flex_none()),
@@ -319,7 +326,7 @@ impl Render for PartsTable {
                             Button::new(("choose-file", id))
                                 .ghost()
                                 .small()
-                                .label("Choose file…")
+                                .label(t("components.parts_table.choose_file"))
                                 .on_click(cx.listener(move |this, _, _, cx| this.choose_file(id, cx))),
                         ),
                     )
@@ -328,7 +335,7 @@ impl Render for PartsTable {
                             .icon(IconName::Close)
                             .ghost()
                             .xsmall()
-                            .tooltip("Remove")
+                            .tooltip(t("components.remove"))
                             .on_click(cx.listener(move |this, _, window, cx| this.remove_row(id, window, cx)))
                     })))
             }))

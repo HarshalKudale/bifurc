@@ -26,6 +26,7 @@ use serde_json::{Map, Value, json};
 
 use crate::{
     app_model::{AppModel, Deleted, ModelEvent},
+    i18n::{t, t_with},
     components::{
         Autosave, EntityAction, EntityBar, KeyValueEvent, KeyValueTable,
         dialogs::{PromptField, confirm_danger, delete_consequence, prompt, resolve_deleted},
@@ -55,8 +56,8 @@ pub struct EnvironmentsScreen {
 
 impl EnvironmentsScreen {
     pub fn new(model: Entity<AppModel>, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let name = cx.new(|cx| InputState::new(window, cx).placeholder("Environment name"));
-        let variables = cx.new(|cx| KeyValueTable::new("Variable", "Value", window, cx));
+        let name = cx.new(|cx| InputState::new(window, cx).placeholder(t("environments.name_placeholder")));
+        let variables = cx.new(|cx| KeyValueTable::new(t("environments.variable"), t("environments.value"), window, cx));
         let subscriptions = vec![
             cx.observe_in(&model, window, |this, _, window, cx| this.follow_model(false, window, cx)),
             cx.subscribe_in(&model, window, |this, _, event: &ModelEvent, window, cx| match event {
@@ -122,7 +123,7 @@ impl EnvironmentsScreen {
     pub fn active_target(&self, cx: &gpui_kit::App) -> Option<ActiveTarget> {
         let id = self.selected.clone()?;
         let name = self.name.read(cx).value();
-        let title = if name.is_empty() { SharedString::from("Environment") } else { name };
+        let title = if name.is_empty() { SharedString::from(t("environments.untitled")) } else { name };
         Some(ActiveTarget::named(title, Some(id), self.name.clone()))
     }
 
@@ -219,15 +220,15 @@ impl EnvironmentsScreen {
             cx.weak_entity(),
             window,
             cx,
-            format!("Discard changes to “{name}”?"),
-            "The edits to this environment have not been saved.",
-            "Discard changes",
+            t_with("environments.discard_title", &[("name", &name)]),
+            t("environments.discard_body"),
+            t("environments.discard_action"),
             move |this, window, cx| this.load(&target, window, cx),
         );
     }
 
     fn report(&mut self, what: &str, message: String, cx: &mut Context<Self>) {
-        self.model.update(cx, |model, cx| model.notice(format!("{what} {message}"), cx));
+        self.model.update(cx, |model, cx| model.notice(t_with("environments.report", &[("what", &what), ("message", &message)]), cx));
     }
 
     /// What the footer of the detail pane asks for. There is no draft here, so Save has nothing to do.
@@ -246,9 +247,9 @@ impl EnvironmentsScreen {
                         cx.weak_entity(),
                         window,
                         cx,
-                        format!("Revert “{name}” to the last synced version?"),
-                        "The changes saved since then are discarded.",
-                        "Revert",
+                        t_with("environments.revert_title", &[("name", &name)]),
+                        t("environments.revert_body"),
+                        t("environments.revert"),
                         move |this, _, cx| this.model.update(cx, |model, cx| model.revert_entity(&id, cx)),
                     );
                 }
@@ -305,7 +306,7 @@ impl EnvironmentsScreen {
                     }
                 }
                 Err(message) => {
-                    this.report("Couldn't save the environment.", message, cx);
+                    this.report(t("environments.error_save"), message, cx);
                     cx.notify();
                     return;
                 }
@@ -320,9 +321,9 @@ impl EnvironmentsScreen {
             cx.weak_entity(),
             window,
             cx,
-            "New environment",
-            "Create",
-            vec![PromptField::new("Name", "Staging")],
+            t("environments.new_environment"),
+            t("environments.create"),
+            vec![PromptField::new(t("environments.name"), t("environments.name_example"))],
             |this, values, _, cx| {
                 let model = this.model.read(cx);
                 let client = model.client().clone();
@@ -332,7 +333,7 @@ impl EnvironmentsScreen {
                     "entity": { "name": values[0], "variables": [] },
                 });
                 call(&client, cx, "entity.create", payload, |this, outcome, cx| match failure(&outcome) {
-                    Some(message) => this.report("Couldn't create the environment.", message, cx),
+                    Some(message) => this.report(t("environments.error_create"), message, cx),
                     None => {
                         // Selecting it is deferred to the snapshot that lists it.
                         if let Some(id) =
@@ -355,9 +356,9 @@ impl EnvironmentsScreen {
             cx.weak_entity(),
             window,
             cx,
-            format!("Delete environment “{}”?", environment.name),
+            t_with("environments.delete_title", &[("name", &environment.name)]),
             consequence,
-            "Delete",
+            t("environments.delete"),
             move |this, _, cx| {
                 let client = this.model.read(cx).client().clone();
                 // Nothing here is worth keeping once the environment is gone.
@@ -365,7 +366,7 @@ impl EnvironmentsScreen {
                 this.baseline = this.current(cx);
                 call(&client, cx, "entity.delete", json!({ "kind": "environments", "id": id }), |this, outcome, cx| {
                     if let Some(message) = failure(&outcome) {
-                        this.report("Couldn't delete the environment.", message, cx);
+                        this.report(t("environments.error_delete"), message, cx);
                     }
                 });
             },
@@ -414,9 +415,9 @@ impl EnvironmentsScreen {
                                     .child(environment.name.clone()),
                             )
                             .when(environment.is_global(), |this| {
-                                this.child(div().text_xs().text_color(theme.muted_foreground).child("Always applied"))
+                                this.child(div().text_xs().text_color(theme.muted_foreground).child(t("environments.always_applied")))
                             })
-                            .when(is_active, |this| this.child(Tag::secondary().small().child("Active"))),
+                            .when(is_active, |this| this.child(Tag::secondary().small().child(t("environments.active")))),
                     )
                     .on_click(cx.listener(move |this, _, window, cx| this.select(id.clone(), window, cx)))
             }))
@@ -424,7 +425,7 @@ impl EnvironmentsScreen {
 
     fn render_detail(&self, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
         let Some(environment) = self.environment(cx) else {
-            return page::empty("No environment", "Create an environment to give your requests variables.");
+            return page::empty(t("environments.no_environment"), t("environments.no_environment_body"));
         };
         let theme = cx.theme().clone();
         let dirty = self.is_dirty(cx);
@@ -452,9 +453,9 @@ impl EnvironmentsScreen {
                                 Button::new("use-environment")
                                     .ghost()
                                     .small()
-                                    .label(if is_active { "In use" } else { "Use" })
+                                    .label(if is_active { t("environments.use_in_use") } else { t("environments.use") })
                                     .disabled(is_active)
-                                    .tooltip("Resolve variables against this environment")
+                                    .tooltip(t("environments.use_tooltip"))
                                     .on_click(move |_, _, cx| {
                                         model.update(cx, |m, cx| m.set_active_environment(Some(&use_id), cx))
                                     }),
@@ -471,12 +472,12 @@ impl EnvironmentsScreen {
 impl Render for EnvironmentsScreen {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let header = page::header(
-            "Environments",
-            "Sets of variables that {{name}} references in requests resolve against. Global applies under all of them.",
+            t("environments.title"),
+            t("environments.description"),
             Button::new("new-environment")
                 .small()
                 .icon(IconName::Plus)
-                .label("New environment")
+                .label(t("environments.new_environment"))
                 .on_click(cx.listener(|this, _, window, cx| this.prompt_new(window, cx))),
             cx,
         );

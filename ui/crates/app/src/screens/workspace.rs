@@ -32,21 +32,26 @@ use crate::{
         dialogs::confirm_danger,
     },
     engine::{call, describe, failure, fetch_artifact, upload_and_call},
+    i18n::{t, t_with},
     model::git::FileState,
 };
 
 /// The kinds of thing the engine can export and import, in the order they are offered.
 const KINDS: [(&str, &str); 6] = [
-    ("workspace", "Whole workspace"),
-    ("requests", "Requests"),
-    ("mocks", "Mocks"),
-    ("environments", "Environments"),
-    ("mappings", "Mappings"),
-    ("proxyRules", "Proxy rules"),
+    ("workspace", "workspace.kind.workspace"),
+    ("requests", "workspace.kind.requests"),
+    ("mocks", "workspace.kind.mocks"),
+    ("environments", "workspace.kind.environments"),
+    ("mappings", "workspace.kind.mappings"),
+    ("proxyRules", "workspace.kind.proxy_rules"),
 ];
 
 /// What an import does with something that is already in the workspace.
-const COLLISIONS: [(&str, &str); 3] = [("keep", "Keep existing"), ("override", "Replace"), ("new", "Keep both")];
+const COLLISIONS: [(&str, &str); 3] = [
+    ("keep", "workspace.collision.keep"),
+    ("override", "workspace.collision.replace"),
+    ("new", "workspace.collision.keep_both"),
+];
 
 #[derive(Debug, Clone, PartialEq)]
 struct Format {
@@ -133,7 +138,7 @@ pub struct WorkspaceScreen {
 
 impl WorkspaceScreen {
     pub fn new(model: Entity<AppModel>, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let name = cx.new(|cx| InputState::new(window, cx).placeholder("Workspace name"));
+        let name = cx.new(|cx| InputState::new(window, cx).placeholder(t("workspace.general.name_placeholder")));
         let subscriptions = vec![
             cx.observe_in(&model, window, |this, _, window, cx| {
                 this.follow_workspace(window, cx);
@@ -305,7 +310,7 @@ impl WorkspaceScreen {
         let payload = json!({ "workspaceId": model.workspace_id() });
         call(&client, cx, action, payload, move |this, outcome, cx| {
             if let Some(message) = failure(&outcome) {
-                this.report(format!("{what} {message}"), cx);
+                this.report(t_with(what, &[("message", &message)]), cx);
             }
             this.model.update(cx, |model, cx| model.refresh(cx));
             this.refresh_sync(cx);
@@ -336,10 +341,10 @@ impl WorkspaceScreen {
         cx.notify();
         match fetched {
             Ok((bytes, name)) => save_to_file(bytes, name, cx, |this, outcome, cx| match outcome {
-                Ok(path) => this.report(format!("Exported to {}.", path.display()), cx),
-                Err(message) => this.report(format!("Couldn't save the export. {message}"), cx),
+                Ok(path) => this.report(t_with("workspace.transfer.exported", &[("path", &path.display())]), cx),
+                Err(message) => this.report(t_with("workspace.transfer.save_failed", &[("message", &message)]), cx),
             }),
-            Err(message) => self.report(format!("Couldn't export. {message}"), cx),
+            Err(message) => self.report(t_with("workspace.transfer.export_failed", &[("message", &message)]), cx),
         }
     }
 
@@ -349,10 +354,10 @@ impl WorkspaceScreen {
             return;
         }
         let collision = self.collision;
-        pick_file("Choose the file to import", cx, move |this, picked, cx| {
+        pick_file(t("workspace.transfer.choose_file"), cx, move |this, picked, cx| {
             let file = match picked {
                 Ok(file) => file,
-                Err(error) => return this.report(format!("Couldn't read the file. {error}"), cx),
+                Err(error) => return this.report(t_with("workspace.transfer.read_failed", &[("error", &error)]), cx),
             };
             this.transferring = Some("Importing");
             cx.notify();
@@ -378,11 +383,18 @@ impl WorkspaceScreen {
                         Ok(result) => {
                             let imported = result.get("imported").and_then(Value::as_u64).unwrap_or(0);
                             let skipped = result.get("skipped").and_then(Value::as_u64).unwrap_or(0);
-                            let skipped = if skipped > 0 { format!(", {skipped} skipped") } else { String::new() };
-                            this.report(format!("Imported {imported} item(s){skipped}."), cx);
+                            let message = if skipped > 0 {
+                                t_with(
+                                    "workspace.transfer.imported_skipped",
+                                    &[("imported", &imported), ("skipped", &skipped)],
+                                )
+                            } else {
+                                t_with("workspace.transfer.imported", &[("imported", &imported)])
+                            };
+                            this.report(message, cx);
                             this.model.update(cx, |model, cx| model.refresh(cx));
                         }
-                        Err(message) => this.report(format!("Couldn't import. {message}"), cx),
+                        Err(message) => this.report(t_with("workspace.transfer.import_failed", &[("message", &message)]), cx),
                     }
                     cx.notify();
                 },
@@ -396,9 +408,9 @@ impl WorkspaceScreen {
             cx.weak_entity(),
             window,
             cx,
-            format!("Delete workspace “{}”?", workspace.name),
-            "Its requests, mocks, mappings and history are deleted from this computer. This can't be undone.",
-            "Delete",
+            t_with("workspace.delete.title", &[("name", &workspace.name)]),
+            t("workspace.delete.consequence"),
+            t("workspace.delete.confirm"),
             move |this, _, cx| this.model.update(cx, |model, cx| model.delete_workspace(&workspace.id, cx)),
         );
     }
@@ -407,8 +419,8 @@ impl WorkspaceScreen {
         let this = cx.weak_entity();
         let name = self.name.clone();
         let model = self.model.clone();
-        SettingPage::new("General").icon(IconName::Building2).default_open(true).groups(vec![
-            SettingGroup::new().title("Workspace").item(
+        SettingPage::new(t("workspace.page.general")).icon(IconName::Building2).default_open(true).groups(vec![
+            SettingGroup::new().title(t("workspace.general.group")).item(
                 SettingItem::render(move |options, _, cx| {
                     let id = model.read(cx).workspace_id().to_owned();
                     let theme = cx.theme().clone();
@@ -417,15 +429,21 @@ impl WorkspaceScreen {
                         .w_full()
                         .gap_1p5()
                         .child(h_flex().w_full().gap_2().child(div().flex_1().child(Input::new(&name))).child(
-                            Button::new("rename-workspace").with_size(options.size()).label("Rename").on_click(
-                                move |_, _, cx| {
+                            Button::new("rename-workspace")
+                                .with_size(options.size())
+                                .label(t("workspace.general.rename"))
+                                .on_click(move |_, _, cx| {
                                     rename.update(cx, |this, cx| this.rename(cx)).ok();
-                                },
-                            ),
+                                }),
                         ))
-                        .child(div().text_xs().text_color(theme.muted_foreground).child(format!("Id: {id}")))
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(theme.muted_foreground)
+                                .child(t_with("workspace.general.id", &[("id", &id)])),
+                        )
                 })
-                .keywords(["name", "rename", "title"]),
+                .keywords(t("workspace.general.keywords").split(',')),
             ),
         ])
     }
@@ -452,7 +470,7 @@ impl WorkspaceScreen {
         let sync = self.sync.clone();
         let model = self.model.clone();
         let setup = self.model.read(cx).setup().clone();
-        let page = SettingPage::new("Git sync").icon(IconName::Github);
+        let page = SettingPage::new(t("workspace.page.sync")).icon(IconName::Github);
         let Some(workspace) = self.model.read(cx).config().active_workspace().cloned() else {
             return page.groups(Vec::new());
         };
@@ -461,24 +479,26 @@ impl WorkspaceScreen {
             let check_model = model.clone();
             return page.groups(vec![
                 SettingGroup::new()
-                    .title("Git")
+                    .title(t("workspace.sync.git_group"))
                     .item(SettingItem::render(move |options, _, cx| {
                         let model = check_model.clone();
                         h_flex()
                             .w_full()
                             .gap_2()
-                            .child(div().flex_1().text_color(cx.theme().muted_foreground).child(
-                                "Git is not installed, so this workspace is plain files on this computer: no history, \
-                                 no audit log, no way to revert a change, and no sync. Install Git, then check again.",
-                            ))
-                            .child(Button::new("check-git").with_size(options.size()).label("Check again").on_click(
-                                move |_, _, cx| model.update(cx, |model, cx| model.refresh_setup(cx)),
-                            ))
+                            .child(
+                                div()
+                                    .flex_1()
+                                    .text_color(cx.theme().muted_foreground)
+                                    .child(t("workspace.sync.git_missing")),
+                            )
+                            .child(
+                                Button::new("check-git")
+                                    .with_size(options.size())
+                                    .label(t("workspace.sync.git_check_again"))
+                                    .on_click(move |_, _, cx| model.update(cx, |model, cx| model.refresh_setup(cx))),
+                            )
                     }))
-                    .footer(|_, _| {
-                        "Nothing is lost: once Git is there, the workspace becomes a repository and everything in it \
-                         can be synced at once."
-                    }),
+                    .footer(|_, _| t("workspace.sync.git_footer")),
             ]);
         }
 
@@ -486,30 +506,29 @@ impl WorkspaceScreen {
 
         let account_label = match &workspace.account {
             Some(account) if account.signed_in => format!("@{}", account.login),
-            Some(account) => format!("@{} (signed out)", account.login),
-            None => "None".to_owned(),
+            Some(account) => t_with("workspace.account.signed_out", &[("login", &account.login)]),
+            None => t("workspace.account.none").to_owned(),
         };
         let signed_out = workspace.account.clone().filter(|account| !account.signed_in);
-        let mut account_group = SettingGroup::new().title("Account").item(Self::fact(
-            "GitHub account",
+        let mut account_group = SettingGroup::new().title(t("workspace.account.group")).item(Self::fact(
+            t("workspace.account.title"),
             account_label,
             false,
             Some(if workspace.account.is_some() {
-                "The account this workspace commits and syncs as. It belongs to this workspace only."
+                t("workspace.account.bound_description")
             } else {
-                "Commits are made as this computer. An account is chosen when the workspace is published."
+                t("workspace.account.unbound_description")
             }),
         ));
         if let Some(owner) = sync.owner.clone() {
             account_group = account_group.item(Self::fact(
-                "Owner",
+                t("workspace.owner.title"),
                 format!("@{owner}"),
                 false,
                 Some(if setup.team_sync {
-                    "The account that owns the workspace's repository. Whoever it gives the workspace to in the \
-                     Bifurc Console can import it, and sync it if they were given write access."
+                    t("workspace.owner.team_description")
                 } else {
-                    "The account that owns the workspace's repository. Only the owner can import it or sync it."
+                    t("workspace.owner.description")
                 }),
             ));
         }
@@ -517,22 +536,18 @@ impl WorkspaceScreen {
         match sync.access.as_deref().filter(|_| workspace.sync.is_some()) {
             Some("read") => {
                 account_group = account_group.item(Self::fact(
-                    "Access",
-                    "Read-only".to_owned(),
+                    t("workspace.access.title"),
+                    t("workspace.access.read_only").to_owned(),
                     false,
-                    Some(
-                        "Your account may read the repository and not push to it. What it gets is pulled, and what \
-                         you change is saved on this device only. Access is checked again every few minutes, and \
-                         whenever you pull.",
-                    ),
+                    Some(t("workspace.access.read_only_description")),
                 ));
             }
             Some("write") => {
                 account_group = account_group.item(Self::fact(
-                    "Access",
-                    "Read and write".to_owned(),
+                    t("workspace.access.title"),
+                    t("workspace.access.read_write").to_owned(),
                     false,
-                    Some("Your account was given write access to the repository, so the workspace syncs both ways."),
+                    Some(t("workspace.access.read_write_description")),
                 ));
             }
             _ => {}
@@ -548,14 +563,18 @@ impl WorkspaceScreen {
                         div()
                             .flex_1()
                             .text_color(cx.theme().muted_foreground)
-                            .child(format!("Sync is paused until @{} signs in again.", account.login)),
+                            .child(t_with("workspace.account.paused", &[("login", &account.login)])),
                     )
-                    .child(Button::new("sign-in-again").with_size(options.size()).primary().label("Sign in…").on_click(
-                        move |_, window, cx| {
-                            let purpose = Purpose::SignIn { account_id: account.id.clone() };
-                            open_setup_dialog(model.clone(), purpose, window, cx);
-                        },
-                    ))
+                    .child(
+                        Button::new("sign-in-again")
+                            .with_size(options.size())
+                            .primary()
+                            .label(t("workspace.account.sign_in"))
+                            .on_click(move |_, window, cx| {
+                                let purpose = Purpose::SignIn { account_id: account.id.clone() };
+                                open_setup_dialog(model.clone(), purpose, window, cx);
+                            }),
+                    )
             }));
         }
 
@@ -563,7 +582,7 @@ impl WorkspaceScreen {
             let publish_model = model.clone();
             let (id, name) = (workspace.id.clone(), workspace.name.clone());
             let remote_group = SettingGroup::new()
-                .title("Remote")
+                .title(t("workspace.remote.title"))
                 .item(SettingItem::render(move |options, _, cx| {
                     let (model, id, name) = (publish_model.clone(), id.clone(), name.clone());
                     h_flex()
@@ -574,14 +593,14 @@ impl WorkspaceScreen {
                                 .flex_1()
                                 .text_sm()
                                 .text_color(cx.theme().muted_foreground)
-                                .child("Not published. The workspace is on this computer only."),
+                                .child(t("workspace.remote.not_published")),
                         )
                         .child(
                             Button::new("publish-workspace")
                                 .with_size(options.size())
                                 .primary()
                                 .icon(IconName::Github)
-                                .label("Publish to GitHub…")
+                                .label(t("workspace.remote.publish"))
                                 .on_click(move |_, window, cx| {
                                     let purpose =
                                         Purpose::Publish { workspace_id: id.clone(), workspace_name: name.clone() };
@@ -589,52 +608,48 @@ impl WorkspaceScreen {
                                 }),
                         )
                 }))
-                .footer(|_, _| {
-                    "Publishing creates a new repository on your account and pushes this workspace to it. \
-                     Once set, the repository can't be changed."
-                });
+                .footer(|_, _| t("workspace.remote.publish_footer"));
             return page.groups(vec![account_group, changes_group, remote_group]);
         };
 
         let remote_group = SettingGroup::new()
-            .title("Remote")
+            .title(t("workspace.remote.title"))
             .item(Self::fact(
-                "Repository",
+                t("workspace.remote.repository_title"),
                 config.repo.clone().unwrap_or_else(|| config.remote.clone()),
                 true,
-                Some("Set once, when the workspace was published or imported. It can't be changed."),
+                Some(t("workspace.remote.repository_description")),
             ))
-            .footer(|_, _| {
-                "What the repository gets from elsewhere is pulled every few seconds, and your unsynced changes stay \
-                 on top of it. Nothing of yours is pushed until you sync it."
-            });
+            .footer(|_, _| t("workspace.remote.footer"));
 
         let git = self.model.read(cx).git();
         let not_synced = git.files.values().filter(|s| !matches!(s, FileState::Clean)).count();
         let synced = git.files.len() - not_synced;
-        let status_label = match sync.status.as_str() {
-            "pushing" => "Pushing…",
-            "syncing" => "Syncing…",
-            "pulling" => "Pulling…",
-            "cloning" => "Cloning…",
-            "error" => "Error",
-            _ => "Idle",
-        };
+        let status_label = t(match sync.status.as_str() {
+            "pushing" => "workspace.status.pushing",
+            "syncing" => "workspace.status.syncing",
+            "pulling" => "workspace.status.pulling",
+            "cloning" => "workspace.status.cloning",
+            "error" => "workspace.status.error",
+            _ => "workspace.status.idle",
+        });
         let working = sync.is_working();
         let read_only = config.read_only;
         let (pull, push) = (this.clone(), this.clone());
-        let status_group = SettingGroup::new().title("Status").item(SettingItem::render(move |options, _, cx| {
+        let status_group = SettingGroup::new().title(t("workspace.status.title")).item(SettingItem::render(move |options, _, cx| {
             let theme = cx.theme().clone();
             let (pull, push) = (pull.clone(), push.clone());
             let now = now_ms();
-            let when = |ts: Option<i64>| ts.map_or_else(|| "never".to_owned(), |ts| relative_time(now, ts));
+            let when = |ts: Option<i64>| ts.map_or_else(|| t("workspace.status.never").to_owned(), |ts| relative_time(now, ts));
             let state = match sync.status.as_str() {
                 "error" => Tag::danger().child(status_label),
                 _ if working => Tag::warning().child(sync.progress.clone().unwrap_or_else(|| status_label.to_owned())),
                 _ => Tag::secondary().child(status_label),
             };
-            let counts = if not_synced == 0 { Tag::success() } else { Tag::warning() }
-                .child(format!("Synced entities {synced} · Not synced entities {not_synced}"));
+            let counts = if not_synced == 0 { Tag::success() } else { Tag::warning() }.child(t_with(
+                "workspace.status.counts",
+                &[("synced", &synced), ("not_synced", &not_synced)],
+            ));
             v_flex()
                 .w_full()
                 .gap_2()
@@ -647,27 +662,32 @@ impl WorkspaceScreen {
                             Button::new("pull-remote")
                                 .with_size(options.size())
                                 .icon(IconName::ArrowDown)
-                                .label("Pull")
+                                .label(t("workspace.status.pull"))
                                 .disabled(working)
                                 .on_click(move |_, _, cx| {
-                                    pull.update(cx, |this, cx| this.run_sync("sync.pull", "Couldn't pull.", cx)).ok();
+                                    pull.update(cx, |this, cx| {
+                                        this.run_sync("sync.pull", "workspace.sync.pull_failed", cx)
+                                    })
+                                    .ok();
                                 }),
                         )
                         .child(
                             Button::new("push-remote")
                                 .with_size(options.size())
                                 .icon(IconName::ArrowUp)
-                                .label("Push")
+                                .label(t("workspace.status.push"))
                                 .disabled(working || read_only)
                                 .on_click(move |_, _, cx| {
-                                    push.update(cx, |this, cx| this.run_sync("sync.push", "Couldn't push.", cx)).ok();
+                                    push.update(cx, |this, cx| {
+                                        this.run_sync("sync.push", "workspace.sync.push_failed", cx)
+                                    })
+                                    .ok();
                                 }),
                         ),
                 )
-                .child(div().text_xs().text_color(theme.muted_foreground).child(format!(
-                    "Last pushed {} · last pulled {}",
-                    when(sync.last_pushed),
-                    when(sync.last_pulled)
+                .child(div().text_xs().text_color(theme.muted_foreground).child(t_with(
+                    "workspace.status.last_synced",
+                    &[("pushed", &when(sync.last_pushed)), ("pulled", &when(sync.last_pulled))],
                 )))
                 .children(sync.error.clone().map(|error| div().text_xs().text_color(theme.danger).child(error)))
         }));
@@ -684,27 +704,31 @@ impl WorkspaceScreen {
         let busy = self.model.read(cx).is_publishing() || self.sync.is_working();
         let read_only = self.model.read(cx).is_read_only();
         let progress = self.sync.progress.clone().filter(|_| self.sync.is_working());
-        let count = |n: usize, one: &str, many: &str| if n == 1 { format!("1 {one}") } else { format!("{n} {many}") };
+        let plural = |n: usize, one: &str, other: &str| t_with(if n == 1 { one } else { other }, &[("count", &n)]);
         let mut summary = match (waiting, unpushed) {
-            (0, _) if read_only => "Nothing was changed here.".to_owned(),
-            (n, _) if read_only => format!("{} saved on this device only.", count(n, "change is", "changes are")),
-            (0, true) => "Everything is committed. Commits are waiting to be pushed.".to_owned(),
-            (0, false) => "Everything is synced.".to_owned(),
-            (n, _) => format!("{} not synced yet.", count(n, "item is", "items are")),
+            (0, _) if read_only => t("workspace.changes.nothing_changed").to_owned(),
+            (n, _) if read_only => plural(n, "workspace.changes.saved_here_one", "workspace.changes.saved_here_other"),
+            (0, true) => t("workspace.changes.committed").to_owned(),
+            (0, false) => t("workspace.changes.synced").to_owned(),
+            (n, _) => plural(n, "workspace.changes.not_synced_one", "workspace.changes.not_synced_other"),
         };
         if deleted > 0 && read_only {
-            summary.push_str(&format!(
-                " {} be reverted where it was deleted.",
-                count(deleted, "deletion can", "deletions can")
+            summary.push(' ');
+            summary.push_str(&plural(
+                deleted,
+                "workspace.changes.deleted_read_only_one",
+                "workspace.changes.deleted_read_only_other",
             ));
         } else if deleted > 0 {
-            summary.push_str(&format!(
-                " {} to be confirmed or reverted where it was deleted.",
-                count(deleted, "deletion waits", "deletions wait")
+            summary.push(' ');
+            summary.push_str(&plural(
+                deleted,
+                "workspace.changes.deleted_waiting_one",
+                "workspace.changes.deleted_waiting_other",
             ));
         }
         SettingGroup::new()
-            .title("Changes")
+            .title(t("workspace.changes.title"))
             .item(SettingItem::render(move |options, _, cx| {
                 let model = model.clone();
                 h_flex()
@@ -722,7 +746,7 @@ impl WorkspaceScreen {
                             .with_size(options.size())
                             .primary()
                             .icon(IconName::Github)
-                            .label("Sync all")
+                            .label(t("workspace.changes.sync_all"))
                             .loading(busy)
                             .disabled(busy || read_only || (waiting == 0 && !unpushed))
                             .on_click(move |_, _, cx| model.update(cx, |model, cx| model.sync_all(cx))),
@@ -730,13 +754,11 @@ impl WorkspaceScreen {
             }))
             .footer(move |_, _| {
                 if read_only {
-                    "This workspace is read-only: your account has read access to its repository. Ask the owner \
-                     for write access to sync what you change."
+                    t("workspace.changes.footer_read_only")
                 } else if has_remote {
-                    "Each new or changed item gets a commit of its own, then all of them are pushed together."
+                    t("workspace.changes.footer_remote")
                 } else {
-                    "Each new or changed item gets a commit of its own. Nothing leaves this computer until the \
-                     workspace is published."
+                    t("workspace.changes.footer_local")
                 }
             })
     }
@@ -748,7 +770,7 @@ impl WorkspaceScreen {
         let kinds: Vec<(SharedString, SharedString)> = KINDS
             .iter()
             .filter(|(k, _)| !self.formats_of(k, exporting).is_empty())
-            .map(|(k, label)| (SharedString::from(*k), SharedString::from(*label)))
+            .map(|(k, label)| (SharedString::from(*k), SharedString::from(t(label))))
             .collect();
         let formats: Vec<(SharedString, SharedString)> = self
             .formats_of(&kind, exporting)
@@ -760,7 +782,7 @@ impl WorkspaceScreen {
         let (format_for_read, format_for_write) = (format.clone(), this);
         vec![
             SettingItem::new(
-                "What",
+                t("workspace.transfer.what"),
                 SettingField::dropdown(
                     kinds,
                     move |_: &App| SharedString::from(kind_for_read.clone()),
@@ -780,7 +802,7 @@ impl WorkspaceScreen {
                 ),
             ),
             SettingItem::new(
-                "Format",
+                t("workspace.transfer.format"),
                 SettingField::dropdown(
                     formats,
                     move |_: &App| SharedString::from(format_for_read.clone()),
@@ -806,11 +828,13 @@ impl WorkspaceScreen {
         let (export, import) = (cx.weak_entity(), cx.weak_entity());
         let collision_write = cx.weak_entity();
         let collision_now = self.collision;
-        let collisions: Vec<(SharedString, SharedString)> =
-            COLLISIONS.iter().map(|(id, label)| (SharedString::from(*id), SharedString::from(*label))).collect();
+        let collisions: Vec<(SharedString, SharedString)> = COLLISIONS
+            .iter()
+            .map(|(id, label)| (SharedString::from(*id), SharedString::from(t(*label))))
+            .collect();
 
         let export_group = SettingGroup::new()
-            .title("Export")
+            .title(t("workspace.transfer.export_title"))
             .items(self.transfer_fields(true, cx))
             .item(SettingItem::render(move |options, _, _| {
                 let export = export.clone();
@@ -819,7 +843,7 @@ impl WorkspaceScreen {
                         .with_size(options.size())
                         .primary()
                         .icon(IconName::ArrowUp)
-                        .label("Export…")
+                        .label(t("workspace.transfer.export_button"))
                         .loading(transferring == Some("Exporting"))
                         .disabled(transferring.is_some())
                         .on_click(move |_, _, cx| {
@@ -827,13 +851,13 @@ impl WorkspaceScreen {
                         }),
                 )
             }))
-            .footer(|_, _| "Writes a Bifurc JSON file you choose the place of. Nothing in the workspace changes.");
+            .footer(|_, _| t("workspace.transfer.export_footer"));
         let import_group = SettingGroup::new()
-            .title("Import")
+            .title(t("workspace.transfer.import_title"))
             .items(self.transfer_fields(false, cx))
             .item(
                 SettingItem::new(
-                    "When it already exists",
+                    t("workspace.transfer.when_exists"),
                     SettingField::dropdown(
                         collisions,
                         move |_: &App| SharedString::from(collision_now),
@@ -848,7 +872,7 @@ impl WorkspaceScreen {
                         },
                     ),
                 )
-                .description("What to do with an item whose id is already in the workspace."),
+                .description(t("workspace.transfer.when_exists_description")),
             )
             .item(SettingItem::render(move |options, _, _| {
                 let import = import.clone();
@@ -857,7 +881,7 @@ impl WorkspaceScreen {
                         .with_size(options.size())
                         .primary()
                         .icon(IconName::ArrowDown)
-                        .label("Import…")
+                        .label(t("workspace.transfer.import_button"))
                         .loading(transferring == Some("Importing"))
                         .disabled(transferring.is_some())
                         .on_click(move |_, _, cx| {
@@ -865,11 +889,8 @@ impl WorkspaceScreen {
                         }),
                 )
             }))
-            .footer(|_, _| {
-                "Imported items are added to this workspace. Requests of other tools become requests of their \
-                 type: REST, GraphQL, gRPC, WebSocket and the rest."
-            });
-        SettingPage::new("Import & export").icon(IconName::Inbox).groups(vec![export_group, import_group])
+            .footer(|_, _| t("workspace.transfer.import_footer"));
+        SettingPage::new(t("workspace.page.transfer")).icon(IconName::Inbox).groups(vec![export_group, import_group])
     }
 
     fn cookies_page(&self, cx: &mut Context<Self>) -> SettingPage {
@@ -879,16 +900,16 @@ impl WorkspaceScreen {
         let cookies_of = |entry: &Value| entry.get("cookies").and_then(Value::as_array).cloned().unwrap_or_default();
         let total: usize = domains.iter().map(|entry| cookies_of(entry).len()).sum();
         let summary = match (total, domains.len()) {
-            (0, _) => "No cookies are stored for this workspace.".to_owned(),
-            (1, _) => "1 cookie is stored.".to_owned(),
-            (n, 1) => format!("{n} cookies are stored for 1 site."),
-            (n, sites) => format!("{n} cookies are stored for {sites} sites."),
+            (0, _) => t("workspace.cookies.none").to_owned(),
+            (1, _) => t("workspace.cookies.one").to_owned(),
+            (n, 1) => t_with("workspace.cookies.one_site", &[("count", &n)]),
+            (n, sites) => t_with("workspace.cookies.many_sites", &[("count", &n), ("sites", &sites)]),
         };
 
         let configure = this.clone();
-        let behaviour = SettingGroup::new().title("On restart").item(
+        let behaviour = SettingGroup::new().title(t("workspace.cookies.restart_group")).item(
             SettingItem::new(
-                "Clear cookies when the engine restarts",
+                t("workspace.cookies.clear_on_restart"),
                 SettingField::switch(
                     move |_: &App| clear_on_restart,
                     move |value: bool, cx: &mut App| {
@@ -900,12 +921,12 @@ impl WorkspaceScreen {
                     },
                 ),
             )
-            .description("Requests keep the cookies a server sets and send them back to the same site, as a browser does: a login is followed by the requests after it, a logout ends it. Turned off, the cookies are also kept on this computer and survive a restart.")
-            .keywords(["cookie", "session", "login", "restart"]),
+            .description(t("workspace.cookies.clear_on_restart_description"))
+            .keywords(t("workspace.cookies.keywords").split(',')),
         );
 
         let clear_all = this.clone();
-        let mut stored = SettingGroup::new().title("Stored cookies").item(SettingItem::render(move |options, _, cx| {
+        let mut stored = SettingGroup::new().title(t("workspace.cookies.stored_group")).item(SettingItem::render(move |options, _, cx| {
             let clear_all = clear_all.clone();
             h_flex()
                 .w_full()
@@ -914,7 +935,7 @@ impl WorkspaceScreen {
                 .child(
                     Button::new("clear-all-cookies")
                         .with_size(options.size())
-                        .label("Clear all")
+                        .label(t("workspace.cookies.clear_all"))
                         .disabled(total == 0)
                         .on_click(move |_, _, cx| {
                             clear_all.update(cx, |this, cx| this.cookie_command("cookies.clear", json!({}), cx)).ok();
@@ -943,7 +964,7 @@ impl WorkspaceScreen {
                             .child(
                                 div().flex_1().font_family(theme.mono_font_family.clone()).child(domain.clone()),
                             )
-                            .child(Button::new(("clear-cookies", index)).with_size(options.size()).label("Clear").on_click(
+                            .child(Button::new(("clear-cookies", index)).with_size(options.size()).label(t("workspace.cookies.clear")).on_click(
                                 move |_, _, cx| {
                                     let payload = json!({ "domain": cleared });
                                     clear.update(cx, |this, cx| this.cookie_command("cookies.clear", payload, cx)).ok();
@@ -969,15 +990,15 @@ impl WorkspaceScreen {
                     }))
             }));
         }
-        SettingPage::new("Cookies").icon(IconName::Globe).groups(vec![behaviour, stored])
+        SettingPage::new(t("workspace.page.cookies")).icon(IconName::Globe).groups(vec![behaviour, stored])
     }
 
     fn danger_page(&self, cx: &mut Context<Self>) -> SettingPage {
         let this = cx.weak_entity();
         let can_delete = self.model.read(cx).config().workspaces.len() > 1;
-        SettingPage::new("Danger zone").icon(IconName::TriangleAlert).groups(vec![
+        SettingPage::new(t("workspace.page.danger")).icon(IconName::TriangleAlert).groups(vec![
             SettingGroup::new()
-                .title("Delete workspace")
+                .title(t("workspace.danger.group"))
                 .item(SettingItem::render(move |options, _, cx| {
                     let theme = cx.theme().clone();
                     let delete = this.clone();
@@ -988,20 +1009,20 @@ impl WorkspaceScreen {
                             div()
                                 .flex_1()
                                 .text_color(theme.muted_foreground)
-                                .child("Removes the workspace and everything in it from this computer."),
+                                .child(t("workspace.danger.description")),
                         )
                         .child(
                             Button::new("delete-workspace")
                                 .with_size(options.size())
                                 .danger()
-                                .label("Delete…")
+                                .label(t("workspace.danger.delete"))
                                 .disabled(!can_delete)
                                 .on_click(move |_, window, cx| {
                                     delete.update(cx, |this, cx| this.ask_delete(window, cx)).ok();
                                 }),
                         )
                 }))
-                .footer(|_, _| "The last workspace can't be deleted. Remote data, if connected, is not touched."),
+                .footer(|_, _| t("workspace.danger.footer")),
         ])
     }
 }

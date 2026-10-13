@@ -29,23 +29,25 @@ use crate::{
     app_model::{AppModel, ModelEvent},
     components::{binary::save_to_file, commit_diffs::CommitDiffs, page},
     engine::{call, describe, failure, fetch_artifact},
+    i18n::{t, t_with},
 };
 
 const PAGE_SIZE: usize = 100;
 const MS_PER_DAY: i64 = 86_400_000;
 
 const ENTITIES: [(&str, &str); 8] = [
-    ("mock", "Mock"),
-    ("mapping", "Mapping"),
-    ("rule", "Proxy rule"),
-    ("environment", "Environment"),
-    ("request", "Request"),
-    ("wsConnection", "WebSocket"),
-    ("folder", "Folder"),
-    ("workspace", "Workspace"),
+    ("mock", "audit.entity.mock"),
+    ("mapping", "audit.entity.mapping"),
+    ("rule", "audit.entity.proxy_rule"),
+    ("environment", "audit.entity.environment"),
+    ("request", "audit.entity.request"),
+    ("wsConnection", "audit.entity.websocket"),
+    ("folder", "audit.entity.folder"),
+    ("workspace", "audit.entity.workspace"),
 ];
 
-const ACTIONS: [(&str, &str); 3] = [("create", "Created"), ("update", "Updated"), ("delete", "Deleted")];
+const ACTIONS: [(&str, &str); 3] =
+    [("create", "audit.action.created"), ("update", "audit.action.updated"), ("delete", "audit.action.deleted")];
 
 /// Days since 1970-01-01 of a civil date.
 fn days_from_civil(year: i64, month: i64, day: i64) -> i64 {
@@ -112,10 +114,10 @@ fn absolute_time(ts: i64) -> String {
 pub(super) fn relative_time(now: i64, ts: i64) -> String {
     let seconds = (now - ts).div_euclid(1000);
     match seconds {
-        ..60 => "just now".to_owned(),
-        60..3600 => format!("{}m ago", seconds / 60),
-        3600..86_400 => format!("{}h ago", seconds / 3600),
-        86_400..2_592_000 => format!("{}d ago", seconds / 86_400),
+        ..60 => t("audit.time.just_now").to_owned(),
+        60..3600 => t_with("audit.time.minutes_ago", &[("count", &(seconds / 60))]),
+        3600..86_400 => t_with("audit.time.hours_ago", &[("count", &(seconds / 3600))]),
+        86_400..2_592_000 => t_with("audit.time.days_ago", &[("count", &(seconds / 86_400))]),
         _ => absolute_time(ts)[..10].to_owned(),
     }
 }
@@ -126,31 +128,34 @@ pub(super) fn now_ms() -> i64 {
 
 /// `1–100 of 230`.
 fn page_label(offset: usize, shown: usize, total: usize) -> String {
-    format!("{}–{} of {total}", offset + 1, offset + shown)
+    t_with(
+        "audit.footer.page_label",
+        &[("from", &(offset + 1)), ("to", &(offset + shown)), ("total", &total)],
+    )
 }
 
 fn entity_label(entity: &str) -> &'static str {
     match entity {
-        "mock" => "MOCK",
-        "mapping" => "MAP",
-        "rule" => "RULE",
-        "environment" => "ENV",
-        "request" => "REQ",
-        "wsConnection" => "WS",
-        "folder" => "FOLDER",
-        "workspace" => "WS",
+        "mock" => t("audit.tag.mock"),
+        "mapping" => t("audit.tag.map"),
+        "rule" => t("audit.tag.rule"),
+        "environment" => t("audit.tag.env"),
+        "request" => t("audit.tag.req"),
+        "wsConnection" => t("audit.tag.ws"),
+        "folder" => t("audit.tag.folder"),
+        "workspace" => t("audit.tag.ws"),
         // A commit of several files, or one made outside the app: it is about no one item.
-        "" => "COMMIT",
+        "" => t("audit.tag.commit"),
         _ => "?",
     }
 }
 
 fn action_label(action: &str) -> &'static str {
     match action {
-        "create" => "Created",
-        "update" => "Updated",
-        "delete" => "Deleted",
-        _ => "Changed",
+        "create" => t("audit.action.created"),
+        "update" => t("audit.action.updated"),
+        "delete" => t("audit.action.deleted"),
+        _ => t("audit.action.changed"),
     }
 }
 
@@ -220,9 +225,9 @@ pub struct AuditScreen {
 
 impl AuditScreen {
     pub fn new(model: Entity<AppModel>, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let search = cx.new(|cx| InputState::new(window, cx).placeholder("Search changes"));
-        let from = cx.new(|cx| InputState::new(window, cx).placeholder("From  YYYY-MM-DD"));
-        let to = cx.new(|cx| InputState::new(window, cx).placeholder("To  YYYY-MM-DD"));
+        let search = cx.new(|cx| InputState::new(window, cx).placeholder(t("audit.filter.search_placeholder")));
+        let from = cx.new(|cx| InputState::new(window, cx).placeholder(t("audit.filter.from_placeholder")));
+        let to = cx.new(|cx| InputState::new(window, cx).placeholder(t("audit.filter.to_placeholder")));
         let mut subscriptions = vec![cx.subscribe(&model, |this, model, event: &ModelEvent, cx| match event {
             ModelEvent::WorkspaceSwitched => this.reload(0, cx),
             ModelEvent::ConfigChanged if model.read(cx).workspace_id() != this.loaded_for => this.reload(0, cx),
@@ -315,7 +320,7 @@ impl AuditScreen {
             this.loaded = true;
             this.loaded_for = workspace;
             if let Some(message) = failure(&outcome) {
-                this.report(format!("Couldn't load the audit log. {message}"), cx);
+                this.report(t_with("audit.error.load", &[("message", &message)]), cx);
                 cx.notify();
                 return;
             }
@@ -384,13 +389,13 @@ impl AuditScreen {
             Ok((bytes, name)) => {
                 self.exporting = None;
                 save_to_file(bytes, name, cx, |this, outcome, cx| match outcome {
-                    Ok(path) => this.report(format!("Saved the audit log to {}.", path.display()), cx),
-                    Err(message) => this.report(format!("Couldn't save the audit log. {message}"), cx),
+                    Ok(path) => this.report(t_with("audit.export.saved_to", &[("path", &path.display())]), cx),
+                    Err(message) => this.report(t_with("audit.error.save", &[("message", &message)]), cx),
                 });
             }
             Err(message) => {
                 self.exporting = None;
-                self.report(format!("Couldn't export the audit log. {message}"), cx);
+                self.report(t_with("audit.error.export", &[("message", &message)]), cx);
             }
         }
         cx.notify();
@@ -410,14 +415,14 @@ impl AuditScreen {
         Button::new(id).outline().small().label(label).dropdown_caret(true).dropdown_menu(move |menu, _, _| {
             let all_view = this.clone();
             let menu = menu.item(
-                PopupMenuItem::new(all)
+                PopupMenuItem::new(t(all))
                     .checked(current.is_none())
                     .on_click(move |_, _, cx| drop(all_view.update(cx, |this, cx| select(this, None, cx)))),
             );
             options.iter().fold(menu, |menu, &(value, label)| {
                 let view = this.clone();
                 menu.item(
-                    PopupMenuItem::new(label)
+                    PopupMenuItem::new(t(label))
                         .checked(current == Some(value))
                         .on_click(move |_, _, cx| drop(view.update(cx, |this, cx| select(this, Some(value), cx)))),
                 )
@@ -430,11 +435,11 @@ impl AuditScreen {
         let entity_label = self
             .entity
             .and_then(|e| ENTITIES.iter().find(|(value, _)| *value == e))
-            .map_or("All items".to_owned(), |(_, label)| (*label).to_owned());
+            .map_or(t("audit.filter.all_items").to_owned(), |(_, label)| t(label).to_owned());
         let action_label = self
             .action
             .and_then(|a| ACTIONS.iter().find(|(value, _)| *value == a))
-            .map_or("All actions".to_owned(), |(_, label)| (*label).to_owned());
+            .map_or(t("audit.filter.all_actions").to_owned(), |(_, label)| t(label).to_owned());
         h_flex()
             .flex_none()
             .flex_wrap()
@@ -446,7 +451,7 @@ impl AuditScreen {
             .child(self.filter_menu(
                 "audit-entity",
                 entity_label,
-                "All items",
+                "audit.filter.all_items",
                 &ENTITIES,
                 self.entity,
                 cx,
@@ -455,7 +460,7 @@ impl AuditScreen {
             .child(self.filter_menu(
                 "audit-action",
                 action_label,
-                "All actions",
+                "audit.filter.all_actions",
                 &ACTIONS,
                 self.action,
                 cx,
@@ -474,7 +479,7 @@ impl AuditScreen {
                     Button::new("audit-clear")
                         .ghost()
                         .small()
-                        .label("Clear")
+                        .label(t("audit.filter.clear"))
                         .on_click(cx.listener(|this, _, window, cx| this.clear_filters(window, cx))),
                 )
             })
@@ -487,7 +492,10 @@ impl AuditScreen {
             .text_xs()
             .text_color(theme.muted_foreground)
             .font_family(theme.mono_font_family.clone())
-            .child(format!("commit {} · {} · {}", entry.commit, entry.actor, absolute_time(entry.ts)));
+            .child(t_with(
+                "audit.commit_line",
+                &[("commit", &entry.commit), ("actor", &entry.actor), ("time", &absolute_time(entry.ts))],
+            ));
         let body = CommitDiffs::render(&self.diffs, &entry.commit, cx);
         v_flex()
             .w_full()
@@ -603,7 +611,7 @@ impl AuditScreen {
                         Button::new("audit-prev")
                             .small()
                             .icon(IconName::ChevronLeft)
-                            .label("Prev")
+                            .label(t("audit.footer.prev"))
                             .disabled(offset == 0)
                             .on_click(
                                 cx.listener(move |this, _, _, cx| this.reload(offset.saturating_sub(PAGE_SIZE), cx)),
@@ -613,7 +621,7 @@ impl AuditScreen {
                         Button::new("audit-next")
                             .small()
                             .icon(IconName::ChevronRight)
-                            .label("Next")
+                            .label(t("audit.footer.next"))
                             .disabled(offset + PAGE_SIZE >= total)
                             .on_click(cx.listener(move |this, _, _, cx| this.reload(offset + PAGE_SIZE, cx))),
                     ),
@@ -639,28 +647,28 @@ impl Render for AuditScreen {
             .child(export_button("audit-export-json", "json", "JSON", cx))
             .child(export_button("audit-export-csv", "csv", "CSV", cx))
             .child(
-                Button::new("audit-refresh").small().icon(IconName::RefreshCw).tooltip("Reload the history").on_click(
+                Button::new("audit-refresh").small().icon(IconName::RefreshCw).tooltip(t("audit.page.reload_tooltip")).on_click(
                     cx.listener(|this, _, _, cx| {
                         let offset = this.offset;
                         this.reload(offset, cx);
                     }),
                 ),
             );
-        let noun = if self.total == 1 { "change" } else { "changes" };
-        let header =
-            page::header("Audit log", format!("{} {noun} in this workspace's history", self.total), actions, cx);
+        let subtitle = if self.total == 1 {
+            t_with("audit.page.subtitle_one", &[("count", &self.total)])
+        } else {
+            t_with("audit.page.subtitle_other", &[("count", &self.total)])
+        };
+        let header = page::header(t("audit.page.title"), subtitle, actions, cx);
 
         let body: AnyElement = if !self.loaded {
-            page::loading("Loading history…")
+            page::loading(t("audit.page.loading"))
         } else {
             let list: AnyElement = if self.entries.is_empty() {
                 if self.any_filter(cx) {
-                    page::empty("No matches", "No change matches the filters.")
+                    page::empty(t("audit.empty.no_matches.title"), t("audit.empty.no_matches.body"))
                 } else {
-                    page::empty(
-                        "No history yet",
-                        "Changes to requests, mocks and other items appear here once they are saved.",
-                    )
+                    page::empty(t("audit.empty.no_history.title"), t("audit.empty.no_history.body"))
                 }
             } else {
                 let now = now_ms();

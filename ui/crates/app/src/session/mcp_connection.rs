@@ -22,6 +22,7 @@ use gpui_kit::{
 use serde_json::Value;
 
 use crate::{
+    i18n::{t, t_with},
     components::stream_log::{LogRow, LogSearch, OpenRows, Way, found, log_row, nothing_found, search_button},
     model::{
         mcp::{CallStatus, McpLine, McpView},
@@ -169,17 +170,19 @@ impl Render for McpConnection {
         let none_found = shown.is_empty() && !self.view.lines.is_empty();
         let server = Some(self.view.server.clone()).filter(|server| !server.is_empty());
         let failed = self.view.lines.iter().filter(|line| line.status == CallStatus::Error).count();
-        let mut counts = format!(
-            "{} line{}",
-            self.view.lines.len(),
-            if self.view.lines.len() == 1 { "" } else { "s" }
-        );
+        let mut counts = vec![if self.view.lines.len() == 1 {
+            t_with("session.mcp.lines_one", &[("count", &self.view.lines.len())])
+        } else {
+            t_with("session.mcp.lines_other", &[("count", &self.view.lines.len())])
+        }];
         if self.view.waiting() > 0 {
-            counts.push_str(&format!(" · {} waiting", self.view.waiting()));
+            counts.push(t_with("session.mcp.waiting", &[("count", &self.view.waiting())]));
         }
         if failed > 0 {
-            counts.push_str(&format!(" · {failed} failed"));
+            counts.push(t_with("session.mcp.failed", &[("count", &failed)]));
         }
+        counts.push(t("session.log.times_utc").to_owned());
+        let counts = counts.join(" · ");
 
         v_flex()
             .size_full()
@@ -210,7 +213,7 @@ impl Render for McpConnection {
                             .flex_none()
                             .text_sm()
                             .text_color(theme.muted_foreground)
-                            .child(format!("{counts} · times in UTC")),
+                            .child(counts),
                     )
                     .child(search_button("search-mcp-lines").on_click(cx.listener(|this, _, window, cx| {
                         this.search.toggle(window, cx);
@@ -220,7 +223,7 @@ impl Render for McpConnection {
                         Button::new("clear-mcp-lines")
                             .ghost()
                             .small()
-                            .label("Clear")
+                            .label(t("session.connection.clear"))
                             .disabled(self.view.lines.is_empty())
                             .on_click(cx.listener(|_, _, _, cx| cx.emit(McpEvent::Clear))),
                     ),
@@ -237,13 +240,11 @@ impl Render for McpConnection {
                     .border_color(theme.border)
                     .when(self.view.lines.is_empty(), |this| {
                         this.child(Empty::new().header(
-                            EmptyHeader::new().title(EmptyTitle::new().child("Nothing asked yet")).description(
+                            EmptyHeader::new().title(EmptyTitle::new().child(t("session.mcp.nothing_asked"))).description(
                                 EmptyDescription::new().child(match state {
-                                    SocketState::Connected => {
-                                        "Call a tool, get a prompt or read a resource: each answer appears here."
-                                    }
-                                    SocketState::Connecting => "Waiting for the server to say what it offers.",
-                                    _ => "Connect to see what the server offers and ask it for something.",
+                                    SocketState::Connected => t("session.mcp.empty_connected"),
+                                    SocketState::Connecting => t("session.mcp.empty_connecting"),
+                                    _ => t("session.mcp.empty_disconnected"),
                                 }),
                             ),
                         ))
