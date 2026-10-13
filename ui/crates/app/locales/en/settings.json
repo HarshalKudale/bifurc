@@ -161,6 +161,11 @@
 
   "privacy.group": "Privacy",
 
+  "review.group": "Review",
+  "review.title": "Rate Bifurc",
+  "review.link": "Review Bifurc on the Microsoft Store",
+  "review.description": "Tell others what you think. It takes a minute and helps more than you'd expect.",
+
   "updates.group": "Updates",
   "updates.automatic_title": "Check for updates automatically",
   "updates.automatic_description": "Once a day. The request carries this app's version and nothing else.",
