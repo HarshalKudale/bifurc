@@ -92,7 +92,7 @@ fn kind_of(request_kind: &str) -> Option<Kind> {
 /// The id of the connection a flow's stream node holds. It is the flow's, not the run's: a flow has one run at
 /// a time, and a new run takes the connection over instead of leaving the last one's behind.
 fn live_id(run: &Run, node: &Node) -> String {
-    format!("flow:{}:{}", run.flow.id, node.id)
+    format!("{}:{}", run.live_prefix(), node.id)
 }
 
 /// Send the node's message over its open connection, if it has one to send and the type takes one.

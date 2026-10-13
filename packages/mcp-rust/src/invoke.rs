@@ -417,6 +417,7 @@ mod tests {
             ("flows_list", all.clone()),
             ("flows_show", with(json!({"flow": "f1"}))),
             ("flows_run", with(json!({"flow": "f1", "inputs": {"user": "bob"}, "timeout": 30, "max_events": 5}))),
+            ("flows_loadtest", with(json!({"flow": "f1", "instances": 5, "inputs": {"user": "bob"}, "timeout": 30}))),
             ("workspaces_list", json!({"json": true})),
             ("workspaces_show", json!({"workspace": "w1", "json": true})),
             ("workspaces_create", json!({"name": "Mine", "account": "octocat", "json": true})),
