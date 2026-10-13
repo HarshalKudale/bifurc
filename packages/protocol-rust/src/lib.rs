@@ -5,6 +5,7 @@
 //! the tests run every one through the validator.
 
 pub mod commands;
+pub mod crash;
 pub mod envelope;
 pub mod errors;
 pub mod events;

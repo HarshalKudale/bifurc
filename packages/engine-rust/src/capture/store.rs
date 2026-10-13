@@ -93,6 +93,7 @@ fn write_now(ws_id: &str) {
         .and_then(|()| std::fs::write(&file, serde_json::to_string(&snapshot).unwrap_or_else(|_| "[]".into())));
     if let Err(err) = written {
         notice(&format!("[capture] could not persist {}: {err}", file.display()));
+        crate::analytics::failed("capture_persist");
     }
 }
 

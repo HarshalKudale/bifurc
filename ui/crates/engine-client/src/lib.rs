@@ -10,6 +10,7 @@ mod error;
 mod frame;
 mod sidecar;
 
+pub use bifurc_protocol::crash;
 pub use connection::{CLIENT_NAME, EngineClient, EngineEvent, Hello, Incoming, PROTOCOL_VERSION};
 pub use error::{ClientError, EngineError, Result};
 pub use sidecar::{
