@@ -163,6 +163,7 @@ impl Desktop {
             Ok(child) => child,
             Err(err) => {
                 notice(&format!("no tray icon: could not start {}: {err}", program.display()));
+                crate::analytics::failed("tray_start");
                 return;
             }
         };
@@ -267,6 +268,7 @@ impl Desktop {
             Err(err) => {
                 self.state.lock().launched_at = None;
                 notice(&format!("could not start the interface at {}: {err}", ui.display()));
+                crate::analytics::failed("interface_start");
             }
         }
     }

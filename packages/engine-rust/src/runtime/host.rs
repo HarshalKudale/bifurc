@@ -146,6 +146,7 @@ async fn bootstrap_workspaces(mut settings: AppSettings) -> Result<AppSettings> 
         }
         if let Err(err) = init_workspace_repo(id).await {
             notice(&format!("workspace \"{id}\": could not prepare its git repository: {err}"));
+            crate::analytics::failed("workspace_repo_init");
         }
         crate::gitops::start_auto_sync(id);
     }
@@ -191,6 +192,8 @@ impl WorkspaceHost {
         let registry = Arc::new(registry);
 
         set_data_root(&opts.data_dir)?;
+        // Before anything that can fail, so that what fails while starting is reported too.
+        crate::analytics::start(opts.transport.kind().as_str());
         let log = EventLog::new(bus());
         crate::capture::start_capture_recording();
         let sweeper = crate::workspace::blob::start_blob_sweeper();
@@ -359,11 +362,17 @@ impl WorkspaceHost {
                             companion = Some(server);
                             notice(&format!("companion: {port} — the browser extension connects here"));
                         }
-                        Err(err) => notice(&format!("companion on {port} FAILED to start: {}", err.message)),
+                        Err(err) => {
+                            notice(&format!("companion on {port} FAILED to start: {}", err.message));
+                            crate::analytics::failed("companion_start");
+                        }
                     },
-                    None => notice(&format!(
-                        "companion FAILED to start: no free port within {SCAN_LIMIT} of {base} — set a different                          base in Settings → Ports"
-                    )),
+                    None => {
+                        notice(&format!(
+                            "companion FAILED to start: no free port within {SCAN_LIMIT} of {base} — set a different                          base in Settings → Ports"
+                        ));
+                        crate::analytics::failed("companion_no_port");
+                    }
                 }
                 let path = path.clone().unwrap_or_else(|| engine_socket_path(&opts.data_dir));
                 let server = create_socket_server(&path, session).await?;
@@ -412,7 +421,6 @@ impl WorkspaceHost {
         if let Some(desktop) = &desktop {
             desktop.start();
         }
-        crate::analytics::start(opts.transport.kind().as_str());
         crate::updates::start();
         crate::gitops::start_history_watch();
 

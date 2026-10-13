@@ -15,6 +15,13 @@
 //! - its own name (`request.parseCurl`) when it succeeds and nothing describes it;
 //! - `command failed`, with its name and the error code, when it fails.
 //!
+//! Two more kinds of event are no command's, and always anonymous:
+//! - `engine failure`, with a fixed word for what failed in the background ([`failed`]);
+//! - a crash report a Bifurc process left in the data directory (`bifurc_protocol::crash`), read here because
+//!   the engine is the one process that may send anything: a panic as PostHog's `$exception`, with the file
+//!   and line of Bifurc's code and never the message, and `app failure` for what failed before an engine was
+//!   there to be told ([`collect_crashes`]).
+//!
 //! Nothing is sent before the terms of service and the privacy policy were accepted on this data directory:
 //! accepting them is what allows analytics, so they begin with the acceptance ([`resume`]).
 //!
@@ -41,7 +48,7 @@ use crate::{
     runtime::notice,
     utils::{
         id::now_ms,
-        json::{merged, opt_str, read_json, write_json_pretty},
+        json::{merged, opt_str, read_json, truthy, write_json_pretty},
     },
     workspace::{paths::data_dir, settings::load_settings},
 };
@@ -56,6 +63,8 @@ const SHUTDOWN_FLUSH: Duration = Duration::from_secs(2);
 /// How long what `app.json` says about the switch and the organizations is taken as still so. A command is
 /// routed by it, and `app.json` is not read for every one.
 const ROUTING_TTL: Duration = Duration::from_secs(5);
+/// How many crash reports stay in the data directory for the user to look at or attach to an issue.
+const KEPT_CRASHES: usize = 20;
 
 /// Where events go.
 #[derive(Clone)]
@@ -290,6 +299,8 @@ async fn send(target: &Target, batch: Vec<Value>) -> Result<(), String> {
 pub fn start(transport: &str) {
     STATE.lock().transport = Some(transport.to_string());
     begin();
+    // With nothing to send to, the reports are still kept few.
+    collect_crashes();
 }
 
 /// The terms or the policy were just accepted: begin, if that was what analytics were waiting for.
@@ -344,6 +355,7 @@ fn begin() {
         }
     }
     let sender = target.clone();
+    STATE.lock().target = Some(target);
     let flusher = tokio::spawn(async move {
         if !first.is_empty() {
             match send(&sender, first).await {
@@ -352,6 +364,8 @@ fn begin() {
                 Err(reason) => notice(&format!("usage analytics could not be sent: {reason}")),
             }
         }
+        // What crashed before this engine started is not left waiting for the first tick.
+        flush().await;
         let mut tick = tokio::time::interval(EVENTS_EVERY);
         tick.tick().await;
         loop {
@@ -359,9 +373,7 @@ fn begin() {
             flush().await;
         }
     });
-    let mut state = STATE.lock();
-    state.target = Some(target);
-    state.flusher = Some(flusher);
+    STATE.lock().flusher = Some(flusher);
 }
 
 fn enqueue(queue: &mut Vec<Queued>, item: Queued) {
@@ -412,8 +424,52 @@ pub fn record_command(command: Option<Command>, action: &str, client: &str, resu
     enqueue(&mut state.queue, Queued { replaces: finished.replaces, event: body, managed });
 }
 
+/// Queue an event that is no command's and no workspace's: anonymous, so only if the user's own analytics are
+/// on. `at` is when it happened.
+fn record(found: events::Event, at: i64) {
+    if route(&routing(), None) != Route::Anonymous {
+        return;
+    }
+    let mut state = STATE.lock();
+    let Some(install_id) = state.target.as_ref().and_then(|target| target.install_id.clone()) else { return };
+    let mut body = event(&install_id, &found.name, Value::Object(found.properties));
+    body["timestamp"] = json!(iso_string(at));
+    enqueue(&mut state.queue, Queued { replaces: found.replaces, event: body, managed: false });
+}
+
+/// Something failed in the engine with no command to answer for it. `what` is a fixed word, never the
+/// error's text.
+pub fn failed(what: &'static str) {
+    record(events::failure(what), now_ms());
+}
+
+/// Queue the crash reports the Bifurc processes left in the data directory since the last look, and keep
+/// only the newest [`KEPT_CRASHES`] files. A report is looked at once, whether or not it may be sent.
+fn collect_crashes() {
+    let Ok(dir) = std::fs::read_dir(data_dir().join(bifurc_protocol::crash::DIR)) else { return };
+    let mut files: Vec<std::path::PathBuf> =
+        dir.flatten().map(|entry| entry.path()).filter(|path| path.extension().is_some_and(|ext| ext == "json")).collect();
+    // A file's name begins with when it was written.
+    files.sort();
+    let kept = files.split_off(files.len().saturating_sub(KEPT_CRASHES));
+    for old in files {
+        let _ = std::fs::remove_file(old);
+    }
+    if STATE.lock().target.is_none() {
+        return;
+    }
+    for path in kept {
+        let Some(report) = read_json(&path).filter(|report| !truthy(report, "collected")) else { continue };
+        let _ = write_json_pretty(&path, &merged(&report, &json!({ "collected": true })));
+        if let Some(found) = events::reported(&report) {
+            record(found, report.get("at").and_then(Value::as_i64).unwrap_or_else(now_ms));
+        }
+    }
+}
+
 /// Send the queued events. What could not be sent is kept for the next flush.
 pub async fn flush() {
+    collect_crashes();
     let (target, queue) = {
         let mut state = STATE.lock();
         let Some(target) = state.target.clone() else { return };
