@@ -90,8 +90,7 @@ pub(crate) fn need(value: Option<&str>, what: &str) -> Result<String> {
 /// The error of a verb the group does not have. Deleting and syncing one item are the desktop app's.
 pub(crate) fn unknown_verb(group: &str, verb: &str) -> CliError {
     let hint = match verb {
-        "remove" | "delete" | "rm" | "unset" | "logout" => "; deleting is done in the desktop app",
-        "publish" | "import" | "revert" | "push" | "pull" => "; that is done in the desktop app",
+        "revert" | "push" | "pull" | "publish" | "commit" | "discard" => "; git is under: bifurc sync",
         _ => "",
     };
     CliError::msg(format!("unknown: {group} {verb}{hint} (see: bifurc {group} --help)"))
@@ -217,7 +216,7 @@ pub(crate) fn refused(result: Value) -> Result<Value> {
 }
 
 /// The workspaces of the engine, each with whether it is the active one, and the active one's id.
-fn workspace_rows(ctx: &mut Context) -> Result<(Vec<Value>, Value)> {
+pub(crate) fn workspace_rows(ctx: &mut Context) -> Result<(Vec<Value>, Value)> {
     let config = ctx.request("config.get", json!({}))?;
     let active = config.get("activeWorkspaceId").cloned().unwrap_or(Value::Null);
     let rows = config
@@ -252,7 +251,8 @@ pub fn workspaces(ctx: &mut Context, sub: Option<&str>) -> Result<String> {
             let workspace = find_one(&rows, &wanted, &["name"], "workspace", "workspaces")?;
             let (id, name) = (id_of(workspace), js_template(workspace.get("name")));
             ctx.request("workspace.setActive", json!({ "id": id }))?;
-            Ok(ctx.print(&json!({ "ok": true, "activeWorkspaceId": id }), || format!("Active workspace: {name} ({id})")))
+            Ok(ctx
+                .print(&json!({ "ok": true, "activeWorkspaceId": id }), || format!("Active workspace: {name} ({id})")))
         }
         "update" => {
             ctx.accept(&["name"], 1)?;
@@ -285,9 +285,13 @@ pub fn workspaces(ctx: &mut Context, sub: Option<&str>) -> Result<String> {
             }))
         }
         "sync" => {
-            ctx.accept(&[], 0)?;
+            ctx.accept(&["message"], 0)?;
             let workspace = workspace_id(ctx)?;
-            let result = refused(ctx.request("sync.all", json!({ "workspaceId": workspace }))?)?;
+            let mut payload = json!({ "workspaceId": workspace });
+            if let Some(message) = ctx.args.flag("message") {
+                payload["message"] = json!(message);
+            }
+            let result = refused(ctx.request("sync.all", payload)?)?;
             Ok(ctx.print(&result, || {
                 let count = |key: &str| result.get(key).and_then(Value::as_u64).unwrap_or(0);
                 let mut line = match count("synced") {
@@ -301,7 +305,10 @@ pub fn workspaces(ctx: &mut Context, sub: Option<&str>) -> Result<String> {
                     line.push_str(", and pushed them");
                 }
                 if count("pendingDeletions") > 0 {
-                    line.push_str(&format!("\n{} deletion(s) still wait to be confirmed or reverted", count("pendingDeletions")));
+                    line.push_str(&format!(
+                        "\n{} deletion(s) still wait to be confirmed or reverted",
+                        count("pendingDeletions")
+                    ));
                 }
                 line
             }))
@@ -311,7 +318,7 @@ pub fn workspaces(ctx: &mut Context, sub: Option<&str>) -> Result<String> {
 }
 
 /// The id of a signed-in account, named by its id or its login.
-fn account_id(ctx: &mut Context, wanted: &str) -> Result<String> {
+pub(crate) fn account_id(ctx: &mut Context, wanted: &str) -> Result<String> {
     let listed = ctx.request("account.list", json!({}))?;
     listed
         .get("accounts")
@@ -366,7 +373,8 @@ pub fn account(ctx: &mut Context, sub: Option<&str>) -> Result<String> {
             let id = account_id(ctx, &need(ctx.args.positional(2), "account login")?)?;
             let result = refused(ctx.request("account.repos", json!({ "accountId": id }))?)?;
             let rows: Vec<Value> = result.get("repos").and_then(Value::as_array).cloned().unwrap_or_default();
-            Ok(ctx.print(&Value::Array(rows.clone()), || table(&rows, &["fullName", "private", "access", "workspaceId"])))
+            Ok(ctx
+                .print(&Value::Array(rows.clone()), || table(&rows, &["fullName", "private", "access", "workspaceId"])))
         }
         other => Err(unknown_verb("account", other)),
     }
@@ -602,31 +610,8 @@ mod tests {
         assert_eq!(out.unwrap_err(), CliError::msg("missing workspace id or name"));
         let argv = ["workspaces", "frob"];
         let (out, calls) = run(&argv, vec![], |c| workspaces(c, sub(&argv)));
-        assert_eq!(
-            out.unwrap_err(),
-            CliError::msg("unknown: workspaces frob (see: bifurc workspaces --help)")
-        );
+        assert_eq!(out.unwrap_err(), CliError::msg("unknown: workspaces frob (see: bifurc workspaces --help)"));
         assert!(calls.is_empty());
-    }
-
-    #[test]
-    fn what_the_desktop_app_does_is_said_so() {
-        for (group, verb, hint) in [
-            ("workspaces", "publish", "that is done in the desktop app"),
-            ("workspaces", "import", "that is done in the desktop app"),
-            ("account", "logout", "deleting is done in the desktop app"),
-        ] {
-            let argv = [group, verb, "x"];
-            let (out, calls) = run(&argv, vec![], |c| match group {
-                "workspaces" => workspaces(c, sub(&argv)),
-                _ => account(c, sub(&argv)),
-            });
-            assert_eq!(
-                out.unwrap_err(),
-                CliError::msg(format!("unknown: {group} {verb}; {hint} (see: bifurc {group} --help)"))
-            );
-            assert!(calls.is_empty());
-        }
     }
 
     #[test]
@@ -649,7 +634,10 @@ mod tests {
 
         let argv = ["status", "now"];
         let (out, _) = run(&argv, vec![], |c| status(c));
-        assert_eq!(out.unwrap_err(), CliError::msg("unexpected argument \"now\" for \"status\" (see: bifurc status --help)"));
+        assert_eq!(
+            out.unwrap_err(),
+            CliError::msg("unexpected argument \"now\" for \"status\" (see: bifurc status --help)")
+        );
     }
 
     #[test]

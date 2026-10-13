@@ -18,8 +18,9 @@ use gpui_kit::component::{
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    AppContext as _, Context, Entity, InteractiveElement as _, IntoElement, ParentElement as _, Render, ScrollHandle,
-    SharedString, StatefulInteractiveElement as _, Styled as _, Window, div,
+    AppContext as _, Context, Entity, InteractiveElement as _, IntoElement, ListAlignment, ListOffset, ListState,
+    ParentElement as _, Render, ScrollHandle, SharedString, StatefulInteractiveElement as _, Styled as _, Window, div,
+    list, px,
 };
 use serde_json::Value;
 
@@ -27,13 +28,14 @@ use crate::{
     i18n::{t, t_with},
     components::{
         BodyPane, Syntax,
-        stream_log::{LogRow, LogSearch, OpenRows, Way, found, log_row, nothing_found, search_button},
+        stream_log::{LogRow, LogSearch, OpenRows, Way, compact, found, log_row, nothing_found, search_button},
         binary::{BinaryBody, save_to_file, suggested_file_name},
         page,
     },
     model::{
-        http::{BodyEncoding, HttpResponse, pretty_json, status_text},
+        http::{BodyEncoding, HttpResponse, TestOutcome, pretty_json, status_text},
         media::{self, BodyClass},
+        stream::MAX_MESSAGES,
     },
 };
 
@@ -63,7 +65,25 @@ struct LiveEntry {
     sent: bool,
     ts: u64,
     data: String,
+    /// The start of `data` on one line, which is what a closed row shows. Made once: a row is drawn often.
+    line: String,
+    /// The name and id of an event, for a message that is one.
+    event: Option<String>,
+    event_id: Option<String>,
 }
+
+impl LiveEntry {
+    fn new(id: String, sent: bool, ts: u64, data: String) -> Self {
+        let mut line = compact(&data);
+        if let Some((end, _)) = line.char_indices().nth(LINE_CHARS) {
+            line.truncate(end);
+        }
+        Self { id, sent, ts, data, line, event: None, event_id: None }
+    }
+}
+
+/// More characters than a row has room for.
+const LINE_CHARS: usize = 400;
 
 struct LiveCall {
     entries: Vec<LiveEntry>,
@@ -71,6 +91,9 @@ struct LiveCall {
     code: i64,
     message: String,
     metadata: Vec<(String, String)>,
+    /// Set when this is an HTTP response that arrived in pieces rather than a gRPC call: its status, and
+    /// once it has ended how long it took and what its tests found.
+    http: Option<HttpResponse>,
 }
 
 /// What a gRPC call came back with, apart from the messages (those are in the body editor).
@@ -116,6 +139,9 @@ pub struct Exchange {
     saved_note: Option<SharedString>,
     live_scroll: ScrollHandle,
     follow_tail: bool,
+    /// The list of an HTTP response's messages, and the entry each of its rows shows, newest first.
+    live_list: ListState,
+    live_shown: Vec<usize>,
     /// The live messages that are open, by id.
     live_open: OpenRows,
     live_search: LogSearch,
@@ -132,6 +158,8 @@ impl Exchange {
             saved_note: None,
             live_scroll: ScrollHandle::new(),
             follow_tail: false,
+            live_list: ListState::new(0, ListAlignment::Top, px(400.)),
+            live_shown: Vec::new(),
             live_open: OpenRows::default(),
             live_search: LogSearch::new(window, cx, |this, cx| {
                 this.live_open.highlight(&this.live_search.query(cx), cx);
@@ -145,8 +173,63 @@ impl Exchange {
         cx.notify();
     }
 
+    /// The HTTP response that is arriving in pieces, while it still is.
+    fn arriving(&mut self) -> Option<&mut LiveCall> {
+        match &mut self.phase {
+            Phase::GrpcLive(live) if live.running && live.http.is_some() => Some(live),
+            _ => None,
+        }
+    }
+
     pub fn fail(&mut self, message: String, cx: &mut Context<Self>) {
-        self.phase = Phase::Failed(message);
+        // A response that broke off keeps the messages that came.
+        if let Some(live) = self.arriving() {
+            live.running = false;
+            live.message = message;
+        } else {
+            self.phase = Phase::Failed(message);
+        }
+        cx.notify();
+    }
+
+    /// Takes an `event.request.stream` payload: messages of an HTTP response that is arriving in pieces. The
+    /// first one carries the status and headers. The response is shown as the log of its messages, and stays
+    /// that when it ends.
+    pub fn receive(&mut self, payload: &Value, cx: &mut Context<Self>) {
+        if self.arriving().is_none() {
+            let Some(response) = HttpResponse::from_value(payload, BodyEncoding::Text) else { return };
+            self.binary = None;
+            self.section = Section::Body;
+            self.live_open.clear();
+            self.live_list.reset(0);
+            self.phase = Phase::GrpcLive(LiveCall {
+                entries: Vec::new(),
+                running: true,
+                code: 0,
+                message: String::new(),
+                metadata: response.headers.clone(),
+                http: Some(response),
+            });
+        }
+        let Phase::GrpcLive(live) = &mut self.phase else { return };
+        let text = |message: &Value, key: &str| message.get(key).and_then(Value::as_str).map(str::to_owned);
+        for message in payload.get("messages").and_then(Value::as_array).into_iter().flatten() {
+            let mut entry = LiveEntry::new(
+                text(message, "id").unwrap_or_default(),
+                false,
+                message.get("ts").and_then(Value::as_u64).unwrap_or(0),
+                text(message, "data").unwrap_or_default(),
+            );
+            entry.event = text(message, "event");
+            entry.event_id = text(message, "eventId");
+            live.entries.push(entry);
+        }
+        if live.entries.len() > MAX_MESSAGES {
+            let excess = live.entries.len() - MAX_MESSAGES;
+            live.entries.drain(..excess);
+            let entries = &live.entries;
+            self.live_open.retain(|id| entries.iter().any(|entry| entry.id == id));
+        }
         cx.notify();
     }
 
@@ -159,6 +242,21 @@ impl Exchange {
         window: &mut Window,
         cx: &mut Context<Self>,
     ) -> Option<u16> {
+        // A response that arrived in pieces stays the log of them; the result adds what is known at the end.
+        if let Some(live) = self.arriving() {
+            let mut end = serde_json::Map::new();
+            for key in ["status", "headers", "durationMs", "tests", "preScriptError", "postScriptError"] {
+                if let Some(value) = result.get(key) {
+                    end.insert(key.to_owned(), value.clone());
+                }
+            }
+            live.running = false;
+            if let Some(response) = HttpResponse::from_value(&Value::Object(end), encoding) {
+                live.http = Some(response);
+            }
+            cx.notify();
+            return live.http.as_ref().map(|response| response.status);
+        }
         self.binary = None;
         self.saved_note = None;
         let (raw, pretty, syntax, status) = match HttpResponse::from_value(result, encoding) {
@@ -214,6 +312,7 @@ impl Exchange {
             code: 0,
             message: String::new(),
             metadata: Vec::new(),
+            http: None,
         });
         cx.notify();
     }
@@ -221,12 +320,12 @@ impl Exchange {
     pub fn live_message(&mut self, payload: &Value, cx: &mut Context<Self>) {
         let Phase::GrpcLive(live) = &mut self.phase else { return };
         let message = &payload["message"];
-        live.entries.push(LiveEntry {
-            id: message.get("id").and_then(Value::as_str).unwrap_or_default().to_owned(),
-            sent: message.get("direction").and_then(Value::as_str) == Some("sent"),
-            ts: message.get("ts").and_then(Value::as_u64).unwrap_or(0),
-            data: message.get("data").and_then(Value::as_str).unwrap_or_default().to_owned(),
-        });
+        live.entries.push(LiveEntry::new(
+            message.get("id").and_then(Value::as_str).unwrap_or_default().to_owned(),
+            message.get("direction").and_then(Value::as_str) == Some("sent"),
+            message.get("ts").and_then(Value::as_u64).unwrap_or(0),
+            message.get("data").and_then(Value::as_str).unwrap_or_default().to_owned(),
+        ));
         self.follow_tail = true;
         cx.notify();
     }
@@ -290,15 +389,16 @@ impl Exchange {
             }))
             .child(Tab::new().label(t("session.response.tab_body")))
             .child(Tab::new().label(t_with("session.response.tab_headers", &[("count", &response.headers.len())])))
-            .child(Tab::new().label(if response.tests.is_empty() {
-                t("session.response.tab_tests").to_owned()
-            } else {
-                let passed = response.tests.iter().filter(|t| t.passed).count();
-                t_with(
-                    "session.response.tab_tests_count",
-                    &[("passed", &passed), ("total", &response.tests.len())],
-                )
-            }))
+            .child(Self::tests_tab(&response.tests))
+    }
+
+    fn tests_tab(tests: &[TestOutcome]) -> Tab {
+        Tab::new().label(if tests.is_empty() {
+            t("session.response.tab_tests").to_owned()
+        } else {
+            let passed = tests.iter().filter(|t| t.passed).count();
+            t_with("session.response.tab_tests_count", &[("passed", &passed), ("total", &tests.len())])
+        })
     }
 
     fn status_tag(response: &HttpResponse) -> Tag {
@@ -364,6 +464,34 @@ impl Exchange {
             .into_any_element()
     }
 
+    /// What the test script found, a test to a row.
+    fn render_tests(tests: &[TestOutcome], cx: &mut Context<Self>) -> gpui_kit::AnyElement {
+        if tests.is_empty() {
+            return page::empty(t("session.response.no_tests_title"), t("session.response.no_tests_description"));
+        }
+        let theme = cx.theme().clone();
+        v_flex()
+            .id("response-tests")
+            .overflow_y_scroll()
+            .size_full()
+            .p_3()
+            .gap_2()
+            .children(tests.iter().map(|test| {
+                h_flex()
+                    .gap_2()
+                    .items_start()
+                    .child(div().w_16().flex_none().child(if test.passed {
+                        Tag::success().child(t("session.response.test_passed"))
+                    } else {
+                        Tag::danger().child(t("session.response.test_failed"))
+                    }))
+                    .child(v_flex().flex_1().min_w_0().child(test.name.clone()).when_some(test.error.clone(), |this, error| {
+                        this.child(div().text_sm().text_color(theme.muted_foreground).child(error))
+                    }))
+            }))
+            .into_any_element()
+    }
+
     fn render_http(&self, response: &HttpResponse, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
         let theme = cx.theme().clone();
         let content =
@@ -395,32 +523,7 @@ impl Exchange {
                             .child(div().flex_1().min_w_0().child(value.clone()))
                     }))
                     .into_any_element(),
-                Section::Tests if response.tests.is_empty() => {
-                    page::empty(t("session.response.no_tests_title"), t("session.response.no_tests_description"))
-                }
-                Section::Tests => v_flex()
-                    .id("response-tests")
-                    .overflow_y_scroll()
-                    .size_full()
-                    .p_3()
-                    .gap_2()
-                    .children(response.tests.iter().map(|test| {
-                        h_flex()
-                            .gap_2()
-                            .items_start()
-                            .child(div().w_16().flex_none().child(if test.passed {
-                                Tag::success().child(t("session.response.test_passed"))
-                            } else {
-                                Tag::danger().child(t("session.response.test_failed"))
-                            }))
-                            .child(v_flex().flex_1().min_w_0().child(test.name.clone()).when_some(
-                                test.error.clone(),
-                                |this, error| {
-                                    this.child(div().text_sm().text_color(theme.muted_foreground).child(error))
-                                },
-                            ))
-                    }))
-                    .into_any_element(),
+                Section::Tests => Self::render_tests(&response.tests, cx),
             };
 
         let can_find = self.section == Section::Body
@@ -463,11 +566,13 @@ impl Exchange {
         let row = LogRow {
             id: entry.id.clone(),
             ts: entry.ts,
-            tag: if entry.sent { t("session.log.sent") } else { t("session.log.received") }.to_owned(),
-            outline: entry.sent,
-            way: Some(if entry.sent { Way::Sent } else { Way::Received }),
-            note: None,
-            data: entry.data.clone(),
+            tag: entry.event.clone().unwrap_or_else(|| {
+                if entry.sent { t("session.log.sent") } else { t("session.log.received") }.to_owned()
+            }),
+            outline: entry.sent || entry.event.as_deref() == Some("message"),
+            way: entry.event.is_none().then_some(if entry.sent { Way::Sent } else { Way::Received }),
+            note: entry.event_id.as_ref().map(|id| t_with("session.sse.event_id", &[("id", id)])),
+            data: entry.line.clone(),
         };
         let id = entry.id.clone();
         log_row(
@@ -484,6 +589,15 @@ impl Exchange {
         )
     }
 
+    /// The row at `ix` of the list of an HTTP response's messages.
+    fn render_shown_row(&self, ix: usize, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
+        let Phase::GrpcLive(live) = &self.phase else { return div().into_any_element() };
+        match self.live_shown.get(ix).and_then(|at| live.entries.get(*at)) {
+            Some(entry) => self.render_live_row(entry, cx),
+            None => div().into_any_element(),
+        }
+    }
+
     fn render_live(&mut self, live: &LiveCall, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
         let theme = cx.theme().clone();
         if self.follow_tail {
@@ -493,23 +607,28 @@ impl Exchange {
         let received = live.entries.iter().filter(|e| !e.sent).count();
         let sent = live.entries.len() - received;
         let ok = live.code == 0;
-        let selected = if self.section == Section::Headers { 1 } else { 0 };
-        let tag = if live.running {
-            Tag::warning().child(t("session.log.open"))
-        } else if ok {
-            Tag::success().child("OK")
-        } else {
-            Tag::danger().child(grpc_status_name(live.code))
+        let selected = SECTIONS.iter().position(|s| *s == self.section).unwrap_or(0);
+        let tag = match &live.http {
+            _ if live.running => Tag::warning().child(t("session.log.open")),
+            Some(response) => Self::status_tag(response),
+            None if ok => Tag::success().child("OK"),
+            None => Tag::danger().child(grpc_status_name(live.code)),
         };
         let needle = self.live_search.needle(cx);
-        let shown: Vec<&LiveEntry> =
-            live.entries.iter().filter(|entry| found(needle.as_deref(), &[&entry.data])).collect();
-        let search_bar = if self.section == Section::Headers {
-            None
-        } else {
+        let shown: Vec<&LiveEntry> = live
+            .entries
+            .iter()
+            .filter(|entry| found(needle.as_deref(), &[&entry.data, entry.event.as_deref().unwrap_or_default()]))
+            .collect();
+        let search_bar = if self.section == Section::Body {
             self.live_search.bar(shown.len(), live.entries.len(), cx)
+        } else {
+            None
         };
         let content = match self.section {
+            Section::Tests => {
+                Self::render_tests(live.http.as_ref().map(|response| response.tests.as_slice()).unwrap_or_default(), cx)
+            }
             Section::Headers if live.metadata.is_empty() => {
                 page::empty(t("session.response.no_metadata_title"), t("session.response.no_metadata_live_description"))
             }
@@ -535,6 +654,30 @@ impl Exchange {
                 )
             }
             _ if shown.is_empty() => nothing_found(),
+            // An HTTP response has the newest message first, and builds only the rows that are in view.
+            _ if live.http.is_some() => {
+                self.live_shown = (0..live.entries.len())
+                    .rev()
+                    .filter(|ix| {
+                        let entry = &live.entries[*ix];
+                        found(needle.as_deref(), &[&entry.data, entry.event.as_deref().unwrap_or_default()])
+                    })
+                    .collect();
+                let (old, new) = (self.live_list.item_count(), self.live_shown.len());
+                if new > old && needle.is_none() {
+                    // Messages came: the list keeps its place, and a list that was at its top stays there.
+                    let top = self.live_list.logical_scroll_top();
+                    self.live_list.splice(0..0, new - old);
+                    if top.item_ix == 0 && top.offset_in_item == px(0.) {
+                        self.live_list.scroll_to(ListOffset::default());
+                    }
+                } else if new != old {
+                    self.live_list.reset(new);
+                }
+                list(self.live_list.clone(), cx.processor(|this, ix: usize, _, cx| this.render_shown_row(ix, cx)))
+                    .size_full()
+                    .into_any_element()
+            }
             _ => v_flex()
                 .id("grpc-live-log")
                 .track_scroll(&self.live_scroll)
@@ -552,24 +695,38 @@ impl Exchange {
                     .pt_2()
                     .gap_3()
                     .child(tag)
-                    .child(div().text_sm().text_color(theme.muted_foreground).child(t_with(
-                        "session.log.received_sent",
-                        &[("received", &received), ("sent", &sent)],
-                    )))
+                    .children(live.http.as_ref().filter(|_| !live.running && live.message.is_empty()).map(|response| {
+                        div()
+                            .text_sm()
+                            .text_color(theme.muted_foreground)
+                            .child(t_with("session.response.duration", &[("ms", &response.duration_ms)]))
+                    }))
+                    .child(div().text_sm().text_color(theme.muted_foreground).child(match &live.http {
+                        Some(_) if received == 1 => t_with("session.response.messages_one", &[("count", &received)]),
+                        Some(_) => t_with("session.response.messages_other", &[("count", &received)]),
+                        None => t_with("session.log.received_sent", &[("received", &received), ("sent", &sent)]),
+                    }))
                     .child(div().text_sm().text_color(theme.muted_foreground).child(t("session.log.times_utc")))
                     .child(div().flex_1())
-                    .child(search_button("search-log").disabled(self.section == Section::Headers).on_click(
+                    .child(search_button("search-log").disabled(self.section != Section::Body).on_click(
                         cx.listener(|this, _, window, cx| {
                             this.live_search.toggle(window, cx);
                             cx.notify();
                         }),
                     )),
             )
-            .when(!live.running && !ok && !live.message.is_empty(), |this| {
+            .when(!live.running && !live.message.is_empty() && (!ok || live.http.is_some()), |this| {
                 this.child(div().px_3().pt_2().child(
-                    Alert::error("grpc-live-status", SharedString::from(live.message.clone())).title(t("session.response.call_failed")),
+                    Alert::error("grpc-live-status", SharedString::from(live.message.clone())).title(t(
+                        if live.http.is_some() { "session.response.send_failed" } else { "session.response.call_failed" },
+                    )),
                 ))
             })
+            .children(live.http.iter().flat_map(|response| response.script_errors.iter()).enumerate().map(|(ix, error)| {
+                div().px_3().pt_2().child(
+                    Alert::warning(("script-error", ix), SharedString::from(error.clone())).title(t("session.response.script_failed")),
+                )
+            }))
             .child(
                 div().flex_none().px_3().child(
                     TabBar::new("grpc-live-sections")
@@ -577,11 +734,15 @@ impl Exchange {
                         .small()
                         .selected_index(selected)
                         .on_click(cx.listener(|this, ix: &usize, _, cx| {
-                            this.section = if *ix == 1 { Section::Headers } else { Section::Body };
+                            this.section = SECTIONS[*ix];
                             cx.notify();
                         }))
                         .child(Tab::new().label(t("session.response.tab_messages")))
-                        .child(Tab::new().label(t_with("session.response.tab_metadata", &[("count", &live.metadata.len())]))),
+                        .child(Tab::new().label(t_with(
+                            if live.http.is_some() { "session.response.tab_headers" } else { "session.response.tab_metadata" },
+                            &[("count", &live.metadata.len())],
+                        )))
+                        .children(live.http.as_ref().map(|response| Self::tests_tab(&response.tests))),
                 ),
             )
             .children(search_bar.map(|bar| div().flex_none().pt_2().child(bar)))

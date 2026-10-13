@@ -1193,15 +1193,4 @@ mod tests {
         let (out, _) = run(&argv, answers, |c| requests(c, sub(&argv)));
         assert_eq!(out.unwrap_err(), CliError::msg("down"));
     }
-
-    #[test]
-    fn nothing_is_removed_from_the_command_line() {
-        let argv = ["requests", "delete", "r1"];
-        let (out, calls) = run(&argv, vec![], |c| requests(c, sub(&argv)));
-        assert_eq!(
-            out.unwrap_err(),
-            CliError::msg("unknown: requests delete; deleting is done in the desktop app (see: bifurc requests --help)")
-        );
-        assert!(calls.is_empty());
-    }
 }

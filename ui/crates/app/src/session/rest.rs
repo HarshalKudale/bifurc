@@ -131,6 +131,8 @@ pub struct RestSession {
     script: Script,
     baseline: Fields,
     exchange: Entity<Exchange>,
+    /// Names this session's sends, so the engine's reports of a response that is still arriving find it.
+    stream_id: String,
     sending: bool,
     saving: bool,
     autosave: Autosave,
@@ -168,10 +170,17 @@ impl RestSession {
             InputEvent::Focus => {}
         }));
         subscriptions.push(cx.subscribe_in(&model, window, |this, _, event: &ModelEvent, window, cx| {
-            if let ModelEvent::EntityReverted(id) = event
-                && this.saved_id.as_deref() == Some(id.as_str())
-            {
-                this.reload(window, cx);
+            match event {
+                ModelEvent::EntityReverted(id) if this.saved_id.as_deref() == Some(id.as_str()) => {
+                    this.reload(window, cx);
+                }
+                ModelEvent::RequestStream(payload)
+                    if this.sending
+                        && payload.get("streamId").and_then(Value::as_str) == Some(this.stream_id.as_str()) =>
+                {
+                    this.exchange.update(cx, |exchange, cx| exchange.receive(payload, cx));
+                }
+                _ => {}
             }
         }));
         subscriptions.push(cx.subscribe_in(
@@ -242,6 +251,7 @@ impl RestSession {
                 test_script: String::new(),
             },
             exchange,
+            stream_id: format!("rest-{}", cx.entity_id().as_u64()),
             sending: false,
             saving: false,
             autosave: Autosave::new(window),
@@ -755,7 +765,7 @@ impl RestSession {
             return;
         }
         let payload = match (&self.saved_id, fields == self.baseline) {
-            (Some(id), true) => json!({ "workspaceId": self.workspace_id, "id": id }),
+            (Some(id), true) => json!({ "workspaceId": self.workspace_id, "id": id, "streamId": self.stream_id }),
             _ => {
                 let mut scripts = Map::new();
                 for (field, text) in
@@ -778,7 +788,12 @@ impl RestSession {
                 } else {
                     request.insert("body".into(), json!(fields.body));
                 }
-                json!({ "workspaceId": self.workspace_id, "request": request, "scripts": scripts })
+                json!({
+                    "workspaceId": self.workspace_id,
+                    "request": request,
+                    "scripts": scripts,
+                    "streamId": self.stream_id,
+                })
             }
         };
 

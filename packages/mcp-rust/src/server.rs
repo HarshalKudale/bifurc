@@ -29,16 +29,20 @@ pub const DESCRIBE_TOOL: &str = "describe_tool";
 pub const CALL_TOOL: &str = "call_tool";
 
 /// What a client is told about the server as a whole.
-const INSTRUCTIONS: &str = "Bifurc is a local API workbench: saved requests of every protocol, mocks, <sub>.localhost \
-    mappings, forward-proxy rules, environments and health checks, kept per workspace by an engine that also runs \
-    the proxy. These tools are the commands of its `bifurc` command line and act on the same engine as the desktop \
-    app, so what they change shows there at once. An item is named by its id or by its name. Deleting anything, \
-    writing scripts, entering secrets and signing in are left to the user in the desktop app.";
+const INSTRUCTIONS: &str = "Bifurc is a local API workbench: saved requests of every protocol, flows that chain them, \
+    mocks, <sub>.localhost mappings, forward-proxy rules, environments, health checks and captured traffic, kept \
+    per workspace (a git repository) by an engine that also runs the proxies. These tools are the commands of its \
+    `bifurc` command line and act on the same engine as the desktop app, so what they change shows there at once; \
+    everything the app does after its first-run setup has a tool. A tool is named <group>_<verb>; an item is named \
+    by its id or by its name. Every group of saved items has list, show, create, update, patch (set any field from \
+    JSON: scripts, tests, the folder), duplicate and delete. The help tool is the manual: call it with a group \
+    (flows, requests, sync, …) before writing a flow's JSON or using a group for the first time. Entering a \
+    secret or a passphrase and signing in are left to the user.";
 
 const ALL_LISTED: &str = "";
 const SOME_LISTED: &str = " Only the everyday tools are listed; find the others with search_tools (for example \
-    \"health check\", \"environment\", \"proxy rule\", \"workspace\"), read one's arguments with describe_tool and run \
-    it with call_tool.";
+    \"create flow\", \"delete mock\", \"environment variable\", \"captured traffic\", \"git push\"), read one's \
+    arguments with describe_tool and run it with call_tool.";
 
 /// What a host is told about a tool's effect.
 fn annotations(effect: Effect) -> ToolAnnotations {
@@ -48,6 +52,7 @@ fn annotations(effect: Effect) -> ToolAnnotations {
         Effect::Adds => hints.read_only(false).destructive(false).open_world(false),
         Effect::Changes => hints.read_only(false).destructive(true).idempotent(true).open_world(false),
         Effect::Runs => hints.read_only(false).destructive(false).open_world(true),
+        Effect::Deletes => hints.read_only(false).destructive(true).open_world(false),
     }
 }
 
@@ -96,7 +101,8 @@ fn meta_tools() -> Vec<McpTool> {
         McpTool::new(
             CALL_TOOL,
             "Run a Bifurc tool found with search_tools. What it does is what that tool does: one whose name ends in \
-             _list or _show only reads; _create adds; _update, _enable, _disable and _use change something.",
+             _list or _show only reads; _create adds; _update, _patch, _enable, _disable and _use change something; \
+             _delete, _remove, _clear and _discard remove something.",
             schema(json!({
                 "type": "object",
                 "properties": {
@@ -172,8 +178,9 @@ impl Server {
         if hits.is_empty() {
             return Outcome {
                 text: format!(
-                    "No tool matches \"{query}\". The tools are about: requests, mocks, mappings, rules, env, health, \
-                     workspaces, vault, account, services. An empty query lists them all."
+                    "No tool matches \"{query}\". The tools are about: requests, flows, mocks, mappings, rules, env, \
+                     folders, runner, health, capture, cookies, sync, history, export, import, workspaces, vault, \
+                     account, proxy, settings, tls, services. An empty query lists them all."
                 ),
                 failed: false,
             };
@@ -301,6 +308,7 @@ mod tests {
                 "flows_list",
                 "flows_run",
                 "services_list",
+                "help",
                 "search_tools",
                 "describe_tool",
                 "call_tool",
@@ -335,11 +343,11 @@ mod tests {
         let found = call(&server, SEARCH_TOOLS, json!({"query": "create health check", "limit": 1}));
         assert_eq!(found, Outcome { text: "health_create: Create a health check for a URL.".into(), failed: false });
         let found = call(&server, SEARCH_TOOLS, json!({"query": "rules", "detail": "names"}));
-        assert_eq!(found.text.lines().count(), 6);
+        assert_eq!(found.text.lines().count(), 10);
         let found = call(&server, SEARCH_TOOLS, json!({"query": "health_run", "detail": "full", "limit": 1}));
         let parsed: Value = serde_json::from_str(&found.text).unwrap();
         assert_eq!(parsed[0]["inputSchema"]["properties"]["check"]["type"], "string");
-        let found = call(&server, SEARCH_TOOLS, json!({"limit": 100}));
+        let found = call(&server, SEARCH_TOOLS, json!({"limit": 1000}));
         assert_eq!(found.text.lines().count(), catalog().len());
         let found = call(&server, SEARCH_TOOLS, json!({"query": "xyzzy"}));
         assert!(!found.failed && found.text.starts_with("No tool matches \"xyzzy\""));
@@ -372,7 +380,10 @@ mod tests {
         let ran = call(&server, CALL_TOOL, json!({"name": "health_create", "arguments": "name=Users"}));
         assert_eq!(ran.text, "call_tool: \"arguments\" must be an object");
         let ran = call(&server, CALL_TOOL, json!({"name": "vault_unseal"}));
-        assert_eq!(ran.text, "no tool \"vault_unseal\"; did you mean: vault_list");
+        assert_eq!(
+            ran.text,
+            "no tool \"vault_unseal\"; did you mean: vault_list, vault_rename, vault_unset, vault_delete"
+        );
         assert_eq!(call(&server, CALL_TOOL, json!({})).text, "call_tool: missing \"name\"");
     }
 
