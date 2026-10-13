@@ -253,6 +253,7 @@ mod tests {
     #[test]
     fn unions_take_the_first_member_that_accepts() {
         assert!(validate("request.send", &json!({ "workspaceId": "w", "id": "r" })).is_ok());
+        assert!(validate("request.send", &json!({ "workspaceId": "w", "id": "r", "streamId": "s" })).is_ok());
         assert!(validate("request.send", &json!({ "workspaceId": "w" })).is_err());
     }
 
