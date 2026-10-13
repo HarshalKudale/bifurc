@@ -274,7 +274,7 @@ impl RightSidebar {
                     .border_color(theme.border)
                     .child(summary)
                     .when(open, |this| {
-                        this.child(div().px_3().pb_3().child(self.diffs.read(cx).render(&entry.commit, cx)))
+                        this.child(div().px_3().pb_3().child(CommitDiffs::render(&self.diffs, &entry.commit, cx)))
                     })
             }))
             .into_any_element()
