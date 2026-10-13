@@ -29,9 +29,14 @@ fn canonical(word: &str) -> &str {
         "healthcheck" | "ping" | "uptime" => "health",
         "secret" | "password" | "credential" => "vault",
         "port" | "process" => "service",
-        "repo" | "repository" | "git" | "commit" | "push" => "sync",
+        "repo" | "repository" | "git" => "sync",
         "new" | "add" | "make" | "save" => "create",
         "edit" | "change" | "modify" | "rename" => "update",
+        "remove" | "erase" | "drop" => "delete",
+        "copy" | "clone" => "duplicate",
+        "certificate" | "cert" | "https" | "ssl" => "tls",
+        "traffic" | "captured" => "capture",
+        "script" | "field" => "patch",
         "get" | "view" | "read" | "inspect" => "show",
         "run" | "execute" | "invoke" | "fire" => "send",
         "switch" | "select" | "activate" => "use",
@@ -63,7 +68,7 @@ fn words(text: &str) -> Vec<String> {
 fn score(tool: &Tool, wanted: &[String]) -> u32 {
     let name = words(tool.name);
     let summary = words(tool.summary);
-    let details = words(tool.details);
+    let details = words(&tool.details);
     let params: Vec<String> = tool.params.iter().flat_map(|param| words(param.name)).collect();
     wanted
         .iter()
@@ -139,7 +144,18 @@ mod tests {
             names.sort_unstable();
             assert_eq!(
                 names,
-                ["rules_create", "rules_disable", "rules_enable", "rules_list", "rules_show", "rules_update"]
+                [
+                    "folders_list",
+                    "rules_create",
+                    "rules_delete",
+                    "rules_disable",
+                    "rules_duplicate",
+                    "rules_enable",
+                    "rules_list",
+                    "rules_patch",
+                    "rules_show",
+                    "rules_update",
+                ]
             );
         }
     }
