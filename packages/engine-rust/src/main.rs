@@ -23,6 +23,7 @@ fn main() {
         }
         HostArgsResult::Args(args) => args,
     };
+    bifurc_protocol::crash::install("engine", ENGINE_VERSION, args.data_dir.clone());
 
     let transport = match args.transport {
         TransportKind::Stdio => HostTransport::Stdio,

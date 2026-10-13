@@ -42,6 +42,14 @@ fn main() -> ExitCode {
             return ExitCode::from(code);
         }
     };
+    let data_dir = settings.data_dir.clone().map(Into::into).unwrap_or_else(|| {
+        settings
+            .env_data_dir
+            .clone()
+            .filter(|dir| !dir.is_empty())
+            .map_or_else(bifurc_cli::discovery::platform_default_data_dir, Into::into)
+    });
+    bifurc_cli::protocol::crash::install("mcp", env!("CARGO_PKG_VERSION"), data_dir);
     let runtime = match tokio::runtime::Builder::new_current_thread().enable_all().build() {
         Ok(runtime) => runtime,
         Err(error) => {
