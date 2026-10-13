@@ -42,6 +42,7 @@ use crate::{
         entity_bar, tab_strip,
     },
     engine::{call, call_in, describe, patch_entity},
+    i18n::{t, t_with},
     model::{NodeRef, RequestKind, config::REQUEST_FOLDER_KIND, tree::folder_path},
     panels::host::HostPanel,
     preferences::Preferences,
@@ -92,14 +93,14 @@ impl OpenTab {
 /// One line about a request type, for the list a screen with nothing open offers.
 fn kind_summary(kind: RequestKind) -> &'static str {
     match kind {
-        RequestKind::Rest => "An HTTP call with a method, headers and a body",
-        RequestKind::GraphQl => "A query or mutation, with its variables",
-        RequestKind::Grpc => "A call to a method of a gRPC service",
-        RequestKind::Soap => "An XML envelope sent to a SOAP action",
-        RequestKind::WebSocket => "A connection that sends and receives messages",
-        RequestKind::Sse => "A one-way stream of events from a server",
-        RequestKind::SocketIo => "A connection that emits and receives named events",
-        RequestKind::Mcp => "The tools, prompts and resources of an MCP server",
+        RequestKind::Rest => t("requests.kind_summary.rest"),
+        RequestKind::GraphQl => t("requests.kind_summary.graphql"),
+        RequestKind::Grpc => t("requests.kind_summary.grpc"),
+        RequestKind::Soap => t("requests.kind_summary.soap"),
+        RequestKind::WebSocket => t("requests.kind_summary.websocket"),
+        RequestKind::Sse => t("requests.kind_summary.sse"),
+        RequestKind::SocketIo => t("requests.kind_summary.socketio"),
+        RequestKind::Mcp => t("requests.kind_summary.mcp"),
     }
 }
 
@@ -124,10 +125,22 @@ impl RequestsScreen {
         let tree = cx.new(|cx| RequestTree::new(model.clone(), window, cx));
         let (dock, skin) = DockSkin::dock_area("requests-dock", Some(1), window, cx);
         let request_panel = cx.new(|cx| {
-            HostPanel::new("RequestPanel", "Request", "No request open", "Open a request to edit it here.", cx)
+            HostPanel::new(
+                "RequestPanel",
+                t("requests.panel.request_title"),
+                t("requests.welcome.title"),
+                t("requests.panel.request_empty_description"),
+                cx,
+            )
         });
         let response_panel = cx.new(|cx| {
-            HostPanel::new("ResponsePanel", "Response", "No response", "Send a request to see its response here.", cx)
+            HostPanel::new(
+                "ResponsePanel",
+                t("requests.common.response"),
+                t("requests.panel.response_empty_title"),
+                t("requests.panel.response_empty_description"),
+                cx,
+            )
         });
         // Dock sizes are physical starting points the user resizes; they are not part of the rem scale.
         dock.update(cx, |area, cx| {
@@ -214,7 +227,7 @@ impl RequestsScreen {
                 });
                 call(&client, cx, "folder.move", payload, |this, outcome, cx| {
                     if let Err(error) = outcome {
-                        this.notify_failure(format!("Couldn't move the folder. {}", describe(&error)), cx);
+                        this.notify_failure(t_with("requests.errors.move_folder", &[("error", &describe(&error))]), cx);
                     }
                 });
             }
@@ -227,7 +240,7 @@ impl RequestsScreen {
                 patch.insert("folderId".into(), json!(folder));
                 patch_entity(&client, cx, &workspace_id, kind.entity_kind(), &id, patch, |this, outcome, cx| {
                     if let Err(message) = outcome {
-                        this.notify_failure(format!("Couldn't move the request. {message}"), cx);
+                        this.notify_failure(t_with("requests.errors.move_request", &[("error", &message)]), cx);
                     }
                 });
             }
@@ -263,7 +276,7 @@ impl RequestsScreen {
                 folders: session.folder_trail(model, cx),
             }),
             TabContent::Runner(runner) => Some(ActiveTarget {
-                title: "Runner".into(),
+                title: t("requests.runner.tab_title").into(),
                 entity_id: None,
                 request: None,
                 name: None,
@@ -271,7 +284,7 @@ impl RequestsScreen {
                 folders: folder_path(&model.config().request_folder_rows(), runner.read(cx).folder_id()),
             }),
             TabContent::Curl(_) => Some(ActiveTarget {
-                title: CURL_TAB_TITLE.into(),
+                title: t(CURL_TAB_TITLE).into(),
                 entity_id: None,
                 request: None,
                 name: None,
@@ -408,7 +421,7 @@ impl RequestsScreen {
         let kind = built.get("kind").and_then(Value::as_str).and_then(RequestKind::from_entity_kind);
         let entity = built.get("request").and_then(Value::as_object).cloned();
         let (Some(kind), Some(entity)) = (kind, entity) else {
-            self.notify_failure("The engine did not return a request for this cURL command.".to_owned(), cx);
+            self.notify_failure(t("requests.errors.curl_no_request").to_owned(), cx);
             return;
         };
         let session = self.draft(kind, None, window, cx);
@@ -505,9 +518,9 @@ impl RequestsScreen {
             cx.weak_entity(),
             window,
             cx,
-            format!("Discard “{title}”?"),
-            "This request has not been saved. Closing its tab discards it.",
-            "Discard",
+            t_with("requests.confirm.discard_title", &[("title", &title)]),
+            t("requests.confirm.discard_body"),
+            t("requests.common.discard"),
             move |this, window, cx| this.close_keys(vec![key.clone()], window, cx),
         );
     }
@@ -521,14 +534,18 @@ impl RequestsScreen {
             self.close_keys(keys, window, cx);
             return;
         }
-        let what = if unsaved == 1 { "1 unsaved request".to_owned() } else { format!("{unsaved} unsaved requests") };
+        let what = if unsaved == 1 {
+            t_with("requests.confirm.unsaved_one", &[("count", &unsaved)])
+        } else {
+            t_with("requests.confirm.unsaved_other", &[("count", &unsaved)])
+        };
         confirm_danger(
             cx.weak_entity(),
             window,
             cx,
-            format!("Discard {what}?"),
-            "Requests that have not been saved are discarded when their tabs close.",
-            "Discard",
+            t_with("requests.confirm.unsaved_title", &[("what", &what)]),
+            t("requests.confirm.unsaved_body"),
+            t("requests.common.discard"),
             move |this, window, cx| this.close_keys(keys.clone(), window, cx),
         );
     }
@@ -586,7 +603,7 @@ impl RequestsScreen {
             },
             TabContent::Runner(runner) => StripTab {
                 id: id.into(),
-                badge: "RUN".into(),
+                badge: t("requests.runner.badge").into(),
                 title: runner.read(cx).title(cx),
                 dirty: false,
                 can_duplicate: false,
@@ -594,7 +611,7 @@ impl RequestsScreen {
             TabContent::Curl(_) => StripTab {
                 id: id.into(),
                 badge: CURL_TAB_BADGE.into(),
-                title: CURL_TAB_TITLE.into(),
+                title: t(CURL_TAB_TITLE).into(),
                 dirty: false,
                 can_duplicate: false,
             },
@@ -616,7 +633,7 @@ impl RequestsScreen {
             let copy = match &outcome {
                 Ok(result) => result.get("entity").and_then(|entity| entity.get("id")).and_then(Value::as_str),
                 Err(error) => {
-                    return this.notify_failure(format!("Couldn't duplicate the request. {}", describe(error)), cx);
+                    return this.notify_failure(t_with("requests.errors.duplicate", &[("error", &describe(error))]), cx);
                 }
             };
             let Some(copy) = copy else { return };
@@ -650,9 +667,9 @@ impl RequestsScreen {
                     cx.weak_entity(),
                     window,
                     cx,
-                    format!("Revert “{title}” to the last synced version?"),
-                    "The changes saved since then are discarded. This can't be undone.",
-                    "Revert",
+                    t_with("requests.confirm.revert_title", &[("title", &title)]),
+                    t("requests.confirm.revert_body"),
+                    t("requests.common.revert"),
                     move |this, _, cx| this.model.update(cx, |model, cx| model.revert_entity(&id, cx)),
                 );
             }
@@ -718,9 +735,9 @@ impl RequestsScreen {
             cx.weak_entity(),
             window,
             cx,
-            "New folder",
-            "Create",
-            vec![PromptField::new("Name", "Folder name")],
+            t("requests.prompt.new_folder_title"),
+            t("requests.common.create"),
+            vec![PromptField::new(t("requests.prompt.name"), t("requests.prompt.folder_name_placeholder"))],
             move |this, values, _, cx| {
                 let client = this.model.read(cx).client().clone();
                 let payload = json!({
@@ -731,7 +748,7 @@ impl RequestsScreen {
                 });
                 call(&client, cx, "folder.add", payload, |this, outcome, cx| {
                     if let Err(error) = outcome {
-                        this.notify_failure(format!("Couldn't create the folder. {}", describe(&error)), cx);
+                        this.notify_failure(t_with("requests.errors.create_folder", &[("error", &describe(&error))]), cx);
                     }
                 });
             },
@@ -753,8 +770,8 @@ impl RequestsScreen {
             && self.has_open_tab(*kind, id)
         {
             window.push_notification(
-                Notification::info("This request is open. Change its name in the breadcrumb above the tabs.")
-                    .title("Rename it where it is open"),
+                Notification::info(t("requests.prompt.rename_open_description"))
+                    .title(t("requests.prompt.rename_open_title")),
                 cx,
             );
             return;
@@ -764,9 +781,9 @@ impl RequestsScreen {
             cx.weak_entity(),
             window,
             cx,
-            format!("Rename “{current}”"),
-            "Rename",
-            vec![PromptField::new("Name", "Name").initial(current.clone())],
+            t_with("requests.prompt.rename_title", &[("name", &current)]),
+            t("requests.common.rename"),
+            vec![PromptField::new(t("requests.prompt.name"), t("requests.prompt.name")).initial(current.clone())],
             move |this, values, _, cx| {
                 let client = this.model.read(cx).client().clone();
                 match node.clone() {
@@ -774,7 +791,7 @@ impl RequestsScreen {
                         let payload = json!({ "kind": REQUEST_FOLDER_KIND, "id": id, "name": values[0] });
                         call(&client, cx, "folder.rename", payload, |this, outcome, cx| {
                             if let Err(error) = outcome {
-                                this.notify_failure(format!("Couldn't rename the folder. {}", describe(&error)), cx);
+                                this.notify_failure(t_with("requests.errors.rename_folder", &[("error", &describe(&error))]), cx);
                             }
                         });
                     }
@@ -799,13 +816,13 @@ impl RequestsScreen {
                 _ => None,
             });
             let Some(entity) = entity else {
-                this.notify_failure("Couldn't rename the request: it could not be read.".to_owned(), cx);
+                this.notify_failure(t("requests.errors.rename_unreadable").to_owned(), cx);
                 return;
             };
             let update = json!({ "kind": kind.entity_kind(), "entity": entity });
             call(&client, cx, "entity.update", update, |this, outcome, cx| {
                 if let Err(error) = outcome {
-                    this.notify_failure(format!("Couldn't rename the request. {}", describe(&error)), cx);
+                    this.notify_failure(t_with("requests.errors.rename_request", &[("error", &describe(&error))]), cx);
                 }
             });
         });
@@ -813,17 +830,22 @@ impl RequestsScreen {
 
     fn confirm_delete(&mut self, node: NodeRef, window: &mut Window, cx: &mut Context<Self>) {
         let name = self.name_of(&node, cx);
-        let (what, consequence) = match &node {
-            NodeRef::Folder { .. } => ("folder", FOLDER_DELETE_CONSEQUENCE),
-            NodeRef::Request { id, .. } => ("request", delete_consequence(self.model.read(cx).git().entity_state(id))),
+        let (title, consequence) = match &node {
+            NodeRef::Folder { .. } => {
+                (t_with("requests.confirm.delete_folder_title", &[("name", &name)]), t(FOLDER_DELETE_CONSEQUENCE))
+            }
+            NodeRef::Request { id, .. } => (
+                t_with("requests.confirm.delete_request_title", &[("name", &name)]),
+                delete_consequence(self.model.read(cx).git().entity_state(id)),
+            ),
         };
         confirm_danger(
             cx.weak_entity(),
             window,
             cx,
-            format!("Delete {what} “{name}”?"),
+            title,
             consequence,
-            "Delete",
+            t("requests.common.delete"),
             move |this, _, cx| {
                 let client = this.model.read(cx).client().clone();
                 let (action, payload) = match &node {
@@ -832,7 +854,7 @@ impl RequestsScreen {
                 };
                 call(&client, cx, action, payload, |this, outcome, cx| {
                     if let Err(error) = outcome {
-                        this.notify_failure(format!("Couldn't delete. {}", describe(&error)), cx);
+                        this.notify_failure(t_with("requests.errors.delete", &[("error", &describe(&error))]), cx);
                     }
                 });
             },
@@ -855,7 +877,7 @@ impl RequestsScreen {
                 .ghost()
                 .small()
                 .selected(tree_open)
-                .tooltip(if tree_open { "Hide the folder tree" } else { "Show the folder tree" })
+                .tooltip(if tree_open { t("requests.tabs.hide_tree") } else { t("requests.tabs.show_tree") })
                 .on_click(cx.listener(|_, _, _, cx| {
                     Preferences::update(cx, |p| p.folder_tree_open = !p.folder_tree_open);
                     cx.notify();
@@ -866,7 +888,7 @@ impl RequestsScreen {
                 .icon(IconName::Plus)
                 .ghost()
                 .small()
-                .tooltip("New request")
+                .tooltip(t("requests.tabs.new_request"))
                 .dropdown_menu(move |menu, window, cx| new_menu(menu, &tree, None, window, cx)),
         );
         tab_strip(self, strip, prefix, suffix, window, cx)
@@ -884,7 +906,7 @@ impl RequestsScreen {
                         .w_full()
                         .gap_3()
                         .child(div().w_12().flex_none().child(Tag::secondary().small().child(kind.badge())))
-                        .child(div().flex_none().child(format!("New {} request", kind.label())))
+                        .child(div().flex_none().child(t_with("requests.welcome.new_kind", &[("kind", &kind.label())])))
                         .child(
                             div()
                                 .flex_1()
@@ -908,7 +930,7 @@ impl RequestsScreen {
                     .w_full()
                     .gap_3()
                     .child(div().w_12().flex_none().child(Tag::secondary().small().child(CURL_TAB_BADGE)))
-                    .child(div().flex_none().child(CURL_TAB_TITLE))
+                    .child(div().flex_none().child(t(CURL_TAB_TITLE)))
                     .child(
                         div()
                             .flex_1()
@@ -919,7 +941,7 @@ impl RequestsScreen {
                             .text_left()
                             .text_sm()
                             .text_color(theme.muted_foreground)
-                            .child("A request of the type a pasted cURL command describes"),
+                            .child(t("requests.welcome.curl_summary")),
                     ),
             )
             .on_click(cx.listener(|this, _, window, cx| this.import_curl(window, cx)));
@@ -939,12 +961,12 @@ impl RequestsScreen {
                         v_flex()
                             .items_center()
                             .gap_1()
-                            .child(div().font_semibold().child("No request open"))
+                            .child(div().font_semibold().child(t("requests.welcome.title")))
                             .child(
                                 div()
                                     .text_sm()
                                     .text_color(theme.muted_foreground)
-                                    .child("Open one from the folder tree, or start a new one."),
+                                    .child(t("requests.welcome.description")),
                             ),
                     )
                     .child(v_flex().gap_1().children(rows).child(import)),

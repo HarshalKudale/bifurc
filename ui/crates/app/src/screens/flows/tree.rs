@@ -25,6 +25,7 @@ use gpui_kit::{
 use crate::{
     app_model::{AppModel, Deleted},
     components::{page, tree_drag},
+    i18n::t,
     model::{
         git::FileState,
         tree::{FolderRow, ItemRow, Moved, TreeKey, TreeNode, build_tree, can_move},
@@ -95,7 +96,7 @@ impl EventEmitter<FlowTreeEvent> for FlowTree {}
 
 impl FlowTree {
     pub fn new(model: Entity<AppModel>, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let filter = cx.new(|cx| InputState::new(window, cx).placeholder("Filter flows"));
+        let filter = cx.new(|cx| InputState::new(window, cx).placeholder(t("flows.tree.filter")));
         let tree = cx.new(|cx| TreeState::new(cx));
         let subscriptions = vec![
             cx.subscribe(&filter, |this, _, event: &InputEvent, cx| {
@@ -209,8 +210,8 @@ fn emitter(
 }
 
 fn new_menu(menu: PopupMenu, tree: &WeakEntity<FlowTree>, folder: Option<String>) -> PopupMenu {
-    menu.item(PopupMenuItem::new("Flow…").on_click(emitter(tree, FlowTreeEvent::NewFlow { folder: folder.clone() })))
-        .item(PopupMenuItem::new("Folder…").on_click(emitter(tree, FlowTreeEvent::NewFolder { parent: folder })))
+    menu.item(PopupMenuItem::new(t("flows.menu.new_flow")).on_click(emitter(tree, FlowTreeEvent::NewFlow { folder: folder.clone() })))
+        .item(PopupMenuItem::new(t("flows.menu.new_folder")).on_click(emitter(tree, FlowTreeEvent::NewFolder { parent: folder })))
 }
 
 fn context_menu(
@@ -226,30 +227,30 @@ fn context_menu(
         let (revert_model, confirm_model) = (model.clone(), model.clone());
         let (revert, confirm) = (deleted_target(&key), deleted_target(&key));
         return menu
-            .item(PopupMenuItem::new("Revert delete").on_click(move |_, _, cx| {
+            .item(PopupMenuItem::new(t("flows.menu.revert_delete")).on_click(move |_, _, cx| {
                 revert_model.update(cx, |model, cx| model.revert_delete(revert.clone(), cx));
             }))
-            .item(PopupMenuItem::new("Confirm delete").on_click(move |_, _, cx| {
+            .item(PopupMenuItem::new(t("flows.menu.confirm_delete")).on_click(move |_, _, cx| {
                 confirm_model.update(cx, |model, cx| model.confirm_delete(confirm.clone(), cx));
             }));
     }
     let menu = match &key {
         TreeKey::Item(id) => menu
-            .item(PopupMenuItem::new("Open").on_click(emitter(tree, FlowTreeEvent::Open(id.clone()))))
-            .item(PopupMenuItem::new("Duplicate").on_click(emitter(tree, FlowTreeEvent::Duplicate(id.clone())))),
+            .item(PopupMenuItem::new(t("flows.common.open")).on_click(emitter(tree, FlowTreeEvent::Open(id.clone()))))
+            .item(PopupMenuItem::new(t("flows.common.duplicate")).on_click(emitter(tree, FlowTreeEvent::Duplicate(id.clone())))),
         TreeKey::Folder(id) => menu
             .item(
-                PopupMenuItem::new("New flow here…")
+                PopupMenuItem::new(t("flows.menu.new_flow_here"))
                     .on_click(emitter(tree, FlowTreeEvent::NewFlow { folder: Some(id.clone()) })),
             )
             .item(
-                PopupMenuItem::new("New folder here…")
+                PopupMenuItem::new(t("flows.menu.new_folder_here"))
                     .on_click(emitter(tree, FlowTreeEvent::NewFolder { parent: Some(id.clone()) })),
             ),
     };
     menu.separator()
-        .item(PopupMenuItem::new("Rename…").on_click(emitter(tree, FlowTreeEvent::Rename(key.clone()))))
-        .item(PopupMenuItem::new("Delete…").on_click(emitter(tree, FlowTreeEvent::Delete(key.clone()))))
+        .item(PopupMenuItem::new(t("flows.menu.rename")).on_click(emitter(tree, FlowTreeEvent::Rename(key.clone()))))
+        .item(PopupMenuItem::new(t("flows.menu.delete")).on_click(emitter(tree, FlowTreeEvent::Delete(key.clone()))))
 }
 
 fn render_row(
@@ -365,9 +366,9 @@ impl Render for FlowTree {
             });
 
         let body = if !has_flows {
-            page::empty("No flows yet", "Use + to create the first one.")
+            page::empty(t("flows.tree.empty.title"), t("flows.tree.empty.description"))
         } else if filtering && self.tree.read(cx).entry(0).is_none() {
-            page::empty("No matches", "No flow matches the filter.")
+            page::empty(t("flows.tree.no_matches.title"), t("flows.tree.no_matches.description"))
         } else {
             tree(&self.tree, move |ix, entry, selected, _, cx| render_row(ix, entry, selected, &model, &row_tree, cx))
                 .context_menu(move |_, entry, menu, _, cx| context_menu(entry, menu, &menu_tree, &menu_model, cx))
@@ -389,7 +390,7 @@ impl Render for FlowTree {
                             .icon(IconName::Plus)
                             .ghost()
                             .small()
-                            .tooltip("New flow or folder")
+                            .tooltip(t("flows.tree.new_tooltip"))
                             .dropdown_menu(move |menu, _, _| new_menu(menu, &new_tree, None)),
                     ),
             )

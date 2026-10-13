@@ -17,6 +17,7 @@ use gpui_kit::{
 };
 
 use super::var_editor::VarEditor;
+use crate::i18n::t;
 
 #[derive(Debug, Clone)]
 pub enum KeyValueEvent {
@@ -177,7 +178,7 @@ impl Render for KeyValueTable {
                             .icon(IconName::Close)
                             .ghost()
                             .xsmall()
-                            .tooltip("Remove")
+                            .tooltip(t("components.remove"))
                             .on_click(cx.listener(move |this, _, window, cx| this.remove_row(id, window, cx)))
                     })))
             }))

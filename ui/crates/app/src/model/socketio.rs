@@ -10,6 +10,7 @@
 use serde_json::Value;
 
 use super::socket::{Direction, SocketState};
+use crate::i18n::{t, t_with};
 
 /// What a line of the log is.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -56,16 +57,18 @@ impl SocketIoMessage {
     pub fn label(&self) -> String {
         match self.kind {
             MessageKind::Event => self.event.clone(),
-            MessageKind::Ack => "ack".to_owned(),
+            MessageKind::Ack => t("model.socketio.ack").to_owned(),
         }
     }
 
     /// What is said beside the line: that an acknowledgement was asked for, or which event one answers.
     pub fn note(&self) -> Option<String> {
         match (self.kind, self.ack_id) {
-            (MessageKind::Event, Some(id)) => Some(format!("ack #{id}")),
-            (MessageKind::Ack, Some(id)) if self.event.is_empty() => Some(format!("#{id}")),
-            (MessageKind::Ack, Some(id)) => Some(format!("{} #{id}", self.event)),
+            (MessageKind::Event, Some(id)) => Some(t_with("model.socketio.ack_asked", &[("id", &id)])),
+            (MessageKind::Ack, Some(id)) if self.event.is_empty() => {
+                Some(t_with("model.socketio.ack_answer_unknown", &[("id", &id)]))
+            }
+            (MessageKind::Ack, Some(id)) => Some(t_with("model.socketio.ack_answer", &[("event", &self.event), ("id", &id)])),
             _ => None,
         }
     }

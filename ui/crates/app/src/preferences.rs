@@ -17,6 +17,8 @@ const FILE_NAME: &str = "desktop-ui.json";
 pub struct Preferences {
     /// The theme's name as the registry lists it. `None` follows the kit's default for the system appearance.
     pub theme: Option<String>,
+    /// The language's code in `i18n::LANGUAGES`. `None` until the user has picked one in the first run.
+    pub language: Option<String>,
     pub font_size: f32,
     pub sidebar_collapsed: bool,
     pub folder_tree_open: bool,
@@ -28,6 +30,7 @@ impl Default for Preferences {
     fn default() -> Self {
         Self {
             theme: None,
+            language: None,
             font_size: theme::DEFAULT_FONT_SIZE,
             sidebar_collapsed: false,
             folder_tree_open: true,
@@ -53,6 +56,9 @@ impl Preferences {
 
     /// Makes the window match the stored preferences.
     pub fn apply(&self, cx: &mut App) {
+        if let Some(code) = &self.language {
+            crate::i18n::set_language(code);
+        }
         if let Some(name) = &self.theme {
             theme::apply(name, cx);
         }

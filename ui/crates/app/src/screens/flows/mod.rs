@@ -37,6 +37,7 @@ use crate::{
         entity_bar, page,
     },
     engine::{call, call_in, failure, patch_entity},
+    i18n::{t, t_with},
     model::{
         flow::{Described, FlowDoc, FlowNode, NodeKind, RunView},
         tree::{TreeKey, folder_path},
@@ -71,7 +72,7 @@ pub struct FlowsScreen {
 
 impl FlowsScreen {
     pub fn new(model: Entity<AppModel>, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let name = cx.new(|cx| InputState::new(window, cx).placeholder("Flow name"));
+        let name = cx.new(|cx| InputState::new(window, cx).placeholder(t("flows.name.placeholder")));
         let tree = cx.new(|cx| FlowTree::new(model.clone(), window, cx));
         let editor = cx.new(|cx| NodeEditor::new(model.clone(), window, cx));
         let canvas = cx.new(|cx| FlowCanvas::new(editor.clone(), cx));
@@ -125,7 +126,7 @@ impl FlowsScreen {
     pub fn active_target(&self, cx: &gpui_kit::App) -> Option<ActiveTarget> {
         let id = self.doc.as_ref().map(|doc| doc.id.clone())?;
         let name = self.name.read(cx).value();
-        let title = if name.is_empty() { SharedString::from("Flow") } else { name };
+        let title = if name.is_empty() { SharedString::from(t("flows.untitled")) } else { name };
         let folders = self
             .folder_of(&id, cx)
             .map(|folder| folder_path(&self.model.read(cx).config().flow_folder_rows(), &folder))
@@ -176,10 +177,10 @@ impl FlowsScreen {
             let entity = outcome.as_ref().ok().and_then(|answer| answer.get("entity"));
             match entity.map(FlowDoc::from_value) {
                 Some(Ok(doc)) => this.show(doc, window, cx),
-                Some(Err(error)) => this.report("Couldn't read the flow.", error, cx),
+                Some(Err(error)) => this.report(t("flows.error.read"), error, cx),
                 None => this.report(
-                    "Couldn't open the flow.",
-                    failure(&outcome).unwrap_or_else(|| "It is not there.".to_owned()),
+                    t("flows.error.open"),
+                    failure(&outcome).unwrap_or_else(|| t("flows.open.not_there").to_owned()),
                     cx,
                 ),
             }
@@ -251,7 +252,7 @@ impl FlowsScreen {
             cx.notify();
             if let Some(message) = failure(&outcome) {
                 this.run_when_saved = false;
-                return this.report("Couldn't save the flow.", message, cx);
+                return this.report(t("flows.error.save"), message, cx);
             }
             if this.selected.as_deref() != Some(flow_id.as_str()) {
                 return;
@@ -480,7 +481,7 @@ impl FlowsScreen {
         let client = model.client().clone();
         let payload = json!({ "workspaceId": model.workspace_id(), "id": flow_id });
         call(&client, cx, "flow.run", payload, |this, outcome, cx| match failure(&outcome) {
-            Some(message) => this.report("The flow did not run.", message, cx),
+            Some(message) => this.report(t("flows.error.run"), message, cx),
             None => {
                 let run_id =
                     outcome.ok().and_then(|answer| answer.get("runId").and_then(Value::as_str).map(str::to_owned));
@@ -500,7 +501,7 @@ impl FlowsScreen {
         let payload = json!({ "workspaceId": model.workspace_id(), "id": flow_id });
         call(&client, cx, "flow.cancel", payload, |this, outcome, cx| {
             if let Some(message) = failure(&outcome) {
-                this.report("Couldn't stop the flow.", message, cx);
+                this.report(t("flows.error.stop"), message, cx);
             }
         });
     }
@@ -510,9 +511,9 @@ impl FlowsScreen {
             cx.weak_entity(),
             window,
             cx,
-            "New flow",
-            "Create",
-            vec![PromptField::new("Name", "Sign in and place an order")],
+            t("flows.prompt.new_flow"),
+            t("flows.common.create"),
+            vec![PromptField::new(t("flows.common.name"), t("flows.field.name_example"))],
             move |this, values, window, cx| {
                 let model = this.model.read(cx);
                 let client = model.client().clone();
@@ -521,7 +522,7 @@ impl FlowsScreen {
                 let payload = json!({ "kind": "flows", "workspaceId": model.workspace_id(), "entity": entity });
                 call_in(&client, window, cx, "entity.create", payload, |this, outcome, window, cx| {
                     match failure(&outcome) {
-                        Some(message) => this.report("Couldn't create the flow.", message, cx),
+                        Some(message) => this.report(t("flows.error.create"), message, cx),
                         None => {
                             let id = outcome
                                 .ok()
@@ -543,9 +544,9 @@ impl FlowsScreen {
             cx.weak_entity(),
             window,
             cx,
-            "New flow folder",
-            "Create",
-            vec![PromptField::new("Name", "Folder name")],
+            t("flows.prompt.new_folder"),
+            t("flows.common.create"),
+            vec![PromptField::new(t("flows.common.name"), t("flows.field.folder_name"))],
             move |this, values, _, cx| {
                 let model = this.model.read(cx);
                 let client = model.client().clone();
@@ -554,7 +555,7 @@ impl FlowsScreen {
                 });
                 call(&client, cx, "folder.add", payload, |this, outcome, cx| {
                     if let Some(message) = failure(&outcome) {
-                        this.report("Couldn't create the folder.", message, cx);
+                        this.report(t("flows.error.create_folder"), message, cx);
                     }
                 });
             },
@@ -589,16 +590,16 @@ impl FlowsScreen {
             cx.weak_entity(),
             window,
             cx,
-            format!("Rename “{current}”"),
-            "Rename",
-            vec![PromptField::new("Name", "Name").initial(current.clone())],
+            t_with("flows.prompt.rename_title", &[("name", &current)]),
+            t("flows.common.rename"),
+            vec![PromptField::new(t("flows.common.name"), t("flows.common.name")).initial(current.clone())],
             move |this, values, window, cx| match &key {
                 TreeKey::Folder(id) => {
                     let client = this.model.read(cx).client().clone();
                     let payload = json!({ "kind": "flow", "id": id, "name": values[0] });
                     call(&client, cx, "folder.rename", payload, |this, outcome, cx| {
                         if let Some(message) = failure(&outcome) {
-                            this.report("Couldn't rename the folder.", message, cx);
+                            this.report(t("flows.error.rename_folder"), message, cx);
                         }
                     });
                 }
@@ -608,7 +609,7 @@ impl FlowsScreen {
                     this.name.update(cx, |state, cx| state.set_value(name.clone(), window, cx));
                     this.edit(cx, |doc| doc.name = name);
                 }
-                TreeKey::Item(id) => this.patch_flow(id, "name", json!(values[0]), "Couldn't rename the flow.", cx),
+                TreeKey::Item(id) => this.patch_flow(id, "name", json!(values[0]), t("flows.error.rename"), cx),
             },
         );
     }
@@ -619,7 +620,7 @@ impl FlowsScreen {
         let payload = json!({ "workspaceId": model.workspace_id(), "kind": "flows", "id": id });
         call_in(&client, window, cx, "entity.duplicate", payload, |this, outcome, window, cx| {
             if let Some(message) = failure(&outcome) {
-                return this.report("Couldn't duplicate the flow.", message, cx);
+                return this.report(t("flows.error.duplicate"), message, cx);
             }
             let copy = outcome.ok().and_then(|answer| answer.pointer("/entity/id").and_then(Value::as_str).map(str::to_owned));
             if let Some(copy) = copy {
@@ -638,27 +639,30 @@ impl FlowsScreen {
                 let payload = json!({ "kind": "flow", "id": id, "parentId": folder, "workspaceId": model.workspace_id() });
                 call(&client, cx, "folder.move", payload, |this, outcome, cx| {
                     if let Some(message) = failure(&outcome) {
-                        this.report("Couldn't move the folder.", message, cx);
+                        this.report(t("flows.error.move_folder"), message, cx);
                     }
                 });
             }
-            TreeKey::Item(id) => self.patch_flow(&id, "folderId", json!(folder), "Couldn't move the flow.", cx),
+            TreeKey::Item(id) => self.patch_flow(&id, "folderId", json!(folder), t("flows.error.move"), cx),
         }
     }
 
     fn confirm_delete(&mut self, key: TreeKey, window: &mut Window, cx: &mut Context<Self>) {
         let name = self.name_of(&key, cx);
-        let (what, consequence) = match &key {
-            TreeKey::Folder(_) => ("folder", FOLDER_DELETE_CONSEQUENCE),
-            TreeKey::Item(id) => ("flow", delete_consequence(self.model.read(cx).git().entity_state(id))),
+        let (title, consequence) = match &key {
+            TreeKey::Folder(_) => (t_with("flows.confirm.delete_folder_title", &[("name", &name)]), t(FOLDER_DELETE_CONSEQUENCE)),
+            TreeKey::Item(id) => (
+                t_with("flows.confirm.delete_flow_title", &[("name", &name)]),
+                delete_consequence(self.model.read(cx).git().entity_state(id)),
+            ),
         };
         confirm_danger(
             cx.weak_entity(),
             window,
             cx,
-            format!("Delete {what} “{name}”?"),
+            title,
             consequence,
-            "Delete",
+            t("flows.common.delete"),
             move |this, _, cx| {
                 let client = this.model.read(cx).client().clone();
                 let (action, payload) = match &key {
@@ -672,7 +676,7 @@ impl FlowsScreen {
                 }
                 call(&client, cx, action, payload, |this, outcome, cx| {
                     if let Some(message) = failure(&outcome) {
-                        this.report("Couldn't delete.", message, cx);
+                        this.report(t("flows.error.delete"), message, cx);
                     }
                 });
             },
@@ -703,9 +707,9 @@ impl FlowsScreen {
                     cx.weak_entity(),
                     window,
                     cx,
-                    format!("Revert “{name}” to the last synced version?"),
-                    "The changes saved since then are discarded.",
-                    "Revert",
+                    t_with("flows.revert.title", &[("name", &name)]),
+                    t("flows.revert.consequence"),
+                    t("flows.common.revert"),
                     move |this, _, cx| this.model.update(cx, |model, cx| model.revert_entity(&id, cx)),
                 );
             }
@@ -721,16 +725,25 @@ impl FlowsScreen {
     /// What the last run came to, in a line.
     fn run_summary(&self) -> Option<(String, bool)> {
         let run = self.run.as_ref()?;
-        let took = run.duration_ms.map(|ms| format!(" in {:.1} s", ms as f64 / 1000.0)).unwrap_or_default();
+        let took = run
+            .duration_ms
+            .map(|ms| t_with("flows.run.took", &[("seconds", &format!("{:.1}", ms as f64 / 1000.0))]))
+            .unwrap_or_default();
         let tests = match run.total_tests {
             0 => String::new(),
-            total => format!(", {} of {total} tests passed", total - run.failed_tests),
+            total => t_with("flows.run.tests_passed", &[("passed", &(total - run.failed_tests)), ("total", &total)]),
         };
         Some(match run.status.as_str() {
-            "running" => ("Running…".to_owned(), false),
-            "succeeded" => (format!("Succeeded{took}{tests}"), run.failed_tests > 0),
-            "cancelled" => (format!("Stopped{took}"), false),
-            _ => (format!("Failed{took}: {}", run.error.as_deref().unwrap_or("see the nodes")), true),
+            "running" => (t("flows.run.running").to_owned(), false),
+            "succeeded" => (t_with("flows.run.succeeded", &[("took", &took), ("tests", &tests)]), run.failed_tests > 0),
+            "cancelled" => (t_with("flows.run.stopped", &[("took", &took)]), false),
+            _ => (
+                t_with(
+                    "flows.run.failed",
+                    &[("took", &took), ("error", &run.error.as_deref().unwrap_or(t("flows.run.see_nodes")))],
+                ),
+                true,
+            ),
         })
     }
 
@@ -752,21 +765,21 @@ impl FlowsScreen {
                 .small()
                 .danger()
                 .icon(IconName::Pause)
-                .label("Stop")
+                .label(t("flows.common.stop"))
                 .on_click(cx.listener(|this, _, _, cx| this.stop_run(cx)))
         } else {
             Button::new("flow-run")
                 .small()
                 .primary()
                 .icon(IconName::Play)
-                .label("Run")
+                .label(t("flows.common.run"))
                 .disabled(!self.described.ok || self.run_when_saved)
                 .on_click(cx.listener(|this, _, _, cx| this.start_run(cx)))
         };
         let saved = match (self.saving, self.is_dirty()) {
-            (true, _) => "Saving…",
-            (false, true) => "Unsaved",
-            (false, false) => "Saved",
+            (true, _) => t("flows.save.saving"),
+            (false, true) => t("flows.save.unsaved"),
+            (false, false) => t("flows.save.saved"),
         };
         h_flex()
             .flex_none()
@@ -784,12 +797,17 @@ impl FlowsScreen {
             })
             .when(!errors.is_empty() && !running, |this| {
                 let count = errors.len();
+                let label = if count == 1 {
+                    t_with("flows.problems.count_one", &[("count", &count)])
+                } else {
+                    t_with("flows.problems.count_other", &[("count", &count)])
+                };
                 this.child(
                     Button::new("flow-problems")
                         .small()
                         .ghost()
                         .icon(IconName::TriangleAlert)
-                        .label(if count == 1 { "1 problem".to_owned() } else { format!("{count} problems") })
+                        .label(label)
                         .tooltip(errors.join("\n"))
                         .on_click(cx.listener(move |this, _, window, cx| {
                             if first_problem.is_some() {
@@ -804,11 +822,8 @@ impl FlowsScreen {
     fn render_detail(&self, cx: &mut Context<Self>) -> AnyElement {
         let Some(doc) = self.doc.as_ref() else {
             return match self.selected {
-                Some(_) => page::loading("Opening the flow…"),
-                None => page::empty(
-                    "No flow",
-                    "Create a flow to chain saved requests: what one answers is wired into the next.",
-                ),
+                Some(_) => page::loading(t("flows.loading.opening")),
+                None => page::empty(t("flows.empty.title"), t("flows.empty.description")),
             };
         };
         let bar = EntityBar {

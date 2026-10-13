@@ -1,3 +1,5 @@
+use crate::i18n::t;
+
 /// The request types the engine can store and send. WebSocket is one of them, not a separate feature:
 /// it has a saved entity and an id-addressed command family exactly like the others, and it is kept in the
 /// same folders: the request folders are every type's.
@@ -26,16 +28,16 @@ impl RequestKind {
     ];
 
     pub fn label(self) -> &'static str {
-        match self {
-            RequestKind::Rest => "REST",
-            RequestKind::GraphQl => "GraphQL",
-            RequestKind::Grpc => "gRPC",
-            RequestKind::Soap => "SOAP",
-            RequestKind::WebSocket => "WebSocket",
-            RequestKind::Sse => "SSE",
-            RequestKind::SocketIo => "Socket.IO",
-            RequestKind::Mcp => "MCP",
-        }
+        t(match self {
+            RequestKind::Rest => "model.kind.rest",
+            RequestKind::GraphQl => "model.kind.graphql",
+            RequestKind::Grpc => "model.kind.grpc",
+            RequestKind::Soap => "model.kind.soap",
+            RequestKind::WebSocket => "model.kind.websocket",
+            RequestKind::Sse => "model.kind.sse",
+            RequestKind::SocketIo => "model.kind.socketio",
+            RequestKind::Mcp => "model.kind.mcp",
+        })
     }
 
     /// The protocol's `EntityKind`, as `entity.create` / `entity.load` / `entity.update` / `entity.delete` take it.
@@ -84,16 +86,16 @@ impl RequestKind {
 
     /// A few characters that mark the type in a list, where a REST row shows its method instead.
     pub fn badge(self) -> &'static str {
-        match self {
-            RequestKind::Rest => "REST",
-            RequestKind::GraphQl => "GQL",
-            RequestKind::Grpc => "gRPC",
-            RequestKind::Soap => "SOAP",
-            RequestKind::WebSocket => "WS",
-            RequestKind::Sse => "SSE",
-            RequestKind::SocketIo => "SIO",
-            RequestKind::Mcp => "MCP",
-        }
+        t(match self {
+            RequestKind::Rest => "model.kind.rest",
+            RequestKind::GraphQl => "model.kind.badge_graphql",
+            RequestKind::Grpc => "model.kind.grpc",
+            RequestKind::Soap => "model.kind.soap",
+            RequestKind::WebSocket => "model.kind.badge_websocket",
+            RequestKind::Sse => "model.kind.sse",
+            RequestKind::SocketIo => "model.kind.badge_socketio",
+            RequestKind::Mcp => "model.kind.mcp",
+        })
     }
 }
 

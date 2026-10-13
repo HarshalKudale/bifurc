@@ -6,6 +6,7 @@ mod bootstrap;
 mod commands;
 mod components;
 mod engine;
+mod i18n;
 mod model;
 mod panels;
 mod preferences;

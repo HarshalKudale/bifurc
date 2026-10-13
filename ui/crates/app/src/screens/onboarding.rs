@@ -37,6 +37,7 @@ use crate::{
     app_model::{AppModel, Load, ModelEvent, ProxyStatus, SetupState},
     components::certificate::Certificate,
     engine::{call, call_in, failure},
+    i18n::{self, t, t_with},
     preferences::Preferences,
     screens::workspace_setup::{Purpose, WorkspaceSetup},
     theme,
@@ -50,6 +51,7 @@ const HTTP_PORT: u16 = 80;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 enum Stage {
+    Language,
     Terms,
     Privacy,
     Overview,
@@ -60,7 +62,8 @@ enum Stage {
 }
 
 impl Stage {
-    const ALL: [Stage; 7] = [
+    const ALL: [Stage; 8] = [
+        Stage::Language,
         Stage::Terms,
         Stage::Privacy,
         Stage::Overview,
@@ -71,15 +74,16 @@ impl Stage {
     ];
 
     fn label(self) -> &'static str {
-        match self {
-            Stage::Terms => "Terms",
-            Stage::Privacy => "Privacy",
-            Stage::Overview => "Overview",
-            Stage::Preferences => "Preferences",
-            Stage::Https => "HTTPS",
-            Stage::Proxies => "Proxies",
-            Stage::Workspace => "Workspace",
-        }
+        t(match self {
+            Stage::Language => "onboarding.stage.language.label",
+            Stage::Terms => "onboarding.stage.terms.label",
+            Stage::Privacy => "onboarding.stage.privacy.label",
+            Stage::Overview => "onboarding.stage.overview.label",
+            Stage::Preferences => "onboarding.stage.preferences.label",
+            Stage::Https => "onboarding.stage.https.label",
+            Stage::Proxies => "onboarding.stage.proxies.label",
+            Stage::Workspace => "onboarding.stage.workspace.label",
+        })
     }
 
     fn previous(self) -> Option<Stage> {
@@ -90,8 +94,9 @@ impl Stage {
 
 /// Where the walk starts. One that was left half way picks up after the terms and the policy, neither of
 /// which is asked twice; one that was finished is only here because the last workspace is gone.
-fn first_stage(setup: &SetupState) -> Stage {
+fn first_stage(setup: &SetupState, language_chosen: bool) -> Stage {
     match (setup.terms_accepted, setup.privacy_accepted, setup.onboarded) {
+        (false, _, false) if !language_chosen => Stage::Language,
         (false, _, _) => Stage::Terms,
         (true, false, _) => Stage::Privacy,
         (true, true, false) => Stage::Overview,
@@ -114,13 +119,16 @@ const FIRST_UNRESERVED_PORT: u16 = 1024;
 
 /// Which of the two proxies `setup.startServers` could not start, and why, if one could not.
 fn start_problem(result: &Value) -> Option<String> {
-    let problems: Vec<String> = [("reverse", "reverse proxy"), ("forward", "forward proxy")]
+    let problems: Vec<String> = [("reverse", "onboarding.proxy.reverse"), ("forward", "onboarding.proxy.forward")]
         .into_iter()
         .filter_map(|(key, name)| {
             let listener = result.get(key)?;
             let error = listener.get("error").and_then(Value::as_str)?;
             let port = listener.get("port").and_then(Value::as_u64).unwrap_or_default();
-            Some(format!("The {name} could not start on port {port}: {}.", error.trim_end_matches('.')))
+            Some(t_with(
+                "onboarding.problem.server_start",
+                &[("name", &t(name)), ("port", &port), ("error", &error.trim_end_matches('.'))],
+            ))
         })
         .collect();
     (!problems.is_empty()).then(|| problems.join(" "))
@@ -129,8 +137,8 @@ fn start_problem(result: &Value) -> Option<String> {
 /// What is wrong with the two ports as typed, if something is.
 fn ports_problem(reverse: Option<u16>, forward: Option<u16>) -> Option<&'static str> {
     match (reverse, forward) {
-        (None, _) | (_, None) => Some("A port is a number from 1 to 65535."),
-        (Some(reverse), Some(forward)) if reverse == forward => Some("The two proxies need different ports."),
+        (None, _) | (_, None) => Some(t("onboarding.problem.port_range")),
+        (Some(reverse), Some(forward)) if reverse == forward => Some(t("onboarding.problem.ports_differ")),
         _ => None,
     }
 }
@@ -230,7 +238,7 @@ impl Onboarding {
             self.busy = false;
         }
         if self.stage.is_none() && setup.known {
-            self.stage = Some(first_stage(&setup));
+            self.stage = Some(first_stage(&setup, Preferences::global(cx).language.is_some()));
             self.terms_accepted = setup.terms_accepted;
             self.accepted = setup.privacy_accepted;
         }
@@ -268,6 +276,11 @@ impl Onboarding {
             return;
         }
         match self.stage {
+            Some(Stage::Language) => {
+                let code = i18n::language().code.to_owned();
+                Preferences::update(cx, |p| p.language = Some(code));
+                self.go_to(Stage::Terms, window, cx);
+            }
             Some(Stage::Terms) => self.accept_terms(window, cx),
             Some(Stage::Privacy) => self.accept_privacy(window, cx),
             Some(Stage::Overview) => self.go_to(Stage::Preferences, window, cx),
@@ -302,7 +315,7 @@ impl Onboarding {
                 model.refresh_setup(cx);
             });
             if let Some(message) = failure(&outcome) {
-                this.error = Some(format!("Couldn't start the proxies. {message}"));
+                this.error = Some(t_with("onboarding.error.start_proxies", &[("message", &message)]));
                 cx.notify();
                 return;
             }
@@ -316,8 +329,7 @@ impl Onboarding {
                 }
                 Some(problem) if !acknowledged => {
                     this.servers_failed_on = Some((reverse, forward));
-                    this.error =
-                        Some(format!("{problem} Choose another port, or continue and change it later in Settings."));
+                    this.error = Some(t_with("onboarding.problem.choose_other", &[("problem", &problem)]));
                     cx.notify();
                 }
                 _ => {
@@ -343,10 +355,13 @@ impl Onboarding {
             Some(why) => {
                 this.busy = false;
                 this.servers_failed_on = this.permission_asked_on;
-                this.error = Some(format!(
-                    "{problem} Bifurc was not allowed to use ports below {FIRST_UNRESERVED_PORT}: {}. Choose \
-                     another port, or continue and change it later in Settings.",
-                    why.trim_end_matches('.')
+                this.error = Some(t_with(
+                    "onboarding.problem.low_ports_refused",
+                    &[
+                        ("problem", &problem),
+                        ("reserved", &FIRST_UNRESERVED_PORT),
+                        ("why", &why.trim_end_matches('.')),
+                    ],
                 ));
                 cx.notify();
             }
@@ -365,7 +380,7 @@ impl Onboarding {
             this.busy = false;
             match failure(&outcome) {
                 Some(message) => {
-                    this.error = Some(format!("Couldn't record that you accepted. {message}"));
+                    this.error = Some(t_with("onboarding.error.accepted", &[("message", &message)]));
                     cx.notify();
                 }
                 None => {
@@ -373,7 +388,7 @@ impl Onboarding {
                     let mut setup = this.model.read(cx).setup().clone();
                     setup.terms_accepted = true;
                     this.model.update(cx, |model, cx| model.refresh_setup(cx));
-                    this.go_to(first_stage(&setup), window, cx);
+                    this.go_to(first_stage(&setup, true), window, cx);
                 }
             }
         });
@@ -391,14 +406,14 @@ impl Onboarding {
             this.busy = false;
             match failure(&outcome) {
                 Some(message) => {
-                    this.error = Some(format!("Couldn't record that you accepted. {message}"));
+                    this.error = Some(t_with("onboarding.error.accepted", &[("message", &message)]));
                     cx.notify();
                 }
                 None => {
                     let mut setup = this.model.read(cx).setup().clone();
                     setup.privacy_accepted = true;
                     this.model.update(cx, |model, cx| model.refresh_setup(cx));
-                    this.go_to(first_stage(&setup), window, cx);
+                    this.go_to(first_stage(&setup, true), window, cx);
                 }
             }
         });
@@ -416,7 +431,7 @@ impl Onboarding {
         call(&client, cx, "setup.complete", json!({}), |this, outcome, cx| {
             this.busy = false;
             if let Some(message) = failure(&outcome) {
-                this.error = Some(format!("Couldn't finish the setup. {message}"));
+                this.error = Some(t_with("onboarding.error.finish", &[("message", &message)]));
             }
             this.model.update(cx, |model, cx| model.refresh_setup(cx));
             cx.notify();
@@ -502,23 +517,18 @@ impl Onboarding {
         let shown = url.trim_start_matches("https://").to_owned();
         v_flex()
             .gap_4()
-            .child(
-                "The terms of service are the agreement between you and Bifurc: what you may use the app for, \
-                 what it comes with and without, and who is responsible for what. They also say that anonymous \
-                 usage analytics are on by default and can be turned off in Settings, under About. Read them \
-                 before you go on.",
-            )
+            .child(t("onboarding.terms.body"))
             .child(
                 h_flex()
                     .gap_1()
                     .text_sm()
                     .text_color(theme.muted_foreground)
-                    .child("The full terms:")
+                    .child(t("onboarding.terms.link_label"))
                     .child(Link::new("terms-of-service").href(url).child(shown)),
             )
             .child(
                 Checkbox::new("accept-terms")
-                    .label("I have read and accept the terms of service")
+                    .label(t("onboarding.terms.accept_label"))
                     .checked(self.terms_accepted)
                     .on_change(cx.listener(|this, checked: &bool, _, cx| {
                         this.terms_accepted = *checked;
@@ -534,24 +544,18 @@ impl Onboarding {
         let shown = url.trim_start_matches("https://").to_owned();
         v_flex()
             .gap_4()
-            .child(
-                "Your workspaces, requests and captured traffic stay on this computer. Bifurc sends anonymous \
-                 usage analytics: what kind of thing you do, from which interface and on which platform. Never \
-                 a name, a URL, a path or anything you typed. They are on by default once you accept, and you \
-                 can turn them off at any time in Settings, under About; that Bifurc was installed on this \
-                 device is still reported, once.",
-            )
+            .child(t("onboarding.privacy.body"))
             .child(
                 h_flex()
                     .gap_1()
                     .text_sm()
                     .text_color(theme.muted_foreground)
-                    .child("The full policy:")
+                    .child(t("onboarding.privacy.link_label"))
                     .child(Link::new("privacy-policy").href(url).child(shown)),
             )
             .child(
                 Checkbox::new("accept-privacy")
-                    .label("I have read and accept the privacy policy")
+                    .label(t("onboarding.privacy.accept_label"))
                     .checked(self.accepted)
                     .on_change(cx.listener(|this, checked: &bool, _, cx| {
                         this.accepted = *checked;
@@ -566,33 +570,33 @@ impl Onboarding {
         let parts: [(IconName, &str, &str); 6] = [
             (
                 IconName::Globe,
-                "Requests",
-                "Send REST, GraphQL, gRPC, SOAP and WebSocket requests, one at a time or a folder in a run.",
+                t("onboarding.overview.requests.title"),
+                t("onboarding.overview.requests.description"),
             ),
             (
                 IconName::GalleryVerticalEnd,
-                "Mocks",
-                "Answer a call yourself, for an endpoint that is missing or that you want to behave differently.",
+                t("onboarding.overview.mocks.title"),
+                t("onboarding.overview.mocks.description"),
             ),
             (
                 IconName::Replace,
-                "Mappings",
-                "Give local services names: api.localhost reaches the service on port 3000.",
+                t("onboarding.overview.mappings.title"),
+                t("onboarding.overview.mappings.description"),
             ),
             (
                 IconName::Network,
-                "Proxy rules and capture",
-                "Send a browser or a tool through the forward proxy to redirect, mock and record its traffic.",
+                t("onboarding.overview.proxy_rules.title"),
+                t("onboarding.overview.proxy_rules.description"),
             ),
             (
                 IconName::Asterisk,
-                "Environments and vaults",
-                "Keep variables for each environment, and secrets sealed behind a passphrase.",
+                t("onboarding.overview.environments.title"),
+                t("onboarding.overview.environments.description"),
             ),
             (
                 IconName::Folder,
-                "Workspaces",
-                "Everything you save is a file in a workspace with its history. Syncing it with GitHub is optional.",
+                t("onboarding.overview.workspaces.title"),
+                t("onboarding.overview.workspaces.description"),
             ),
         ];
         Self::group(cx)
@@ -620,6 +624,27 @@ impl Onboarding {
             .into_any_element()
     }
 
+    fn render_language(&self, cx: &mut Context<Self>) -> AnyElement {
+        let chosen = i18n::language().code;
+        let menu = Button::new("onboarding-language")
+            .outline()
+            .label(i18n::language().name)
+            .dropdown_caret(true)
+            .dropdown_menu(move |menu, _, _| {
+                i18n::LANGUAGES.iter().fold(menu, |menu, language| {
+                    let code = language.code;
+                    menu.item(PopupMenuItem::new(language.name).checked(code == chosen).on_click(move |_, _, cx| {
+                        i18n::set_language(code);
+                        Preferences::update(cx, |p| p.language = Some(code.to_owned()));
+                        cx.refresh_windows();
+                    }))
+                })
+            });
+        Self::group(cx)
+            .child(Self::row(t("onboarding.language.row.title"), t("onboarding.language.row.description"), menu, cx))
+            .into_any_element()
+    }
+
     fn render_preferences(&self, cx: &mut Context<Self>) -> AnyElement {
         let current = theme::current(cx);
         let themes = theme::available(cx);
@@ -629,9 +654,9 @@ impl Onboarding {
                 let menu = menu.scrollable(true).max_h(rems(20.).to_pixels(window.rem_size()));
                 themes.iter().fold(menu, |menu, (name, is_dark)| {
                     // Most themes say which they are in their name; the rest get it appended.
-                    let mode = if *is_dark { "Dark" } else { "Light" };
+                    let mode = t(if *is_dark { "onboarding.preferences.theme.dark" } else { "onboarding.preferences.theme.light" });
                     let label: SharedString =
-                        if name.contains(mode) { name.clone() } else { format!("{name} ({mode})").into() };
+                        if name.contains(&mode) { name.clone() } else { format!("{name} ({mode})").into() };
                     let name = name.clone();
                     menu.item(PopupMenuItem::new(label).checked(name == chosen).on_click(move |_, _, cx| {
                         if theme::apply(&name, cx) {
@@ -660,8 +685,8 @@ impl Onboarding {
             );
 
         Self::group(cx)
-            .child(Self::row("Color theme", "Each theme is light or dark.", theme_menu, cx))
-            .child(Self::row("Interface size", "Scales text, spacing and controls together.", size_menu, cx))
+            .child(Self::row(t("onboarding.preferences.theme.title"), t("onboarding.preferences.theme.description"), theme_menu, cx))
+            .child(Self::row(t("onboarding.preferences.size.title"), t("onboarding.preferences.size.description"), size_menu, cx))
             .into_any_element()
     }
 
@@ -673,15 +698,19 @@ impl Onboarding {
             (self.certificate.clone(), self.certificate.clone(), self.certificate.clone());
         let state: SharedString = match (&certificate.fingerprint, certificate.generated) {
             (Some(fingerprint), true) => fingerprint.clone().into(),
-            (None, true) => "A certificate is in place.".into(),
-            (_, false) => "No certificate yet.".into(),
+            (None, true) => t("onboarding.https.certificate.in_place").into(),
+            (_, false) => t("onboarding.https.certificate.none").into(),
         };
         let certificate_actions = h_flex()
             .gap_2()
             .child(
                 Button::new("onboarding-generate")
                     .outline()
-                    .label(if certificate.generated { "Regenerate" } else { "Generate" })
+                    .label(if certificate.generated {
+                        t("onboarding.https.regenerate")
+                    } else {
+                        t("onboarding.https.generate")
+                    })
                     .loading(certificate.busy)
                     .disabled(working)
                     .on_click(move |_, _, cx| generate.update(cx, |certificate, cx| certificate.generate(cx))),
@@ -689,15 +718,15 @@ impl Onboarding {
             .child(
                 Button::new("onboarding-import")
                     .outline()
-                    .label("Import…")
+                    .label(t("onboarding.https.import"))
                     .loading(certificate.importing)
                     .disabled(working)
-                    .tooltip("Use your own certificate and private key instead")
+                    .tooltip(t("onboarding.https.import_tooltip"))
                     .on_click(move |_, _, cx| import.update(cx, |certificate, cx| certificate.import(cx))),
             );
         let install_action = Button::new("onboarding-install")
             .outline()
-            .label("Install")
+            .label(t("onboarding.https.install"))
             .loading(certificate.installing)
             .disabled(!certificate.generated || certificate.installing)
             .on_click(move |_, _, cx| install.update(cx, |certificate, cx| certificate.install(cx)));
@@ -715,22 +744,21 @@ impl Onboarding {
             });
 
         Self::group(cx)
-            .child(Self::row("Root certificate", state, certificate_actions, cx))
+            .child(Self::row(t("onboarding.https.root.title"), state, certificate_actions, cx))
             .child(
                 v_flex()
                     .gap_2()
                     .child(Self::row(
-                        "Trust on this computer",
-                        "Adds the certificate to your trusted roots, so intercepted sites open without warnings. \
-                         Firefox keeps its own store and needs the certificate imported there.",
+                        t("onboarding.https.trust.title"),
+                        t("onboarding.https.trust.description"),
                         install_action,
                         cx,
                     ))
                     .children(note),
             )
             .child(Self::row(
-                "Intercept HTTPS",
-                "Decrypt HTTPS traffic through the forward proxy so rules, mocks and capture apply to it.",
+                t("onboarding.https.intercept.title"),
+                t("onboarding.https.intercept.description"),
                 intercept,
                 cx,
             ))
@@ -746,14 +774,14 @@ impl Onboarding {
     ) -> Div {
         let state = match (&listener.error, listener.running) {
             (Some(error), _) => Tag::danger().child(error.clone()),
-            (None, true) => Tag::success().child(format!("Running on port {}", listener.port)),
-            (None, false) => Tag::secondary().child("Stopped"),
+            (None, true) => Tag::success().child(t_with("onboarding.listener.running", &[("port", &listener.port)])),
+            (None, false) => Tag::secondary().child(t("onboarding.listener.stopped")),
         };
         h_flex().gap_2().child(state).child(
             Button::new(id)
                 .outline()
                 .small()
-                .label(if listener.running { "Stop" } else { "Start" })
+                .label(if listener.running { t("onboarding.listener.stop") } else { t("onboarding.listener.start") })
                 .loading(listener.busy)
                 .on_click(move |_, _, cx| model.update(cx, |model, cx| toggle(model, cx))),
         )
@@ -766,12 +794,12 @@ impl Onboarding {
         let (reverse, forward) = self.typed_ports(cx);
         let problem = ports_problem(reverse, forward).filter(|_| self.ports_filled);
         let port_field = |input: &Entity<InputState>| div().w_24().child(Input::new(input));
-        let muted = |text: String| div().text_sm().text_color(theme.muted_foreground).child(text);
+        let muted = |text: &'static str| div().text_sm().text_color(theme.muted_foreground).child(text);
 
         let reverse_group = Self::group(cx)
             .child(Self::row(
-                "Reverse proxy",
-                "Serves your .localhost names and sends each one on to its mapping.",
+                t("onboarding.reverse.title"),
+                t("onboarding.reverse.description"),
                 Self::listener_controls(
                     "onboarding-reverse-toggle",
                     &reverse_status,
@@ -781,12 +809,14 @@ impl Onboarding {
                 cx,
             ))
             .child(Self::row(
-                "Port",
-                format!(
-                    "Keep {HTTP_PORT} for names that work without a port, like {}. On any other port, every \
-                     address needs that port, like {}.",
-                    mapping_address(HTTP_PORT),
-                    mapping_address(3000),
+                t("onboarding.port.title"),
+                t_with(
+                    "onboarding.reverse.port_description",
+                    &[
+                        ("port", &HTTP_PORT),
+                        ("plain", &mapping_address(HTTP_PORT)),
+                        ("example", &mapping_address(3000)),
+                    ],
                 ),
                 port_field(&self.reverse_port),
                 cx,
@@ -794,31 +824,32 @@ impl Onboarding {
             .children(reverse.filter(|port| *port != HTTP_PORT).map(|port| {
                 Alert::warning(
                     "reverse-port-note",
-                    format!(
-                        "Add :{port} to every .localhost address you open or call: {} instead of {}.",
-                        mapping_address(port),
-                        mapping_address(HTTP_PORT),
+                    t_with(
+                        "onboarding.reverse.port_note",
+                        &[
+                            ("port", &port),
+                            ("address", &mapping_address(port)),
+                            ("plain", &mapping_address(HTTP_PORT)),
+                        ],
                     ),
                 )
-                .title(format!("Names need the port while the reverse proxy is on {port}"))
+                .title(t_with("onboarding.reverse.port_names_need", &[("port", &port)]))
             }))
             .children(reverse.filter(|port| cfg!(target_os = "linux") && *port < FIRST_UNRESERVED_PORT).map(|port| {
                 Alert::warning(
                     "reverse-port-permission",
-                    format!(
-                        "Linux only lets a program listen below {FIRST_UNRESERVED_PORT} when it has been allowed \
-                         to. If Bifurc's engine is not allowed yet, continuing asks for your password to allow \
-                         it; refuse, and port {port} stays closed. A port from {FIRST_UNRESERVED_PORT} up, such \
-                         as 8000, needs no permission.",
+                    t_with(
+                        "onboarding.reverse.permission_note",
+                        &[("reserved", &FIRST_UNRESERVED_PORT), ("port", &port)],
                     ),
                 )
-                .title(format!("Port {port} needs permission"))
+                .title(t_with("onboarding.reverse.permission_title", &[("port", &port)]))
             }));
 
         let forward_group = Self::group(cx)
             .child(Self::row(
-                "Forward proxy",
-                "Point a browser or a tool at it to apply proxy rules, mocks and capture to its traffic.",
+                t("onboarding.forward.title"),
+                t("onboarding.forward.description"),
                 Self::listener_controls(
                     "onboarding-forward-toggle",
                     &forward_status,
@@ -828,10 +859,10 @@ impl Onboarding {
                 cx,
             ))
             .child(Self::row(
-                "Port",
+                t("onboarding.port.title"),
                 match forward {
-                    Some(port) => format!("The proxy address to give a browser or a tool is http://localhost:{port}."),
-                    None => "The proxy address to give a browser or a tool uses this port.".to_owned(),
+                    Some(port) => t_with("onboarding.forward.address_known", &[("port", &port)]),
+                    None => t("onboarding.forward.address_unknown").to_owned(),
                 },
                 port_field(&self.forward_port),
                 cx,
@@ -843,11 +874,9 @@ impl Onboarding {
             .child(forward_group)
             .children(problem.map(|problem| div().text_sm().text_color(theme.danger).child(problem)))
             .child(muted(if model.setup().servers_confirmed {
-                "A new port takes effect at once while its proxy is running.".to_owned()
+                t("onboarding.proxies.takes_effect")
             } else {
-                "Neither proxy has been started yet. Both start on these ports when you continue, and with \
-                 Bifurc from then on."
-                    .to_owned()
+                t("onboarding.proxies.not_started")
             }))
             .into_any_element()
     }
@@ -875,14 +904,14 @@ impl Onboarding {
     }
 
     fn render_actions(&self, stage: Stage, cx: &mut Context<Self>) -> AnyElement {
-        let label = match stage {
-            Stage::Terms | Stage::Privacy => "Accept and continue",
+        let label = t(match stage {
+            Stage::Terms | Stage::Privacy => "onboarding.action.accept",
             Stage::Proxies if self.servers_failed_on.is_some() && self.servers_failed_on == self.typed_port_pair(cx) => {
-                "Continue anyway"
+                "onboarding.action.continue_anyway"
             }
-            Stage::Proxies if self.has_workspace(cx) => "Finish",
-            _ => "Continue",
-        };
+            Stage::Proxies if self.has_workspace(cx) => "onboarding.action.finish",
+            _ => "onboarding.action.continue",
+        });
         let blocked = match stage {
             Stage::Terms => !self.terms_accepted,
             Stage::Privacy => !self.accepted,
@@ -899,7 +928,7 @@ impl Onboarding {
                 this.child(
                     Button::new("onboarding-back")
                         .outline()
-                        .label("Back")
+                        .label(t("onboarding.action.back"))
                         .disabled(self.busy)
                         .on_click(cx.listener(|this, _, window, cx| this.back(window, cx))),
                 )
@@ -919,25 +948,23 @@ impl Onboarding {
     fn render_stage(&self, stage: Stage, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme().clone();
         let (title, description) = match stage {
-            Stage::Terms => ("Terms of service", "Accept the terms to use Bifurc."),
-            Stage::Privacy => ("Privacy policy", "Accept the policy to use Bifurc."),
-            Stage::Overview => ("What Bifurc does", "One place for the calls your work makes and receives."),
-            Stage::Preferences => ("Preferences", "How the app looks. Change it any time in Settings."),
-            Stage::Https => (
-                "HTTPS",
-                "Optional. To work on HTTPS traffic, the forward proxy signs the sites it intercepts with a root \
-                 certificate made on this computer. You can set this up later in Settings.",
-            ),
-            Stage::Proxies => ("Proxy ports", "The ports Bifurc's two proxies listen on."),
-            Stage::Workspace => {
-                ("Set up your first workspace", "A workspace holds your requests, mocks, mappings and environments.")
+            Stage::Language => (t("onboarding.stage.language.title"), t("onboarding.stage.language.description")),
+            Stage::Terms => (t("onboarding.stage.terms.title"), t("onboarding.stage.terms.description")),
+            Stage::Privacy => (t("onboarding.stage.privacy.title"), t("onboarding.stage.privacy.description")),
+            Stage::Overview => (t("onboarding.stage.overview.title"), t("onboarding.stage.overview.description")),
+            Stage::Preferences => {
+                (t("onboarding.stage.preferences.title"), t("onboarding.stage.preferences.description"))
             }
+            Stage::Https => (t("onboarding.stage.https.title"), t("onboarding.stage.https.description")),
+            Stage::Proxies => (t("onboarding.stage.proxies.title"), t("onboarding.stage.proxies.description")),
+            Stage::Workspace => (t("onboarding.stage.workspace.title"), t("onboarding.stage.workspace.description")),
         };
         let heading = v_flex()
             .gap_1()
             .child(div().text_xl().font_semibold().child(title))
             .child(div().text_color(theme.muted_foreground).child(description));
         let body = match stage {
+            Stage::Language => self.render_language(cx),
             Stage::Terms => self.render_terms(cx),
             Stage::Privacy => self.render_privacy(cx),
             Stage::Overview => self.render_overview(cx),
@@ -973,12 +1000,12 @@ impl Render for Onboarding {
         // A walk that was finished before is only here for a workspace: there are no steps to show.
         let finished_before = self.model.read(cx).setup().onboarded;
         let content = match self.stage {
-            None => Self::render_waiting("Starting", cx),
+            None => Self::render_waiting(t("onboarding.waiting.starting"), cx),
             Some(stage) => match stages.iter().position(|listed| *listed == stage) {
                 // The first workspace exists and the engine is being told the walk is over.
                 None => v_flex()
                     .gap_4()
-                    .child(Self::render_waiting("Finishing the setup", cx))
+                    .child(Self::render_waiting(t("onboarding.waiting.finishing"), cx))
                     .children(self.error.clone().map(|error| div().text_sm().text_color(theme.danger).child(error)))
                     .into_any_element(),
                 Some(current) => v_flex()
@@ -1017,11 +1044,12 @@ mod tests {
 
     #[test]
     fn the_walk_starts_at_the_terms_then_the_policy_until_both_are_accepted() {
-        assert_eq!(first_stage(&setup(false, false, false)), Stage::Terms);
-        assert_eq!(first_stage(&setup(false, true, true)), Stage::Terms);
-        assert_eq!(first_stage(&setup(true, false, false)), Stage::Privacy);
-        assert_eq!(first_stage(&setup(true, true, false)), Stage::Overview);
-        assert_eq!(first_stage(&setup(true, true, true)), Stage::Workspace);
+        assert_eq!(first_stage(&setup(false, false, false), true), Stage::Terms);
+        assert_eq!(first_stage(&setup(false, true, true), true), Stage::Terms);
+        assert_eq!(first_stage(&setup(true, false, false), true), Stage::Privacy);
+        assert_eq!(first_stage(&setup(true, true, false), true), Stage::Overview);
+        assert_eq!(first_stage(&setup(true, true, true), true), Stage::Workspace);
+        assert_eq!(first_stage(&setup(false, false, false), false), Stage::Language);
         assert_eq!(Stage::Privacy.previous(), Some(Stage::Terms));
     }
 

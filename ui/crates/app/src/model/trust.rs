@@ -10,6 +10,8 @@ use std::{
     process::{Command, Stdio},
 };
 
+use crate::i18n::{t, t_with};
+
 /// What the platform's tool says when it cannot be run or refuses.
 fn run(command: &mut Command) -> Result<(), String> {
     hide_console(command);
@@ -21,7 +23,7 @@ fn run(command: &mut Command) -> Result<(), String> {
         return Ok(());
     }
     let text = String::from_utf8_lossy(if output.stderr.is_empty() { &output.stdout } else { &output.stderr });
-    let last = text.lines().map(str::trim).rfind(|line| !line.is_empty()).unwrap_or("it failed without saying why");
+    let last = text.lines().map(str::trim).rfind(|line| !line.is_empty()).unwrap_or(t("model.trust.no_reason"));
     Err(format!("{}: {last}", command.get_program().to_string_lossy()))
 }
 
@@ -54,28 +56,29 @@ fn linux_script(target: &str, rebuild: &str) -> String {
 
 /// What to tell the user to run when the certificate could not be installed for them.
 fn linux_instructions(certificate: &Path, target: &str, rebuild: &str) -> String {
-    format!(
-        "Run this in a terminal: sudo sh -c '{}' sh \"{}\"",
-        linux_script(target, rebuild),
-        certificate.display()
-    )
+    let command = format!("sudo sh -c '{}' sh \"{}\"", linux_script(target, rebuild), certificate.display());
+    t_with("model.trust.run_in_terminal", &[("command", &command)])
 }
 
 fn install_linux(file: &Path) -> Result<String, String> {
     let (target, rebuild) = LINUX_STORES
         .into_iter()
         .find(|(target, _)| Path::new(target).parent().is_some_and(Path::is_dir))
-        .ok_or_else(|| format!("No system trust store was found. Add {} to your trusted roots by hand.", file.display()))?;
+        .ok_or_else(|| t_with("model.trust.no_store", &[("file", &file.display())]))?;
     // The stores belong to root on every distribution, so polkit asks for the password.
-    run(Command::new("pkexec").args(["sh", "-c", &linux_script(target, rebuild), "sh"]).arg(file))
-        .map_err(|error| format!("{error}. {}", linux_instructions(file, target, rebuild)))?;
-    Ok("Installed in the system trust store. Restart your browser to pick it up.".to_owned())
+    run(Command::new("pkexec").args(["sh", "-c", &linux_script(target, rebuild), "sh"]).arg(file)).map_err(|error| {
+        t_with(
+            "model.trust.failed_with_instructions",
+            &[("error", &error), ("instructions", &linux_instructions(file, target, rebuild))],
+        )
+    })?;
+    Ok(t("model.trust.installed_linux").to_owned())
 }
 
 /// Puts `pem` in this computer's trust store. The message says where it went, or why it did not.
 pub fn install(pem: &[u8]) -> Result<String, String> {
     let file = env::temp_dir().join(format!("bifurc-ca-{}.pem", std::process::id()));
-    fs::write(&file, pem).map_err(|error| format!("Couldn't write the certificate to a file. {error}"))?;
+    fs::write(&file, pem).map_err(|error| t_with("model.trust.write_failed", &[("error", &error)]))?;
     let outcome = install_file(&file);
     // A failure can name the file in what it tells the user to run, so it is only removed on success.
     if outcome.is_ok() {
@@ -87,14 +90,14 @@ pub fn install(pem: &[u8]) -> Result<String, String> {
 fn install_file(file: &Path) -> Result<String, String> {
     if cfg!(windows) {
         run(Command::new("certutil").args(["-addstore", "-user", "Root"]).arg(file))?;
-        Ok("Installed in the Windows user certificate store. Restart your browser to pick it up.".to_owned())
+        Ok(t("model.trust.installed_windows").to_owned())
     } else if cfg!(target_os = "macos") {
         let keychain = home().join("Library").join("Keychains").join("login.keychain-db");
         run(Command::new("security")
             .args(["add-trusted-cert", "-d", "-r", "trustRoot", "-k"])
             .arg(keychain)
             .arg(file))?;
-        Ok("Installed in your login keychain. Restart your browser to pick it up.".to_owned())
+        Ok(t("model.trust.installed_macos").to_owned())
     } else {
         install_linux(file)
     }

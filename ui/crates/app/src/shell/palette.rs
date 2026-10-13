@@ -24,6 +24,7 @@ use crate::{
         SyncEntity, SyncWorkspace, ToggleCapturePaused, ToggleFolderTree, ToggleForwardProxy, ToggleInspector,
         ToggleSidebar,
     },
+    i18n::{t, t_with},
     model::NodeRef,
 };
 
@@ -50,93 +51,93 @@ type CommandRow = (&'static str, IconName, Box<dyn Action>);
 fn command_groups() -> Vec<(&'static str, Vec<CommandRow>)> {
     vec![
         (
-            "Requests",
+            t("shell.screen.requests"),
             vec![
-                ("New REST request", IconName::Plus, Box::new(NewRestRequest)),
-                ("New GraphQL request", IconName::Plus, Box::new(NewGraphQlRequest)),
-                ("New gRPC request", IconName::Plus, Box::new(NewGrpcRequest)),
-                ("New SOAP request", IconName::Plus, Box::new(NewSoapRequest)),
-                ("New WebSocket request", IconName::Plus, Box::new(NewWebSocketRequest)),
-                ("New SSE request", IconName::Plus, Box::new(NewSseRequest)),
-                ("New Socket.IO request", IconName::Plus, Box::new(NewSocketIoRequest)),
-                ("New MCP request", IconName::Plus, Box::new(NewMcpRequest)),
-                ("Import a request from cURL", IconName::Plus, Box::new(ImportCurlRequest)),
-                ("New request folder…", IconName::Folder, Box::new(NewFolder)),
-                ("Send request or connect", IconName::Play, Box::new(RunRequest)),
+                (t("shell.palette.new_rest_request"), IconName::Plus, Box::new(NewRestRequest)),
+                (t("shell.palette.new_graphql_request"), IconName::Plus, Box::new(NewGraphQlRequest)),
+                (t("shell.palette.new_grpc_request"), IconName::Plus, Box::new(NewGrpcRequest)),
+                (t("shell.palette.new_soap_request"), IconName::Plus, Box::new(NewSoapRequest)),
+                (t("shell.palette.new_websocket_request"), IconName::Plus, Box::new(NewWebSocketRequest)),
+                (t("shell.palette.new_sse_request"), IconName::Plus, Box::new(NewSseRequest)),
+                (t("shell.palette.new_socketio_request"), IconName::Plus, Box::new(NewSocketIoRequest)),
+                (t("shell.palette.new_mcp_request"), IconName::Plus, Box::new(NewMcpRequest)),
+                (t("shell.palette.import_request_curl"), IconName::Plus, Box::new(ImportCurlRequest)),
+                (t("shell.palette.new_request_folder"), IconName::Folder, Box::new(NewFolder)),
+                (t("shell.palette.send_request"), IconName::Play, Box::new(RunRequest)),
             ],
         ),
         (
-            "Mocks",
+            t("shell.screen.mocks"),
             vec![
-                ("New mock", IconName::Plus, Box::new(NewMock)),
-                ("Import a mock from cURL", IconName::Plus, Box::new(ImportCurlMock)),
-                ("New mock folder…", IconName::Folder, Box::new(NewMockFolder)),
+                (t("shell.palette.new_mock"), IconName::Plus, Box::new(NewMock)),
+                (t("shell.palette.import_mock_curl"), IconName::Plus, Box::new(ImportCurlMock)),
+                (t("shell.palette.new_mock_folder"), IconName::Folder, Box::new(NewMockFolder)),
             ],
         ),
         (
-            "Proxy",
+            t("shell.palette.group_proxy"),
             vec![
-                ("New mapping…", IconName::Plus, Box::new(NewMapping)),
-                ("New proxy rule", IconName::Plus, Box::new(NewProxyRule)),
-                ("Pause or resume capture", IconName::Pause, Box::new(ToggleCapturePaused)),
-                ("Clear captured traffic", IconName::Delete, Box::new(ClearCapture)),
-                ("Start or stop the forward proxy", IconName::Play, Box::new(ToggleForwardProxy)),
-                ("Restart the forward proxy", IconName::RefreshCw, Box::new(RestartForwardProxy)),
+                (t("shell.palette.new_mapping"), IconName::Plus, Box::new(NewMapping)),
+                (t("shell.palette.new_proxy_rule"), IconName::Plus, Box::new(NewProxyRule)),
+                (t("shell.palette.pause_capture"), IconName::Pause, Box::new(ToggleCapturePaused)),
+                (t("shell.palette.clear_capture"), IconName::Delete, Box::new(ClearCapture)),
+                (t("shell.palette.toggle_forward_proxy"), IconName::Play, Box::new(ToggleForwardProxy)),
+                (t("shell.palette.restart_forward_proxy"), IconName::RefreshCw, Box::new(RestartForwardProxy)),
             ],
         ),
         (
-            "Services",
+            t("shell.screen.services"),
             vec![
-                ("Look for local services again", IconName::RefreshCw, Box::new(RefreshServices)),
-                ("New health check…", IconName::Plus, Box::new(NewHealthCheck)),
-                ("Check every URL now", IconName::Heart, Box::new(CheckAllHealth)),
+                (t("shell.palette.refresh_services"), IconName::RefreshCw, Box::new(RefreshServices)),
+                (t("shell.palette.new_health_check"), IconName::Plus, Box::new(NewHealthCheck)),
+                (t("shell.palette.check_all_health"), IconName::Heart, Box::new(CheckAllHealth)),
             ],
         ),
         (
-            "Open item",
+            t("shell.palette.group_open_item"),
             vec![
-                ("Save", IconName::File, Box::new(SaveRequest)),
-                ("Sync this item", IconName::Github, Box::new(SyncEntity)),
-                ("Revert to the last synced version…", IconName::Undo, Box::new(RevertRequest)),
-                ("Delete this item…", IconName::Delete, Box::new(DeleteEntity)),
-                ("Close tab", IconName::Close, Box::new(CloseRequestTab)),
+                (t("shell.palette.save"), IconName::File, Box::new(SaveRequest)),
+                (t("shell.palette.sync_item"), IconName::Github, Box::new(SyncEntity)),
+                (t("shell.palette.revert_item"), IconName::Undo, Box::new(RevertRequest)),
+                (t("shell.palette.delete_item"), IconName::Delete, Box::new(DeleteEntity)),
+                (t("shell.palette.close_tab"), IconName::Close, Box::new(CloseRequestTab)),
             ],
         ),
         (
-            "Workspace",
+            t("shell.group.workspace"),
             vec![
-                ("New environment…", IconName::Plus, Box::new(NewEnvironment)),
-                ("Add workspace…", IconName::Plus, Box::new(NewWorkspace)),
-                ("Rename this workspace…", IconName::File, Box::new(RenameWorkspace)),
-                ("Publish this screen's changes", IconName::Github, Box::new(PublishChanges)),
-                ("Sync the whole workspace", IconName::Github, Box::new(SyncWorkspace)),
-                ("Reload workspace", IconName::RefreshCw, Box::new(ReloadWorkspace)),
+                (t("shell.palette.new_environment"), IconName::Plus, Box::new(NewEnvironment)),
+                (t("shell.palette.add_workspace"), IconName::Plus, Box::new(NewWorkspace)),
+                (t("shell.palette.rename_workspace"), IconName::File, Box::new(RenameWorkspace)),
+                (t("shell.palette.publish_screen"), IconName::Github, Box::new(PublishChanges)),
+                (t("shell.palette.sync_workspace"), IconName::Github, Box::new(SyncWorkspace)),
+                (t("shell.palette.reload_workspace"), IconName::RefreshCw, Box::new(ReloadWorkspace)),
             ],
         ),
         (
-            "Go to",
+            t("shell.palette.group_go_to"),
             vec![
-                ("Go to Services", Screen::Services.icon(), Box::new(ShowServices)),
-                ("Go to Health bar", Screen::HealthBar.icon(), Box::new(ShowHealthBar)),
-                ("Go to Mappings", Screen::Mappings.icon(), Box::new(ShowMappings)),
-                ("Go to Proxy rules", Screen::ProxyRules.icon(), Box::new(ShowProxyRules)),
-                ("Go to Capture", Screen::Capture.icon(), Box::new(ShowCapture)),
-                ("Go to Requests", Screen::Requests.icon(), Box::new(ShowRequests)),
-                ("Go to Mocks", Screen::Mocks.icon(), Box::new(ShowMocks)),
-                ("Go to Flows", Screen::Flows.icon(), Box::new(ShowFlows)),
-                ("Go to Environments", Screen::Environments.icon(), Box::new(ShowEnvironments)),
-                ("Go to Vaults", Screen::Vaults.icon(), Box::new(ShowVaults)),
-                ("Go to Workspace config", Screen::WorkspaceConfig.icon(), Box::new(ShowWorkspaceConfig)),
-                ("Go to Audit log", Screen::AuditLog.icon(), Box::new(ShowAuditLog)),
-                ("Go to Settings", Screen::Settings.icon(), Box::new(ShowSettings)),
+                (t("shell.palette.go_services"), Screen::Services.icon(), Box::new(ShowServices)),
+                (t("shell.palette.go_health_bar"), Screen::HealthBar.icon(), Box::new(ShowHealthBar)),
+                (t("shell.palette.go_mappings"), Screen::Mappings.icon(), Box::new(ShowMappings)),
+                (t("shell.palette.go_proxy_rules"), Screen::ProxyRules.icon(), Box::new(ShowProxyRules)),
+                (t("shell.palette.go_capture"), Screen::Capture.icon(), Box::new(ShowCapture)),
+                (t("shell.palette.go_requests"), Screen::Requests.icon(), Box::new(ShowRequests)),
+                (t("shell.palette.go_mocks"), Screen::Mocks.icon(), Box::new(ShowMocks)),
+                (t("shell.palette.go_flows"), Screen::Flows.icon(), Box::new(ShowFlows)),
+                (t("shell.palette.go_environments"), Screen::Environments.icon(), Box::new(ShowEnvironments)),
+                (t("shell.palette.go_vaults"), Screen::Vaults.icon(), Box::new(ShowVaults)),
+                (t("shell.palette.go_workspace_config"), Screen::WorkspaceConfig.icon(), Box::new(ShowWorkspaceConfig)),
+                (t("shell.palette.go_audit_log"), Screen::AuditLog.icon(), Box::new(ShowAuditLog)),
+                (t("shell.palette.go_settings"), Screen::Settings.icon(), Box::new(ShowSettings)),
             ],
         ),
         (
-            "View",
+            t("shell.palette.group_view"),
             vec![
-                ("Toggle sidebar", IconName::PanelLeft, Box::new(ToggleSidebar)),
-                ("Toggle inspector", IconName::PanelRight, Box::new(ToggleInspector)),
-                ("Toggle folder tree", IconName::FolderOpen, Box::new(ToggleFolderTree)),
+                (t("shell.palette.toggle_sidebar"), IconName::PanelLeft, Box::new(ToggleSidebar)),
+                (t("shell.palette.toggle_inspector"), IconName::PanelRight, Box::new(ToggleInspector)),
+                (t("shell.palette.toggle_folder_tree"), IconName::FolderOpen, Box::new(ToggleFolderTree)),
             ],
         ),
     ]
@@ -196,13 +197,13 @@ impl Shell {
         }
         let config = self.model.read(cx).config().clone();
         let environments: Vec<Entry> = std::iter::once(Entry {
-            label: "Use no environment".to_owned(),
-            keywords: vec!["environment".to_owned()],
+            label: t("shell.palette.use_no_environment").to_owned(),
+            keywords: vec![t("shell.palette.keyword_environment").to_owned()],
             choice: Choice::UseEnvironment(None),
         })
         .chain(config.selectable_environments().map(|e| Entry {
-            label: format!("Use environment: {}", e.name),
-            keywords: vec!["environment".to_owned()],
+            label: t_with("shell.palette.use_environment", &[("name", &e.name)]),
+            keywords: vec![t("shell.palette.keyword_environment").to_owned()],
             choice: Choice::UseEnvironment(Some(e.id.clone())),
         }))
         .collect();
@@ -215,11 +216,11 @@ impl Shell {
             }));
             choices.push(Vec::new());
         }
-        groups.push(choice_group("Environment", &environments));
+        groups.push(choice_group(t("shell.palette.group_environment"), &environments));
         choices.push(environments.iter().map(|entry| entry.choice.clone()).collect());
 
         let (state, shell) = (self.palette.clone(), cx.weak_entity());
-        open_search(shell, state, "Search commands…", groups, choices, window, cx);
+        open_search(shell, state, t("shell.palette.search_commands"), groups, choices, window, cx);
     }
 
     /// Ctrl+P: the things in the workspace, to open one.
@@ -236,7 +237,7 @@ impl Shell {
                 let label = if r.name.is_empty() { r.target.clone() } else { r.name.clone() };
                 Entry {
                     label: format!("{}  {label}", r.method.clone().unwrap_or_else(|| r.kind.badge().to_owned())),
-                    keywords: vec![r.target.clone(), "request".to_owned()],
+                    keywords: vec![r.target.clone(), t("shell.palette.keyword_request").to_owned()],
                     choice: Choice::Request(NodeRef::Request { kind: r.kind, id: r.id.clone() }),
                 }
             })
@@ -247,10 +248,10 @@ impl Shell {
             .filter(|m| !m.deleted && m.locked.is_none())
             .map(|m| {
                 let label = if m.name.is_empty() { m.url_pattern.clone() } else { m.name.clone() };
-                let method = if m.method == "*" { "ANY" } else { m.method.as_str() };
+                let method = if m.method == "*" { t("shell.palette.method_any") } else { m.method.as_str() };
                 Entry {
                     label: format!("{method}  {label}"),
-                    keywords: vec![m.url_pattern.clone(), "mock".to_owned()],
+                    keywords: vec![m.url_pattern.clone(), t("shell.palette.keyword_mock").to_owned()],
                     choice: Choice::Mock(m.id.clone()),
                 }
             })
@@ -261,7 +262,7 @@ impl Shell {
             .filter(|m| !m.deleted)
             .map(|m| Entry {
                 label: format!("{}  →  {}", m.domain, m.target),
-                keywords: vec![m.label.clone().unwrap_or_default(), "mapping".to_owned()],
+                keywords: vec![m.label.clone().unwrap_or_default(), t("shell.palette.keyword_mapping").to_owned()],
                 choice: Choice::Mapping,
             })
             .collect();
@@ -269,18 +270,22 @@ impl Shell {
             .selectable_environments()
             .map(|e| Entry {
                 label: e.name.clone(),
-                keywords: vec!["environment".to_owned()],
+                keywords: vec![t("shell.palette.keyword_environment").to_owned()],
                 choice: Choice::Environment(e.id.clone()),
             })
             .collect();
 
-        let sections =
-            [("Requests", requests), ("Mocks", mocks), ("Mappings", mappings), ("Environments", environments)];
+        let sections = [
+            (t("shell.screen.requests"), requests),
+            (t("shell.screen.mocks"), mocks),
+            (t("shell.screen.mappings"), mappings),
+            (t("shell.screen.environments"), environments),
+        ];
         let groups = sections.iter().map(|(label, entries)| choice_group(*label, entries)).collect();
         let choices = sections.iter().map(|(_, entries)| entries.iter().map(|e| e.choice.clone()).collect()).collect();
 
         let (state, shell) = (self.finder.clone(), cx.weak_entity());
-        open_search(shell, state, "Search requests, mocks, mappings and environments…", groups, choices, window, cx);
+        open_search(shell, state, t("shell.palette.search_finder"), groups, choices, window, cx);
     }
 
     fn apply_choice(&mut self, choice: Choice, window: &mut Window, cx: &mut Context<Self>) {

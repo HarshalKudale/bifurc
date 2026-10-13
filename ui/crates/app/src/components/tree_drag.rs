@@ -10,6 +10,8 @@ use gpui_kit::{
     SharedString, Stateful, StatefulInteractiveElement as _, Styled as _, Window, div,
 };
 
+use crate::i18n::t;
+
 /// A tree row on its way to another folder.
 pub struct DraggedRow<K> {
     pub key: K,
@@ -95,6 +97,6 @@ pub fn top_level_target<K: 'static>(
         .text_xs()
         .text_center()
         .text_color(theme.muted_foreground)
-        .child("Move to top level");
+        .child(t("components.tree_drag.top_level"));
     drop_target(strip, accepts, on_drop)
 }
