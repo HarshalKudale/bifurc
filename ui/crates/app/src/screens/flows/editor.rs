@@ -36,6 +36,7 @@ use crate::{
     app_model::{AppModel, ModelEvent},
     components::{KeyValueEvent, KeyValueTable},
     engine::{call_in, describe},
+    i18n::{t, t_with},
     model::{
         ConfigSnapshot, RequestKind,
         config::RequestStub,
@@ -48,26 +49,26 @@ use crate::{
 
 /// The comparisons a rule can make: the name the flow stores, and how it reads.
 const OPS: [(&str, &str); 16] = [
-    ("equals", "equals"),
-    ("notEquals", "does not equal"),
-    ("contains", "contains"),
-    ("notContains", "does not contain"),
-    ("startsWith", "starts with"),
-    ("endsWith", "ends with"),
-    ("matches", "matches the pattern"),
-    ("greaterThan", "is greater than"),
-    ("greaterOrEqual", "is at least"),
-    ("lessThan", "is less than"),
-    ("lessOrEqual", "is at most"),
-    ("exists", "exists"),
-    ("notExists", "does not exist"),
-    ("isEmpty", "is empty"),
-    ("notEmpty", "is not empty"),
-    ("isType", "is of the type"),
+    ("equals", "flows.op.equals"),
+    ("notEquals", "flows.op.not_equals"),
+    ("contains", "flows.op.contains"),
+    ("notContains", "flows.op.not_contains"),
+    ("startsWith", "flows.op.starts_with"),
+    ("endsWith", "flows.op.ends_with"),
+    ("matches", "flows.op.matches"),
+    ("greaterThan", "flows.op.greater_than"),
+    ("greaterOrEqual", "flows.op.greater_or_equal"),
+    ("lessThan", "flows.op.less_than"),
+    ("lessOrEqual", "flows.op.less_or_equal"),
+    ("exists", "flows.op.exists"),
+    ("notExists", "flows.op.not_exists"),
+    ("isEmpty", "flows.op.is_empty"),
+    ("notEmpty", "flows.op.not_empty"),
+    ("isType", "flows.op.is_type"),
 ];
 
 pub fn op_label(op: &str) -> &'static str {
-    OPS.iter().find(|(name, _)| *name == op).map_or("equals", |(_, label)| label)
+    t(OPS.iter().find(|(name, _)| *name == op).map_or("flows.op.equals", |(_, key)| key))
 }
 
 /// Whether a comparison is made against a value, or only asks about the one it reads.
@@ -78,7 +79,7 @@ pub fn op_takes_value(op: &str) -> bool {
 /// A rule in a line: `input.status equals 200`.
 pub fn rule_summary(rule: &Rule) -> String {
     let value = if op_takes_value(&rule.op) { rule.value.as_str() } else { "" };
-    format!("{} {} {value}", rule.path, op_label(&rule.op)).trim_end().to_owned()
+    t_with("flows.rule.summary", &[("path", &rule.path), ("op", &op_label(&rule.op)), ("value", &value)]).trim_end().to_owned()
 }
 
 /// The request types a node of this kind can run.
@@ -168,7 +169,7 @@ fn request_groups(config: &ConfigSnapshot, kind: NodeKind) -> Vec<(String, Vec<R
         |request: &&RequestStub| allowed.contains(&request.kind) && !request.deleted && request.locked.is_none();
     for request in config.requests.iter().filter(usable) {
         // A request whose folder is gone is still one a node can run.
-        let path = request.folder_id.as_deref().and_then(|id| paths.get(id)).map_or("No folder", String::as_str);
+        let path = request.folder_id.as_deref().and_then(|id| paths.get(id)).map_or(t("flows.picker.no_folder"), String::as_str);
         let item = RequestItem {
             key: (request.kind, request.id.clone()),
             name: request.name.clone().into(),
@@ -199,7 +200,8 @@ pub fn rule_path(path: &[Value]) -> String {
 }
 
 /// The types a data node's value can be given as.
-const DATA_TYPES: [(&str, &str); 4] = [("text", "Text"), ("number", "Number"), ("boolean", "Boolean"), ("json", "JSON")];
+const DATA_TYPES: [(&str, &str); 4] =
+    [("text", "flows.type.text"), ("number", "flows.type.number"), ("boolean", "flows.type.boolean"), ("json", "flows.type.json")];
 
 fn data_type_of(value: &Value) -> &'static str {
     match value {
@@ -261,15 +263,15 @@ impl Number {
     ];
 
     fn label(self) -> &'static str {
-        match self {
-            Number::Delay => "Wait (ms)",
-            Number::Count => "Times",
-            Number::Retries => "Retries",
-            Number::RetryDelay => "Wait between tries (ms)",
-            Number::MaxMessages => "Stop after messages",
-            Number::IdleTimeout => "Stop when idle for (ms)",
-            Number::Listen => "Listen for at most (ms)",
-        }
+        t(match self {
+            Number::Delay => "flows.number.delay",
+            Number::Count => "flows.number.count",
+            Number::Retries => "flows.number.retries",
+            Number::RetryDelay => "flows.number.retry_delay",
+            Number::MaxMessages => "flows.number.max_messages",
+            Number::IdleTimeout => "flows.number.idle_timeout",
+            Number::Listen => "flows.number.listen",
+        })
     }
 
     fn read(self, node: &FlowNode) -> u64 {
@@ -325,8 +327,8 @@ fn arguments_for(item: &McpItem, held: &[Pair]) -> Vec<Pair> {
 /// What the server takes for an argument, as its empty field says it: its type, whether it must be given,
 /// and what is used when it is not.
 fn argument_hint(argument: &McpArgument) -> String {
-    let default = argument.default.as_ref().map(|default| format!("default {default}")).unwrap_or_default();
-    [argument.kind.as_str(), if argument.required { "required" } else { "" }, default.as_str()]
+    let default = argument.default.as_ref().map(|default| t_with("flows.mcp.default", &[("value", default)])).unwrap_or_default();
+    [argument.kind.as_str(), if argument.required { t("flows.mcp.required") } else { "" }, default.as_str()]
         .into_iter()
         .filter(|part| !part.is_empty())
         .collect::<Vec<_>>()
@@ -387,19 +389,19 @@ impl NodeEditor {
         let field = |placeholder: &'static str, window: &mut Window, cx: &mut Context<Self>| {
             cx.new(|cx| InputState::new(window, cx).placeholder(placeholder))
         };
-        let name = field("Name", window, cx);
-        let message = field("What to send", window, cx);
-        let event = field("Event name", window, cx);
-        let target = field("Name of the tool, prompt or resource URI", window, cx);
+        let name = field(t("flows.common.name"), window, cx);
+        let message = field(t("flows.editor.message"), window, cx);
+        let event = field(t("flows.editor.event"), window, cx);
+        let target = field(t("flows.editor.target"), window, cx);
         let expression = field("vars.total * 2", window, cx);
-        let data = field("Value", window, cx);
+        let data = field(t("flows.common.value"), window, cx);
         let numbers: Vec<(Number, Entity<InputState>)> =
             Number::ALL.iter().map(|number| (*number, field("0", window, cx))).collect();
         let requests =
             cx.new(|cx| ComboboxState::new(RequestList::new(Vec::new()), vec![], window, cx).searchable(true));
         let tools = cx.new(|cx| ComboboxState::new(ToolList::new(Vec::new()), vec![], window, cx).searchable(true));
-        let variables = cx.new(|cx| KeyValueTable::new("Variable", "Value", window, cx));
-        let inputs = cx.new(|cx| KeyValueTable::new("Input", "Default value", window, cx));
+        let variables = cx.new(|cx| KeyValueTable::new(t("flows.editor.variable"), t("flows.common.value"), window, cx));
+        let inputs = cx.new(|cx| KeyValueTable::new(t("flows.common.input"), t("flows.editor.default_value"), window, cx));
 
         let on_input = |this: &mut Self, _: Entity<InputState>, event: &InputEvent, cx: &mut Context<Self>| {
             if matches!(event, InputEvent::Change) {
@@ -501,7 +503,7 @@ impl NodeEditor {
             ArgumentField::Choice { state, required } => Select::new(state)
                 .xsmall()
                 .w_full()
-                .placeholder(if *required { "Choose one" } else { "Not set" })
+                .placeholder(if *required { t("flows.editor.choose_one") } else { t("flows.editor.not_set") })
                 // An argument that need not be sent can be put back to nothing chosen.
                 .cleanable(!required)
                 .into_any_element(),
@@ -603,7 +605,7 @@ impl NodeEditor {
             call_in(&connect_client, window, cx, "mcp.connect", connect, move |this, outcome, _, cx| {
                 let refused = match outcome {
                     Ok(answer) if answer.get("ok").and_then(Value::as_bool) == Some(false) => {
-                        Some(answer.get("error").and_then(Value::as_str).unwrap_or("It refused.").to_owned())
+                        Some(answer.get("error").and_then(Value::as_str).unwrap_or(t("flows.mcp.refused")).to_owned())
                     }
                     Ok(_) => None,
                     Err(error) => Some(describe(&error)),
@@ -673,7 +675,7 @@ impl NodeEditor {
                 fields.push((pair.name, ArgumentField::Choice { state, required }));
                 continue;
             }
-            let hint = argument.map(argument_hint).filter(|hint| !hint.is_empty()).unwrap_or_else(|| "value".to_owned());
+            let hint = argument.map(argument_hint).filter(|hint| !hint.is_empty()).unwrap_or_else(|| t("flows.editor.value_hint").to_owned());
             let field = cx.new(|cx| InputState::new(window, cx).placeholder(hint).default_value(pair.value));
             subscriptions.push(cx.subscribe(&field, |this: &mut Self, _, event: &InputEvent, cx| {
                 if matches!(event, InputEvent::Change) {
@@ -741,13 +743,13 @@ impl NodeEditor {
             }));
             input
         };
-        self.branch_names = branches.iter().map(|branch| field(&branch.name, "Branch name", cx)).collect();
+        self.branch_names = branches.iter().map(|branch| field(&branch.name, t("flows.branch.name_placeholder"), cx)).collect();
         let lists: Vec<&Vec<Rule>> = match self.node.as_ref().map(|node| node.kind) {
             Some(NodeKind::Validate) => vec![&rules],
             _ => branches.iter().map(|branch| &branch.rules).collect(),
         };
         self.rule_values =
-            lists.into_iter().map(|rules| rules.iter().map(|rule| field(&rule.value, "Value", cx)).collect()).collect();
+            lists.into_iter().map(|rules| rules.iter().map(|rule| field(&rule.value, t("flows.common.value"), cx)).collect()).collect();
         self._rule_subscriptions = subscriptions;
     }
 
@@ -824,14 +826,14 @@ impl NodeEditor {
 
     fn render_request_picker(&self, node: &FlowNode) -> AnyElement {
         let none = match node.kind {
-            NodeKind::Stream => "No saved stream, WebSocket, Socket.IO or gRPC request yet",
-            NodeKind::Mcp => "No saved MCP request yet",
-            _ => "No saved request yet",
+            NodeKind::Stream => t("flows.picker.none_stream"),
+            NodeKind::Mcp => t("flows.picker.none_mcp"),
+            _ => t("flows.picker.none_request"),
         };
         Combobox::new(&self.requests)
             .small()
-            .placeholder(if self.listed.is_empty() { none } else { "Choose a saved request" })
-            .search_placeholder("Search by name, folder or address")
+            .placeholder(if self.listed.is_empty() { none } else { t("flows.picker.choose") })
+            .search_placeholder(t("flows.picker.search"))
             .disabled(self.listed.is_empty())
             .w_full()
             .into_any_element()
@@ -840,22 +842,22 @@ impl NodeEditor {
     /// What the node calls: chosen from what its server declares, or typed while the server is not reached.
     fn render_mcp_target(&self, node: &FlowNode, cx: &mut Context<Self>) -> Vec<AnyElement> {
         let theme = cx.theme().clone();
-        let what = match node.call.as_str() {
-            "tool" => "tool",
-            "prompt" => "prompt",
-            _ => "resource",
+        let (what, plural) = match node.call.as_str() {
+            "tool" => (t("flows.mcp.what.tool"), t("flows.mcp.what.tools")),
+            "prompt" => (t("flows.mcp.what.prompt"), t("flows.mcp.what.prompts")),
+            _ => (t("flows.mcp.what.resource"), t("flows.mcp.what.resources")),
         };
         let note = |text: String| div().text_color(theme.muted_foreground).child(text).into_any_element();
         if node.request_id.is_empty() {
-            return vec![note(format!("Choose the saved MCP request whose server has the {what}."))];
+            return vec![note(t_with("flows.mcp.choose_request", &[("what", &what)]))];
         }
         let items = self.mcp_items(&node.call);
         if items.is_empty() {
             let state = match (self.mcp.state, &self.mcp.error) {
-                (SocketState::Connected, _) => format!("Its server declares no {what}."),
-                (SocketState::Connecting, _) => "Connecting to its server to list what it has…".to_owned(),
-                (_, Some(error)) => format!("Its server was not reached: {error}"),
-                _ => "Its server is not connected.".to_owned(),
+                (SocketState::Connected, _) => t_with("flows.mcp.declares_none", &[("what", &what)]),
+                (SocketState::Connecting, _) => t("flows.mcp.connecting").to_owned(),
+                (_, Some(error)) => t_with("flows.mcp.not_reached", &[("error", error)]),
+                _ => t("flows.mcp.not_connected").to_owned(),
             };
             return vec![v_flex().gap_1().child(Input::new(&self.target).small()).child(note(state)).into_any_element()];
         }
@@ -863,8 +865,8 @@ impl NodeEditor {
         let description = items.iter().find(|item| item.name == node.target).map(|item| item.description.trim().to_owned());
         let picker = Combobox::new(&self.tools)
             .small()
-            .placeholder(format!("Choose a {what}"))
-            .search_placeholder(format!("Search the {what}s"))
+            .placeholder(t_with("flows.mcp.choose_what", &[("what", &what)]))
+            .search_placeholder(t_with("flows.mcp.search_what", &[("plural", &plural)]))
             .w_full()
             .into_any_element();
         let described = description.filter(|text| !text.is_empty()).map(|text| {
@@ -903,7 +905,7 @@ impl NodeEditor {
                 .xsmall()
                 .outline()
                 .selected(value == chosen)
-                .label(*label)
+                .label(t(label))
                 .on_click(cx.listener(move |this, _, window, cx| choose(this, value, window, cx)))
         });
         h_flex().gap_1().children(buttons).into_any_element()
@@ -931,7 +933,7 @@ impl NodeEditor {
                 .px_2()
                 .py_1()
                 .text_color(theme.muted_foreground)
-                .child("Run the flow once, or put a Sample response node before this one, to choose from what it is handed.")
+                .child(t("flows.chooser.empty"))
                 .into_any_element(),
             false => json_tree("choose", &self.handed, &self.open, toggle, Some(pick), cx).into_any_element(),
         };
@@ -940,8 +942,8 @@ impl NodeEditor {
             .border_1()
             .border_color(theme.border)
             .child(
-                h_flex().px_2().pt_1().justify_between().child(Self::label("Click the part to read", cx)).child(
-                    Button::new("flow-choose-all").xsmall().ghost().label("All of it").on_click(
+                h_flex().px_2().pt_1().justify_between().child(Self::label(t("flows.chooser.click"), cx)).child(
+                    Button::new("flow-choose-all").xsmall().ghost().label(t("flows.common.all_of_it")).on_click(
                         cx.listener(|this, _, window, cx| this.chose("input".to_owned(), window, cx)),
                     ),
                 ),
@@ -970,7 +972,7 @@ impl NodeEditor {
             .selected(self.choosing == Some(choosing))
             .label(if path.is_empty() { "input".to_owned() } else { path.to_owned() })
             .icon(IconName::ChevronDown)
-            .tooltip("Choose the part of the response to read")
+            .tooltip(t("flows.editor.choose_part"))
             .on_click(cx.listener(move |this, _, _, cx| {
                 this.choosing = (this.choosing != Some(choosing)).then_some(choosing);
                 cx.notify();
@@ -995,7 +997,7 @@ impl NodeEditor {
                 .dropdown_menu(move |menu, _, _| {
                     OPS.iter().fold(menu, |menu, (name, label)| {
                         let this = this.clone();
-                        menu.item(PopupMenuItem::new(*label).checked(*name == current).on_click(move |_, _, cx| {
+                        menu.item(PopupMenuItem::new(t(label)).checked(*name == current).on_click(move |_, _, cx| {
                             this.update(cx, |this, cx| {
                                 this.edit(cx, |node| {
                                     if let Some(rule) = rules_mut(node, branch).and_then(|rules| rules.get_mut(index)) {
@@ -1018,7 +1020,7 @@ impl NodeEditor {
                             .xsmall()
                             .ghost()
                             .icon(IconName::Close)
-                            .tooltip("Remove this rule")
+                            .tooltip(t("flows.rule.remove"))
                             .on_click(cx.listener(move |this, _, window, cx| {
                                 this.restructure(window, cx, |node| {
                                     if let Some(rules) = rules_mut(node, branch).filter(|rules| index < rules.len()) {
@@ -1041,7 +1043,7 @@ impl NodeEditor {
                 .xsmall()
                 .ghost()
                 .icon(IconName::Plus)
-                .label("Add a rule")
+                .label(t("flows.rule.add"))
                 .on_click(cx.listener(move |this, _, window, cx| {
                     this.restructure(window, cx, |node| {
                         if let Some(rules) = rules_mut(node, branch) {
@@ -1072,7 +1074,7 @@ impl NodeEditor {
                                 .xsmall()
                                 .ghost()
                                 .icon(IconName::Delete)
-                                .tooltip("Remove this branch and its connections")
+                                .tooltip(t("flows.branch.remove"))
                                 .on_click(cx.listener(move |this, _, window, cx| {
                                     this.restructure(window, cx, |node| {
                                         if index < node.branches.len() {
@@ -1086,7 +1088,7 @@ impl NodeEditor {
                         Switch::new(ElementId::Name(format!("flow-branch-any-{index}").into()))
                             .small()
                             .checked(any)
-                            .label("Any one rule is enough")
+                            .label(t("flows.branch.any_one"))
                             .on_change(cx.listener(move |this, checked: &bool, _, cx| {
                                 let matching = if *checked { "any" } else { "all" };
                                 this.edit(cx, |node| {
@@ -1102,10 +1104,10 @@ impl NodeEditor {
         }
         v_flex()
             .gap_2()
-            .child(Self::label("Tried in this order; the first that holds is taken", cx))
+            .child(Self::label(t("flows.branch.order"), cx))
             .children(branches)
             .child(
-                Button::new("flow-branch-add").xsmall().outline().icon(IconName::Plus).label("Add a branch").on_click(
+                Button::new("flow-branch-add").xsmall().outline().icon(IconName::Plus).label(t("flows.branch.add")).on_click(
                     cx.listener(|this, _, window, cx| {
                         this.restructure(window, cx, |node| {
                             let id = (1..)
@@ -1155,13 +1157,8 @@ impl NodeEditor {
         let unread = matches!(self.data_type, "number" | "json") && data_text(&node.value) != typed.trim();
         let mut out = vec![types, value];
         if unread {
-            let what = if self.data_type == "number" { "a number" } else { "JSON" };
-            out.push(
-                div()
-                    .text_color(cx.theme().warning)
-                    .child(format!("This is not {what} yet. The node holds what it held before."))
-                    .into_any_element(),
-            );
+            let text = if self.data_type == "number" { t("flows.data.unread_number") } else { t("flows.data.unread_json") };
+            out.push(div().text_color(cx.theme().warning).child(text).into_any_element());
         }
         out
     }
@@ -1172,7 +1169,7 @@ impl NodeEditor {
         match pasted.as_deref().map(serde_json::from_str::<Value>) {
             Some(Ok(value)) => self.edit(cx, |node| node.value = value),
             _ => self.model.update(cx, |model, cx| {
-                model.notice("The clipboard does not hold JSON. Copy a response, then paste it here.".to_owned(), cx)
+                model.notice(t("flows.sample.not_json").to_owned(), cx)
             }),
         }
     }
@@ -1186,7 +1183,7 @@ impl Render for NodeEditor {
         let mut sections: Vec<AnyElement> = Vec::new();
         match node.kind {
             NodeKind::Start => sections.push(Self::labelled(
-                "Inputs a run can be given; a request reads one as {{name}}",
+                t("flows.start.inputs"),
                 div().h(rems(9.0)).child(self.inputs.clone()),
                 cx,
             )),
@@ -1196,7 +1193,7 @@ impl Render for NodeEditor {
                     Checkbox::new("flow-fail-status")
                         .small()
                         .checked(node.fail_on_status)
-                        .label("An answer that is not a success leaves by Error")
+                        .label(t("flows.request.fail_status"))
                         .on_click(cx.listener(|this, checked: &bool, _, cx| {
                             let checked = *checked;
                             this.edit(cx, |node| node.fail_on_status = checked);
@@ -1208,11 +1205,11 @@ impl Render for NodeEditor {
             NodeKind::Stream => {
                 sections.push(self.render_request_picker(&node));
                 if node.request_kind == RequestKind::SocketIo.entity_kind() {
-                    sections.push(Self::labelled("Event to emit", Input::new(&self.event).small(), cx));
+                    sections.push(Self::labelled(t("flows.stream.event"), Input::new(&self.event).small(), cx));
                 }
                 if node.request_kind != RequestKind::Sse.entity_kind() {
                     sections.push(Self::labelled(
-                        "Message sent once connected, unless one is wired",
+                        t("flows.stream.message"),
                         Input::new(&self.message).small(),
                         cx,
                     ));
@@ -1222,7 +1219,7 @@ impl Render for NodeEditor {
             }
             NodeKind::Mcp => {
                 sections.push(self.render_request_picker(&node));
-                let calls = [("tool", "Tool"), ("prompt", "Prompt"), ("resource", "Resource")];
+                let calls = [("tool", "flows.mcp.call.tool"), ("prompt", "flows.mcp.call.prompt"), ("resource", "flows.mcp.call.resource")];
                 sections.push(self.render_choice("flow-mcp-call", &calls, &node.call, cx, |this, call, window, cx| {
                     // Another kind of call is of another thing: what was named, and its arguments, go.
                     if this.node.as_ref().is_some_and(|node| node.call != call) {
@@ -1235,20 +1232,20 @@ impl Render for NodeEditor {
             }
             NodeKind::Condition => sections.push(self.render_branches(&node, cx)),
             NodeKind::Validate => {
-                sections.push(Self::label("Every check must hold", cx));
+                sections.push(Self::label(t("flows.validate.every"), cx));
                 sections.extend(self.render_rules(None, &node.rules, cx));
             }
             NodeKind::Evaluate | NodeKind::If => {
                 sections.push(Self::labelled(
                     match node.kind {
-                        NodeKind::If => "JavaScript over input and vars: what holds leaves by True, anything else by False",
-                        _ => "JavaScript over input, what the node is handed, and vars",
+                        NodeKind::If => t("flows.if.expression"),
+                        _ => t("flows.evaluate.expression"),
                     },
                     Input::new(&self.expression).small(),
                     cx,
                 ));
                 sections.push(Self::labelled(
-                    "Variables: type a value, or wire one in below",
+                    t("flows.evaluate.variables"),
                     div().h(rems(8.0)).child(self.variables.clone()),
                     cx,
                 ));
@@ -1257,7 +1254,7 @@ impl Render for NodeEditor {
             NodeKind::Repeat => sections.push(self.render_numbers(&[Number::Count], cx)),
             NodeKind::ForEach => {
                 sections.push(Self::labelled(
-                    "The list to go through",
+                    t("flows.for_each.list"),
                     self.render_path_button("flow-list-path".to_owned(), &node.path, Choosing::List, cx),
                     cx,
                 ));
@@ -1266,7 +1263,7 @@ impl Render for NodeEditor {
                 }
             }
             NodeKind::Display => {
-                let formats = [("json", "JSON"), ("text", "Text"), ("table", "Table")];
+                let formats = [("json", "flows.type.json"), ("text", "flows.type.text"), ("table", "flows.display.table")];
                 let chosen = if node.format.is_empty() { "json" } else { node.format.as_str() };
                 sections.push(self.render_choice("flow-display-format", &formats, chosen, cx, |this, format, _, cx| {
                     this.edit(cx, |node| node.format = format.to_owned())
@@ -1278,8 +1275,8 @@ impl Render for NodeEditor {
                     .xsmall()
                     .outline()
                     .icon(IconName::Copy)
-                    .label("Paste JSON")
-                    .tooltip("Replace the sample with the JSON on the clipboard")
+                    .label(t("flows.sample.paste"))
+                    .tooltip(t("flows.sample.paste_tooltip"))
                     .on_click(cx.listener(|this, _, _, cx| this.paste_sample(cx)))
                     .into_any_element(),
             ),

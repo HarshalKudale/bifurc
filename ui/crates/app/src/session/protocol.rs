@@ -30,6 +30,7 @@ use serde_json::{Map, Value, json};
 
 use super::{Carry, LoadState, SaveMode, SessionEvent, engine_folder, exchange::Exchange};
 use crate::{
+    i18n::{t, t_with},
     app_model::{AppModel, ModelEvent},
     components::{Autosave, KeyValueEvent, KeyValueTable, Syntax, VarEditor, page, request_bar},
     engine::{call_in, describe},
@@ -64,27 +65,32 @@ const fn field(key: &'static str, label: &'static str, placeholder: &'static str
 }
 
 const GRAPHQL_FIELDS: &[FieldSpec] = &[
-    field("endpointUrl", "Endpoint", "https://api.example.test/graphql", FieldKind::Line),
-    field("operationName", "Operation", "Operation name (optional)", FieldKind::Line),
-    field("query", "Query", "query { ... }", FieldKind::Document(Syntax::GraphQl)),
-    field("variables", "Variables", "{ }", FieldKind::Document(Syntax::Json)),
-    field("headers", "Headers", "", FieldKind::Pairs),
+    field("endpointUrl", "session.protocol.endpoint", "https://api.example.test/graphql", FieldKind::Line),
+    field("operationName", "session.protocol.operation", "session.protocol.operation_placeholder", FieldKind::Line),
+    field("query", "session.protocol.query", "query { ... }", FieldKind::Document(Syntax::GraphQl)),
+    field("variables", "session.protocol.variables", "{ }", FieldKind::Document(Syntax::Json)),
+    field("headers", "session.protocol.headers", "", FieldKind::Pairs),
 ];
 
 const GRPC_FIELDS: &[FieldSpec] = &[
-    field("serverAddress", "Server", "localhost:50051", FieldKind::Line),
-    field("serviceName", "Service", "package.Service", FieldKind::Line),
-    field("methodName", "Method", "MethodName", FieldKind::Line),
-    field("requestBody", "Message", "{ }", FieldKind::Document(Syntax::Json)),
-    field("metadata", "Metadata", "", FieldKind::Pairs),
+    field("serverAddress", "session.protocol.server", "localhost:50051", FieldKind::Line),
+    field("serviceName", "session.protocol.service", "package.Service", FieldKind::Line),
+    field("methodName", "session.protocol.method", "MethodName", FieldKind::Line),
+    field("requestBody", "session.protocol.message", "{ }", FieldKind::Document(Syntax::Json)),
+    field("metadata", "session.protocol.metadata", "", FieldKind::Pairs),
 ];
 
 const SOAP_FIELDS: &[FieldSpec] = &[
-    field("endpointUrl", "Endpoint", "https://example.test/service", FieldKind::Line),
-    field("soapAction", "SOAPAction", "urn:Action (optional)", FieldKind::Line),
-    field("body", "Envelope", "<soap:Envelope>…</soap:Envelope>", FieldKind::Document(Syntax::Markup)),
-    field("headers", "Headers", "", FieldKind::Pairs),
+    field("endpointUrl", "session.protocol.endpoint", "https://example.test/service", FieldKind::Line),
+    field("soapAction", "session.protocol.soap_action", "session.protocol.soap_action_placeholder", FieldKind::Line),
+    field("body", "session.protocol.envelope", "<soap:Envelope>…</soap:Envelope>", FieldKind::Document(Syntax::Markup)),
+    field("headers", "session.protocol.headers", "", FieldKind::Pairs),
 ];
+
+/// A hint is a key; an example value (a URL, a sample document) is shown as it is.
+fn placeholder_of(spec: &FieldSpec) -> &'static str {
+    if spec.placeholder.starts_with("session.") { t(spec.placeholder) } else { spec.placeholder }
+}
 
 /// The controls of each protocol's editor. The first `Line` field is the target, shown beside Send.
 fn fields_of(kind: RequestKind) -> &'static [FieldSpec] {
@@ -150,12 +156,12 @@ impl MethodInfo {
     }
 
     fn kind_label(&self) -> &'static str {
-        match self.streaming_type() {
-            "unary" => "Unary",
-            "server" => "Server streaming",
-            "client" => "Client streaming",
-            _ => "Bidirectional streaming",
-        }
+        t(match self.streaming_type() {
+            "unary" => "session.protocol.unary",
+            "server" => "session.protocol.server_streaming",
+            "client" => "session.protocol.client_streaming",
+            _ => "session.protocol.bidi_streaming",
+        })
     }
 }
 
@@ -317,7 +323,7 @@ impl ProtocolSession {
         debug_assert!(kind.send_command().is_some(), "{} is not an HTTP-like request type", kind.label());
         let workspace_id = model.read(cx).workspace_id().to_owned();
         let name =
-            cx.new(|cx| InputState::new(window, cx).placeholder("Request name").default_value(default_name(kind)));
+            cx.new(|cx| InputState::new(window, cx).placeholder(t("session.rest.name_placeholder")).default_value(default_name(kind)));
         let exchange = cx.new(|cx| Exchange::new(window, cx));
 
         let mut subscriptions =
@@ -351,7 +357,7 @@ impl ProtocolSession {
             .iter()
             .map(|spec| match spec.kind {
                 FieldKind::Line => {
-                    let editor = VarEditor::line(spec.placeholder, window, cx);
+                    let editor = VarEditor::line(placeholder_of(spec), window, cx);
                     subscriptions.push(cx.subscribe_in(
                         editor.state(),
                         window,
@@ -364,7 +370,7 @@ impl ProtocolSession {
                     Control::Text(editor)
                 }
                 FieldKind::Document(syntax) => {
-                    let editor = VarEditor::code(syntax, spec.placeholder, window, cx);
+                    let editor = VarEditor::code(syntax, placeholder_of(spec), window, cx);
                     subscriptions.push(cx.subscribe(editor.state(), |this, _, event: &InputEvent, cx| {
                         if matches!(event, InputEvent::Change) {
                             this.changed(cx);
@@ -373,7 +379,7 @@ impl ProtocolSession {
                     Control::Text(editor)
                 }
                 FieldKind::Pairs => {
-                    let table = cx.new(|cx| KeyValueTable::new("Name", "Value", window, cx));
+                    let table = cx.new(|cx| KeyValueTable::new(t("session.protocol.column_name"), t("session.rest.column_value"), window, cx));
                     subscriptions.push(cx.subscribe(&table, |this, _, _: &KeyValueEvent, cx| this.changed(cx)));
                     Control::Pairs(table)
                 }
@@ -479,7 +485,7 @@ impl ProtocolSession {
                 v.get("entity")
                     .and_then(Value::as_object)
                     .cloned()
-                    .ok_or_else(|| "The request no longer exists.".to_owned())
+                    .ok_or_else(|| t("session.rest.gone").to_owned())
             }) {
                 Ok(entity) => {
                     this.adopt_entity(entity, window, cx);
@@ -519,7 +525,11 @@ impl ProtocolSession {
 
     pub fn title(&self, cx: &gpui_kit::App) -> SharedString {
         let name = self.name.read(cx).value();
-        if name.is_empty() { format!("{} request", self.kind.label()).into() } else { name }
+        if name.is_empty() {
+            t_with("session.protocol.untitled", &[("kind", &self.kind.label())]).into()
+        } else {
+            name
+        }
     }
 
     pub fn is_dirty(&self, cx: &gpui_kit::App) -> bool {
@@ -583,15 +593,15 @@ impl ProtocolSession {
         }
         let values = self.values(cx);
         (values != self.baseline && Self::target_is_empty(&values))
-            .then(|| format!("Not saved. Enter the {}.", self.target_label()).into())
+            .then(|| t_with("session.protocol.problem_no_target", &[("target", &self.target_label())]).into())
     }
 
     /// What the main button does for this request.
     fn send_label(&self, cx: &gpui_kit::App) -> &'static str {
         match (self.kind, self.live) {
-            (RequestKind::Grpc, true) => "Cancel",
-            (RequestKind::Grpc, false) if self.streaming_kind(cx) != "unary" => "Invoke",
-            _ => "Send",
+            (RequestKind::Grpc, true) => t("session.protocol.cancel"),
+            (RequestKind::Grpc, false) if self.streaming_kind(cx) != "unary" => t("session.protocol.invoke"),
+            _ => t("session.rest.send"),
         }
     }
 
@@ -645,7 +655,7 @@ impl ProtocolSession {
                     this.connected = this.live;
                     None
                 }
-                Ok(result) => Some(result.get("error").and_then(Value::as_str).unwrap_or("The call failed.").to_owned()),
+                Ok(result) => Some(result.get("error").and_then(Value::as_str).unwrap_or(t("session.protocol.call_failed")).to_owned()),
                 Err(error) => Some(describe(&error)),
             };
             if let Some(message) = failure {
@@ -668,7 +678,7 @@ impl ProtocolSession {
                 Err(error) => Some(describe(&error)),
             };
             if let Some(message) = failure {
-                window.push_notification(Notification::error(message).title("The call did not take that"), cx);
+                window.push_notification(Notification::error(message).title(t("session.protocol.call_not_taken")), cx);
             }
         });
     }
@@ -746,7 +756,7 @@ impl ProtocolSession {
                     None
                 }
                 Ok(result) => Some(
-                    result.get("error").and_then(Value::as_str).unwrap_or("The server did not answer.").to_owned(),
+                    result.get("error").and_then(Value::as_str).unwrap_or(t("session.protocol.server_no_answer")).to_owned(),
                 ),
                 Err(error) => Some(describe(&error)),
             };
@@ -870,20 +880,24 @@ impl ProtocolSession {
         } else {
             let service_text = self.text_of("serviceName", cx).unwrap_or_default();
             let service_hint = match picker.state {
-                Reflection::Loading => "Reading the server's schema…",
-                _ if !ready => "Enter the server address first",
-                _ => "Select a service",
+                Reflection::Loading => t("session.protocol.reading_schema"),
+                _ if !ready => t("session.protocol.enter_address_first"),
+                _ => t("session.protocol.select_service"),
             };
             (
                 Combobox::new(&picker.service_box)
                     .placeholder(service_hint)
-                    .search_placeholder("Search services")
+                    .search_placeholder(t("session.protocol.search_services"))
                     .disabled(!ready || self.live)
                     .w_full()
                     .into_any_element(),
                 Combobox::new(&picker.method_box)
-                    .placeholder(if service_text.trim().is_empty() { "Select a service first" } else { "Select a method" })
-                    .search_placeholder("Search methods")
+                    .placeholder(if service_text.trim().is_empty() {
+                        t("session.protocol.select_service_first")
+                    } else {
+                        t("session.protocol.select_method")
+                    })
+                    .search_placeholder(t("session.protocol.search_methods"))
                     .disabled(!ready || self.live || service_text.trim().is_empty())
                     .w_full()
                     .into_any_element(),
@@ -895,7 +909,7 @@ impl ProtocolSession {
                 div()
                     .text_xs()
                     .text_color(theme.warning)
-                    .child(format!("{message} Type the service and method instead."))
+                    .child(t_with("session.protocol.reflect_failed", &[("message", message)]))
                     .into_any_element(),
             ),
             Reflection::Ready => {
@@ -918,7 +932,11 @@ impl ProtocolSession {
                             div()
                                 .text_xs()
                                 .text_color(muted)
-                                .child(format!("{count} service{} on this server.", if count == 1 { "" } else { "s" }))
+                                .child(if count == 1 {
+                                    t_with("session.protocol.services_on_server_one", &[("count", &count)])
+                                } else {
+                                    t_with("session.protocol.services_on_server_other", &[("count", &count)])
+                                })
                                 .into_any_element(),
                         )
                     }
@@ -936,8 +954,8 @@ impl ProtocolSession {
                 h_flex()
                     .gap_3()
                     .items_start()
-                    .child(v_flex().flex_1().min_w_0().gap_1().child(page::section_label("Service", cx)).child(service_control))
-                    .child(v_flex().flex_1().min_w_0().gap_1().child(page::section_label("Method", cx)).child(method_control)),
+                    .child(v_flex().flex_1().min_w_0().gap_1().child(page::section_label(t("session.protocol.service"), cx)).child(service_control))
+                    .child(v_flex().flex_1().min_w_0().gap_1().child(page::section_label(t("session.protocol.method"), cx)).child(method_control)),
             )
             .children(note)
             .into_any_element()
@@ -949,7 +967,7 @@ impl ProtocolSession {
     }
 
     fn target_label(&self) -> String {
-        fields_of(self.kind)[0].label.to_lowercase()
+        t(fields_of(self.kind)[0].label).to_lowercase()
     }
 
     /// A saved request is written a moment after each change; a draft waits for Save.
@@ -1122,7 +1140,8 @@ impl ProtocolSession {
             self.send_after_save = false;
             if mode == SaveMode::Explicit {
                 window.push_notification(
-                    Notification::warning(format!("Enter the {} first.", self.target_label())).title("Can't save yet"),
+                    Notification::warning(t_with("session.protocol.enter_target_first", &[("target", &self.target_label())]))
+                        .title(t("session.rest.save_no_url_title")),
                     cx,
                 );
             }
@@ -1168,7 +1187,7 @@ impl ProtocolSession {
                             }
                         }
                         None => window
-                            .push_notification(Notification::error("The engine did not return the saved request."), cx),
+                            .push_notification(Notification::error(t("session.rest.engine_no_saved")), cx),
                     }
                     saved.is_some()
                 }
@@ -1180,7 +1199,7 @@ impl ProtocolSession {
                 }
                 Err(error) => {
                     window.push_notification(
-                        Notification::error(describe(&error)).title("Couldn't save the request"),
+                        Notification::error(describe(&error)).title(t("session.rest.save_failed_title")),
                         cx,
                     );
                     cx.emit(SessionEvent::Changed);
@@ -1235,7 +1254,7 @@ impl ProtocolSession {
                     let unanswered = result.get("ok").and_then(Value::as_bool) == Some(false) && result.get("status").is_none();
                     if unanswered {
                         let message =
-                            result.get("error").and_then(Value::as_str).unwrap_or("The call failed.").to_owned();
+                            result.get("error").and_then(Value::as_str).unwrap_or(t("session.protocol.call_failed")).to_owned();
                         this.exchange.update(cx, |exchange, cx| exchange.fail(message, cx));
                     } else {
                         this.exchange.update(cx, |exchange, cx| exchange.finish_grpc(&result, window, cx));
@@ -1263,14 +1282,14 @@ impl Render for ProtocolSession {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
         match &self.load {
-            LoadState::Loading => return page::loading("Loading request…"),
+            LoadState::Loading => return page::loading(t("session.rest.loading")),
             LoadState::Failed(message) => {
                 return div()
                     .size_full()
                     .p_4()
                     .child(
                         Alert::error("load-failed", SharedString::from(message.clone()))
-                            .title("Couldn't open the request"),
+                            .title(t("session.rest.open_failed")),
                     )
                     .into_any_element();
             }
@@ -1304,14 +1323,14 @@ impl Render for ProtocolSession {
             secondary.push(
                 Button::new("grpc-send-message")
                     .primary()
-                    .label("Send message")
+                    .label(t("session.protocol.send_message"))
                     .disabled(!open)
                     .on_click(cx.listener(|this, _, window, cx| this.send_message(window, cx))),
             );
             secondary.push(
                 Button::new("grpc-end-streaming")
                     .outline()
-                    .label("End streaming")
+                    .label(t("session.protocol.end_streaming"))
                     .disabled(!open)
                     .on_click(cx.listener(|this, _, window, cx| this.end_streaming(window, cx))),
             );
@@ -1346,7 +1365,7 @@ impl Render for ProtocolSession {
                             .flex_1()
                             .min_w_0()
                             .gap_1()
-                            .child(page::section_label(specs[ix].label, cx))
+                            .child(page::section_label(t(specs[ix].label), cx))
                             .child(line(ix))
                     }))
                     .into_any_element()
@@ -1361,7 +1380,7 @@ impl Render for ProtocolSession {
                             this.section = *ix;
                             cx.notify();
                         }))
-                        .children(sections.iter().map(|(_, spec)| Tab::new().label(spec.label))),
+                        .children(sections.iter().map(|(_, spec)| Tab::new().label(t(spec.label)))),
                 ),
             )
             .child(div().flex_1().min_h_0().children(content))

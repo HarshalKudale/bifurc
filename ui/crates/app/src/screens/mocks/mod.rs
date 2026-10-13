@@ -41,6 +41,7 @@ use crate::{
         entity_bar, page, tab_strip, tree_drag,
     },
     engine::{call, call_in, failure, patch_entity},
+    i18n::{t, t_with},
     model::{
         git::FileState,
         tree::{FolderRow, ItemRow, Moved, TreeKey, TreeNode, build_tree, can_move, folder_path},
@@ -99,13 +100,27 @@ pub struct MocksScreen {
 
 impl MocksScreen {
     pub fn new(model: Entity<AppModel>, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let filter = cx.new(|cx| InputState::new(window, cx).placeholder("Filter mocks"));
+        let filter = cx.new(|cx| InputState::new(window, cx).placeholder(t("mocks.filter.placeholder")));
         let tree = cx.new(|cx| TreeState::new(cx));
         let (dock, skin) = DockSkin::dock_area("mocks-dock", Some(1), window, cx);
         let rule_panel =
-            cx.new(|cx| HostPanel::new("MockRulePanel", "Rule", "No mock open", "Open a mock to edit it here.", cx));
+            cx.new(|cx| {
+                HostPanel::new(
+                    "MockRulePanel",
+                    t("mocks.panel.rule_title"),
+                    t("mocks.no_mock_open"),
+                    t("mocks.panel.rule_empty"),
+                    cx,
+                )
+            });
         let response_panel = cx.new(|cx| {
-            HostPanel::new("MockResponsePanel", "Response", "No mock open", "A mock's response is edited here.", cx)
+            HostPanel::new(
+                "MockResponsePanel",
+                t("mocks.panel.response_title"),
+                t("mocks.no_mock_open"),
+                t("mocks.panel.response_empty"),
+                cx,
+            )
         });
         // Dock sizes are physical starting points the user resizes; they are not part of the rem scale.
         dock.update(cx, |area, cx| {
@@ -225,7 +240,7 @@ impl MocksScreen {
     pub fn active_target(&self, cx: &App) -> Option<ActiveTarget> {
         if self.active_curl().is_some() {
             return Some(ActiveTarget {
-                title: CURL_TAB_TITLE.into(),
+                title: t(CURL_TAB_TITLE).into(),
                 entity_id: None,
                 request: None,
                 name: None,
@@ -308,7 +323,7 @@ impl MocksScreen {
         let is_tab = |tab: &OpenTab| tab.curl.as_ref().is_some_and(|(open, _)| open == import);
         let Some(ix) = self.tabs.iter().position(is_tab) else { return };
         let Some(mock) = built.get("mock").and_then(Value::as_object).cloned() else {
-            self.report("Couldn't import the command.", "The engine did not return a mock for it.".to_owned(), cx);
+            self.report(t("mocks.import.failed"), t("mocks.import.no_mock").to_owned(), cx);
             return;
         };
         let tab = &mut self.tabs[ix];
@@ -361,9 +376,9 @@ impl MocksScreen {
             cx.weak_entity(),
             window,
             cx,
-            format!("Discard changes to “{title}”?"),
-            "The edits in this tab have not been saved.",
-            "Discard changes",
+            t_with("mocks.close.title_changes", &[("title", &title)]),
+            t("mocks.close.body_changes"),
+            t("mocks.close.button_changes"),
             move |this, window, cx| this.close_keys(vec![key.clone()], window, cx),
         );
     }
@@ -377,14 +392,18 @@ impl MocksScreen {
             self.close_keys(keys, window, cx);
             return;
         }
-        let what = if unsaved == 1 { "1 unsaved mock".to_owned() } else { format!("{unsaved} unsaved mocks") };
+        let title = if unsaved == 1 {
+            t("mocks.close.title_one").to_owned()
+        } else {
+            t_with("mocks.close.title_other", &[("count", &unsaved)])
+        };
         confirm_danger(
             cx.weak_entity(),
             window,
             cx,
-            format!("Discard {what}?"),
-            "Mocks that have not been saved are discarded when their tabs close.",
-            "Discard",
+            title,
+            t("mocks.close.body_unsaved"),
+            t("mocks.close.button_discard"),
             move |this, window, cx| this.close_keys(keys.clone(), window, cx),
         );
     }
@@ -435,7 +454,7 @@ impl MocksScreen {
             return Some(StripTab {
                 id: id.into(),
                 badge: CURL_TAB_BADGE.into(),
-                title: CURL_TAB_TITLE.into(),
+                title: t(CURL_TAB_TITLE).into(),
                 dirty: false,
                 can_duplicate: false,
             });
@@ -463,7 +482,7 @@ impl MocksScreen {
         let payload = json!({ "workspaceId": model.workspace_id(), "kind": "mocks", "id": id });
         call_in(&client, window, cx, "entity.duplicate", payload, move |this, outcome, window, cx| {
             if let Some(message) = failure(&outcome) {
-                this.report("Couldn't duplicate the mock.", message, cx);
+                this.report(t("mocks.error.duplicate"), message, cx);
                 return;
             }
             let copy = outcome
@@ -505,9 +524,9 @@ impl MocksScreen {
                     cx.weak_entity(),
                     window,
                     cx,
-                    format!("Revert “{name}” to the last synced version?"),
-                    "The changes saved since then are discarded.",
-                    "Revert",
+                    t_with("mocks.revert.title", &[("name", &name)]),
+                    t("mocks.revert.body"),
+                    t("mocks.revert.button"),
                     move |this, _, cx| this.model.update(cx, |model, cx| model.revert_entity(&id, cx)),
                 );
             }
@@ -544,7 +563,8 @@ impl MocksScreen {
     }
 
     fn report(&mut self, what: &str, message: String, cx: &mut Context<Self>) {
-        self.model.update(cx, |model, cx| model.notice(format!("{what} {message}"), cx));
+        let text = t_with("mocks.report", &[("what", &what), ("message", &message)]);
+        self.model.update(cx, |model, cx| model.notice(text, cx));
     }
 
     pub fn prompt_new_folder(&mut self, parent: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
@@ -552,9 +572,9 @@ impl MocksScreen {
             cx.weak_entity(),
             window,
             cx,
-            "New mock folder",
-            "Create",
-            vec![PromptField::new("Name", "Folder name")],
+            t("mocks.prompt.new_folder_title"),
+            t("mocks.prompt.create"),
+            vec![PromptField::new(t("mocks.prompt.name"), t("mocks.prompt.folder_name"))],
             move |this, values, _, cx| {
                 let model = this.model.read(cx);
                 let client = model.client().clone();
@@ -563,7 +583,7 @@ impl MocksScreen {
                 });
                 call(&client, cx, "folder.add", payload, |this, outcome, cx| {
                     if let Some(message) = failure(&outcome) {
-                        this.report("Couldn't create the folder.", message, cx);
+                        this.report(t("mocks.error.create_folder"), message, cx);
                     }
                 });
             },
@@ -585,8 +605,7 @@ impl MocksScreen {
             && self.tabs.iter().any(|tab| tab.key == TabKey::Saved(id.clone()))
         {
             window.push_notification(
-                Notification::info("This mock is open. Change its name in the breadcrumb above the tabs.")
-                    .title("Rename in the breadcrumb"),
+                Notification::info(t("mocks.rename.open_body")).title(t("mocks.rename.open_title")),
                 cx,
             );
             return;
@@ -596,9 +615,9 @@ impl MocksScreen {
             cx.weak_entity(),
             window,
             cx,
-            format!("Rename “{current}”"),
-            "Rename",
-            vec![PromptField::new("Name", "Name").initial(current.clone())],
+            t_with("mocks.rename.title", &[("current", &current)]),
+            t("mocks.rename.button"),
+            vec![PromptField::new(t("mocks.prompt.name"), t("mocks.prompt.name")).initial(current.clone())],
             move |this, values, _, cx| {
                 let model = this.model.read(cx);
                 let client = model.client().clone();
@@ -607,7 +626,7 @@ impl MocksScreen {
                         let payload = json!({ "kind": "mock", "id": id, "name": values[0] });
                         call(&client, cx, "folder.rename", payload, |this, outcome, cx| {
                             if let Some(message) = failure(&outcome) {
-                                this.report("Couldn't rename the folder.", message, cx);
+                                this.report(t("mocks.error.rename_folder"), message, cx);
                             }
                         });
                     }
@@ -617,7 +636,7 @@ impl MocksScreen {
                         patch.insert("name".into(), json!(values[0]));
                         patch_entity(&client, cx, &workspace_id, "mocks", id, patch, |this, outcome, cx| {
                             if let Err(message) = outcome {
-                                this.report("Couldn't rename the mock.", message, cx);
+                                this.report(t("mocks.error.rename_mock"), message, cx);
                             }
                         });
                     }
@@ -656,7 +675,7 @@ impl MocksScreen {
                 let payload = json!({ "kind": "mock", "id": id, "parentId": folder, "workspaceId": workspace_id });
                 call(&client, cx, "folder.move", payload, |this, outcome, cx| {
                     if let Some(message) = failure(&outcome) {
-                        this.report("Couldn't move the folder.", message, cx);
+                        this.report(t("mocks.error.move_folder"), message, cx);
                     }
                 });
             }
@@ -668,7 +687,7 @@ impl MocksScreen {
                 patch.insert("folderId".into(), json!(folder));
                 patch_entity(&client, cx, &workspace_id, "mocks", &id, patch, |this, outcome, cx| {
                     if let Err(message) = outcome {
-                        this.report("Couldn't move the mock.", message, cx);
+                        this.report(t("mocks.error.move_mock"), message, cx);
                     }
                 });
             }
@@ -677,17 +696,20 @@ impl MocksScreen {
 
     fn confirm_delete(&mut self, key: TreeKey, window: &mut Window, cx: &mut Context<Self>) {
         let name = self.name_of(&key, cx);
-        let (what, consequence) = match &key {
-            TreeKey::Folder(_) => ("folder", FOLDER_DELETE_CONSEQUENCE),
-            TreeKey::Item(id) => ("mock", delete_consequence(self.model.read(cx).git().entity_state(id))),
+        let (title, consequence) = match &key {
+            TreeKey::Folder(_) => (t_with("mocks.delete.title_folder", &[("name", &name)]), t(FOLDER_DELETE_CONSEQUENCE)),
+            TreeKey::Item(id) => (
+                t_with("mocks.delete.title_mock", &[("name", &name)]),
+                delete_consequence(self.model.read(cx).git().entity_state(id)),
+            ),
         };
         confirm_danger(
             cx.weak_entity(),
             window,
             cx,
-            format!("Delete {what} “{name}”?"),
+            title,
             consequence,
-            "Delete",
+            t("mocks.delete.button"),
             move |this, _, cx| {
                 let client = this.model.read(cx).client().clone();
                 let (action, payload) = match &key {
@@ -696,7 +718,7 @@ impl MocksScreen {
                 };
                 call(&client, cx, action, payload, |this, outcome, cx| {
                     if let Some(message) = failure(&outcome) {
-                        this.report("Couldn't delete.", message, cx);
+                        this.report(t("mocks.error.delete"), message, cx);
                     }
                 });
             },
@@ -727,9 +749,9 @@ impl MocksScreen {
             });
 
         let body = if !has_mocks {
-            page::empty("No mocks yet", "Use + to create the first one.")
+            page::empty(t("mocks.tree.empty_title"), t("mocks.tree.empty_body"))
         } else if filtering && self.tree.read(cx).entry(0).is_none() {
-            page::empty("No matches", "No mock matches the filter.")
+            page::empty(t("mocks.tree.no_matches_title"), t("mocks.tree.no_matches_body"))
         } else {
             tree(&self.tree, move |ix, entry, selected, _, cx| render_row(ix, entry, selected, &model, &row_view, cx))
                 .context_menu(move |_, entry, menu, _, cx| context_menu(entry, menu, &menu_view, &menu_model, cx))
@@ -751,7 +773,7 @@ impl MocksScreen {
                             .icon(IconName::Plus)
                             .ghost()
                             .small()
-                            .tooltip("New mock or folder")
+                            .tooltip(t("mocks.tree.new_tooltip"))
                             .dropdown_menu(move |menu, _, _| new_menu(menu, &new_view, None)),
                     ),
             )
@@ -775,7 +797,7 @@ impl MocksScreen {
                 .ghost()
                 .small()
                 .selected(tree_open)
-                .tooltip(if tree_open { "Hide the folder tree" } else { "Show the folder tree" })
+                .tooltip(if tree_open { t("mocks.tabs.hide_tree") } else { t("mocks.tabs.show_tree") })
                 .on_click(cx.listener(|_, _, _, cx| {
                     Preferences::update(cx, |p| p.folder_tree_open = !p.folder_tree_open);
                     cx.notify();
@@ -786,7 +808,7 @@ impl MocksScreen {
                 .icon(IconName::Plus)
                 .ghost()
                 .small()
-                .tooltip("New mock")
+                .tooltip(t("mocks.new_mock"))
                 .dropdown_menu(move |menu, _, _| new_tab_menu(menu, &this)),
         );
         tab_strip(self, strip, prefix, suffix, window, cx)
@@ -805,9 +827,12 @@ fn act(
 
 /// What a new tab can start as: an empty mock, or one made from a cURL command.
 fn new_tab_menu(menu: PopupMenu, view: &WeakEntity<MocksScreen>) -> PopupMenu {
-    menu.item(PopupMenuItem::new("Mock").on_click(act(view, |this, window, cx| this.new_mock(None, window, cx))))
+    menu.item(
+        PopupMenuItem::new(t("mocks.menu.mock"))
+            .on_click(act(view, |this, window, cx| this.new_mock(None, window, cx))),
+    )
         .item(
-            PopupMenuItem::new(CURL_TAB_TITLE)
+            PopupMenuItem::new(t(CURL_TAB_TITLE))
                 .on_click(act(view, |this, window, cx| this.import_curl(None, window, cx))),
         )
 }
@@ -815,15 +840,15 @@ fn new_tab_menu(menu: PopupMenu, view: &WeakEntity<MocksScreen>) -> PopupMenu {
 fn new_menu(menu: PopupMenu, view: &WeakEntity<MocksScreen>, folder: Option<String>) -> PopupMenu {
     let (parent, curl_folder) = (folder.clone(), folder.clone());
     menu.item(
-        PopupMenuItem::new("Mock")
+        PopupMenuItem::new(t("mocks.menu.mock"))
             .on_click(act(view, move |this, window, cx| this.new_mock(folder.clone(), window, cx))),
     )
     .item(
-        PopupMenuItem::new(CURL_TAB_TITLE)
+        PopupMenuItem::new(t(CURL_TAB_TITLE))
             .on_click(act(view, move |this, window, cx| this.import_curl(curl_folder.clone(), window, cx))),
     )
     .item(
-        PopupMenuItem::new("Folder…")
+        PopupMenuItem::new(t("mocks.menu.folder"))
             .on_click(act(view, move |this, window, cx| this.prompt_new_folder(parent.clone(), window, cx))),
     )
 }
@@ -888,10 +913,10 @@ fn context_menu(
         let (revert_model, confirm_model) = (model.clone(), model.clone());
         let (revert, confirm) = (deleted_target(&key), deleted_target(&key));
         return menu
-            .item(PopupMenuItem::new("Revert delete").on_click(move |_, _, cx| {
+            .item(PopupMenuItem::new(t("mocks.menu.revert_delete")).on_click(move |_, _, cx| {
                 revert_model.update(cx, |model, cx| model.revert_delete(revert.clone(), cx));
             }))
-            .item(PopupMenuItem::new("Confirm delete").on_click(move |_, _, cx| {
+            .item(PopupMenuItem::new(t("mocks.menu.confirm_delete")).on_click(move |_, _, cx| {
                 confirm_model.update(cx, |model, cx| model.confirm_delete(confirm.clone(), cx));
             }));
     }
@@ -899,7 +924,7 @@ fn context_menu(
     if let (TreeKey::Item(id), Some(_)) = (&key, locked_to(model.read(cx), &key)) {
         let id = id.clone();
         return menu.item(
-            PopupMenuItem::new("Update required…")
+            PopupMenuItem::new(t("mocks.menu.update_required"))
                 .on_click(act(view, move |this, window, cx| this.open_mock(&id, window, cx))),
         );
     }
@@ -908,32 +933,32 @@ fn context_menu(
         TreeKey::Item(id) => {
             let (open, copy) = (id.clone(), id.clone());
             menu.item(
-                PopupMenuItem::new("Open")
+                PopupMenuItem::new(t("mocks.menu.open"))
                     .on_click(act(view, move |this, window, cx| this.open_mock(&open, window, cx))),
             )
             .item(
-                PopupMenuItem::new("Duplicate")
+                PopupMenuItem::new(t("mocks.menu.duplicate"))
                     .on_click(act(view, move |this, window, cx| this.duplicate(copy.clone(), window, cx))),
             )
         }
         TreeKey::Folder(id) => {
             let (mock_parent, folder_parent) = (id.clone(), id.clone());
             menu.item(
-                PopupMenuItem::new("New mock here")
+                PopupMenuItem::new(t("mocks.menu.new_mock_here"))
                     .on_click(act(view, move |this, window, cx| this.new_mock(Some(mock_parent.clone()), window, cx))),
             )
-            .item(PopupMenuItem::new("New folder here…").on_click(act(view, move |this, window, cx| {
+            .item(PopupMenuItem::new(t("mocks.menu.new_folder_here")).on_click(act(view, move |this, window, cx| {
                 this.prompt_new_folder(Some(folder_parent.clone()), window, cx)
             })))
         }
     };
     menu.separator()
         .item(
-            PopupMenuItem::new("Rename…")
+            PopupMenuItem::new(t("mocks.menu.rename"))
                 .on_click(act(view, move |this, window, cx| this.prompt_rename(rename.clone(), window, cx))),
         )
         .item(
-            PopupMenuItem::new("Delete…")
+            PopupMenuItem::new(t("mocks.menu.delete"))
                 .on_click(act(view, move |this, window, cx| this.confirm_delete(delete.clone(), window, cx))),
         )
 }
@@ -1068,18 +1093,18 @@ impl Render for MocksScreen {
         let curl = self.active_curl().cloned();
         let body = if self.tabs.is_empty() {
             page::empty_with_action(
-                "No mock open",
-                "A mock answers matching requests through the proxy instead of the real server.",
+                t("mocks.no_mock_open"),
+                t("mocks.welcome.body"),
                 h_flex()
                     .gap_2()
                     .child(
                         Button::new("welcome-new-mock")
-                            .label("New mock")
+                            .label(t("mocks.new_mock"))
                             .on_click(cx.listener(|this, _, window, cx| this.new_mock(None, window, cx))),
                     )
                     .child(
                         Button::new("welcome-import-curl")
-                            .label(CURL_TAB_TITLE)
+                            .label(t(CURL_TAB_TITLE))
                             .on_click(cx.listener(|this, _, window, cx| this.import_curl(None, window, cx))),
                     ),
             )

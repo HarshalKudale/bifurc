@@ -12,7 +12,10 @@ use gpui_kit::{
 };
 use serde_json::Value;
 
-use crate::model::flow::{json_rows, path_key};
+use crate::{
+    i18n::{t, t_with},
+    model::flow::{json_rows, path_key},
+};
 
 /// How many rows one tree shows. A response with more is still read whole by the engine.
 const ROW_LIMIT: usize = 300;
@@ -36,7 +39,7 @@ pub fn json_tree(scope: &str, value: &Value, open: &HashSet<String>, toggle: Tog
     if rows.is_empty() {
         // A single value, or a list or an object with nothing in it.
         let shown = match value {
-            Value::Null => "Nothing".to_owned(),
+            Value::Null => t("flows.json.nothing").to_owned(),
             Value::String(text) => text.clone(),
             other => other.to_string(),
         };
@@ -102,7 +105,7 @@ pub fn json_tree(scope: &str, value: &Value, open: &HashSet<String>, toggle: Tog
         .py_1()
         .children(lines)
         .when(cut_short, |this| {
-            this.child(div().px_2().text_color(theme.muted_foreground).child(format!("The first {ROW_LIMIT} rows are shown.")))
+            this.child(div().px_2().text_color(theme.muted_foreground).child(t_with("flows.json.more_rows", &[("count", &ROW_LIMIT)])))
         })
 }
 

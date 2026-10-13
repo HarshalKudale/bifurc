@@ -20,6 +20,7 @@ use gpui_kit::{
 use serde_json::Value;
 
 use crate::{
+    i18n::{t, t_with},
     components::stream_log::{LogRow, LogSearch, OpenRows, Way, found, log_row, nothing_found, search_button},
     model::{
         socket::{Direction, SocketState},
@@ -155,10 +156,10 @@ impl Render for SocketIoConnection {
         let namespace = Some(self.view.namespace.clone()).filter(|ns| !ns.is_empty() && ns != "/");
         let ended = self.view.close_reason.clone().filter(|_| state == SocketState::Disconnected);
         let listening = match self.listening {
-            None => "Every event".to_owned(),
-            Some(0) => "No listeners".to_owned(),
-            Some(1) => "1 listener".to_owned(),
-            Some(count) => format!("{count} listeners"),
+            None => t("session.socketio.listening_every").to_owned(),
+            Some(0) => t("session.socketio.listening_none").to_owned(),
+            Some(1) => t("session.socketio.listening_one").to_owned(),
+            Some(count) => t_with("session.socketio.listening_other", &[("count", &count)]),
         };
         let nothing_heard = self.listening == Some(0);
 
@@ -181,11 +182,11 @@ impl Render for SocketIoConnection {
                         this.child(div().text_sm().text_color(theme.muted_foreground).child(reason))
                     })
                     .child(div().flex_1())
-                    .child(div().text_sm().text_color(theme.muted_foreground).child(format!(
-                        "{listening} · {} message{} · times in UTC",
-                        self.view.messages.len(),
-                        if self.view.messages.len() == 1 { "" } else { "s" }
-                    )))
+                    .child(div().text_sm().text_color(theme.muted_foreground).child(if self.view.messages.len() == 1 {
+                        t_with("session.socketio.count_one", &[("listening", &listening), ("count", &self.view.messages.len())])
+                    } else {
+                        t_with("session.socketio.count_other", &[("listening", &listening), ("count", &self.view.messages.len())])
+                    }))
                     .child(search_button("search-socketio-messages").on_click(cx.listener(|this, _, window, cx| {
                         this.search.toggle(window, cx);
                         cx.notify();
@@ -194,7 +195,7 @@ impl Render for SocketIoConnection {
                         Button::new("clear-socketio-messages")
                             .ghost()
                             .small()
-                            .label("Clear")
+                            .label(t("session.connection.clear"))
                             .disabled(self.view.messages.is_empty())
                             .on_click(cx.listener(|_, _, _, cx| cx.emit(SocketIoEvent::Clear))),
                     ),
@@ -211,13 +212,13 @@ impl Render for SocketIoConnection {
                     .border_color(theme.border)
                     .when(self.view.messages.is_empty(), |this| {
                         this.child(Empty::new().header(
-                            EmptyHeader::new().title(EmptyTitle::new().child("No events")).description(
+                            EmptyHeader::new().title(EmptyTitle::new().child(t("session.socketio.no_events"))).description(
                                 EmptyDescription::new().child(if nothing_heard {
-                                    "No event is listened to. Add one in the Listeners tab to see what the server sends."
+                                    t("session.socketio.empty_nothing_heard")
                                 } else if state == SocketState::Connected {
-                                    "Events sent and received appear here."
+                                    t("session.socketio.empty_connected")
                                 } else {
-                                    "Connect to start sending and receiving events."
+                                    t("session.socketio.empty_disconnected")
                                 }),
                             ),
                         ))

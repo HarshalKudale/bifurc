@@ -10,6 +10,8 @@ use std::collections::HashMap;
 use serde::{Deserialize, Serialize};
 use serde_json::{Map, Value};
 
+use crate::i18n::t;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum NodeKind {
@@ -50,23 +52,23 @@ impl NodeKind {
     ];
 
     pub fn label(self) -> &'static str {
-        match self {
-            NodeKind::Start => "Start",
-            NodeKind::Request => "Request",
-            NodeKind::Stream => "Stream",
-            NodeKind::Mcp => "MCP call",
-            NodeKind::Condition => "Condition",
-            NodeKind::If => "If",
-            NodeKind::Validate => "Validate",
-            NodeKind::Evaluate => "Evaluate",
-            NodeKind::Delay => "Delay",
-            NodeKind::Or => "Or",
-            NodeKind::Repeat => "Repeat",
-            NodeKind::ForEach => "For each",
-            NodeKind::Display => "Display",
-            NodeKind::Data => "Data",
-            NodeKind::Sample => "Sample response",
-        }
+        t(match self {
+            NodeKind::Start => "flows.node.start",
+            NodeKind::Request => "flows.node.request",
+            NodeKind::Stream => "flows.node.stream",
+            NodeKind::Mcp => "flows.node.mcp",
+            NodeKind::Condition => "flows.node.condition",
+            NodeKind::If => "flows.node.if",
+            NodeKind::Validate => "flows.node.validate",
+            NodeKind::Evaluate => "flows.node.evaluate",
+            NodeKind::Delay => "flows.node.delay",
+            NodeKind::Or => "flows.node.or",
+            NodeKind::Repeat => "flows.node.repeat",
+            NodeKind::ForEach => "flows.node.for_each",
+            NodeKind::Display => "flows.node.display",
+            NodeKind::Data => "flows.node.data",
+            NodeKind::Sample => "flows.node.sample",
+        })
     }
 
     /// What a new node of this kind is called in references until it is given a name.

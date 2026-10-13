@@ -6,6 +6,8 @@
 
 use serde_json::Value;
 
+use crate::i18n::t;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
 pub enum StreamState {
     Connecting,
@@ -26,12 +28,12 @@ impl StreamState {
     }
 
     pub fn label(self) -> &'static str {
-        match self {
-            StreamState::Connecting => "Connecting",
-            StreamState::Connected => "Streaming",
-            StreamState::Disconnected => "Ended",
-            StreamState::Error => "Failed",
-        }
+        t(match self {
+            StreamState::Connecting => "model.state.connecting",
+            StreamState::Connected => "model.state.streaming",
+            StreamState::Disconnected => "model.state.ended",
+            StreamState::Error => "model.state.failed",
+        })
     }
 
     /// A stream that is open or opening; the state in which Disconnect is the right command.
