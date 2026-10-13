@@ -31,6 +31,7 @@ use std::{collections::HashSet, ops::Range};
 
 use crate::{
     app_model::{AppModel, ModelEvent},
+    i18n::{t, t_with},
     components::{
         Syntax,
         binary::{BinaryBody, save_to_file, suggested_file_name},
@@ -186,7 +187,7 @@ fn read_only_editor(window: &mut Window, cx: &mut Context<CaptureScreen>) -> Ent
 
 impl CaptureScreen {
     pub fn new(model: Entity<AppModel>, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let filter = cx.new(|cx| InputState::new(window, cx).placeholder("Filter by URL, method, status, type"));
+        let filter = cx.new(|cx| InputState::new(window, cx).placeholder(t("capture.filter.placeholder")));
         let request_body = read_only_editor(window, cx);
         let response_body = read_only_editor(window, cx);
         let subscriptions = vec![
@@ -248,14 +249,14 @@ impl CaptureScreen {
     pub fn status_line(&self, cx: &gpui_kit::App) -> String {
         let total = self.entries.len();
         let shown = self.visible(cx).len();
-        let mut line = format!("{total} captured");
-        if shown < total {
-            line.push_str(&format!(" · {shown} shown"));
+        match (shown < total, self.paused) {
+            (false, false) => t_with("capture.status.captured", &[("total", &total)]),
+            (true, false) => t_with("capture.status.captured_shown", &[("total", &total), ("shown", &shown)]),
+            (false, true) => t_with("capture.status.captured_paused", &[("total", &total)]),
+            (true, true) => {
+                t_with("capture.status.captured_shown_paused", &[("total", &total), ("shown", &shown)])
+            }
         }
-        if self.paused {
-            line.push_str(" · paused");
-        }
-        line
     }
 
     /// Whether the list shows `entry`: it passes the text filter, the type filter and the handler filter.
@@ -285,7 +286,7 @@ impl CaptureScreen {
                     this.disable_cache = result.get("disableCache").and_then(Value::as_bool).unwrap_or(true);
                     this.loaded = true;
                 }
-                Err(error) => this.report("Couldn't read captured traffic.", describe(&error), cx),
+                Err(error) => this.report(t("capture.error.read"), describe(&error), cx),
             }
             cx.notify();
         });
@@ -303,7 +304,7 @@ impl CaptureScreen {
         call(&client, cx, "capture.setPaused", payload, move |this, outcome, cx| {
             match failure(&outcome) {
                 Some(message) => {
-                    let what = if resume { "Couldn't resume capture." } else { "Couldn't pause capture." };
+                    let what = if resume { t("capture.error.resume") } else { t("capture.error.pause") };
                     this.report(what, message, cx);
                 }
                 None => {
@@ -325,7 +326,7 @@ impl CaptureScreen {
             match failure(&outcome) {
                 Some(message) => {
                     this.disable_cache = !disable;
-                    this.report("Couldn't change the cache setting.", message, cx);
+                    this.report(t("capture.error.cache_setting"), message, cx);
                 }
                 None => {
                     if let Ok(result) = &outcome {
@@ -342,7 +343,7 @@ impl CaptureScreen {
         let client = model.client().clone();
         let payload = json!({ "workspaceId": model.workspace_id() });
         call(&client, cx, "capture.clear", payload, |this, outcome, cx| match failure(&outcome) {
-            Some(message) => this.report("Couldn't clear captured traffic.", message, cx),
+            Some(message) => this.report(t("capture.error.clear"), message, cx),
             None => {
                 this.entries.clear();
                 this.checked.clear();
@@ -388,7 +389,7 @@ impl CaptureScreen {
             match exchange {
                 Some(exchange) => this.show(exchange, window, cx),
                 None => {
-                    this.detail = Detail::Failed("This exchange is no longer in the engine's history.".to_owned());
+                    this.detail = Detail::Failed(t("capture.error.no_longer_in_history").to_owned());
                 }
             }
             cx.notify();
@@ -437,7 +438,7 @@ impl CaptureScreen {
         let payload = json!({ "workspaceId": model.workspace_id(), "ids": [id] });
         call(&client, cx, "capture.remove", payload, |this, outcome, cx| {
             if let Some(message) = failure(&outcome) {
-                this.report("Couldn't remove the exchange.", message, cx);
+                this.report(t("capture.error.remove"), message, cx);
             }
         });
         cx.notify();
@@ -521,11 +522,11 @@ impl CaptureScreen {
         cx.notify();
         call_in(&client, window, cx, "folder.add", payload, move |this, outcome, window, cx| {
             if let Some(message) = failure(&outcome) {
-                return this.save_failed("Couldn't create the folder.", message, cx);
+                return this.save_failed(t("capture.error.create_folder"), message, cx);
             }
             let id = outcome.ok().and_then(|folder| folder.get("id")?.as_str().map(str::to_owned));
             let Some(id) = id else {
-                return this.save_failed("Couldn't create the folder.", "The engine returned nothing.".into(), cx);
+                return this.save_failed(t("capture.error.create_folder"), t("capture.error.no_answer").into(), cx);
             };
             let run = SaveRun { pending, mock, folder: Some((id, name)), saved: 0, last: None, first_failure: None };
             this.save_next(run, window, cx);
@@ -558,7 +559,7 @@ impl CaptureScreen {
                     .ok()
                     .and_then(|result| result.get(field).cloned())
                     .filter(Value::is_object)
-                    .ok_or_else(|| "The engine returned nothing.".to_owned()),
+                    .ok_or_else(|| t("capture.error.no_answer").to_owned()),
             };
             let mut entity = match entity {
                 Ok(entity) => entity,
@@ -583,7 +584,7 @@ impl CaptureScreen {
                     None => outcome
                         .ok()
                         .and_then(|result| result.get("entity")?.get("id")?.as_str().map(str::to_owned))
-                        .ok_or_else(|| "The engine returned nothing.".to_owned()),
+                        .ok_or_else(|| t("capture.error.no_answer").to_owned()),
                 };
                 match created {
                     Ok(created) => {
@@ -602,13 +603,13 @@ impl CaptureScreen {
     fn finish_save(&mut self, run: SaveRun, window: &mut Window, cx: &mut Context<Self>) {
         self.saving = false;
         if let Some(message) = run.first_failure {
-            self.report("Couldn't save everything.", message, cx);
+            self.report(t("capture.error.save_some"), message, cx);
         }
-        let noun = if run.mock { "mock" } else { "request" };
         match (&run.folder, run.last, run.saved) {
             (_, _, 0) => {}
             (None, Some(created), _) => {
-                window.push_notification(Notification::success(format!("Saved as a {noun}.")), cx);
+                let text = if run.mock { t("capture.saved_as_mock") } else { t("capture.saved_as_request") };
+                window.push_notification(Notification::success(text), cx);
                 cx.emit(if run.mock {
                     CaptureEvent::SavedMock { id: created }
                 } else {
@@ -616,9 +617,19 @@ impl CaptureScreen {
                 });
             }
             (folder, _, saved) => {
-                let place = folder.as_ref().map_or(String::new(), |(_, name)| format!(" to “{name}”"));
-                let plural = if saved == 1 { "" } else { "s" };
-                window.push_notification(Notification::success(format!("Saved {saved} {noun}{plural}{place}.")), cx);
+                let key = match (run.mock, saved == 1, folder.is_some()) {
+                    (false, true, true) => "capture.saved_requests_in_folder_one",
+                    (false, false, true) => "capture.saved_requests_in_folder_other",
+                    (true, true, true) => "capture.saved_mocks_in_folder_one",
+                    (true, false, true) => "capture.saved_mocks_in_folder_other",
+                    (false, true, false) => "capture.saved_requests_one",
+                    (false, false, false) => "capture.saved_requests_other",
+                    (true, true, false) => "capture.saved_mocks_one",
+                    (true, false, false) => "capture.saved_mocks_other",
+                };
+                let folder_name = folder.as_ref().map_or("", |(_, name)| name.as_str());
+                let text = t_with(key, &[("count", &saved), ("folder", &folder_name)]);
+                window.push_notification(Notification::success(text), cx);
             }
         }
         if run.saved > 0 {
@@ -637,8 +648,10 @@ impl CaptureScreen {
         let Body::Data(binary) = body else { return };
         let file_name = suggested_file_name(&shown.exchange.url, name, content_type);
         save_to_file(binary.bytes().to_vec(), file_name, cx, |this, outcome, cx| match outcome {
-            Ok(path) => this.report("Saved to", format!("{}.", path.display()), cx),
-            Err(message) => this.report("Couldn't save the file.", message, cx),
+            Ok(path) => this.model.update(cx, |model, cx| {
+                model.notice(t_with("capture.saved_to", &[("path", &path.display())]), cx)
+            }),
+            Err(message) => this.report(t("capture.error.save_file"), message, cx),
         });
     }
 
@@ -646,7 +659,7 @@ impl CaptureScreen {
         match status {
             Some(code) if (200..400).contains(&code) => Tag::success().small().child(code.to_string()),
             Some(code) => Tag::danger().small().child(code.to_string()),
-            None => Tag::secondary().small().child("Pending"),
+            None => Tag::secondary().small().child(t("capture.pending")),
         }
     }
 
@@ -666,7 +679,7 @@ impl CaptureScreen {
                     this.type_filter = ix.checked_sub(1).and_then(|ix| ResourceType::ALL.get(ix).copied());
                     cx.notify();
                 }))
-                .child(Tab::new().label("All")),
+                .child(Tab::new().label(t("capture.types.all"))),
             |bar, kind| bar.child(Tab::new().label(kind.label())),
         );
         h_flex()
@@ -680,8 +693,8 @@ impl CaptureScreen {
             .child(
                 Checkbox::new("capture-disable-cache")
                     .small()
-                    .label("Disable cache")
-                    .tooltip("Strips cache related headers from requests before sending them to the target")
+                    .label(t("capture.disable_cache.label"))
+                    .tooltip(t("capture.disable_cache.tooltip"))
                     .checked(self.disable_cache)
                     .on_change(cx.listener(|this, checked: &bool, _, cx| this.set_disable_cache(*checked, cx))),
             )
@@ -702,18 +715,23 @@ impl CaptureScreen {
             .children((ticked > 0).then(|| {
                 h_flex()
                     .gap_2()
-                    .child(div().text_sm().text_color(theme.muted_foreground).child(format!("{ticked} selected")))
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(theme.muted_foreground)
+                            .child(t_with("capture.selected", &[("count", &ticked)])),
+                    )
                     .child(
                         Button::new("capture-save-checked-requests")
                             .small()
-                            .label("Save as requests")
+                            .label(t("capture.save_checked_requests"))
                             .disabled(self.saving)
                             .on_click(cx.listener(|this, _, window, cx| this.save_checked(false, window, cx))),
                     )
                     .child(
                         Button::new("capture-save-checked-mocks")
                             .small()
-                            .label("Save as mocks")
+                            .label(t("capture.save_checked_mocks"))
                             .disabled(self.saving)
                             .on_click(cx.listener(|this, _, window, cx| this.save_checked(true, window, cx))),
                     )
@@ -721,7 +739,7 @@ impl CaptureScreen {
                         Button::new("capture-uncheck")
                             .ghost()
                             .small()
-                            .label("Clear selection")
+                            .label(t("capture.clear_selection"))
                             .on_click(cx.listener(|this, _, _, cx| {
                                 this.checked.clear();
                                 cx.notify();
@@ -741,16 +759,16 @@ impl CaptureScreen {
         let all_checked = !visible_ids.is_empty() && visible_ids.iter().all(|id| self.checked.contains(id));
         if self.entries.is_empty() {
             return page::empty(
-                "No traffic captured",
+                t("capture.empty.no_traffic.title"),
                 if self.paused {
-                    "Capture is paused. Nothing is being recorded until you resume."
+                    t("capture.empty.no_traffic.paused")
                 } else {
-                    "Requests that pass through the proxy are listed here as they happen."
+                    t("capture.empty.no_traffic.body")
                 },
             );
         }
         if visible.is_empty() {
-            return page::empty("No matches", "No captured exchange matches the filter.");
+            return page::empty(t("capture.empty.no_matches.title"), t("capture.empty.no_matches.body"));
         }
         let count = visible.len();
         let row_theme = theme.clone();
@@ -842,7 +860,12 @@ impl CaptureScreen {
                                             .flex_none()
                                             .text_right()
                                             .text_color(theme.muted_foreground)
-                                            .child(entry.duration_ms.map(|ms| format!("{ms} ms")).unwrap_or_default()),
+                                            .child(
+                                                entry
+                                                    .duration_ms
+                                                    .map(|ms| t_with("capture.duration", &[("ms", &ms)]))
+                                                    .unwrap_or_default(),
+                                            ),
                                     )
                                     .child(
                                         div()
@@ -888,14 +911,14 @@ impl CaptureScreen {
                             },
                         )),
                     ))
-                    .child(div().flex_1().child("Name"))
-                    .child(div().w_16().flex_none().child("Method"))
-                    .child(div().w_20().flex_none().child("Status"))
-                    .child(div().w_16().flex_none().child("Type"))
-                    .child(div().w_24().flex_none().child("Handled by"))
-                    .child(div().w_20().flex_none().text_right().child("Size"))
-                    .child(div().w_20().flex_none().text_right().child("Time taken"))
-                    .child(div().w_20().flex_none().text_right().child("Time (UTC)")),
+                    .child(div().flex_1().child(t("capture.field.name")))
+                    .child(div().w_16().flex_none().child(t("capture.field.method")))
+                    .child(div().w_20().flex_none().child(t("capture.field.status")))
+                    .child(div().w_16().flex_none().child(t("capture.field.type")))
+                    .child(div().w_24().flex_none().child(t("capture.field.handled_by")))
+                    .child(div().w_20().flex_none().text_right().child(t("capture.field.size")))
+                    .child(div().w_20().flex_none().text_right().child(t("capture.field.time_taken")))
+                    .child(div().w_20().flex_none().text_right().child(t("capture.field.time_utc"))),
             )
             .child(rows)
             .into_any_element()
@@ -936,7 +959,7 @@ impl CaptureScreen {
         let status = match exchange.status {
             Some(code) if status_text(code).is_empty() => code.to_string(),
             Some(code) => format!("{code} {}", status_text(code)),
-            None => "Pending".to_owned(),
+            None => t("capture.pending").to_owned(),
         };
         let via = self.selected_entry().map_or("", TrafficEntry::via_label);
         let handled_by = match (via.is_empty(), &exchange.target) {
@@ -946,15 +969,15 @@ impl CaptureScreen {
             (true, None) => String::new(),
         };
         let mut general = vec![
-            Self::pair("URL", exchange.url.clone(), cx),
-            Self::pair("Method", exchange.method.clone(), cx),
-            Self::pair("Status", status, cx),
+            Self::pair(t("capture.field.url"), exchange.url.clone(), cx),
+            Self::pair(t("capture.field.method"), exchange.method.clone(), cx),
+            Self::pair(t("capture.field.status"), status, cx),
         ];
         if !handled_by.is_empty() {
-            general.push(Self::pair("Handled by", handled_by, cx));
+            general.push(Self::pair(t("capture.field.handled_by"), handled_by, cx));
         }
         if let Some(ms) = exchange.duration_ms {
-            general.push(Self::pair("Time taken", format!("{ms} ms"), cx));
+            general.push(Self::pair(t("capture.field.time_taken"), t_with("capture.duration", &[("ms", &ms)]), cx));
         }
         v_flex()
             .id("capture-headers")
@@ -962,9 +985,19 @@ impl CaptureScreen {
             .overflow_y_scroll()
             .p_4()
             .gap_4()
-            .child(v_flex().gap_1().child(page::section_label("General", cx)).children(general))
-            .child(Self::pairs("Response headers", &exchange.response_headers, "No headers were captured.", cx))
-            .child(Self::pairs("Request headers", &exchange.request_headers, "No headers were captured.", cx))
+            .child(v_flex().gap_1().child(page::section_label(t("capture.section.general"), cx)).children(general))
+            .child(Self::pairs(
+                t("capture.section.response_headers"),
+                &exchange.response_headers,
+                t("capture.no_headers"),
+                cx,
+            ))
+            .child(Self::pairs(
+                t("capture.section.request_headers"),
+                &exchange.request_headers,
+                t("capture.no_headers"),
+                cx,
+            ))
             .into_any_element()
     }
 
@@ -972,7 +1005,7 @@ impl CaptureScreen {
         let query = shown.exchange.query();
         let query_block = (!query.is_empty()).then(|| {
             div().id("capture-query").flex_none().max_h(px(160.)).overflow_y_scroll().child(Self::pairs(
-                "Query parameters",
+                t("capture.section.query_parameters"),
                 &query,
                 "",
                 cx,
@@ -983,7 +1016,7 @@ impl CaptureScreen {
             .p_4()
             .gap_3()
             .children(query_block)
-            .child(page::section_label("Request body", cx))
+            .child(page::section_label(t("capture.section.request_body"), cx))
             .child(div().flex_1().min_h_0().child(self.render_body(Side::Request, shown, cx)))
             .into_any_element()
     }
@@ -1001,7 +1034,7 @@ impl CaptureScreen {
                     .py_2()
                     .text_xs()
                     .text_color(muted)
-                    .child("Only the first 512 KB of the response is kept.")
+                    .child(t("capture.response_truncated"))
             }))
             .into_any_element()
     }
@@ -1014,10 +1047,10 @@ impl CaptureScreen {
         };
         match body {
             Body::Empty => page::empty(
-                "No body",
+                t("capture.no_body.title"),
                 match side {
-                    Side::Request => "The request carried no body.",
-                    Side::Response => "The response carried no body.",
+                    Side::Request => t("capture.no_body.request"),
+                    Side::Response => t("capture.no_body.response"),
                 },
             ),
             Body::Text { .. } => {
@@ -1030,8 +1063,8 @@ impl CaptureScreen {
                         .on_click(cx.listener(|this, ix: &usize, window, cx| {
                             this.set_response_view(if *ix == 0 { BodyView::Pretty } else { BodyView::Raw }, window, cx)
                         }))
-                        .child(Tab::new().label("Pretty"))
-                        .child(Tab::new().label("Raw"))
+                        .child(Tab::new().label(t("capture.view.pretty")))
+                        .child(Tab::new().label(t("capture.view.raw")))
                 });
                 v_flex()
                     .size_full()
@@ -1041,7 +1074,7 @@ impl CaptureScreen {
                                 .ghost()
                                 .small()
                                 .icon(IconName::Copy)
-                                .label("Copy")
+                                .label(t("capture.copy"))
                                 .on_click(move |_, _, cx| {
                                     let text = copy_from.read(cx).value().to_string();
                                     cx.write_to_clipboard(ClipboardItem::new_string(text));
@@ -1058,7 +1091,7 @@ impl CaptureScreen {
                         Button::new(SharedString::from(format!("capture-save-{key}-body")))
                             .ghost()
                             .small()
-                            .label("Save to file…")
+                            .label(t("capture.save_to_file"))
                             .on_click(cx.listener(move |this, _, _, cx| this.save_body(side, cx))),
                     ),
                 )
@@ -1086,9 +1119,9 @@ impl CaptureScreen {
                             this.section = SECTIONS[*ix];
                             cx.notify();
                         }))
-                        .child(Tab::new().label("Headers"))
-                        .child(Tab::new().label("Payload"))
-                        .child(Tab::new().label("Response")),
+                        .child(Tab::new().label(t("capture.tab.headers")))
+                        .child(Tab::new().label(t("capture.tab.payload")))
+                        .child(Tab::new().label(t("capture.tab.response"))),
                 ),
             )
             .child(div().flex_1().min_h_0().child(content))
@@ -1099,12 +1132,12 @@ impl CaptureScreen {
         let theme = cx.theme().clone();
         let content = match &self.detail {
             Detail::Idle => div().into_any_element(),
-            Detail::Loading => page::loading("Loading the exchange…"),
+            Detail::Loading => page::loading(t("capture.loading")),
             Detail::Failed(message) => div()
                 .p_4()
                 .child(
                     Alert::error("capture-load-failed", SharedString::from(message.clone()))
-                        .title("Couldn't load the exchange"),
+                        .title(t("capture.error.load_title")),
                 )
                 .into_any_element(),
             Detail::Ready(shown) => self.render_sections(shown, cx),
@@ -1135,14 +1168,14 @@ impl CaptureScreen {
                     .child(
                         Button::new("capture-save-request")
                             .small()
-                            .label("Save as request")
+                            .label(t("capture.save_as_request"))
                             .disabled(self.saving)
                             .on_click(cx.listener(|this, _, window, cx| this.save_as(false, window, cx))),
                     )
                     .child(
                         Button::new("capture-save-mock")
                             .small()
-                            .label("Save as mock")
+                            .label(t("capture.save_as_mock"))
                             .disabled(self.saving)
                             .on_click(cx.listener(|this, _, window, cx| this.save_as(true, window, cx))),
                     )
@@ -1151,7 +1184,7 @@ impl CaptureScreen {
                             .ghost()
                             .small()
                             .icon(IconName::Delete)
-                            .tooltip("Remove from the list")
+                            .tooltip(t("capture.remove_tooltip"))
                             .on_click(cx.listener(|this, _, _, cx| this.remove_selected(cx))),
                     )
                     .child(
@@ -1159,7 +1192,7 @@ impl CaptureScreen {
                             .ghost()
                             .small()
                             .icon(IconName::Close)
-                            .tooltip("Close the detail")
+                            .tooltip(t("capture.close_detail_tooltip"))
                             .on_click(cx.listener(|this, _, window, cx| this.select(None, window, cx))),
                     ),
             )
@@ -1171,8 +1204,8 @@ impl CaptureScreen {
 impl Render for CaptureScreen {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let header = page::header(
-            "Capture",
-            "Traffic through the proxy, newest first. The engine keeps the last 200 exchanges.",
+            t("capture.page.title"),
+            t("capture.page.subtitle"),
             h_flex()
                 .gap_2()
                 .child(div().w_72().child(
@@ -1182,13 +1215,13 @@ impl Render for CaptureScreen {
                     Button::new("capture-pause")
                         .small()
                         .icon(if self.paused { IconName::Play } else { IconName::Pause })
-                        .label(if self.paused { "Resume" } else { "Pause" })
+                        .label(if self.paused { t("capture.page.resume") } else { t("capture.page.pause") })
                         .on_click(cx.listener(|this, _, window, cx| this.toggle_paused(window, cx))),
                 )
                 .child(
                     Button::new("capture-clear")
                         .small()
-                        .label("Clear")
+                        .label(t("capture.page.clear"))
                         .disabled(self.entries.is_empty())
                         .on_click(cx.listener(|this, _, _, cx| this.clear(cx))),
                 ),

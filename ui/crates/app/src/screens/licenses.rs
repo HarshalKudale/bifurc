@@ -23,6 +23,8 @@ use gpui_kit::{
 };
 use serde::Deserialize;
 
+use crate::i18n::{t, t_with};
+
 const REPOSITORY_URL: &str = "https://github.com/HarshalKudale/bifurc";
 const LICENSE_URL: &str = "https://github.com/HarshalKudale/bifurc/blob/master/LICENSE";
 const NONCOMMERCIAL_URL: &str = "https://polyformproject.org/licenses/noncommercial/1.0.0";
@@ -71,27 +73,24 @@ pub fn page() -> SettingPage {
         .title("Bifurc")
         .item(
             SettingItem::new(
-                "License",
+                t("licenses.own.license.title"),
                 SettingField::render(|_, _, _| {
                     Link::new("own-license-link").href(NONCOMMERCIAL_URL).child("PolyForm Noncommercial 1.0.0")
                 }),
             )
-            .description(
-                "Free to use, read and modify for non-commercial purposes. It may not be resold, repackaged or used \
-             to build a commercial product. The source is published so you can see what the app does.",
-            )
+            .description(t("licenses.own.license.description"))
             .layout(Axis::Horizontal),
         )
         .item(
             SettingItem::new(
-                "Full text",
+                t("licenses.own.full_text.title"),
                 SettingField::render(|_, _, _| Link::new("own-license-text").href(LICENSE_URL).child("LICENSE")),
             )
-            .description(format!("In the source repository, {REPOSITORY_URL}"))
+            .description(t_with("licenses.own.full_text.description", &[("url", &REPOSITORY_URL)]))
             .layout(Axis::Horizontal),
         );
 
-    let assets = data.assets.iter().fold(SettingGroup::new().title("Bundled assets"), |group, asset| {
+    let assets = data.assets.iter().fold(SettingGroup::new().title(t("licenses.assets.title")), |group, asset| {
         group.item(
             SettingItem::new(
                 asset.name.clone(),
@@ -101,7 +100,7 @@ pub fn page() -> SettingPage {
                 }),
             )
             .description(asset.detail.clone())
-            .keywords(["asset", "icon", "theme", "font"]),
+            .keywords(t("licenses.assets.keywords").split(',')),
         )
     });
 
@@ -110,7 +109,7 @@ pub fn page() -> SettingPage {
         .iter()
         .enumerate()
         .fold(
-            SettingGroup::new().title(format!("Open-source libraries ({})", data.libraries)),
+            SettingGroup::new().title(t_with("licenses.libraries.title", &[("count", &data.libraries)])),
             |group, (index, license)| {
                 group.item(
                     SettingItem::new(
@@ -118,33 +117,25 @@ pub fn page() -> SettingPage {
                         SettingField::render(move |options, _, _| {
                             Button::new(ElementId::Name(format!("view-notices-{index}").into()))
                                 .with_size(options.size())
-                                .label("View notices")
+                                .label(t("licenses.libraries.view_notices"))
                                 .on_click(move |_, window, cx| open_notices(index, window, cx))
                         }),
                     )
-                    .description(format!(
-                        "{} {}. {}",
-                        license.libraries,
-                        if license.libraries == 1 { "library" } else { "libraries" },
-                        license.note
+                    .description(t_with(
+                        if license.libraries == 1 {
+                            "licenses.libraries.description_one"
+                        } else {
+                            "licenses.libraries.description_other"
+                        },
+                        &[("count", &license.libraries), ("note", &license.note)],
                     ))
-                    .keywords([
-                        "license",
-                        "notice",
-                        "open source",
-                        "third party",
-                        "library",
-                        "copyright",
-                    ]),
+                    .keywords(t("licenses.libraries.keywords").split(',')),
                 )
             },
         )
-        .footer(|_, _| {
-            "Where a library offers a choice of licenses, the most permissive one it offers is shown. \
-         Libraries that publish no license file are shown with the standard text of their license."
-        });
+        .footer(|_, _| t("licenses.libraries.footer"));
 
-    SettingPage::new("Licenses").icon(IconName::Info).groups(vec![own, assets, libraries])
+    SettingPage::new(t("licenses.page.title")).icon(IconName::Info).groups(vec![own, assets, libraries])
 }
 
 /// A scrollable list of one license's notices; each opens to its full text.
@@ -217,7 +208,7 @@ fn open_notices(index: usize, window: &mut Window, cx: &mut App) {
                     DialogFooter::new().child(
                         Button::new("notices-close")
                             .outline()
-                            .label("Close")
+                            .label(t("licenses.notices.close"))
                             .on_click(|_, window, cx| window.close_dialog(cx)),
                     ),
                 )

@@ -29,6 +29,7 @@ use super::{
     connection::{ConnectionEvent, SocketConnection},
 };
 use crate::{
+    i18n::{t, t_with},
     app_model::{AppModel, ModelEvent},
     components::{Autosave, KeyValueEvent, KeyValueTable, Syntax, VarEditor, page, request_bar},
     engine::{call, call_in, describe},
@@ -52,8 +53,8 @@ impl Section {
 
     fn label(self) -> &'static str {
         match self {
-            Section::Message => "Message",
-            Section::Headers => "Headers",
+            Section::Message => t("session.websocket.tab_message"),
+            Section::Headers => t("session.rest.tab_headers"),
         }
     }
 }
@@ -102,10 +103,10 @@ impl WsSession {
     ) -> Self {
         let workspace_id = model.read(cx).workspace_id().to_owned();
         let socket_id = saved_id.clone().unwrap_or_else(|| format!("draft-{}", cx.entity_id().as_u64()));
-        let name = cx.new(|cx| InputState::new(window, cx).placeholder("Connection name"));
+        let name = cx.new(|cx| InputState::new(window, cx).placeholder(t("session.websocket.name_placeholder")));
         let url = VarEditor::line("wss://example.test/socket", window, cx);
-        let headers = cx.new(|cx| KeyValueTable::new("Header", "Value", window, cx));
-        let message = VarEditor::code(Syntax::Json, "Message to send", window, cx);
+        let headers = cx.new(|cx| KeyValueTable::new(t("session.rest.column_header"), t("session.rest.column_value"), window, cx));
+        let message = VarEditor::code(Syntax::Json, t("session.websocket.message_placeholder"), window, cx);
         let connection = cx.new(|cx| SocketConnection::new(window, cx));
 
         let mut subscriptions = Vec::new();
@@ -205,7 +206,7 @@ impl WsSession {
                 v.get("entity")
                     .and_then(Value::as_object)
                     .cloned()
-                    .ok_or_else(|| "The request no longer exists.".to_owned())
+                    .ok_or_else(|| t("session.rest.gone").to_owned())
             }) {
                 Ok(entity) => {
                     this.adopt_entity(entity, window, cx);
@@ -277,7 +278,7 @@ impl WsSession {
             return None;
         }
         let fields = self.fields(cx);
-        (fields != self.baseline && fields.url.is_empty()).then(|| "Not saved. Enter a URL.".into())
+        (fields != self.baseline && fields.url.is_empty()).then(|| t("session.rest.problem_no_url").into())
     }
 
     /// A saved request is written a moment after each change; a draft waits for Save.
@@ -404,8 +405,10 @@ impl WsSession {
         }
         if fields.url.is_empty() {
             if mode == SaveMode::Explicit {
-                window
-                    .push_notification(Notification::warning("Enter a URL before saving.").title("Can't save yet"), cx);
+                window.push_notification(
+                    Notification::warning(t("session.rest.save_no_url")).title(t("session.rest.save_no_url_title")),
+                    cx,
+                );
             }
             return;
         }
@@ -451,7 +454,7 @@ impl WsSession {
                         }
                     }
                     None => window
-                        .push_notification(Notification::error("The engine did not return the saved request."), cx),
+                        .push_notification(Notification::error(t("session.rest.engine_no_saved")), cx),
                 },
                 Ok(_) => {
                     this.entity = this.edited_entity(&fields);
@@ -460,7 +463,7 @@ impl WsSession {
                 }
                 Err(error) => {
                     window.push_notification(
-                        Notification::error(describe(&error)).title("Couldn't save the request"),
+                        Notification::error(describe(&error)).title(t("session.rest.save_failed_title")),
                         cx,
                     );
                     cx.emit(SessionEvent::Changed);
@@ -479,8 +482,10 @@ impl WsSession {
         }
         let fields = self.fields(cx);
         if fields.url.is_empty() {
-            window
-                .push_notification(Notification::warning("Enter a URL to connect.").title("Nothing to connect to"), cx);
+            window.push_notification(
+                Notification::warning(t("session.connection.connect_no_url")).title(t("session.connection.connect_no_url_title")),
+                cx,
+            );
             return;
         }
         self.socket_id = self.saved_id.clone().unwrap_or_else(|| self.socket_id.clone());
@@ -502,14 +507,14 @@ impl WsSession {
                     result
                         .get("error")
                         .and_then(Value::as_str)
-                        .unwrap_or("The connection could not be opened.")
+                        .unwrap_or(t("session.websocket.open_failed"))
                         .to_owned(),
                 ),
                 Ok(_) => None,
                 Err(error) => Some(describe(&error)),
             };
             if let Some(message) = failure {
-                window.push_notification(Notification::error(message).title("Couldn't connect"), cx);
+                window.push_notification(Notification::error(message).title(t("session.connection.connect_failed")), cx);
             }
         });
     }
@@ -519,7 +524,7 @@ impl WsSession {
         let payload = json!({ "workspaceId": self.workspace_id, "socketId": self.socket_id });
         call(&client, cx, "ws.disconnect", payload, |_, outcome, cx| {
             if let Err(error) = outcome {
-                cx.emit(SessionEvent::Notice(format!("Couldn't disconnect. {}", describe(&error))));
+                cx.emit(SessionEvent::Notice(t_with("session.connection.disconnect_failed", &[("error", &describe(&error))])));
             }
         });
     }
@@ -541,13 +546,13 @@ impl WsSession {
         call_in(&client, window, cx, "ws.send", payload, |_this, outcome, window, cx| {
             let failure = match outcome {
                 Ok(result) if result.get("ok").and_then(Value::as_bool) == Some(false) => {
-                    Some(result.get("error").and_then(Value::as_str).unwrap_or("The message was not sent.").to_owned())
+                    Some(result.get("error").and_then(Value::as_str).unwrap_or(t("session.websocket.send_failed")).to_owned())
                 }
                 Ok(_) => None,
                 Err(error) => Some(describe(&error)),
             };
             if let Some(message) = failure {
-                window.push_notification(Notification::error(message).title("Couldn't send the message"), cx);
+                window.push_notification(Notification::error(message).title(t("session.websocket.send_failed_title")), cx);
             }
         });
     }
@@ -564,7 +569,7 @@ impl Render for WsSession {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
         match &self.load {
-            LoadState::Loading => return page::loading("Loading request…"),
+            LoadState::Loading => return page::loading(t("session.rest.loading")),
             LoadState::Failed(message) => {
                 return div()
                     .size_full()
@@ -572,7 +577,7 @@ impl Render for WsSession {
                     .bg(theme.background)
                     .child(
                         Alert::error("load-failed", SharedString::from(message.clone()))
-                            .title("Couldn't open the request"),
+                            .title(t("session.rest.open_failed")),
                     )
                     .into_any_element();
             }
@@ -593,17 +598,17 @@ impl Render for WsSession {
                 self.url.line_field(cx).disabled(state.is_live()),
                 if state.is_live() {
                     Button::new("disconnect-socket")
-                        .label("Disconnect")
+                        .label(t("session.connection.disconnect"))
                         .on_click(cx.listener(|this, _, _, cx| this.disconnect(cx)))
                 } else {
                     Button::new("connect-socket")
                         .primary()
-                        .label("Connect")
+                        .label(t("session.connection.connect"))
                         .on_click(cx.listener(|this, _, window, cx| this.connect(window, cx)))
                 },
                 [Button::new("send-socket-message")
                     .primary()
-                    .label("Send message")
+                    .label(t("session.protocol.send_message"))
                     .disabled(!can_send)
                     .on_click(cx.listener(|this, _, window, cx| this.send_message(window, cx)))],
                 cx,

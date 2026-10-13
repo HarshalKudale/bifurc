@@ -3,6 +3,8 @@
 
 use serde_json::Value;
 
+use crate::i18n::t;
+
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum VaultState {
     /// The engine has no key for it: its secrets cannot be used until the passphrase is given.
@@ -14,10 +16,10 @@ pub enum VaultState {
 
 impl VaultState {
     pub fn label(self) -> &'static str {
-        match self {
-            VaultState::Sealed => "Sealed",
-            VaultState::Unsealed => "Unsealed",
-        }
+        t(match self {
+            VaultState::Sealed => "model.vault.sealed",
+            VaultState::Unsealed => "model.vault.unsealed",
+        })
     }
 }
 

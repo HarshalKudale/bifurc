@@ -24,6 +24,7 @@ use gpui_kit::{
 use serde_json::Value;
 
 use crate::{
+    i18n::{t, t_with},
     components::{
         BodyPane, Syntax,
         stream_log::{LogRow, LogSearch, OpenRows, Way, found, log_row, nothing_found, search_button},
@@ -287,13 +288,16 @@ impl Exchange {
                 this.section = SECTIONS[*ix];
                 cx.notify();
             }))
-            .child(Tab::new().label("Body"))
-            .child(Tab::new().label(format!("Headers ({})", response.headers.len())))
+            .child(Tab::new().label(t("session.response.tab_body")))
+            .child(Tab::new().label(t_with("session.response.tab_headers", &[("count", &response.headers.len())])))
             .child(Tab::new().label(if response.tests.is_empty() {
-                "Tests".to_owned()
+                t("session.response.tab_tests").to_owned()
             } else {
                 let passed = response.tests.iter().filter(|t| t.passed).count();
-                format!("Tests ({passed}/{})", response.tests.len())
+                t_with(
+                    "session.response.tab_tests_count",
+                    &[("passed", &passed), ("total", &response.tests.len())],
+                )
             }))
     }
 
@@ -319,8 +323,8 @@ impl Exchange {
         let name = suggested_file_name("", "response", binary.content_type());
         save_to_file(binary.bytes().to_vec(), name, cx, |this, outcome, cx| {
             this.saved_note = Some(match outcome {
-                Ok(path) => format!("Saved to {}", path.display()).into(),
-                Err(error) => format!("Couldn't save the file. {error}").into(),
+                Ok(path) => t_with("session.response.saved_to", &[("path", &path.display())]).into(),
+                Err(error) => t_with("session.response.save_failed", &[("error", &error)]).into(),
             });
             cx.notify();
         });
@@ -352,7 +356,7 @@ impl Exchange {
                             .ghost()
                             .small()
                             .icon(IconName::File)
-                            .label("Save to file…")
+                            .label(t("session.response.save_file"))
                             .on_click(cx.listener(|this, _, _, cx| this.save_binary(cx))),
                     ),
             )
@@ -369,10 +373,12 @@ impl Exchange {
                     self.render_binary(&binary, cx)
                 }
                 Section::Body if response.is_binary => page::empty(
-                    "Binary body",
-                    format!("{} of data that can't be shown as text.", response.body_size_label()),
+                    t("session.response.binary_title"),
+                    t_with("session.response.binary_description", &[("size", &response.body_size_label())]),
                 ),
-                Section::Body if response.size_bytes == 0 => page::empty("Empty body", "The response has no body."),
+                Section::Body if response.size_bytes == 0 => {
+                    page::empty(t("session.response.empty_title"), t("session.response.empty_description"))
+                }
                 Section::Body => self.render_body(),
                 Section::Headers => v_flex()
                     .id("response-headers")
@@ -390,7 +396,7 @@ impl Exchange {
                     }))
                     .into_any_element(),
                 Section::Tests if response.tests.is_empty() => {
-                    page::empty("No tests ran", "Add a test script to the request to check its response.")
+                    page::empty(t("session.response.no_tests_title"), t("session.response.no_tests_description"))
                 }
                 Section::Tests => v_flex()
                     .id("response-tests")
@@ -403,9 +409,9 @@ impl Exchange {
                             .gap_2()
                             .items_start()
                             .child(div().w_16().flex_none().child(if test.passed {
-                                Tag::success().child("Passed")
+                                Tag::success().child(t("session.response.test_passed"))
                             } else {
-                                Tag::danger().child("Failed")
+                                Tag::danger().child(t("session.response.test_failed"))
                             }))
                             .child(v_flex().flex_1().min_w_0().child(test.name.clone()).when_some(
                                 test.error.clone(),
@@ -434,7 +440,7 @@ impl Exchange {
                         div()
                             .text_sm()
                             .text_color(theme.muted_foreground)
-                            .child(format!("{} ms", response.duration_ms)),
+                            .child(t_with("session.response.duration", &[("ms", &response.duration_ms)])),
                     )
                     .child(div().text_sm().text_color(theme.muted_foreground).child(response.body_size_label()))
                     .child(div().flex_1())
@@ -442,7 +448,7 @@ impl Exchange {
             )
             .children(response.script_errors.iter().enumerate().map(|(ix, error)| {
                 div().px_3().pt_2().child(
-                    Alert::warning(("script-error", ix), SharedString::from(error.clone())).title("A script failed"),
+                    Alert::warning(("script-error", ix), SharedString::from(error.clone())).title(t("session.response.script_failed")),
                 )
             }))
             .child(div().flex_none().px_3().child(self.tabs(response, cx)))
@@ -457,7 +463,7 @@ impl Exchange {
         let row = LogRow {
             id: entry.id.clone(),
             ts: entry.ts,
-            tag: if entry.sent { "Sent" } else { "Received" }.to_owned(),
+            tag: if entry.sent { t("session.log.sent") } else { t("session.log.received") }.to_owned(),
             outline: entry.sent,
             way: Some(if entry.sent { Way::Sent } else { Way::Received }),
             note: None,
@@ -489,7 +495,7 @@ impl Exchange {
         let ok = live.code == 0;
         let selected = if self.section == Section::Headers { 1 } else { 0 };
         let tag = if live.running {
-            Tag::warning().child("Open")
+            Tag::warning().child(t("session.log.open"))
         } else if ok {
             Tag::success().child("OK")
         } else {
@@ -505,7 +511,7 @@ impl Exchange {
         };
         let content = match self.section {
             Section::Headers if live.metadata.is_empty() => {
-                page::empty("No metadata", "The server has sent no headers or trailers yet.")
+                page::empty(t("session.response.no_metadata_title"), t("session.response.no_metadata_live_description"))
             }
             Section::Headers => v_flex()
                 .id("grpc-live-metadata")
@@ -523,7 +529,10 @@ impl Exchange {
                 }))
                 .into_any_element(),
             _ if live.entries.is_empty() => {
-                page::empty(if live.running { "Waiting for messages" } else { "No messages" }, "Messages appear here as they are sent and received.")
+                page::empty(
+                    if live.running { t("session.log.waiting_for_messages") } else { t("session.log.no_messages") },
+                    t("session.log.messages_appear_here"),
+                )
             }
             _ if shown.is_empty() => nothing_found(),
             _ => v_flex()
@@ -543,8 +552,11 @@ impl Exchange {
                     .pt_2()
                     .gap_3()
                     .child(tag)
-                    .child(div().text_sm().text_color(theme.muted_foreground).child(format!("{received} received · {sent} sent")))
-                    .child(div().text_sm().text_color(theme.muted_foreground).child("times in UTC"))
+                    .child(div().text_sm().text_color(theme.muted_foreground).child(t_with(
+                        "session.log.received_sent",
+                        &[("received", &received), ("sent", &sent)],
+                    )))
+                    .child(div().text_sm().text_color(theme.muted_foreground).child(t("session.log.times_utc")))
                     .child(div().flex_1())
                     .child(search_button("search-log").disabled(self.section == Section::Headers).on_click(
                         cx.listener(|this, _, window, cx| {
@@ -555,7 +567,7 @@ impl Exchange {
             )
             .when(!live.running && !ok && !live.message.is_empty(), |this| {
                 this.child(div().px_3().pt_2().child(
-                    Alert::error("grpc-live-status", SharedString::from(live.message.clone())).title("The call failed"),
+                    Alert::error("grpc-live-status", SharedString::from(live.message.clone())).title(t("session.response.call_failed")),
                 ))
             })
             .child(
@@ -568,8 +580,8 @@ impl Exchange {
                             this.section = if *ix == 1 { Section::Headers } else { Section::Body };
                             cx.notify();
                         }))
-                        .child(Tab::new().label("Messages"))
-                        .child(Tab::new().label(format!("Metadata ({})", live.metadata.len()))),
+                        .child(Tab::new().label(t("session.response.tab_messages")))
+                        .child(Tab::new().label(t_with("session.response.tab_metadata", &[("count", &live.metadata.len())]))),
                 ),
             )
             .children(search_bar.map(|bar| div().flex_none().pt_2().child(bar)))
@@ -583,7 +595,7 @@ impl Exchange {
         let selected = if self.section == Section::Headers { 1 } else { 0 };
         let content = match self.section {
             Section::Headers if reply.metadata.is_empty() => {
-                page::empty("No metadata", "The server sent no headers or trailers with this response.")
+                page::empty(t("session.response.no_metadata_title"), t("session.response.no_metadata_description"))
             }
             Section::Headers => v_flex()
                 .id("grpc-metadata")
@@ -601,8 +613,8 @@ impl Exchange {
                 }))
                 .into_any_element(),
             _ if reply.messages == 0 => page::empty(
-                if ok { "No messages" } else { "No response" },
-                if ok { "The call finished without a message." } else { "The call failed before a message arrived." },
+                if ok { t("session.log.no_messages") } else { t("session.response.no_response_title") },
+                if ok { t("session.response.finished_without_message") } else { t("session.response.failed_before_message") },
             ),
             _ => self.render_body(),
         };
@@ -615,17 +627,17 @@ impl Exchange {
                     .pt_2()
                     .gap_3()
                     .child(if ok { Tag::success() } else { Tag::danger() }.child(grpc_status_name(reply.code)))
-                    .child(div().text_sm().text_color(theme.muted_foreground).child(format!("{} ms", reply.duration_ms)))
+                    .child(div().text_sm().text_color(theme.muted_foreground).child(t_with("session.response.duration", &[("ms", &reply.duration_ms)])))
                     .child(div().text_sm().text_color(theme.muted_foreground).child(match reply.messages {
-                        1 => "1 message".to_owned(),
-                        n => format!("{n} messages"),
+                        1 => t_with("session.response.messages_one", &[("count", &reply.messages)]),
+                        n => t_with("session.response.messages_other", &[("count", &n)]),
                     }))
                     .child(div().flex_1())
                     .child(self.find_button(self.section == Section::Body && reply.messages != 0, cx)),
             )
             .when(!ok && !reply.message.is_empty(), |this| {
                 this.child(div().px_3().pt_2().child(
-                    Alert::error("grpc-status", SharedString::from(reply.message.clone())).title("The call failed"),
+                    Alert::error("grpc-status", SharedString::from(reply.message.clone())).title(t("session.response.call_failed")),
                 ))
             })
             .child(
@@ -638,8 +650,8 @@ impl Exchange {
                             this.section = if *ix == 1 { Section::Headers } else { Section::Body };
                             cx.notify();
                         }))
-                        .child(Tab::new().label("Body"))
-                        .child(Tab::new().label(format!("Metadata ({})", reply.metadata.len()))),
+                        .child(Tab::new().label(t("session.response.tab_body")))
+                        .child(Tab::new().label(t_with("session.response.tab_metadata", &[("count", &reply.metadata.len())]))),
                 ),
             )
             .child(div().flex_1().min_h_0().child(content))
@@ -650,12 +662,12 @@ impl Exchange {
 impl Render for Exchange {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let body = match &self.phase {
-            Phase::Idle => page::empty("No response yet", "Send the request to see what comes back."),
-            Phase::Sending => page::loading("Waiting for the response…"),
+            Phase::Idle => page::empty(t("session.response.idle_title"), t("session.response.idle_description")),
+            Phase::Sending => page::loading(t("session.response.waiting")),
             Phase::Failed(message) => div()
                 .p_3()
                 .child(
-                    Alert::error("send-failed", SharedString::from(message.clone())).title("Couldn't send the request"),
+                    Alert::error("send-failed", SharedString::from(message.clone())).title(t("session.response.send_failed")),
                 )
                 .into_any_element(),
             Phase::Http(_) => {

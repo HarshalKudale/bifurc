@@ -22,6 +22,8 @@ use gpui_kit::{
     div, px, rems, size,
 };
 
+use crate::i18n::t;
+
 /// The width every tab takes. A longer title is cut with an ellipsis.
 const TAB_WIDTH: Rems = rems(11.);
 
@@ -108,7 +110,7 @@ fn render_tab<V: 'static>(
         .child(div().flex_none().text_xs().text_color(theme.muted_foreground).child(tab.badge))
         .child(div().flex_1().min_w_0().overflow_hidden().whitespace_nowrap().text_ellipsis().child(tab.title))
         .children(tab.dirty.then(|| div().flex_none().text_xs().child("●")))
-        .child(Button::new("close-tab").icon(IconName::Close).ghost().xsmall().tooltip("Close").on_click(
+        .child(Button::new("close-tab").icon(IconName::Close).ghost().xsmall().tooltip(t("components.entity_bar.close")).on_click(
             move |event, window, cx| {
                 // The tab under the button would otherwise take the click as a selection.
                 cx.stop_propagation();
@@ -123,12 +125,15 @@ fn render_tab<V: 'static>(
             let item = |label: &'static str, action: TabAction| {
                 PopupMenuItem::new(label).on_click(emit(&menu_view, on_action, action))
             };
-            menu.item(item("Close", TabAction::Close(ix)))
-                .item(item("Close others", TabAction::CloseOthers(ix)).disabled(count < 2))
-                .item(item("Close tabs to the right", TabAction::CloseToRight(ix)).disabled(ix + 1 >= count))
-                .item(item("Close all", TabAction::CloseAll))
+            menu.item(item(t("components.entity_bar.close"), TabAction::Close(ix)))
+                .item(item(t("components.tab_strip.close_others"), TabAction::CloseOthers(ix)).disabled(count < 2))
+                .item(
+                    item(t("components.tab_strip.close_to_right"), TabAction::CloseToRight(ix))
+                        .disabled(ix + 1 >= count),
+                )
+                .item(item(t("components.tab_strip.close_all"), TabAction::CloseAll))
                 .separator()
-                .item(item("Duplicate", TabAction::Duplicate(ix)).disabled(!can_duplicate))
+                .item(item(t("components.tab_strip.duplicate"), TabAction::Duplicate(ix)).disabled(!can_duplicate))
         })
         .into_any_element()
 }
@@ -195,7 +200,7 @@ pub fn tab_strip<V: Render>(
                         .icon(IconName::ChevronDown)
                         .ghost()
                         .small()
-                        .tooltip("Open tabs")
+                        .tooltip(t("components.tab_strip.open_tabs"))
                         .dropdown_menu(move |menu, _, _| {
                             titles.iter().fold(menu.scrollable(true), |menu, (ix, title)| {
                                 menu.item(

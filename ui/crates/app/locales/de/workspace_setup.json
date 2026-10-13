@@ -1,0 +1,67 @@
+{
+  "placeholder.repository_name": "repository-name",
+  "placeholder.workspace_name": "Name des Arbeitsbereichs",
+  "placeholder.filter_repos": "Repositories filtern",
+
+  "error.start_sign_in": "Die Anmeldung konnte nicht gestartet werden. {reason}",
+  "error.sign_in_failed": "Anmeldung fehlgeschlagen. {reason}",
+  "error.sign_in_not_completed": "GitHub hat sie nicht abgeschlossen.",
+  "error.wrong_account": "Die Anmeldung erfolgte als @{login}, dieser Arbeitsbereich gehört aber zu einem anderen Konto.",
+  "error.list_repos": "Die Repositories konnten nicht aufgelistet werden. {message}",
+
+  "git.missing.title": "Git ist nicht installiert",
+  "git.missing.description": "Jetzt erstellte Arbeitsbereiche bestehen aus einfachen Dateien auf diesem Computer: kein Verlauf, kein Audit-Protokoll, keine Möglichkeit, eine Änderung zurückzusetzen, und keine Synchronisierung. Git installieren und dann erneut prüfen, um all das zu erhalten.",
+
+  "login.enter_code": "Diesen Code zur Anmeldung auf GitHub eingeben:",
+  "login.waiting": "Warten auf GitHub",
+
+  "account.heading": "GitHub-Konto",
+  "account.help_team": "Der Arbeitsbereich wird als dieses Konto synchronisiert, mit dem Zugriff, den das Konto erhalten hat. Der Arbeitsbereich einer anderen Person muss in der Bifurc Console diesem Konto übergeben werden, bevor er importiert werden kann.",
+  "account.help_owner": "Der Arbeitsbereich wird als dieses Konto synchronisiert. Nur das Konto, dem ein Arbeitsbereich gehört, kann ihn verwenden.",
+  "account.help_optional": "Optional. Nur nötig, um diesen Arbeitsbereich mit einem Remote-Repository zu synchronisieren; kann später hinzugefügt werden.",
+  "account.not_set_up": "Die GitHub-Anmeldung ist in diesem Build nicht eingerichtet, daher bleiben Arbeitsbereiche auf diesem Computer.",
+  "account.login": "@{login}",
+  "account.login_signed_out": "@{login} (abgemeldet)",
+  "account.none": "Kein Konto",
+  "account.sign_in_again": "Erneut anmelden",
+  "account.add": "Konto hinzufügen",
+
+  "sign_in.title": "Bei GitHub anmelden",
+
+  "mode.new": "Neuer Arbeitsbereich",
+  "mode.import": "Von GitHub importieren",
+
+  "repos.heading": "Repository",
+  "repos.sign_in_first": "Anmelden, um eines der eigenen Repositories auszuwählen.",
+  "repos.loading": "Repositories werden geladen",
+  "repos.empty_team": "Dieses Konto hat noch keine Repositories, weder eigene noch mit ihm geteilte.",
+  "repos.empty_owner": "Diesem Konto gehören noch keine Repositories.",
+  "repos.read_only_note": "Das Konto hat Lesezugriff auf dieses Repository, daher ist der Arbeitsbereich hier schreibgeschützt: Es wird übernommen, was das Repository erhält, und Änderungen bleiben auf diesem Gerät.",
+
+  "tag.private": "Privat",
+  "tag.shared": "Geteilt",
+  "tag.read_only": "Schreibgeschützt",
+  "tag.on_device": "Auf diesem Gerät",
+
+  "publish.name_label": "Name des Repositorys",
+  "publish.name_help": "Im Konto wird ein neues Repository erstellt. In ein bestehendes wird nie gepusht, und das Repository lässt sich danach nicht mehr ändern.",
+  "publish.private": "Privates Repository",
+  "publish.sync_all": "Auch alles synchronisieren, was nie synchronisiert wurde, ein Commit pro Element",
+
+  "name.label": "Name",
+
+  "submit.publish": "Veröffentlichen",
+  "submit.create": "Arbeitsbereich erstellen",
+  "submit.import": "Importieren",
+
+  "dialog.publish": "Auf GitHub veröffentlichen",
+  "dialog.add": "Arbeitsbereich hinzufügen",
+
+  "button.check_again": "Erneut prüfen",
+  "button.copy_code": "Code kopieren",
+  "button.open_github": "GitHub öffnen",
+  "button.cancel": "Abbrechen",
+  "button.try_again": "Erneut versuchen",
+  "button.close": "Schließen",
+  "button.back": "Zurück"
+}

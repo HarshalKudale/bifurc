@@ -25,6 +25,7 @@ use crate::{
         page,
     },
     engine::{call, failure, patch_entity},
+    i18n::{t, t_with},
     model::{config::MappingInfo, git::FileState},
 };
 
@@ -48,7 +49,7 @@ pub struct MappingsScreen {
 
 impl MappingsScreen {
     pub fn new(model: Entity<AppModel>, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let filter = cx.new(|cx| InputState::new(window, cx).placeholder("Filter mappings"));
+        let filter = cx.new(|cx| InputState::new(window, cx).placeholder(t("mappings.filter.placeholder")));
         let subscriptions = vec![
             cx.observe(&model, |_, _, cx| cx.notify()),
             cx.subscribe(&filter, |_, _, event: &InputEvent, cx| {
@@ -60,8 +61,9 @@ impl MappingsScreen {
         Self { model, filter, _subscriptions: subscriptions }
     }
 
-    fn report(&mut self, what: &str, message: String, cx: &mut Context<Self>) {
-        self.model.update(cx, |model, cx| model.notice(format!("{what} {message}"), cx));
+    /// `what` is a key whose text takes the engine's `{message}`.
+    fn report(&mut self, what: &'static str, message: String, cx: &mut Context<Self>) {
+        self.model.update(cx, |model, cx| model.notice(t_with(what, &[("message", &message)]), cx));
     }
 
     pub fn prompt_new(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -69,12 +71,12 @@ impl MappingsScreen {
             cx.weak_entity(),
             window,
             cx,
-            "New mapping",
-            "Create",
+            t("mappings.prompt.new.title"),
+            t("mappings.button.create"),
             vec![
-                PromptField::new("Subdomain", "api  (becomes api.localhost)"),
-                PromptField::new("Target", "localhost:3000"),
-                PromptField::new("Label", "Optional name").optional(),
+                PromptField::new(t("mappings.field.subdomain"), t("mappings.field.subdomain_placeholder")),
+                PromptField::new(t("mappings.column.target"), "localhost:3000"),
+                PromptField::new(t("mappings.column.label"), t("mappings.field.label_placeholder")).optional(),
             ],
             |this, values, _, cx| {
                 let model = this.model.read(cx);
@@ -89,7 +91,7 @@ impl MappingsScreen {
                 let payload = json!({ "kind": "mappings", "workspaceId": model.workspace_id(), "entity": entity });
                 call(&client, cx, "entity.create", payload, |this, outcome, cx| {
                     if let Some(message) = failure(&outcome) {
-                        this.report("Couldn't create the mapping.", message, cx);
+                        this.report("mappings.error.create", message, cx);
                     }
                 });
             },
@@ -102,12 +104,12 @@ impl MappingsScreen {
             cx.weak_entity(),
             window,
             cx,
-            format!("Edit “{}”", mapping.domain),
-            "Save",
+            t_with("mappings.prompt.edit.title", &[("domain", &mapping.domain)]),
+            t("mappings.button.save"),
             vec![
-                PromptField::new("Subdomain", "api").initial(subdomain_of(&mapping.domain)),
-                PromptField::new("Target", "localhost:3000").initial(mapping.target.clone()),
-                PromptField::new("Label", "Optional name")
+                PromptField::new(t("mappings.field.subdomain"), "api").initial(subdomain_of(&mapping.domain)),
+                PromptField::new(t("mappings.column.target"), "localhost:3000").initial(mapping.target.clone()),
+                PromptField::new(t("mappings.column.label"), t("mappings.field.label_placeholder"))
                     .initial(mapping.label.clone().unwrap_or_default())
                     .optional(),
             ],
@@ -121,7 +123,7 @@ impl MappingsScreen {
                 patch.insert("label".into(), json!(values[2]));
                 patch_entity(&client, cx, &workspace_id, "mappings", &id, patch, |this, outcome, cx| {
                     if let Err(message) = outcome {
-                        this.report("Couldn't save the mapping.", message, cx);
+                        this.report("mappings.error.save", message, cx);
                     }
                 });
             },
@@ -135,15 +137,15 @@ impl MappingsScreen {
             cx.weak_entity(),
             window,
             cx,
-            format!("Delete mapping “{}”?", mapping.domain),
+            t_with("mappings.confirm.delete.title", &[("domain", &mapping.domain)]),
             consequence,
-            "Delete",
+            t("mappings.button.delete"),
             move |this, _, cx| {
                 let client = this.model.read(cx).client().clone();
                 let payload = json!({ "kind": "mappings", "id": id });
                 call(&client, cx, "entity.delete", payload, |this, outcome, cx| {
                     if let Some(message) = failure(&outcome) {
-                        this.report("Couldn't delete the mapping.", message, cx);
+                        this.report("mappings.error.delete", message, cx);
                     }
                 });
             },
@@ -155,14 +157,14 @@ impl MappingsScreen {
         self.model.update(cx, |model, cx| model.publish(paths, cx));
     }
 
-    fn confirm_revert(&mut self, paths: Vec<String>, what: String, window: &mut Window, cx: &mut Context<Self>) {
+    fn confirm_revert(&mut self, paths: Vec<String>, title: String, window: &mut Window, cx: &mut Context<Self>) {
         confirm_danger(
             cx.weak_entity(),
             window,
             cx,
-            format!("Revert {what}?"),
-            "Go back to the last synced version. Mappings that were never synced are removed.",
-            "Revert",
+            title,
+            t("mappings.confirm.revert.consequence"),
+            t("mappings.button.revert"),
             move |this, _, cx| this.model.update(cx, |model, cx| model.revert_paths(paths.clone(), cx)),
         );
     }
@@ -173,9 +175,9 @@ impl MappingsScreen {
         let path = self.model.read(cx).git().entity_path(&mapping.id).map(str::to_owned);
         let busy = self.model.read(cx).is_publishing();
         let state_label = match state {
-            Some(FileState::New) => "New",
-            Some(FileState::Modified) => "Modified",
-            Some(FileState::Deleted) => "Deleted",
+            Some(FileState::New) => t("mappings.state.new"),
+            Some(FileState::Modified) => t("mappings.state.modified"),
+            Some(FileState::Deleted) => t("mappings.state.deleted"),
             Some(FileState::Clean) | None => "",
         };
         let changed = !state_label.is_empty();
@@ -228,13 +230,13 @@ impl MappingsScreen {
                     .flex_1()
                     .min_w_0()
                     .gap_2()
-                    .child(Button::new(key("revert-delete")).small().label("Revert delete").on_click(
+                    .child(Button::new(key("revert-delete")).small().label(t("mappings.button.revert_delete")).on_click(
                         move |_, _, cx| {
                             let target = Deleted::Entity { kind: "mappings", id: revert_id.clone() };
                             revert_model.update(cx, |model, cx| model.revert_delete(target, cx));
                         },
                     ))
-                    .child(Button::new(key("confirm-delete")).small().label("Confirm delete").on_click(
+                    .child(Button::new(key("confirm-delete")).small().label(t("mappings.button.confirm_delete")).on_click(
                         move |_, _, cx| {
                             let target = Deleted::Entity { kind: "mappings", id: confirm_id.clone() };
                             confirm_model.update(cx, |model, cx| model.confirm_delete(target, cx));
@@ -270,31 +272,31 @@ impl MappingsScreen {
                         let (sync_path, revert_path) = (path.clone(), path.clone());
                         let revert_name = delete.domain.clone();
                         let (edit, delete, url) = (edit.clone(), delete.clone(), url.clone());
-                        menu.item(PopupMenuItem::new("Edit…").on_click(move |_, window, cx| {
+                        menu.item(PopupMenuItem::new(t("mappings.menu.edit")).on_click(move |_, window, cx| {
                             let mapping = edit.clone();
                             edit_view.update(cx, |this, cx| this.prompt_edit(mapping, window, cx)).ok();
                         }))
-                        .item(PopupMenuItem::new("Copy address").on_click(move |_, _, cx| {
+                        .item(PopupMenuItem::new(t("mappings.menu.copy_address")).on_click(move |_, _, cx| {
                             cx.write_to_clipboard(ClipboardItem::new_string(url.clone()));
                         }))
                         .separator()
-                        .item(PopupMenuItem::new("Sync").disabled(!changed || busy).on_click(move |_, _, cx| {
+                        .item(PopupMenuItem::new(t("mappings.button.sync")).disabled(!changed || busy).on_click(move |_, _, cx| {
                             if let Some(path) = sync_path.clone() {
                                 sync_view.update(cx, |this, cx| this.sync_paths(vec![path], cx)).ok();
                             }
                         }))
-                        .item(PopupMenuItem::new("Revert…").disabled(!changed || busy).on_click(
+                        .item(PopupMenuItem::new(t("mappings.menu.revert")).disabled(!changed || busy).on_click(
                             move |_, window, cx| {
                                 if let Some(path) = revert_path.clone() {
-                                    let what = format!("“{revert_name}”");
+                                    let title = t_with("mappings.confirm.revert.title_named", &[("name", &revert_name)]);
                                     revert_view
-                                        .update(cx, |this, cx| this.confirm_revert(vec![path], what, window, cx))
+                                        .update(cx, |this, cx| this.confirm_revert(vec![path], title, window, cx))
                                         .ok();
                                 }
                             },
                         ))
                         .separator()
-                        .item(PopupMenuItem::new("Delete…").on_click(
+                        .item(PopupMenuItem::new(t("mappings.menu.delete")).on_click(
                             move |_, window, cx| {
                                 let mapping = delete.clone();
                                 delete_view.update(cx, |this, cx| this.confirm_delete(mapping, window, cx)).ok();
@@ -333,8 +335,8 @@ impl Render for MappingsScreen {
         let busy = model.is_publishing();
         let (sync_paths, revert_paths) = (changed.clone(), changed.clone());
         let header = page::header(
-            "Mappings",
-            "Route a .localhost name to a local server through the proxy.",
+            t("mappings.page.title"),
+            t("mappings.page.description"),
             h_flex()
                 .gap_2()
                 .child(div().w_56().child(
@@ -343,23 +345,23 @@ impl Render for MappingsScreen {
                 .child(
                     Button::new("revert-mappings")
                         .small()
-                        .label("Revert")
-                        .tooltip("Put every changed mapping back to its last synced version")
+                        .label(t("mappings.button.revert"))
+                        .tooltip(t("mappings.revert.tooltip"))
                         .disabled(changed.is_empty() || busy)
                         .on_click(cx.listener(move |this, _, window, cx| {
                             let paths = revert_paths.clone();
-                            let what = match paths.len() {
-                                1 => "1 changed mapping".to_owned(),
-                                count => format!("{count} changed mappings"),
+                            let title = match paths.len() {
+                                1 => t("mappings.confirm.revert.title_one").to_owned(),
+                                count => t_with("mappings.confirm.revert.title_other", &[("count", &count)]),
                             };
-                            this.confirm_revert(paths, what, window, cx);
+                            this.confirm_revert(paths, title, window, cx);
                         })),
                 )
                 .child(
                     Button::new("sync-mappings")
                         .small()
-                        .label("Sync")
-                        .tooltip("Commit the changed mappings (and push them, when there is a remote)")
+                        .label(t("mappings.button.sync"))
+                        .tooltip(t("mappings.sync.tooltip"))
                         .loading(busy)
                         .disabled(changed.is_empty() || busy)
                         .on_click(cx.listener(move |this, _, _, cx| this.sync_paths(sync_paths.clone(), cx))),
@@ -368,7 +370,7 @@ impl Render for MappingsScreen {
                     Button::new("new-mapping")
                         .small()
                         .icon(IconName::Plus)
-                        .label("New mapping")
+                        .label(t("mappings.button.new_mapping"))
                         .on_click(cx.listener(|this, _, window, cx| this.prompt_new(window, cx))),
                 ),
             cx,
@@ -376,14 +378,14 @@ impl Render for MappingsScreen {
 
         let body = if all == 0 {
             page::empty_with_action(
-                "No mappings",
-                "A mapping sends a name such as api.localhost to a server running on your machine.",
+                t("mappings.empty.none.title"),
+                t("mappings.empty.none.description"),
                 Button::new("empty-new-mapping")
-                    .label("New mapping")
+                    .label(t("mappings.button.new_mapping"))
                     .on_click(cx.listener(|this, _, window, cx| this.prompt_new(window, cx))),
             )
         } else if mappings.is_empty() {
-            page::empty("No matches", "No mapping matches the filter.")
+            page::empty(t("mappings.empty.no_matches.title"), t("mappings.empty.no_matches.description"))
         } else {
             let rows: Vec<gpui_kit::AnyElement> =
                 mappings.iter().map(|mapping| self.render_row(mapping, scheme, port, cx)).collect();
@@ -400,13 +402,13 @@ impl Render for MappingsScreen {
                         .text_color(theme.muted_foreground)
                         .border_b_1()
                         .border_color(theme.border)
-                        .child(div().w_12().flex_none().child("On"))
-                        .child(div().flex_1().child("Name"))
+                        .child(div().w_12().flex_none().child(t("mappings.column.on")))
+                        .child(div().flex_1().child(t("mappings.column.name")))
                         // The lane the arrow occupies in the rows.
                         .child(div().size_4().flex_none())
-                        .child(div().flex_1().child("Target"))
-                        .child(div().w_48().flex_none().child("Label"))
-                        .child(div().w_24().flex_none().child("Status"))
+                        .child(div().flex_1().child(t("mappings.column.target")))
+                        .child(div().w_48().flex_none().child(t("mappings.column.label")))
+                        .child(div().w_24().flex_none().child(t("mappings.column.status")))
                         .child(div().w_8().flex_none()),
                 )
                 .child(v_flex().id("mapping-rows").flex_1().min_h_0().overflow_y_scroll().children(rows))

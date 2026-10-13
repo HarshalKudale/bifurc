@@ -21,7 +21,10 @@ use gpui_kit::{
 use serde_json::Value;
 
 use super::{BodyPane, page};
-use crate::model::traffic::clock_utc;
+use crate::{
+    i18n::{t, t_with},
+    model::traffic::clock_utc,
+};
 
 /// Which way a message went, for a log that has both.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -107,7 +110,7 @@ impl OpenRows {
 /// The button that starts a search, shown at the top of every response: a log is searched through its rows,
 /// a single body with its own find.
 pub fn search_button(id: &'static str) -> Button {
-    Button::new(id).ghost().small().icon(IconName::Search).tooltip("Search")
+    Button::new(id).ghost().small().icon(IconName::Search).tooltip(t("components.search"))
 }
 
 /// The search of a log: a field above the rows, which then show only the messages that have the text.
@@ -120,7 +123,7 @@ pub struct LogSearch {
 impl LogSearch {
     /// `on_change` runs in the owner when the text searched for changes.
     pub fn new<T: 'static>(window: &mut Window, cx: &mut Context<T>, on_change: fn(&mut T, &mut Context<T>)) -> Self {
-        let input = cx.new(|cx| InputState::new(window, cx).placeholder("Search messages"));
+        let input = cx.new(|cx| InputState::new(window, cx).placeholder(t("components.stream_log.search_placeholder")));
         let subscription = cx.subscribe(&input, move |this, _, event: &InputEvent, cx| {
             if matches!(event, InputEvent::Change) {
                 on_change(this, cx);
@@ -165,7 +168,7 @@ impl LogSearch {
                             .flex_none()
                             .text_sm()
                             .text_color(theme.muted_foreground)
-                            .child(format!("{shown} of {total}")),
+                            .child(t_with("components.stream_log.count", &[("shown", &shown), ("total", &total)])),
                     )
                 })
                 .into_any_element()
@@ -180,7 +183,7 @@ pub fn found(needle: Option<&str>, texts: &[&str]) -> bool {
 
 /// What a log shows when no row has the text searched for.
 pub fn nothing_found() -> AnyElement {
-    page::empty("No matches", "No message has the text you searched for.")
+    page::empty(t("components.stream_log.no_matches"), t("components.stream_log.no_matches_description"))
 }
 
 /// The row, opened to the whole message when it has a `body`. `on_toggle` runs when it is clicked.
