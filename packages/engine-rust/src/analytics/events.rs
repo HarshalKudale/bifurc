@@ -9,6 +9,7 @@ use serde_json::{Map, Value, json};
 
 use crate::{
     kernel::Scope,
+    protocol::ErrorCode,
     transport::scopes::required_scope_for,
     utils::json::{bool_of, opt_str, str_of, truthy},
 };
@@ -293,7 +294,7 @@ pub fn complete(event: &mut Event, action: &str, result: &Value) -> bool {
         event.properties.insert("reason".into(), json!("not_owner"));
         return true;
     }
-    if result.get("ok") == Some(&json!(false)) || opt_str(result, "status") == Some("failed") {
+    if declined(result) {
         return false;
     }
     if action == "healthbar.saveServices" {
@@ -312,17 +313,118 @@ pub fn complete(event: &mut Event, action: &str, result: &Value) -> bool {
     true
 }
 
+/// The code of a command that answered, and answered that it could not do it.
+pub const NOT_OK: &str = "NOT_OK";
+
+/// Whether `result` is an answer that says the command did not do what was asked.
+fn declined(result: &Value) -> bool {
+    result.get("ok") == Some(&json!(false)) || opt_str(result, "status") == Some("failed")
+}
+
+fn failed(action: &str, code: &str) -> Option<Event> {
+    event("command failed", json!({ "command": action, "code": code }))
+}
+
 /// The one event of a finished command, or `None` when it has none. `described` is what [`describe`] made of
 /// it before it ran; `result` is its data, or its error code. A command that succeeded is the event that
-/// describes it, or else its own name; one that failed is `command failed`. Nothing but the name and the code
-/// leaves with those two.
+/// describes it, or else its own name. One that failed is `command failed`, whether it answered with an error
+/// or with a result that says it could not ([`NOT_OK`], and the machine word the result gives as its
+/// `reason`). Nothing but the name, the code and that word leaves with a failure.
+///
+/// What an interface does on its own is an event only when the engine itself failed at it, and then one per
+/// send, however often the interface asked.
 pub fn finished(described: Option<Event>, action: &str, result: Result<&Value, &str>) -> Option<Event> {
+    let not_ok = |result: &Value| {
+        let mut event = failed(action, NOT_OK)?;
+        if let Some(reason) = opt_str(result, "reason") {
+            event.properties.insert("reason".into(), json!(label(reason)));
+        }
+        Some(event)
+    };
     match (result, described) {
-        (Ok(result), Some(mut described)) => complete(&mut described, action, result).then_some(described),
-        (Ok(_), None) => is_user_action(action).then(|| event(action, json!({}))).flatten(),
-        (Err(code), _) => is_user_action(action)
-            .then(|| event("command failed", json!({ "command": action, "code": code })))
-            .flatten(),
+        (Ok(result), Some(mut described)) => {
+            if complete(&mut described, action, result) {
+                Some(described)
+            } else if declined(result) {
+                not_ok(result)
+            } else {
+                None
+            }
+        }
+        (Ok(_), None) if !is_user_action(action) => None,
+        (Ok(result), None) if declined(result) => not_ok(result),
+        (Ok(_), None) => event(action, json!({})),
+        (Err(code), _) if is_user_action(action) => failed(action, code),
+        (Err(code), _) if code == ErrorCode::EngineError.as_str() => {
+            let mut event = failed(action, code)?;
+            event.replaces = Some(format!("failed/{action}"));
+            Some(event)
+        }
+        (Err(_), _) => None,
+    }
+}
+
+/// Something that failed in the engine with no command to answer for it: `what` is a fixed word of the code
+/// that noticed (`listener_bind`). One per send, however often it happened.
+pub fn failure(what: &'static str) -> Event {
+    Event {
+        name: "engine failure".to_string(),
+        properties: Map::from_iter([("what".to_string(), json!(what))]),
+        replaces: Some(format!("failure/{what}")),
+    }
+}
+
+/// Where in Bifurc's code a panic was, as a file of a crate (`engine-rust/src/main.rs`). A packaged build
+/// already names its files that way; a build made anywhere else names them under the home directory of
+/// whoever built it, and that part is cut off.
+fn place(file: &str) -> String {
+    let path = file.replace('\\', "/");
+    let absolute = path.starts_with('/') || path.as_bytes().get(1) == Some(&b':');
+    let kept = match path.rfind("/src/") {
+        Some(at) if absolute => &path[path[..at].rfind('/').map_or(0, |slash| slash + 1)..],
+        _ if absolute => path.rsplit('/').next().unwrap_or(""),
+        _ => path.as_str(),
+    };
+    let plain = !kept.is_empty()
+        && kept.len() <= 200
+        && kept.bytes().all(|b| b.is_ascii_alphanumeric() || matches!(b, b'_' | b'-' | b'.' | b'/'));
+    if plain { kept.to_string() } else { "unknown".to_string() }
+}
+
+/// What a crash report (`bifurc_protocol::crash`) becomes. A panic is a PostHog `$exception`, so that it is
+/// grouped and tracked as an error there: which process, which version, and the file and line of Bifurc's
+/// code. The message and the backtrace of the report can hold what a user typed, and stay in the file.
+pub fn reported(report: &Value) -> Option<Event> {
+    let process = label(str_of(report, "process"));
+    let version = label(str_of(report, "version"));
+    match opt_str(report, "kind") {
+        Some("failure") => event(
+            "app failure",
+            json!({ "process": process, "app_version": version, "what": label(str_of(report, "what")) }),
+        ),
+        Some("panic") => {
+            let mut parts = str_of(report, "location").rsplitn(3, ':');
+            let column = parts.next().and_then(|n| n.parse::<u32>().ok());
+            let line = parts.next().and_then(|n| n.parse::<u32>().ok());
+            let file = place(parts.next().unwrap_or(""));
+            event(
+                "$exception",
+                json!({
+                    "process": process,
+                    "app_version": version,
+                    "$exception_list": [{
+                        "type": format!("{process} panic"),
+                        "value": format!("panicked at {file}:{}", line.unwrap_or(0)),
+                        "mechanism": { "handled": false, "synthetic": false },
+                        "stacktrace": { "type": "raw", "frames": [{
+                            "platform": "custom", "lang": "rust", "function": "panic", "filename": file,
+                            "lineno": line, "colno": column, "in_app": true, "resolved": true,
+                        }] },
+                    }],
+                }),
+            )
+        }
+        _ => None,
     }
 }
 
@@ -474,10 +576,60 @@ mod tests {
 
         // What an interface does on its own is no event, whether it worked or not.
         assert!(finished(None, "server.status", Ok(&json!({}))).is_none());
-        assert!(finished(None, "server.status", Err("internal")).is_none());
-        // Neither is a described command that did nothing.
+        assert!(finished(None, "server.status", Ok(&json!({ "ok": false }))).is_none());
+        assert!(finished(None, "server.status", Err("NOT_FOUND")).is_none());
+        // Unless the engine itself failed at it: once per send.
+        let broken = finished(None, "server.status", Err("ENGINE_ERROR")).unwrap();
+        assert_eq!(properties(&broken), json!({ "command": "server.status", "code": "ENGINE_ERROR" }));
+        assert_eq!(broken.replaces.as_deref(), Some("failed/server.status"));
+    }
+
+    #[test]
+    fn a_command_that_answers_that_it_could_not_is_a_failure() {
         let deleted = describe("workspace.delete", &json!({ "id": "w" }));
-        assert!(finished(deleted, "workspace.delete", Ok(&json!({ "ok": false }))).is_none());
+        let failed = finished(deleted, "workspace.delete", Ok(&json!({ "ok": false, "error": "C:\\secret" }))).unwrap();
+        assert_eq!(
+            (failed.name.as_str(), properties(&failed)),
+            ("command failed", json!({ "command": "workspace.delete", "code": "NOT_OK" }))
+        );
+        // The result's reason goes along when it is a machine word, and only then.
+        let reasoned = json!({ "ok": false, "reason": "notOwner" });
+        let failed = finished(None, "request.parseCurl", Ok(&reasoned)).unwrap();
+        assert_eq!(failed.properties["reason"], "notOwner");
+        let failed = finished(None, "request.parseCurl", Ok(&json!({ "ok": false, "reason": "no such file" }))).unwrap();
+        assert_eq!(failed.properties["reason"], "other");
+        // A result that only says nothing was added is neither an event nor a failure.
+        let saved = describe("healthbar.saveServices", &json!({ "workspaceId": "w" }));
+        assert!(finished(saved, "healthbar.saveServices", Ok(&json!({ "ok": true, "added": 0 }))).is_none());
+    }
+
+    #[test]
+    fn a_crash_report_is_sent_as_where_it_happened_and_nothing_else() {
+        let secret = "s3cret-value";
+        let report = json!({
+            "kind": "panic", "process": "engine", "version": "0.5.0", "thread": secret,
+            "location": "bifurc\\packages\\engine-rust\\src\\main.rs:53:9", "message": secret, "backtrace": secret,
+        });
+        let event = reported(&report).unwrap();
+        assert_eq!(event.name, "$exception");
+        let exception = &event.properties["$exception_list"][0];
+        assert_eq!(exception["type"], "engine panic");
+        assert_eq!(exception["value"], "panicked at bifurc/packages/engine-rust/src/main.rs:53");
+        let frame = &exception["stacktrace"]["frames"][0];
+        assert_eq!((&frame["lineno"], &frame["colno"]), (&json!(53), &json!(9)));
+        assert!(!properties(&event).to_string().contains(secret));
+
+        // A build made in someone's home directory names its files there: only the crate's part is kept.
+        assert_eq!(place("C:\\Users\\eve\\Bifurc\\packages\\engine-rust\\src\\rest\\send.rs"), "engine-rust/src/rest/send.rs");
+        assert_eq!(place("/home/eve/.cargo/registry/src/index/tokio-1.0.0/src/task.rs"), "tokio-1.0.0/src/task.rs");
+        assert_eq!(place("/home/eve/build.rs"), "build.rs");
+        assert_eq!(place("packages/my secret/src/x.rs"), "unknown");
+
+        let failure = json!({ "kind": "failure", "process": "desktop", "version": "0.5.0", "what": "engine_start" });
+        let event = reported(&failure).unwrap();
+        assert_eq!(event.name, "app failure");
+        assert_eq!(properties(&event), json!({ "process": "desktop", "app_version": "0.5.0", "what": "engine_start" }));
+        assert!(reported(&json!({ "kind": secret })).is_none());
     }
 
     #[test]
