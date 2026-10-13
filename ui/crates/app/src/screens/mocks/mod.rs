@@ -256,6 +256,14 @@ impl MocksScreen {
         })
     }
 
+    /// Brings the tab `by` places away from the one in front to the front, wrapping around.
+    pub fn step(&mut self, by: isize, cx: &mut Context<Self>) {
+        let len = self.tabs.len() as isize;
+        if len > 0 {
+            self.set_active(Some((self.active.unwrap_or(0) as isize + by).rem_euclid(len) as usize), cx);
+        }
+    }
+
     fn set_active(&mut self, ix: Option<usize>, cx: &mut Context<Self>) {
         self.active = ix.filter(|ix| *ix < self.tabs.len());
         if let Some(ix) = self.active {
