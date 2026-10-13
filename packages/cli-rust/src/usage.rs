@@ -28,7 +28,7 @@ Groups (bifurc <group> --help shows the arguments and options of each verb)
   folders       list | create | rename | move | delete | confirm | restore
                                                                       Folders of the request, mock, flow and rule trees
   runner        run | status | cancel | history | config | configure  Send every request of a folder
-  flows         list | show | create | update | validate | run | status | cancel | duplicate | delete
+  flows         list | show | create | update | validate | run | loadtest | loadstatus | loadcancel | status | cancel | duplicate | delete
                                                                       Saved chains of requests
   health        list | show | create | update | run | delete          Health checks
   capture       list | show | mock | request | remove | clear | pause | resume | cache
@@ -243,7 +243,15 @@ The JSON of a flow
                                          --input: a value for an input the flow declares (repeatable)
                                          --timeout: stop the run after that long (0: no limit)
                                          --max-events: stop after that many stream messages
-                                         With --json nothing is printed until the end, then the run's report";
+                                         With --json nothing is printed until the end, then the run's report
+  loadtest <id|name> --instances <n> [--input <name=value>]... [--timeout <seconds>] [--max-events <n>]
+                                         Run it <n> times at once (1 to 10000) and print how many passed and
+                                         failed, how long an instance and each node took, and what failed how
+                                         often. Exits 1 when an instance fails. The other options are those of
+                                         run, for every instance alike. An instance is a user of its own: it
+                                         has its own cookies and keeps the variables its scripts set. It fails
+                                         as a run does (a failed test fails it unless its node ignores tests).
+                                         A flow with an MCP node is refused.";
 
 const VAULT: &str = "Usage: bifurc vault <verb>
 

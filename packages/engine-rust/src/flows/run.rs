@@ -122,6 +122,8 @@ struct State {
     error: Option<String>,
     cancel_requested: bool,
     finished_at: Option<i64>,
+    /// The node that started last: where the run is, or where it ended.
+    at: Option<String>,
     nodes: HashMap<String, NodeState>,
     edges: HashMap<String, u64>,
     changed_nodes: HashSet<String>,
@@ -137,6 +139,8 @@ pub struct Run {
     pub ctx: CommandContext,
     /// The run's inputs by name: the flow's defaults under what the caller gave.
     pub inputs: Value,
+    /// Which run of a load test this is. Such a run reports nothing itself: the load test counts it.
+    pub instance: Option<usize>,
     /// How many stream messages the whole run takes before its streams are closed.
     pub max_events: Option<u64>,
     pub events: AtomicU64,
@@ -172,6 +176,36 @@ fn preview(value: &Value) -> Value {
 impl Run {
     pub fn is_cancelled(&self) -> bool {
         self.cancel.is_cancelled()
+    }
+
+    /// What the ids of the run's connections start with. Runs of one flow side by side each keep their own.
+    pub fn live_prefix(&self) -> String {
+        match self.instance {
+            Some(instance) => format!("flow:{}#{instance}", self.flow.id),
+            None => format!("flow:{}", self.flow.id),
+        }
+    }
+
+    /// End the run as cancelled.
+    pub(super) fn stop(&self) {
+        self.state.lock().cancel_requested = true;
+        self.cancel.cancel();
+    }
+
+    /// The run in a line, for a load test's list: how it stands, where it is or ended, and what went wrong.
+    pub(super) fn brief(&self) -> Value {
+        let state = self.state.lock();
+        json!({
+            "status": state.status, "at": state.at, "error": state.error,
+            "failedTests": state.total_tests - state.passed_tests,
+            "durationMs": state.finished_at.map(|end| (end - self.started_at).max(0)),
+        })
+    }
+
+    /// Each node that ran, with whether it failed and how long its last run took.
+    pub(super) fn timings(&self) -> Vec<(String, bool, Option<u64>)> {
+        let state = self.state.lock();
+        state.nodes.iter().map(|(id, node)| (id.clone(), node.status == "failed", node.duration_ms)).collect()
     }
 
     pub fn scope<'a>(&'a self, token: &'a Token) -> Scope<'a> {
@@ -260,6 +294,7 @@ impl Run {
 
     fn begin(&self, node: &Node, input: &Value) {
         let input = preview(input);
+        self.state.lock().at = Some(node.label().to_string());
         self.change(node, |state| {
             state.status = "running";
             state.runs += 1;
@@ -359,6 +394,9 @@ impl Run {
 
     /// Report the nodes and edges that changed since the last report, if any did.
     fn report_progress(&self) {
+        if self.instance.is_some() {
+            return;
+        }
         let payload = {
             let mut state = self.state.lock();
             if state.changed_nodes.is_empty() && state.changed_edges.is_empty() {
@@ -414,6 +452,9 @@ impl Run {
                 state.nodes.get_mut(&id).expect("listed above").status = "stopped";
                 state.changed_nodes.insert(id);
             }
+        }
+        if self.instance.is_some() {
+            return;
         }
         self.report_progress();
         let report = self.snapshot();
@@ -553,7 +594,7 @@ fn deliver(run: Arc<Run>, node_id: String, token: Token) -> BoxFuture<'static, (
     })
 }
 
-async fn drive(run: Arc<Run>, timeout: Option<Duration>) {
+pub(super) async fn drive(run: Arc<Run>, timeout: Option<Duration>) {
     {
         let start = run.flow.nodes.iter().find(|node| node.kind == NodeKind::Start).map(|node| node.id.clone());
         let token = Token { input: Arc::new(run.inputs.clone()), nodes: Arc::default(), wave: 0 };
@@ -607,8 +648,7 @@ pub fn status(ws_id: &str, flow_id: &str) -> Option<Value> {
 pub fn cancel(ws_id: &str, flow_id: &str) -> Value {
     match find(ws_id, flow_id) {
         Some(run) => {
-            run.state.lock().cancel_requested = true;
-            run.cancel.cancel();
+            run.stop();
             json!({ "ok": true })
         }
         None => json!({ "ok": false, "error": format!("The flow \"{flow_id}\" has no run in workspace \"{ws_id}\".") }),
@@ -631,43 +671,78 @@ fn inputs_of(flow: &Flow, given: Option<&Value>) -> std::result::Result<Value, S
 /// Start a run of a saved flow in the background: `{ ok: true, runId }`, or `{ ok: false, error }` with the
 /// flow's `problems` when it cannot run. Progress and the end go out as `flow.progress` / `flow.finished`.
 pub fn start(ctx: &CommandContext, params: &Value) -> Result<Value> {
+    let plan = match plan(params)? {
+        Ok(plan) => plan,
+        Err(refusal) => return Ok(refusal),
+    };
+    let run = {
+        let mut runs = RUNS.lock();
+        let key = key_of(&plan.ws_id, &plan.flow.id);
+        if runs.get(&key).is_some_and(|run| run.state.lock().status == "running") {
+            return Ok(json!({ "ok": false, "error": format!(
+                "The flow \"{}\" is already running. Cancel it with flow.cancel, or wait for it to finish.",
+                plan.flow.name
+            ) }));
+        }
+        let run = plan.run(ctx, None);
+        runs.insert(key, run.clone());
+        run
+    };
+    let run_id = run.run_id.clone();
+    tokio::spawn(drive(run, plan.timeout));
+    Ok(json!({ "ok": true, "runId": run_id }))
+}
+
+/// What a run is made from: the saved flow, checked, and what the caller asked of the run.
+pub(super) struct Plan {
+    pub ws_id: String,
+    pub flow: Flow,
+    pub timeout: Option<Duration>,
+    inputs: Value,
+    max_events: Option<u64>,
+}
+
+/// Read what a run was asked for. The inner `Err` is the answer to a flow that cannot run as asked.
+pub(super) fn plan(params: &Value) -> Result<std::result::Result<Plan, Value>> {
     let (ws_id, flow_id) = (str_of(params, "workspaceId"), str_of(params, "id"));
     let entity = load_entity(ws_id, "flows", flow_id)
         .ok_or_else(|| EngineError::not_found(format!("No saved flow \"{flow_id}\" in workspace \"{ws_id}\".")))?;
     let flow = Flow::parse(&entity)?;
-    let refusal = |error: String| Ok(json!({ "ok": false, "error": error }));
 
     let described = validate::describe(ws_id, &flow);
     if described["ok"] != true {
         let count = array_of(&described, "problems").iter().filter(|problem| problem["severity"] == "error").count();
-        return Ok(json!({
+        return Ok(Err(json!({
             "ok": false, "problems": described["problems"],
             "error": format!("This flow cannot run: it has {count} problem(s) to fix first."),
-        }));
+        })));
     }
     let inputs = match inputs_of(&flow, params.get("inputs")) {
         Ok(inputs) => inputs,
-        Err(error) => return refusal(error),
+        Err(error) => return Ok(Err(json!({ "ok": false, "error": error }))),
     };
     let timeout_ms =
         params.get("timeoutMs").and_then(Value::as_u64).or(flow.settings.timeout_ms).unwrap_or(DEFAULT_TIMEOUT_MS);
+    Ok(Ok(Plan {
+        ws_id: ws_id.to_string(),
+        flow,
+        timeout: (timeout_ms > 0).then(|| Duration::from_millis(timeout_ms)),
+        inputs,
+        max_events: params.get("maxEvents").and_then(Value::as_u64),
+    }))
+}
 
-    let run = {
-        let mut runs = RUNS.lock();
-        let key = key_of(ws_id, flow_id);
-        if runs.get(&key).is_some_and(|run| run.state.lock().status == "running") {
-            return refusal(format!(
-                "The flow \"{}\" is already running. Cancel it with flow.cancel, or wait for it to finish.",
-                flow.name
-            ));
-        }
-        let run = Arc::new(Run {
-            ws_id: ws_id.to_string(),
-            flow,
+impl Plan {
+    /// A run of the plan, not started yet: [`drive`] runs it.
+    pub(super) fn run(&self, ctx: &CommandContext, instance: Option<usize>) -> Arc<Run> {
+        Arc::new(Run {
+            ws_id: self.ws_id.clone(),
+            flow: self.flow.clone(),
             run_id: generate_id(),
             ctx: ctx.clone(),
-            inputs,
-            max_events: params.get("maxEvents").and_then(Value::as_u64),
+            inputs: self.inputs.clone(),
+            instance,
+            max_events: self.max_events,
             events: AtomicU64::new(0),
             mcp: tokio::sync::Mutex::new(HashSet::new()),
             listening: Mutex::new(HashSet::new()),
@@ -683,6 +758,7 @@ pub fn start(ctx: &CommandContext, params: &Value) -> Result<Value> {
                 error: None,
                 cancel_requested: false,
                 finished_at: None,
+                at: None,
                 nodes: HashMap::new(),
                 edges: HashMap::new(),
                 changed_nodes: HashSet::new(),
@@ -690,13 +766,8 @@ pub fn start(ctx: &CommandContext, params: &Value) -> Result<Value> {
                 total_tests: 0,
                 passed_tests: 0,
             }),
-        });
-        runs.insert(key, run.clone());
-        run
-    };
-    let run_id = run.run_id.clone();
-    tokio::spawn(drive(run, (timeout_ms > 0).then(|| Duration::from_millis(timeout_ms))));
-    Ok(json!({ "ok": true, "runId": run_id }))
+        })
+    }
 }
 
 /// Forget every run. Tests only.

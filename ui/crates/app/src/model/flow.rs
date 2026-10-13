@@ -684,6 +684,53 @@ impl RunView {
     }
 }
 
+/// A flow's latest load test, as its events and `flow.loadtest.status` tell it. What the engine counted is
+/// kept as it was sent.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct LoadView {
+    /// The status, the counts and the times.
+    pub summary: Value,
+    /// A line for each instance, by its index.
+    pub rows: Vec<Value>,
+    /// Each node's times, once the load test has ended.
+    pub nodes: Vec<Value>,
+}
+
+impl LoadView {
+    pub fn load_id(&self) -> &str {
+        self.summary.get("loadId").and_then(Value::as_str).unwrap_or_default()
+    }
+
+    pub fn is_running(&self) -> bool {
+        self.summary.get("status").and_then(Value::as_str) == Some("running")
+    }
+
+    pub fn count(&self, key: &str) -> u64 {
+        self.summary.get(key).and_then(Value::as_u64).unwrap_or(0)
+    }
+
+    /// Take in an `event.flow.loadtest.progress` payload, which holds the lines that changed, or a whole report.
+    pub fn apply(&mut self, told: &Value) {
+        let mut summary = told.clone();
+        let mut part = |key: &str| match summary.as_object_mut().and_then(|told| told.remove(key)) {
+            Some(Value::Array(items)) => items,
+            _ => Vec::new(),
+        };
+        let (rows, nodes) = (part("rows"), part("nodes"));
+        self.summary = summary;
+        self.rows.resize(self.count("instances") as usize, Value::Null);
+        for row in rows {
+            let index = row.get("index").and_then(Value::as_u64).unwrap_or(u64::MAX) as usize;
+            if let Some(slot) = self.rows.get_mut(index) {
+                *slot = row;
+            }
+        }
+        if !nodes.is_empty() {
+            self.nodes = nodes;
+        }
+    }
+}
+
 /// One line of a JSON value shown as a tree: a key with what it holds, as deep as its parents are open.
 #[derive(Debug, Clone, PartialEq)]
 pub struct JsonRow {
@@ -772,6 +819,20 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn a_load_test_keeps_every_line_and_takes_in_the_ones_that_changed() {
+        let mut load = LoadView::default();
+        load.apply(&json!({ "loadId": "l1", "status": "running", "instances": 3, "running": 2,
+            "rows": [{ "index": 2, "status": "failed" }, { "index": 9, "status": "failed" }] }));
+        assert_eq!((load.load_id(), load.is_running(), load.count("running")), ("l1", true, 2));
+        assert_eq!(load.rows, [Value::Null, Value::Null, json!({ "index": 2, "status": "failed" })]);
+        load.apply(&json!({ "loadId": "l1", "status": "finished", "instances": 3, "running": 0,
+            "rows": [{ "index": 0, "status": "succeeded" }], "nodes": [{ "id": "n" }] }));
+        assert!(!load.is_running() && load.summary.get("rows").is_none());
+        assert_eq!((load.rows[0]["status"].as_str(), load.rows[2]["status"].as_str()), (Some("succeeded"), Some("failed")));
+        assert_eq!(load.nodes.len(), 1);
+    }
 
     #[test]
     fn a_flow_is_written_back_as_it_was_read() {
