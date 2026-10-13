@@ -1,7 +1,7 @@
 //! What the CLI knows of the engine protocol: the handshake constants and the command names `call` accepts.
 //! Both come from `bifurc-protocol` (`packages/protocol-rust`).
 
-pub use bifurc_protocol::PROTOCOL_VERSION;
+pub use bifurc_protocol::{PROTOCOL_VERSION, crash};
 use bifurc_protocol::commands;
 
 /// This client's name in the `hello` handshake.
