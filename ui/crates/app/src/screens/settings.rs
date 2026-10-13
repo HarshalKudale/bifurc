@@ -39,6 +39,8 @@ use crate::{
     theme,
 };
 
+/// The Microsoft Store listing, whatever way this copy was installed; its page carries the ratings.
+const STORE_REVIEW_URL: &str = "https://apps.microsoft.com/detail/9ncb4fdzzqpv#ratings-and-reviews";
 const REPOSITORY_URL: &str = "https://github.com/HarshalKudale/bifurc";
 const RELEASES_URL: &str = "https://github.com/HarshalKudale/bifurc-releases/releases";
 
@@ -956,6 +958,16 @@ impl SettingsScreen {
                     .layout(Axis::Horizontal),
                 )
                 .footer(|_, _| t("settings.about.footer")),
+            SettingGroup::new().title(t("settings.review.group")).item(
+                SettingItem::new(
+                    t("settings.review.title"),
+                    SettingField::render(|_, _, _| {
+                        Link::new("review-link").href(STORE_REVIEW_URL).child(t("settings.review.link"))
+                    }),
+                )
+                .description(t("settings.review.description"))
+                .layout(Axis::Horizontal),
+            ),
             updates,
         ])
     }
