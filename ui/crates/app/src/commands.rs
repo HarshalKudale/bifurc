@@ -46,6 +46,10 @@ actions!(
         DeleteEntity,
         RunRequest,
         CloseRequestTab,
+        NextTab,
+        PreviousTab,
+        NextItem,
+        PreviousItem,
         CheckAllHealth,
         RefreshServices,
         ToggleCapturePaused,
@@ -93,6 +97,10 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("secondary-s", SaveRequest, None),
         KeyBinding::new("secondary-enter", RunRequest, None),
         KeyBinding::new("secondary-w", CloseRequestTab, None),
+        KeyBinding::new("ctrl-right", NextTab, None),
+        KeyBinding::new("ctrl-left", PreviousTab, None),
+        KeyBinding::new("ctrl-shift-tab", PreviousItem, None),
+        KeyBinding::new("ctrl-tab", NextItem, None),
         KeyBinding::new("secondary-b", ToggleSidebar, None),
         KeyBinding::new("secondary-shift-b", ToggleInspector, None),
         KeyBinding::new("secondary-shift-e", ToggleFolderTree, None),
@@ -167,6 +175,10 @@ pub fn register_actions(cx: &mut App) {
     on_shell::<SyncEntity>(cx, |shell, window, cx| shell.act_on_active(EntityAction::Sync, window, cx));
     on_shell::<DeleteEntity>(cx, |shell, window, cx| shell.act_on_active(EntityAction::Delete, window, cx));
     on_shell::<CloseRequestTab>(cx, |shell, window, cx| shell.act_on_active(EntityAction::Close, window, cx));
+    on_shell::<NextTab>(cx, |shell, window, cx| shell.step_tab(1, false, window, cx));
+    on_shell::<PreviousTab>(cx, |shell, window, cx| shell.step_tab(-1, false, window, cx));
+    on_shell::<NextItem>(cx, |shell, window, cx| shell.step_tab(1, true, window, cx));
+    on_shell::<PreviousItem>(cx, |shell, window, cx| shell.step_tab(-1, true, window, cx));
     on_shell::<RunRequest>(cx, |shell, window, cx| shell.run_active(window, cx));
     on_shell::<CheckAllHealth>(cx, |shell, window, cx| shell.check_all_health(window, cx));
     on_shell::<RefreshServices>(cx, |shell, window, cx| shell.refresh_services(window, cx));
