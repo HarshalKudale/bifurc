@@ -20,6 +20,7 @@ use serde_json::{Value, json};
 use crate::{
     app_model::AppModel,
     engine::{call, failure},
+    i18n::{t, t_with},
 };
 
 enum Load {
@@ -118,9 +119,9 @@ impl CommitDiffs {
         let theme = cx.theme();
         let note = |text: String| div().text_sm().text_color(theme.muted_foreground).child(text).into_any_element();
         match diffs.loads.get(commit) {
-            None | Some(Load::Loading) => note("Loading changes…".to_owned()),
-            Some(Load::Failed(message)) => note(format!("Couldn't load the changes. {message}")),
-            Some(Load::Empty) => note("No content changed.".to_owned()),
+            None | Some(Load::Loading) => note(t("components.commit_diffs.loading").to_owned()),
+            Some(Load::Failed(message)) => note(t_with("components.commit_diffs.failed", &[("message", &message)])),
+            Some(Load::Empty) => note(t("components.commit_diffs.no_change").to_owned()),
             // The diff scrolls inside its own box, so the box is as tall as a short diff and no taller
             // than leaves the list around it in view.
             Some(Load::Ready(state, rows)) => {
@@ -139,8 +140,16 @@ impl CommitDiffs {
                     .child(
                         h_flex()
                             .gap_1()
-                            .child(option(format!("diff-unified-{commit}"), "Unified", DiffMode::Unified))
-                            .child(option(format!("diff-split-{commit}"), "Side by side", DiffMode::Split)),
+                            .child(option(
+                                format!("diff-unified-{commit}"),
+                                t("components.commit_diffs.unified"),
+                                DiffMode::Unified,
+                            ))
+                            .child(option(
+                                format!("diff-split-{commit}"),
+                                t("components.commit_diffs.side_by_side"),
+                                DiffMode::Split,
+                            )),
                     )
                     .child(
                         div()

@@ -6,9 +6,12 @@
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde_json::Value;
 
-use crate::model::{
-    http::split_query,
-    media::{self, BodyClass},
+use crate::{
+    i18n::t,
+    model::{
+        http::split_query,
+        media::{self, BodyClass},
+    },
 };
 
 /// The engine keeps the last 200 exchanges; the view mirrors the bound so a long session stays bounded here
@@ -57,16 +60,16 @@ impl ResourceType {
         [Self::Fetch, Self::Doc, Self::Css, Self::Js, Self::Font, Self::Img, Self::Media, Self::Other];
 
     pub fn label(self) -> &'static str {
-        match self {
-            Self::Fetch => "Fetch/XHR",
-            Self::Doc => "Doc",
-            Self::Css => "CSS",
-            Self::Js => "JS",
-            Self::Font => "Font",
-            Self::Img => "Img",
-            Self::Media => "Media",
-            Self::Other => "Other",
-        }
+        t(match self {
+            Self::Fetch => "model.traffic.type.fetch",
+            Self::Doc => "model.traffic.type.doc",
+            Self::Css => "model.traffic.type.css",
+            Self::Js => "model.traffic.type.js",
+            Self::Font => "model.traffic.type.font",
+            Self::Img => "model.traffic.type.img",
+            Self::Media => "model.traffic.type.media",
+            Self::Other => "model.traffic.type.other",
+        })
     }
 
     pub fn of(content_type: &str) -> Self {
@@ -112,19 +115,19 @@ impl Handler {
     pub const ALL: [Handler; 3] = [Handler::Mapping, Handler::Proxy, Handler::Mock];
 
     pub fn label(self) -> &'static str {
-        match self {
-            Handler::Mapping => "Mapping",
-            Handler::Proxy => "Proxy",
-            Handler::Mock => "Mock",
-        }
+        t(match self {
+            Handler::Mapping => "model.traffic.mapping",
+            Handler::Proxy => "model.traffic.proxy",
+            Handler::Mock => "model.traffic.mock",
+        })
     }
 
     pub fn tooltip(self) -> &'static str {
-        match self {
-            Handler::Mapping => "Served by a local mapping (localhost domains)",
-            Handler::Proxy => "Sent through the forward proxy to its real target",
-            Handler::Mock => "Answered by a mock",
-        }
+        t(match self {
+            Handler::Mapping => "model.traffic.handler_mapping_tooltip",
+            Handler::Proxy => "model.traffic.handler_proxy_tooltip",
+            Handler::Mock => "model.traffic.handler_mock_tooltip",
+        })
     }
 }
 
@@ -174,12 +177,12 @@ impl TrafficEntry {
     /// A word for how the proxy handled the exchange.
     pub fn via_label(&self) -> &'static str {
         match self.via.as_str() {
-            "rfc6761" => "Localhost",
-            "mapping" => "Mapping",
-            "proxy" => "Proxy",
-            "rule" => "Rule",
-            "mock" => "Mock",
-            "error" => "Error",
+            "rfc6761" => t("model.traffic.localhost"),
+            "mapping" => t("model.traffic.mapping"),
+            "proxy" => t("model.traffic.proxy"),
+            "rule" => t("model.traffic.rule"),
+            "mock" => t("model.traffic.mock"),
+            "error" => t("model.traffic.error"),
             _ => "",
         }
     }

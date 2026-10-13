@@ -35,6 +35,7 @@ use crate::{
         entity_bar, page,
     },
     engine::{call, call_in, describe, failure},
+    i18n::{t, t_with},
     session::SaveMode,
     shell::ActiveTarget,
 };
@@ -129,11 +130,11 @@ fn engine_fields(rule: &Map<String, Value>) -> Fields {
 /// Why a rule cannot be written as it stands, if it cannot.
 fn problem_of(fields: &Fields) -> Option<&'static str> {
     if fields.pattern.is_empty() {
-        Some("Enter the URL pattern this rule matches.")
+        Some(t("proxy_rules.problem.pattern"))
     } else if fields.target == Target::Mapping && fields.mapping_id.is_empty() {
-        Some("Choose the mapping to send matching requests to.")
+        Some(t("proxy_rules.problem.mapping"))
     } else if fields.target == Target::External && fields.external.is_empty() {
-        Some("Enter the server to send matching requests to.")
+        Some(t("proxy_rules.problem.external"))
     } else {
         None
     }
@@ -141,13 +142,13 @@ fn problem_of(fields: &Fields) -> Option<&'static str> {
 
 impl ProxyRulesScreen {
     pub fn new(model: Entity<AppModel>, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let name = cx.new(|cx| InputState::new(window, cx).placeholder("Rule name"));
+        let name = cx.new(|cx| InputState::new(window, cx).placeholder(t("proxy_rules.field.name_placeholder")));
         let pattern = cx.new(|cx| InputState::new(window, cx).placeholder("api.example.com/v1"));
         let external = cx.new(|cx| InputState::new(window, cx).placeholder("http://localhost:9000"));
         let request_script =
-            VarEditor::code(Syntax::JavaScript, "// Runs on the request before it is forwarded", window, cx);
+            VarEditor::code(Syntax::JavaScript, t("proxy_rules.script.request_placeholder"), window, cx);
         let response_script =
-            VarEditor::code(Syntax::JavaScript, "// Runs on the response before it is returned", window, cx);
+            VarEditor::code(Syntax::JavaScript, t("proxy_rules.script.response_placeholder"), window, cx);
 
         let mut subscriptions = vec![cx.subscribe_in(&model, window, |this, _, event: &ModelEvent, window, cx| {
             match event {
@@ -236,7 +237,7 @@ impl ProxyRulesScreen {
                     this.loaded = true;
                     this.follow_rules(window, cx);
                 }
-                Err(error) => this.report("Couldn't read the proxy rules.", describe(&error), cx),
+                Err(error) => this.report("proxy_rules.error.read", describe(&error), cx),
             }
             cx.notify();
         });
@@ -388,9 +389,9 @@ impl ProxyRulesScreen {
                 cx.weak_entity(),
                 window,
                 cx,
-                format!("Discard changes to “{name}”?"),
-                "The edits to this rule have not been saved.",
-                "Discard changes",
+                t_with("proxy_rules.confirm.discard.title", &[("name", &name)]),
+                t("proxy_rules.confirm.discard.consequence"),
+                t("proxy_rules.confirm.discard.ok"),
                 move |this, window, cx| this.open(selection.clone(), window, cx),
             );
         } else {
@@ -423,8 +424,9 @@ impl ProxyRulesScreen {
         cx.notify();
     }
 
-    fn report(&mut self, what: &str, message: String, cx: &mut Context<Self>) {
-        self.model.update(cx, |model, cx| model.notice(format!("{what} {message}"), cx));
+    /// `what` is a key whose text takes the engine's `{message}`.
+    fn report(&mut self, what: &'static str, message: String, cx: &mut Context<Self>) {
+        self.model.update(cx, |model, cx| model.notice(t_with(what, &[("message", &message)]), cx));
     }
 
     /// What the footer of the detail pane asks for.
@@ -443,9 +445,9 @@ impl ProxyRulesScreen {
                         cx.weak_entity(),
                         window,
                         cx,
-                        format!("Revert “{name}” to the last synced version?"),
-                        "The changes saved since then are discarded.",
-                        "Revert",
+                        t_with("proxy_rules.confirm.revert.title", &[("name", &name)]),
+                        t("proxy_rules.confirm.revert.consequence"),
+                        t("proxy_rules.button.revert"),
                         move |this, _, cx| this.model.update(cx, |model, cx| model.revert_entity(&id, cx)),
                     );
                 }
@@ -469,7 +471,7 @@ impl ProxyRulesScreen {
         }
         if let Some(problem) = problem_of(&fields) {
             if mode == SaveMode::Explicit {
-                window.push_notification(Notification::warning(problem).title("Can't save yet"), cx);
+                window.push_notification(Notification::warning(problem).title(t("proxy_rules.problem.cant_save_yet")), cx);
             }
             cx.notify();
             return;
@@ -504,7 +506,7 @@ impl ProxyRulesScreen {
             this.saving = false;
             match failure(&outcome) {
                 Some(message) => {
-                    this.report("Couldn't save the rule.", message, cx);
+                    this.report("proxy_rules.error.save", message, cx);
                     cx.notify();
                     return;
                 }
@@ -543,16 +545,16 @@ impl ProxyRulesScreen {
             cx.weak_entity(),
             window,
             cx,
-            format!("Delete rule “{name}”?"),
+            t_with("proxy_rules.confirm.delete.title", &[("name", &name)]),
             consequence,
-            "Delete",
+            t("proxy_rules.button.delete"),
             move |this, _, cx| {
                 let client = this.model.read(cx).client().clone();
                 this.autosave.cancel();
                 this.selection = Selection::None;
                 call(&client, cx, "entity.delete", json!({ "kind": "proxyRules", "id": id }), |this, outcome, cx| {
                     if let Some(message) = failure(&outcome) {
-                        this.report("Couldn't delete the rule.", message, cx);
+                        this.report("proxy_rules.error.delete", message, cx);
                     }
                 });
             },
@@ -666,7 +668,7 @@ impl ProxyRulesScreen {
                         .px_2()
                         .py_1()
                         .text_sm()
-                        .child(div().text_color(theme.muted_foreground).child("New rule (not saved)")),
+                        .child(div().text_color(theme.muted_foreground).child(t("proxy_rules.list.draft"))),
                 )
             })
     }
@@ -677,7 +679,7 @@ impl ProxyRulesScreen {
             self.model.read(cx).config().mappings.iter().filter(|m| !m.deleted).map(|m| (m.id.clone(), m.domain.clone())).collect();
         let chosen =
             mappings.iter().find(|(id, _)| *id == self.mapping_id).map(|(_, domain)| domain.clone()).unwrap_or_else(
-                || if mappings.is_empty() { "No mappings yet".to_owned() } else { "Choose a mapping".to_owned() },
+                || if mappings.is_empty() { t("proxy_rules.target.no_mappings").to_owned() } else { t("proxy_rules.target.choose_mapping").to_owned() },
             );
         let this = cx.weak_entity();
         let current = self.mapping_id.clone();
@@ -693,8 +695,8 @@ impl ProxyRulesScreen {
                         this.target = if *ix == 0 { Target::Mapping } else { Target::External };
                         this.changed(cx);
                     }))
-                    .child(Tab::new().label("A mapping"))
-                    .child(Tab::new().label("Another server")),
+                    .child(Tab::new().label(t("proxy_rules.target.mapping")))
+                    .child(Tab::new().label(t("proxy_rules.target.external"))),
             )
             .child(
                 div().flex_1().min_w_0().child(match self.target {
@@ -729,14 +731,14 @@ impl ProxyRulesScreen {
         if self.selection == Selection::None {
             return if self.loaded {
                 page::empty_with_action(
-                    "No proxy rules",
-                    "A rule sends traffic that matches a pattern to a mapping or to another server.",
+                    t("proxy_rules.empty.title"),
+                    t("proxy_rules.empty.description"),
                     Button::new("empty-new-rule")
-                        .label("New rule")
+                        .label(t("proxy_rules.button.new_rule"))
                         .on_click(cx.listener(|this, _, window, cx| this.go_to(Selection::Draft, window, cx))),
                 )
             } else {
-                page::loading("Loading rules…")
+                page::loading(t("proxy_rules.page.loading"))
             };
         }
         let theme = cx.theme().clone();
@@ -746,7 +748,7 @@ impl ProxyRulesScreen {
         let problem = (saved && dirty)
             .then(|| problem_of(&self.fields(cx)))
             .flatten()
-            .map(|problem| SharedString::from(format!("Not saved. {problem}")));
+            .map(|problem| SharedString::from(t_with("proxy_rules.problem.not_saved", &[("problem", &problem)])));
         let bar = EntityBar {
             saving: self.saving,
             unsaved: saved && dirty,
@@ -771,7 +773,7 @@ impl ProxyRulesScreen {
                             .gap_3()
                             .p_3()
                             .child(h_flex().gap_3().child(
-                                Switch::new("rule-enabled").checked(self.enabled).small().label("Enabled").on_change(
+                                Switch::new("rule-enabled").checked(self.enabled).small().label(t("proxy_rules.label.enabled")).on_change(
                                     cx.listener(|this, checked: &bool, _, cx| {
                                         this.enabled = *checked;
                                         this.changed(cx);
@@ -781,13 +783,13 @@ impl ProxyRulesScreen {
                             .child(
                                 h_flex()
                                     .gap_3()
-                                    .child(label("Matches"))
+                                    .child(label(t("proxy_rules.label.matches")))
                                     .child(div().flex_1().min_w_0().child(Input::new(&self.pattern).small()))
                                     .child(
                                         Checkbox::new("rule-regex")
                                             .checked(self.use_regex)
                                             .small()
-                                            .label("Regular expression")
+                                            .label(t("proxy_rules.label.regular_expression"))
                                             .on_change(cx.listener(|this, checked: &bool, _, cx| {
                                                 this.use_regex = *checked;
                                                 this.changed(cx);
@@ -797,7 +799,7 @@ impl ProxyRulesScreen {
                             .child(
                                 h_flex()
                                     .gap_3()
-                                    .child(label("Send to"))
+                                    .child(label(t("proxy_rules.label.send_to")))
                                     .child(div().flex_1().min_w_0().child(self.render_target(cx))),
                             ),
                     )
@@ -811,8 +813,8 @@ impl ProxyRulesScreen {
                                     this.script_ix = *ix;
                                     cx.notify();
                                 }))
-                                .child(Tab::new().label("Request script"))
-                                .child(Tab::new().label("Response script")),
+                                .child(Tab::new().label(t("proxy_rules.script.request_tab")))
+                                .child(Tab::new().label(t("proxy_rules.script.response_tab"))),
                         ),
                     )
                     .child(div().flex_1().min_h_0().child(Editor::new(editor.state()).bordered(false).h_full())),
@@ -825,12 +827,12 @@ impl ProxyRulesScreen {
 impl Render for ProxyRulesScreen {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let header = page::header(
-            "Proxy rules",
-            "Send traffic through the forward proxy that matches a pattern to a mapping or to another server.",
+            t("proxy_rules.page.title"),
+            t("proxy_rules.page.description"),
             Button::new("new-rule")
                 .small()
                 .icon(IconName::Plus)
-                .label("New rule")
+                .label(t("proxy_rules.button.new_rule"))
                 .on_click(cx.listener(|this, _, window, cx| this.go_to(Selection::Draft, window, cx))),
             cx,
         );

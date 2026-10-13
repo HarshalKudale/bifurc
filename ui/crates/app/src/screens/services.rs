@@ -25,6 +25,7 @@ use crate::{
         page,
     },
     engine::{call, describe, failure},
+    i18n::{t, t_with},
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -76,7 +77,7 @@ pub struct ServicesScreen {
 
 impl ServicesScreen {
     pub fn new(model: Entity<AppModel>, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let filter = cx.new(|cx| InputState::new(window, cx).placeholder("Filter by process or port"));
+        let filter = cx.new(|cx| InputState::new(window, cx).placeholder(t("services.filter.placeholder")));
         let subscriptions = vec![
             cx.observe(&model, |_, _, cx| cx.notify()),
             cx.subscribe(&filter, |_, _, event: &InputEvent, cx| {
@@ -99,9 +100,10 @@ impl ServicesScreen {
 
     pub fn status_line(&self) -> String {
         match &self.listing {
-            Listing::Loaded(services) => {
-                format!("{} service{}", services.len(), if services.len() == 1 { "" } else { "s" })
-            }
+            Listing::Loaded(services) => match services.len() {
+                1 => t_with("services.status.count_one", &[("count", &1)]),
+                count => t_with("services.status.count_other", &[("count", &count)]),
+            },
             _ => String::new(),
         }
     }
@@ -138,11 +140,11 @@ impl ServicesScreen {
             cx.weak_entity(),
             window,
             cx,
-            format!("Map port {port}"),
-            "Create",
+            t_with("services.prompt.map.title", &[("port", &port)]),
+            t("services.button.create"),
             vec![
-                PromptField::new("Subdomain", "api  (becomes api.localhost)"),
-                PromptField::new("Target", "localhost:3000").initial(target),
+                PromptField::new(t("services.field.subdomain"), t("services.field.subdomain_placeholder")),
+                PromptField::new(t("services.field.target"), "localhost:3000").initial(target),
             ],
             |this, values, _, cx| {
                 let name = values[0].to_lowercase();
@@ -157,7 +159,7 @@ impl ServicesScreen {
                 call(&client, cx, "entity.create", payload, |this, outcome, cx| {
                     if let Some(message) = failure(&outcome) {
                         this.model.update(cx, |model, cx| {
-                            model.notice(format!("Couldn't create the mapping. {message}"), cx)
+                            model.notice(t_with("services.error.create", &[("message", &message)]), cx)
                         });
                     }
                 });
@@ -187,7 +189,7 @@ impl ServicesScreen {
             .cloned()
             .collect();
         if shown.is_empty() {
-            return page::empty("No matches", "No service matches the filter.");
+            return page::empty(t("services.empty.no_matches.title"), t("services.empty.no_matches.description"));
         }
         let count = shown.len();
         let row_theme = theme.clone();
@@ -249,7 +251,7 @@ impl ServicesScreen {
                                 div().w_64().flex_none().child(match name {
                                     Some(name) => h_flex()
                                         .gap_2()
-                                        .child(Tag::success().small().child("Mapped"))
+                                        .child(Tag::success().small().child(t("services.tag.mapped")))
                                         .child(
                                             div()
                                                 .min_w_0()
@@ -261,8 +263,8 @@ impl ServicesScreen {
                                         .into_any_element(),
                                     None => Button::new(("map-service", usize::from(port)))
                                         .small()
-                                        .label("Map…")
-                                        .tooltip("Give this port a .localhost name")
+                                        .label(t("services.button.map"))
+                                        .tooltip(t("services.tooltip.map"))
                                         .on_click(
                                             cx.listener(move |this, _, window, cx| this.prompt_map(port, window, cx)),
                                         )
@@ -289,11 +291,11 @@ impl ServicesScreen {
                     .text_color(theme.muted_foreground)
                     .border_b_1()
                     .border_color(theme.border)
-                    .child(div().w_20().flex_none().child("Port"))
-                    .child(div().flex_1().child("Process"))
-                    .child(div().w_24().flex_none().child("PID"))
-                    .child(div().w_40().flex_none().child("Address"))
-                    .child(div().w_64().flex_none().child("Mapping")),
+                    .child(div().w_20().flex_none().child(t("services.column.port")))
+                    .child(div().flex_1().child(t("services.column.process")))
+                    .child(div().w_24().flex_none().child(t("services.column.pid")))
+                    .child(div().w_40().flex_none().child(t("services.column.address")))
+                    .child(div().w_64().flex_none().child(t("services.column.mapping"))),
             )
             .child(rows)
             .into_any_element()
@@ -303,8 +305,8 @@ impl ServicesScreen {
 impl Render for ServicesScreen {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let header = page::header(
-            "Services",
-            "Programs on this computer that are listening on a port.",
+            t("services.page.title"),
+            t("services.page.description"),
             h_flex()
                 .gap_2()
                 .child(div().w_64().child(
@@ -314,17 +316,17 @@ impl Render for ServicesScreen {
                     Button::new("refresh-services")
                         .small()
                         .icon(IconName::RefreshCw)
-                        .label("Refresh")
+                        .label(t("services.button.refresh"))
                         .loading(self.refreshing)
                         .on_click(cx.listener(|this, _, _, cx| this.refresh(cx))),
                 ),
             cx,
         );
         let body = match &self.listing {
-            Listing::Loading => page::loading("Looking for services…"),
-            Listing::Failed(message) => page::empty("Couldn't list services", message.clone()),
+            Listing::Loading => page::loading(t("services.page.loading")),
+            Listing::Failed(message) => page::empty(t("services.error.list"), message.clone()),
             Listing::Loaded(services) if services.is_empty() => {
-                page::empty("No services found", "Nothing on this computer is listening on a port right now.")
+                page::empty(t("services.empty.none.title"), t("services.empty.none.description"))
             }
             Listing::Loaded(services) => {
                 let services = services.clone();

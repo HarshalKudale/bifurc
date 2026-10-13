@@ -34,6 +34,7 @@ use std::rc::Rc;
 use crate::{
     app_model::{AppModel, ModelEvent},
     engine::{call, call_in, describe, failure},
+    i18n::{t, t_with},
     model::config::AccountInfo,
 };
 
@@ -154,11 +155,13 @@ pub struct WorkspaceSetup {
 impl WorkspaceSetup {
     pub fn new(model: Entity<AppModel>, purpose: Purpose, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let (placeholder, initial) = match &purpose {
-            Purpose::Publish { workspace_name, .. } => ("repository-name", repo_name_for(workspace_name)),
-            _ => ("Workspace name", String::new()),
+            Purpose::Publish { workspace_name, .. } => {
+                (t("workspace_setup.placeholder.repository_name"), repo_name_for(workspace_name))
+            }
+            _ => (t("workspace_setup.placeholder.workspace_name"), String::new()),
         };
         let name = cx.new(|cx| InputState::new(window, cx).placeholder(placeholder).default_value(initial));
-        let filter = cx.new(|cx| InputState::new(window, cx).placeholder("Filter repositories"));
+        let filter = cx.new(|cx| InputState::new(window, cx).placeholder(t("workspace_setup.placeholder.filter_repos")));
         // A workspace that already commits as an account is published as that account and no other.
         let bound = match &purpose {
             Purpose::Publish { workspace_id, .. } => model
@@ -280,8 +283,12 @@ impl WorkspaceSetup {
                         uri: text(&started, "verificationUri"),
                     });
                 }
-                Ok(started) => this.error = Some(format!("Couldn't start the sign-in. {}", text(&started, "error"))),
-                Err(error) => this.error = Some(format!("Couldn't start the sign-in. {}", describe(&error))),
+                Ok(started) => {
+                    this.error = Some(t_with("workspace_setup.error.start_sign_in", &[("reason", &text(&started, "error"))]))
+                }
+                Err(error) => {
+                    this.error = Some(t_with("workspace_setup.error.start_sign_in", &[("reason", &describe(&error))]))
+                }
             }
             cx.notify();
         });
@@ -307,8 +314,7 @@ impl WorkspaceSetup {
                 let signed_in = payload.pointer("/account/id").and_then(Value::as_str).map(str::to_owned);
                 if self.account_fixed && signed_in != self.account {
                     let login = payload.pointer("/account/login").and_then(Value::as_str).unwrap_or_default();
-                    self.error =
-                        Some(format!("You signed in as @{login}, but this workspace belongs to another account."));
+                    self.error = Some(t_with("workspace_setup.error.wrong_account", &[("login", &login)]));
                 } else if matches!(self.purpose, Purpose::SignIn { .. }) {
                     // The account is back, which is all this dialog was for.
                     window.close_dialog(cx);
@@ -322,8 +328,11 @@ impl WorkspaceSetup {
             }
             Some("cancelled") => {}
             _ => {
-                let reason = payload.get("error").and_then(Value::as_str).unwrap_or("GitHub did not complete it.");
-                self.error = Some(format!("Couldn't sign in. {reason}"));
+                let reason = payload
+                    .get("error")
+                    .and_then(Value::as_str)
+                    .unwrap_or(t("workspace_setup.error.sign_in_not_completed"));
+                self.error = Some(t_with("workspace_setup.error.sign_in_failed", &[("reason", &reason)]));
             }
         }
         cx.notify();
@@ -426,19 +435,15 @@ impl WorkspaceSetup {
         v_flex()
             .gap_2()
             .child(
-                Alert::warning(
-                    "git-missing",
-                    "Workspaces made now are plain files on this computer: no history, no audit log, no way to \
-                     revert a change, and no sync. Install Git, then check again, to get them.",
-                )
-                .title("Git is not installed"),
+                Alert::warning("git-missing", t("workspace_setup.git.missing.description"))
+                    .title(t("workspace_setup.git.missing.title")),
             )
             .child(
                 h_flex().justify_end().child(
                     Button::new("check-git")
                         .outline()
                         .small()
-                        .label("Check again")
+                        .label(t("workspace_setup.button.check_again"))
                         .on_click(cx.listener(|this, _, _, cx| this.check_git_again(cx))),
                 ),
             )
@@ -455,7 +460,7 @@ impl WorkspaceSetup {
             .rounded(theme.radius)
             .border_1()
             .border_color(theme.border)
-            .child(div().text_sm().child("Enter this code on GitHub to sign in:"))
+            .child(div().text_sm().child(t("workspace_setup.login.enter_code")))
             .child(
                 div()
                     .text_2xl()
@@ -471,7 +476,7 @@ impl WorkspaceSetup {
                             .outline()
                             .small()
                             .icon(IconName::Copy)
-                            .label("Copy code")
+                            .label(t("workspace_setup.button.copy_code"))
                             .on_click(move |_, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(code.clone()))),
                     )
                     .child(
@@ -479,17 +484,17 @@ impl WorkspaceSetup {
                             .primary()
                             .small()
                             .icon(IconName::ExternalLink)
-                            .label("Open GitHub")
+                            .label(t("workspace_setup.button.open_github"))
                             .on_click(move |_, _, cx| cx.open_url(&uri)),
                     )
                     .child(div().flex_1())
                     .child(Spinner::new().small())
-                    .child(div().text_sm().text_color(theme.muted_foreground).child("Waiting for GitHub"))
+                    .child(div().text_sm().text_color(theme.muted_foreground).child(t("workspace_setup.login.waiting")))
                     .child(
                         Button::new("cancel-login")
                             .ghost()
                             .small()
-                            .label("Cancel")
+                            .label(t("workspace_setup.button.cancel"))
                             .on_click(cx.listener(|this, _, _, cx| this.cancel_login(cx))),
                     ),
             )
@@ -502,16 +507,15 @@ impl WorkspaceSetup {
         let setup = self.model.read(cx).setup().clone();
         let needs_account = self.mode == Mode::Import || !matches!(self.purpose, Purpose::First | Purpose::Add);
         let help = if needs_account && setup.team_sync {
-            "The workspace syncs as this account, with the access the account was given. Someone else's \
-             workspace has to be given to this account in the Bifurc Console before it can be imported."
+            t("workspace_setup.account.help_team")
         } else if needs_account {
-            "The workspace syncs as this account. Only the account that owns a workspace can use it."
+            t("workspace_setup.account.help_owner")
         } else {
-            "Optional. Only needed to sync this workspace with a remote repository; it can be added later."
+            t("workspace_setup.account.help_optional")
         };
         let heading = v_flex()
             .gap_1()
-            .child(div().text_sm().font_medium().child("GitHub account"))
+            .child(div().text_sm().font_medium().child(t("workspace_setup.account.heading")))
             .child(div().text_sm().text_color(theme.muted_foreground).child(help));
 
         if let Some(login) = &self.login {
@@ -525,22 +529,22 @@ impl WorkspaceSetup {
                     div()
                         .text_sm()
                         .text_color(theme.muted_foreground)
-                        .child("GitHub sign-in is not set up in this build, so workspaces stay on this computer."),
+                        .child(t("workspace_setup.account.not_set_up")),
                 )
                 .into_any_element();
         }
 
         let selected = self.selected_account(cx);
         let label = match &selected {
-            Some(account) if account.signed_in => format!("@{}", account.login),
-            Some(account) => format!("@{} (signed out)", account.login),
-            None => "No account".to_owned(),
+            Some(account) if account.signed_in => t_with("workspace_setup.account.login", &[("login", &account.login)]),
+            Some(account) => t_with("workspace_setup.account.login_signed_out", &[("login", &account.login)]),
+            None => t("workspace_setup.account.none").to_owned(),
         };
         // Short enough to sit beside the account chooser at any width the view is shown at.
         let sign_in_label = match (&selected, setup.accounts.is_empty()) {
-            (Some(account), _) if !account.signed_in => "Sign in again",
-            (_, true) => "Sign in to GitHub",
-            (_, false) => "Add account",
+            (Some(account), _) if !account.signed_in => t("workspace_setup.account.sign_in_again"),
+            (_, true) => t("workspace_setup.sign_in.title"),
+            (_, false) => t("workspace_setup.account.add"),
         };
         // A workspace's own account is not swapped for another: it only ever signs back in.
         let offer_sign_in = !(self.account_fixed && selected.as_ref().is_some_and(|account| account.signed_in));
@@ -569,9 +573,9 @@ impl WorkspaceSetup {
                     let menu = accounts.iter().fold(menu, |menu, account| {
                         let (this, id) = (this.clone(), account.id.clone());
                         let name = if account.signed_in {
-                            format!("@{}", account.login)
+                            t_with("workspace_setup.account.login", &[("login", &account.login)])
                         } else {
-                            format!("@{} (signed out)", account.login)
+                            t_with("workspace_setup.account.login_signed_out", &[("login", &account.login)])
                         };
                         menu.item(
                             PopupMenuItem::new(name).checked(current.as_deref() == Some(account.id.as_str())).on_click(
@@ -582,7 +586,7 @@ impl WorkspaceSetup {
                         )
                     });
                     let this = this.clone();
-                    menu.separator().item(PopupMenuItem::new("No account").checked(current.is_none()).on_click(
+                    menu.separator().item(PopupMenuItem::new(t("workspace_setup.account.none")).checked(current.is_none()).on_click(
                         move |_, _, cx| {
                             this.update(cx, |this, cx| this.select_account(None, cx)).ok();
                         },
@@ -615,7 +619,7 @@ impl WorkspaceSetup {
                 Button::new("mode-new")
                     .outline()
                     .flex_1()
-                    .label("New workspace")
+                    .label(t("workspace_setup.mode.new"))
                     .selected(mode == Mode::New)
                     .on_click(cx.listener(|this, _, _, cx| this.set_mode(Mode::New, cx))),
             )
@@ -624,7 +628,7 @@ impl WorkspaceSetup {
                     .outline()
                     .flex_1()
                     .icon(IconName::Github)
-                    .label("Import from GitHub")
+                    .label(t("workspace_setup.mode.import"))
                     .selected(mode == Mode::Import)
                     .on_click(cx.listener(|this, _, _, cx| this.set_mode(Mode::Import, cx))),
             )
@@ -651,14 +655,14 @@ impl WorkspaceSetup {
         let theme = cx.theme().clone();
         let muted = |text: &'static str| div().text_sm().text_color(theme.muted_foreground).child(text);
         if self.usable_account(cx).is_none() {
-            return muted("Sign in to choose one of your repositories.").into_any_element();
+            return muted(t("workspace_setup.repos.sign_in_first")).into_any_element();
         }
         let repos = match &self.repos {
             Repos::Idle | Repos::Loading => {
                 return h_flex()
                     .gap_2()
                     .child(Spinner::new().small())
-                    .child(muted("Loading repositories"))
+                    .child(muted(t("workspace_setup.repos.loading")))
                     .into_any_element();
             }
             Repos::Failed(message) => {
@@ -668,14 +672,14 @@ impl WorkspaceSetup {
                         div()
                             .text_sm()
                             .text_color(theme.danger)
-                            .child(format!("Couldn't list repositories. {message}")),
+                            .child(t_with("workspace_setup.error.list_repos", &[("message", &message)])),
                     )
                     .child(
                         h_flex().child(
                             Button::new("retry-repos")
                                 .outline()
                                 .small()
-                                .label("Try again")
+                                .label(t("workspace_setup.button.try_again"))
                                 .on_click(cx.listener(|this, _, _, cx| this.load_repos(cx))),
                         ),
                     )
@@ -686,9 +690,9 @@ impl WorkspaceSetup {
         if repos.is_empty() {
             let team_sync = self.model.read(cx).setup().team_sync;
             return muted(if team_sync {
-                "This account has no repositories yet, of its own or shared with it."
+                t("workspace_setup.repos.empty_team")
             } else {
-                "This account owns no repositories yet."
+                t("workspace_setup.repos.empty_owner")
             })
             .into_any_element();
         }
@@ -716,12 +720,18 @@ impl WorkspaceSetup {
                                     .text_ellipsis()
                                     .child(repo.full_name.clone()),
                             )
-                            .when(repo.private, |this| this.child(Tag::secondary().small().child("Private")))
-                            .when(repo.shared && !repo.read_only, |this| {
-                                this.child(Tag::secondary().small().child("Shared"))
+                            .when(repo.private, |this| {
+                                this.child(Tag::secondary().small().child(t("workspace_setup.tag.private")))
                             })
-                            .when(repo.read_only, |this| this.child(Tag::warning().small().child("Read-only")))
-                            .when(here, |this| this.child(Tag::secondary().small().child("On this device"))),
+                            .when(repo.shared && !repo.read_only, |this| {
+                                this.child(Tag::secondary().small().child(t("workspace_setup.tag.shared")))
+                            })
+                            .when(repo.read_only, |this| {
+                                this.child(Tag::warning().small().child(t("workspace_setup.tag.read_only")))
+                            })
+                            .when(here, |this| {
+                                this.child(Tag::secondary().small().child(t("workspace_setup.tag.on_device")))
+                            }),
                     )
                     .on_click(cx.listener(move |this, _, _, cx| {
                         this.selected_repo = Some(name.clone());
@@ -736,7 +746,7 @@ impl WorkspaceSetup {
             repos.iter().any(|repo| repo.read_only && self.selected_repo.as_deref() == Some(repo.full_name.as_str()));
         v_flex()
             .gap_2()
-            .child(div().text_sm().font_medium().child("Repository"))
+            .child(div().text_sm().font_medium().child(t("workspace_setup.repos.heading")))
             .child(Input::new(&self.filter))
             .child(
                 v_flex()
@@ -751,10 +761,7 @@ impl WorkspaceSetup {
                     .children(rows),
             )
             .when(selected_read_only, |this| {
-                this.child(muted(
-                    "Your account has read access to this repository, so the workspace will be read-only here: \
-                     you get what the repository gets, and what you change stays on this device.",
-                ))
+                this.child(muted(t("workspace_setup.repos.read_only_note")))
             })
             .into_any_element()
     }
@@ -766,15 +773,15 @@ impl WorkspaceSetup {
                 .child(
                     Button::new("setup-close")
                         .outline()
-                        .label("Close")
+                        .label(t("workspace_setup.button.close"))
                         .on_click(|_, window, cx| window.close_dialog(cx)),
                 )
                 .into_any_element();
         }
         let label = match (&self.purpose, self.mode) {
-            (Purpose::Publish { .. }, _) => "Publish",
-            (_, Mode::New) => "Create workspace",
-            (_, Mode::Import) => "Import",
+            (Purpose::Publish { .. }, _) => t("workspace_setup.submit.publish"),
+            (_, Mode::New) => t("workspace_setup.submit.create"),
+            (_, Mode::Import) => t("workspace_setup.submit.import"),
         };
         let in_dialog = self.purpose != Purpose::First;
         h_flex()
@@ -785,7 +792,7 @@ impl WorkspaceSetup {
                 this.child(
                     Button::new("setup-back")
                         .outline()
-                        .label("Back")
+                        .label(t("workspace_setup.button.back"))
                         .disabled(self.busy)
                         .on_click(move |_, window, cx| on_back(window, cx)),
                 )
@@ -795,7 +802,7 @@ impl WorkspaceSetup {
                 this.child(
                     Button::new("setup-cancel")
                         .outline()
-                        .label("Cancel")
+                        .label(t("workspace_setup.button.cancel"))
                         .on_click(|_, window, cx| window.close_dialog(cx)),
                 )
             })
@@ -839,9 +846,9 @@ impl WorkspaceSetup {
 /// Opens the view in a dialog: one more workspace, or a workspace's first publish.
 pub fn open_setup_dialog(model: Entity<AppModel>, purpose: Purpose, window: &mut Window, cx: &mut App) {
     let title = match purpose {
-        Purpose::Publish { .. } => "Publish to GitHub",
-        Purpose::SignIn { .. } => "Sign in to GitHub",
-        Purpose::First | Purpose::Add => "Add workspace",
+        Purpose::Publish { .. } => t("workspace_setup.dialog.publish"),
+        Purpose::SignIn { .. } => t("workspace_setup.sign_in.title"),
+        Purpose::First | Purpose::Add => t("workspace_setup.dialog.add"),
     };
     // Deferred so a dialog opened from a menu or the palette opens after that closes.
     window.defer(cx, move |window, cx| {
@@ -877,13 +884,13 @@ impl Render for WorkspaceSetup {
             (true, _) => v_flex()
                 .gap_4()
                 .child(self.render_name(
-                    "Repository name",
-                    Some("A new repository is created on the account. An existing one is never pushed into, and the repository can't be changed afterwards."),
+                    t("workspace_setup.publish.name_label"),
+                    Some(t("workspace_setup.publish.name_help")),
                     cx,
                 ))
                 .child(
                     Checkbox::new("publish-private")
-                        .label("Private repository")
+                        .label(t("workspace_setup.publish.private"))
                         .checked(self.private)
                         .on_change(cx.listener(|this, checked: &bool, _, cx| {
                             this.private = *checked;
@@ -892,7 +899,7 @@ impl Render for WorkspaceSetup {
                 )
                 .child(
                     Checkbox::new("publish-sync-all")
-                        .label("Also sync everything that was never synced, one commit per item")
+                        .label(t("workspace_setup.publish.sync_all"))
                         .checked(self.sync_all)
                         .on_change(cx.listener(|this, checked: &bool, _, cx| {
                             this.sync_all = *checked;
@@ -900,7 +907,7 @@ impl Render for WorkspaceSetup {
                         })),
                 )
                 .into_any_element(),
-            (false, Mode::New) => self.render_name("Name", None, cx),
+            (false, Mode::New) => self.render_name(t("workspace_setup.name.label"), None, cx),
             (false, Mode::Import) => self.render_repos(cx),
         };
 

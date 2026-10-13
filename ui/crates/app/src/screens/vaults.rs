@@ -22,6 +22,7 @@ use serde_json::{Value, json};
 
 use crate::{
     app_model::AppModel,
+    i18n::{t, t_with},
     components::{
         EntityAction, EntityBar,
         dialogs::{PromptField, confirm_danger, prompt},
@@ -62,7 +63,7 @@ impl VaultsScreen {
     }
 
     fn report(&mut self, what: &str, message: String, cx: &mut Context<Self>) {
-        self.model.update(cx, |model, cx| model.notice(format!("{what} {message}"), cx));
+        self.model.update(cx, |model, cx| model.notice(t_with("vaults.report", &[("what", &what), ("message", &message)]), cx));
     }
 
     /// Runs a vault command; a refusal (a wrong passphrase, a bad name) is shown as a notice. The list
@@ -85,23 +86,23 @@ impl VaultsScreen {
             cx.weak_entity(),
             window,
             cx,
-            "New vault",
-            "Create",
+            t("vaults.new_vault"),
+            t("vaults.create"),
             vec![
-                PromptField::new("Name", "api_keys"),
-                PromptField::new("Passphrase", "At least 8 characters").secret(),
-                PromptField::new("Repeat the passphrase", "").secret(),
+                PromptField::new(t("vaults.name"), "api_keys"),
+                PromptField::new(t("vaults.passphrase"), t("vaults.passphrase_hint")).secret(),
+                PromptField::new(t("vaults.repeat_passphrase"), "").secret(),
             ],
             |this, values, _, cx| {
                 if values[1] != values[2] {
-                    this.report("Couldn't create the vault.", "The passphrases differ.".to_owned(), cx);
+                    this.report(t("vaults.error_create"), t("vaults.passphrases_differ").to_owned(), cx);
                     return;
                 }
                 let payload =
                     json!({ "workspaceId": this.workspace(cx), "name": values[0], "passphrase": values[1] });
                 let client = this.model.read(cx).client().clone();
                 call(&client, cx, "vault.create", payload, |this, outcome, cx| match failure(&outcome) {
-                    Some(message) => this.report("Couldn't create the vault.", message, cx),
+                    Some(message) => this.report(t("vaults.error_create"), message, cx),
                     None => {
                         if let Some(id) = outcome.ok().and_then(|r| r.get("id").and_then(Value::as_str).map(str::to_owned)) {
                             this.selected = Some(id);
@@ -119,12 +120,12 @@ impl VaultsScreen {
             cx.weak_entity(),
             window,
             cx,
-            format!("Unseal “{}”", vault.name),
-            "Unseal",
-            vec![PromptField::new("Passphrase", "").secret()],
+            t_with("vaults.unseal_title", &[("name", &vault.name)]),
+            t("vaults.unseal"),
+            vec![PromptField::new(t("vaults.passphrase"), "").secret()],
             move |this, values, _, cx| {
                 let payload = json!({ "workspaceId": this.workspace(cx), "id": vault.id, "passphrase": values[0] });
-                this.run("vault.unseal", payload, "Couldn't unseal the vault.", cx);
+                this.run("vault.unseal", payload, t("vaults.error_unseal"), cx);
             },
         );
     }
@@ -132,7 +133,7 @@ impl VaultsScreen {
     fn seal(&mut self, cx: &mut Context<Self>) {
         let Some(vault) = self.vault(cx) else { return };
         let payload = json!({ "workspaceId": self.workspace(cx), "id": vault.id });
-        self.run("vault.seal", payload, "Couldn't seal the vault.", cx);
+        self.run("vault.seal", payload, t("vaults.error_seal"), cx);
     }
 
     fn prompt_rename(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -141,12 +142,12 @@ impl VaultsScreen {
             cx.weak_entity(),
             window,
             cx,
-            "Rename vault",
-            "Rename",
-            vec![PromptField::new("Name", "api_keys").initial(vault.name.clone())],
+            t("vaults.rename_title"),
+            t("vaults.rename"),
+            vec![PromptField::new(t("vaults.name"), "api_keys").initial(vault.name.clone())],
             move |this, values, _, cx| {
                 let payload = json!({ "workspaceId": this.workspace(cx), "id": vault.id, "name": values[0] });
-                this.run("vault.rename", payload, "Couldn't rename the vault.", cx);
+                this.run("vault.rename", payload, t("vaults.error_rename"), cx);
             },
         );
     }
@@ -157,11 +158,11 @@ impl VaultsScreen {
             cx.weak_entity(),
             window,
             cx,
-            format!("New passphrase for “{}”", vault.name),
-            "Change",
+            t_with("vaults.passphrase_title", &[("name", &vault.name)]),
+            t("vaults.change"),
             vec![
-                PromptField::new("Current passphrase", "").secret(),
-                PromptField::new("New passphrase", "At least 8 characters").secret(),
+                PromptField::new(t("vaults.current_passphrase"), "").secret(),
+                PromptField::new(t("vaults.new_passphrase"), t("vaults.passphrase_hint")).secret(),
             ],
             move |this, values, _, cx| {
                 let payload = json!({
@@ -170,7 +171,7 @@ impl VaultsScreen {
                     "passphrase": values[0],
                     "newPassphrase": values[1],
                 });
-                this.run("vault.changePassphrase", payload, "Couldn't change the passphrase.", cx);
+                this.run("vault.changePassphrase", payload, t("vaults.error_change_passphrase"), cx);
             },
         );
     }
@@ -180,20 +181,20 @@ impl VaultsScreen {
         let Some(vault) = self.vault(cx) else { return };
         let mut fields = Vec::new();
         if name.is_none() {
-            fields.push(PromptField::new("Name", "STRIPE_KEY"));
+            fields.push(PromptField::new(t("vaults.name"), "STRIPE_KEY"));
         }
-        fields.push(PromptField::new("Value", "").secret());
+        fields.push(PromptField::new(t("vaults.value"), "").secret());
         let title = match &name {
-            Some(name) => format!("New value for {name}"),
-            None => format!("Add a secret to “{}”", vault.name),
+            Some(name) => t_with("vaults.secret_title_new", &[("name", name)]),
+            None => t_with("vaults.secret_title_add", &[("name", &vault.name)]),
         };
-        prompt(cx.weak_entity(), window, cx, title, "Save", fields, move |this, values, _, cx| {
+        prompt(cx.weak_entity(), window, cx, title, t("vaults.save"), fields, move |this, values, _, cx| {
             let (secret, value) = match &name {
                 Some(name) => (name.clone(), values[0].clone()),
                 None => (values[0].clone(), values[1].clone()),
             };
             let payload = json!({ "workspaceId": this.workspace(cx), "id": vault.id, "name": secret, "value": value });
-            this.run("vault.setSecret", payload, "Couldn't save the secret.", cx);
+            this.run("vault.setSecret", payload, t("vaults.error_save_secret"), cx);
         });
     }
 
@@ -203,12 +204,12 @@ impl VaultsScreen {
             cx.weak_entity(),
             window,
             cx,
-            format!("Remove {name}?"),
-            "Requests that use it will send the reference unresolved.",
-            "Remove",
+            t_with("vaults.remove_title", &[("name", &name)]),
+            t("vaults.remove_body"),
+            t("vaults.remove"),
             move |this, _, cx| {
                 let payload = json!({ "workspaceId": this.workspace(cx), "id": vault.id, "name": name });
-                this.run("vault.deleteSecret", payload, "Couldn't remove the secret.", cx);
+                this.run("vault.deleteSecret", payload, t("vaults.error_remove_secret"), cx);
             },
         );
     }
@@ -219,12 +220,12 @@ impl VaultsScreen {
             cx.weak_entity(),
             window,
             cx,
-            format!("Delete vault “{}”?", vault.name),
-            "Its secrets are deleted and cannot be recovered without a synced copy.",
-            "Delete",
+            t_with("vaults.delete_title", &[("name", &vault.name)]),
+            t("vaults.delete_body"),
+            t("vaults.delete"),
             move |this, _, cx| {
                 let payload = json!({ "workspaceId": this.workspace(cx), "id": vault.id });
-                this.run("vault.delete", payload, "Couldn't delete the vault.", cx);
+                this.run("vault.delete", payload, t("vaults.error_delete"), cx);
             },
         );
     }
@@ -239,9 +240,9 @@ impl VaultsScreen {
                     cx.weak_entity(),
                     window,
                     cx,
-                    format!("Revert “{}” to the last synced version?", vault.name),
-                    "Secrets added or changed since then are discarded.",
-                    "Revert",
+                    t_with("vaults.revert_title", &[("name", &vault.name)]),
+                    t("vaults.revert_body"),
+                    t("vaults.revert"),
                     move |this, _, cx| {
                         let path = vault.path.clone();
                         this.model.update(cx, |model, cx| model.revert_paths(vec![path], cx));
@@ -255,8 +256,8 @@ impl VaultsScreen {
 
     fn state_tag(vault: &VaultInfo) -> Tag {
         match vault.state {
-            VaultState::Sealed => Tag::secondary().small().child("Sealed"),
-            VaultState::Unsealed => Tag::success().small().child("Unsealed"),
+            VaultState::Sealed => Tag::secondary().small().child(t("vaults.sealed")),
+            VaultState::Unsealed => Tag::success().small().child(t("vaults.unsealed")),
         }
     }
 
@@ -319,14 +320,14 @@ impl VaultsScreen {
                     .ghost()
                     .small()
                     .icon(IconName::Copy)
-                    .tooltip("Copy the reference")
+                    .tooltip(t("vaults.copy_tooltip"))
                     .on_click(move |_, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(copy.clone()))),
             )
             .child(
                 Button::new(gpui_kit::ElementId::Name(format!("replace-{name}").into()))
                     .ghost()
                     .small()
-                    .label("New value")
+                    .label(t("vaults.new_value"))
                     .disabled(sealed)
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.prompt_secret(Some(replace_name.clone()), window, cx)
@@ -336,7 +337,7 @@ impl VaultsScreen {
                 Button::new(gpui_kit::ElementId::Name(format!("remove-{name}").into()))
                     .ghost()
                     .small()
-                    .label("Remove")
+                    .label(t("vaults.remove"))
                     .on_click(cx.listener(move |this, _, window, cx| {
                         this.confirm_remove_secret(remove_name.clone(), window, cx)
                     })),
@@ -347,12 +348,12 @@ impl VaultsScreen {
     fn render_detail(&self, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
         let Some(vault) = self.vault(cx) else {
             return page::empty_with_action(
-                "No vault",
-                "A vault keeps secrets encrypted in the workspace. Only the engine can read them.",
+                t("vaults.no_vault"),
+                t("vaults.no_vault_body"),
                 Button::new("empty-new-vault")
                     .primary()
                     .small()
-                    .label("New vault")
+                    .label(t("vaults.new_vault"))
                     .on_click(cx.listener(|this, _, window, cx| this.prompt_new(window, cx))),
             );
         };
@@ -371,23 +372,23 @@ impl VaultsScreen {
             .border_color(theme.border)
             .child(Self::state_tag(&vault))
             .child(div().flex_1().min_w_0().text_sm().text_color(theme.muted_foreground).child(if sealed {
-                "Enter the passphrase to use or edit its secrets."
+                t("vaults.state_sealed_hint")
             } else {
-                "Unsealed: its secrets resolve in requests."
+                t("vaults.state_unsealed_hint")
             }))
             .child(if sealed {
                 Button::new("unseal")
                     .primary()
                     .small()
-                    .label("Unseal…")
+                    .label(t("vaults.unseal_button"))
                     .on_click(cx.listener(|this, _, window, cx| this.prompt_unseal(window, cx)))
                     .into_any_element()
             } else {
                 Button::new("seal")
                     .outline()
                     .small()
-                    .label("Seal")
-                    .tooltip("Forget the key; the passphrase is needed again")
+                    .label(t("vaults.seal"))
+                    .tooltip(t("vaults.seal_tooltip"))
                     .on_click(cx.listener(|this, _, _, cx| this.seal(cx)))
                     .into_any_element()
             })
@@ -395,14 +396,14 @@ impl VaultsScreen {
                 Button::new("rename-vault")
                     .ghost()
                     .small()
-                    .label("Rename…")
+                    .label(t("vaults.rename_vault"))
                     .on_click(cx.listener(|this, _, window, cx| this.prompt_rename(window, cx))),
             )
             .child(
                 Button::new("change-passphrase")
                     .ghost()
                     .small()
-                    .label("Change passphrase…")
+                    .label(t("vaults.change_passphrase"))
                     .on_click(cx.listener(|this, _, window, cx| this.prompt_change_passphrase(window, cx))),
             );
 
@@ -411,20 +412,20 @@ impl VaultsScreen {
             .px_4()
             .py_2()
             .gap_2()
-            .child(div().flex_1().child(page::section_label(format!("Secrets ({})", vault.secrets.len()), cx)))
+            .child(div().flex_1().child(page::section_label(t_with("vaults.secrets_count", &[("count", &vault.secrets.len())]), cx)))
             .child(
                 Button::new("add-secret")
                     .outline()
                     .small()
                     .icon(IconName::Plus)
-                    .label("Add secret")
+                    .label(t("vaults.add_secret"))
                     .disabled(sealed)
-                    .tooltip(if sealed { "Unseal the vault first" } else { "Add a secret to this vault" })
+                    .tooltip(if sealed { t("vaults.unseal_first_tooltip") } else { t("vaults.add_secret_tooltip") })
                     .on_click(cx.listener(|this, _, window, cx| this.prompt_secret(None, window, cx))),
             );
 
         let rows = if vault.secrets.is_empty() {
-            page::empty("No secrets", "Add one, then use it in a request as {{vault.NAME}}.")
+            page::empty(t("vaults.no_secrets"), t("vaults.no_secrets_body"))
         } else {
             v_flex()
                 .id("secret-rows")
@@ -433,10 +434,7 @@ impl VaultsScreen {
                 .children(vault.secrets.iter().map(|name| self.render_secret(&vault, name, cx)))
                 .into_any_element()
         };
-        let usage = div().flex_none().px_4().py_2().text_xs().text_color(theme.muted_foreground).child(format!(
-            "To run a program with these as environment variables:  bifurc vault run {} -- <command>",
-            vault.name
-        ));
+        let usage = div().flex_none().px_4().py_2().text_xs().text_color(theme.muted_foreground).child(t_with("vaults.usage", &[("name", &vault.name)]));
 
         v_flex()
             .size_full()
@@ -452,12 +450,12 @@ impl VaultsScreen {
 impl Render for VaultsScreen {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let header = page::header(
-            "Vaults",
-            "Encrypted secrets that requests use as {{vault.NAME}}. Only the engine can read them; the files are safe to sync.",
+            t("vaults.title"),
+            t("vaults.description"),
             Button::new("new-vault")
                 .small()
                 .icon(IconName::Plus)
-                .label("New vault")
+                .label(t("vaults.new_vault"))
                 .on_click(cx.listener(|this, _, window, cx| this.prompt_new(window, cx))),
             cx,
         );

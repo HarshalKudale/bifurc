@@ -25,12 +25,13 @@ use gpui_kit::{
 use super::{Screen, Shell};
 use crate::{
     commands::{OpenCommandPalette, OpenFinder},
+    i18n::{t, t_with},
     model::{RequestKind, git::PublishAction},
     preferences::Preferences,
 };
 
-fn plural(count: usize, noun: &str) -> String {
-    format!("{count} {noun}{}", if count == 1 { "" } else { "s" })
+fn plural(count: usize, one: &'static str, other: &'static str) -> String {
+    t_with(if count == 1 { one } else { other }, &[("count", &count)])
 }
 
 impl Shell {
@@ -38,9 +39,9 @@ impl Shell {
         let theme = cx.theme().clone();
         let config = self.model.read(cx).config();
         let environment_name =
-            config.active_environment().map(|e| e.name.clone()).unwrap_or_else(|| "No environment".to_owned());
+            config.active_environment().map(|e| e.name.clone()).unwrap_or_else(|| t("shell.chrome.no_environment").to_owned());
         let environments: Vec<(Option<String>, String, bool)> =
-            std::iter::once((None, "No environment".to_owned(), config.active_environment_id.is_none()))
+            std::iter::once((None, t("shell.chrome.no_environment").to_owned(), config.active_environment_id.is_none()))
                 .chain(config.selectable_environments().map(|e| {
                     (Some(e.id.clone()), e.name.clone(), config.active_environment_id.as_deref() == Some(e.id.as_str()))
                 }))
@@ -76,7 +77,7 @@ impl Shell {
                                             div()
                                                 .flex_1()
                                                 .text_left()
-                                                .child("Search requests, mocks and environments…"),
+                                                .child(t("shell.chrome.search_placeholder")),
                                         )
                                         .children(finder_shortcut),
                                 )
@@ -87,8 +88,8 @@ impl Shell {
                                 .outline()
                                 .small()
                                 .icon(IconName::SquareTerminal)
-                                .label("Commands")
-                                .tooltip("Make something new, go to a screen or change the view")
+                                .label(t("shell.chrome.commands"))
+                                .tooltip(t("shell.chrome.commands_tooltip"))
                                 .children(shortcut)
                                 .on_click(|_, window, cx| window.dispatch_action(Box::new(OpenCommandPalette), cx)),
                         ),
@@ -101,7 +102,7 @@ impl Shell {
                                 .small()
                                 .icon(IconName::Asterisk)
                                 .label(environment_name)
-                                .tooltip("Environment that variables resolve against")
+                                .tooltip(t("shell.chrome.environment_tooltip"))
                                 .dropdown_menu(move |menu, _, _| {
                                     let menu = environments.iter().fold(menu, |menu, (id, name, active)| {
                                         let (model, id) = (model.clone(), id.clone());
@@ -112,7 +113,7 @@ impl Shell {
                                         ))
                                     });
                                     let shell = shell.clone();
-                                    menu.separator().item(PopupMenuItem::new("Manage environments").on_click(
+                                    menu.separator().item(PopupMenuItem::new(t("shell.chrome.manage_environments")).on_click(
                                         move |_, window, cx| {
                                             shell
                                                 .update(cx, |shell, cx| {
@@ -140,7 +141,7 @@ impl Shell {
             .xsmall()
             .label(kind.label())
             .icon(IconName::ChevronDown)
-            .tooltip("The type can be changed until the request is saved")
+            .tooltip(t("shell.chrome.request_kind_tooltip"))
             .dropdown_menu(move |menu, _, _| {
                 RequestKind::ALL.iter().fold(menu, |menu, option| {
                     let (shell, option) = (shell.clone(), *option);
@@ -164,7 +165,7 @@ impl Shell {
             .config()
             .active_workspace()
             .map(|w| w.name.clone())
-            .unwrap_or_else(|| "Workspace".to_owned());
+            .unwrap_or_else(|| t("shell.workspace.default_name").to_owned());
         let target = self.active_target(cx);
         let separator = || Icon::new(IconName::ChevronRight).text_color(theme.muted_foreground).size_3p5();
         let screen = div()
@@ -220,7 +221,11 @@ impl Shell {
                 div().id("left-sidebar-trigger").child(
                     SidebarToggleButton::new()
                         .collapsed(collapsed)
-                        .accessibility_label(if collapsed { "Expand the sidebar" } else { "Collapse the sidebar" })
+                        .accessibility_label(if collapsed {
+                            t("shell.chrome.expand_sidebar")
+                        } else {
+                            t("shell.chrome.collapse_sidebar")
+                        })
                         .on_click(cx.listener(|this, _, _, cx| this.toggle_sidebar(cx))),
                 ),
             )
@@ -230,7 +235,11 @@ impl Shell {
                     SidebarToggleButton::new()
                         .side(Side::Right)
                         .collapsed(!self.right_open)
-                        .accessibility_label(if self.right_open { "Hide the inspector" } else { "Show the inspector" })
+                        .accessibility_label(if self.right_open {
+                            t("shell.chrome.hide_inspector")
+                        } else {
+                            t("shell.chrome.show_inspector")
+                        })
                         .on_click(cx.listener(|this, _, window, cx| this.toggle_right_sidebar(window, cx))),
                 ),
             )
@@ -240,13 +249,39 @@ impl Shell {
     fn screen_status(&self, cx: &Context<Self>) -> String {
         let config = self.model.read(cx).config();
         match self.screen {
-            Screen::Requests => plural(config.requests.iter().filter(|r| !r.deleted).count(), "request"),
-            Screen::Mocks => plural(config.mocks.iter().filter(|m| !m.deleted).count(), "mock"),
-            Screen::Mappings => plural(config.mappings.iter().filter(|m| !m.deleted).count(), "mapping"),
-            Screen::ProxyRules => plural(config.proxy_rule_count, "rule"),
-            Screen::Flows => plural(config.flows.iter().filter(|f| !f.deleted).count(), "flow"),
-            Screen::Environments => plural(config.selectable_environments().count(), "environment"),
-            Screen::Vaults => plural(self.model.read(cx).vaults().len(), "vault"),
+            Screen::Requests => plural(
+                config.requests.iter().filter(|r| !r.deleted).count(),
+                "shell.chrome.count_request_one",
+                "shell.chrome.count_request_other",
+            ),
+            Screen::Mocks => plural(
+                config.mocks.iter().filter(|m| !m.deleted).count(),
+                "shell.chrome.count_mock_one",
+                "shell.chrome.count_mock_other",
+            ),
+            Screen::Mappings => plural(
+                config.mappings.iter().filter(|m| !m.deleted).count(),
+                "shell.chrome.count_mapping_one",
+                "shell.chrome.count_mapping_other",
+            ),
+            Screen::ProxyRules => {
+                plural(config.proxy_rule_count, "shell.chrome.count_rule_one", "shell.chrome.count_rule_other")
+            }
+            Screen::Flows => plural(
+                config.flows.iter().filter(|f| !f.deleted).count(),
+                "shell.chrome.count_flow_one",
+                "shell.chrome.count_flow_other",
+            ),
+            Screen::Environments => plural(
+                config.selectable_environments().count(),
+                "shell.chrome.count_environment_one",
+                "shell.chrome.count_environment_other",
+            ),
+            Screen::Vaults => plural(
+                self.model.read(cx).vaults().len(),
+                "shell.chrome.count_vault_one",
+                "shell.chrome.count_vault_other",
+            ),
             Screen::Services => self.services.read(cx).status_line(),
             Screen::HealthBar => self.healthbar.read(cx).status_line(),
             Screen::Capture => self.capture.read(cx).status_line(cx),
@@ -263,7 +298,7 @@ impl Shell {
                 .gap_2()
                 .text_color(theme.muted_foreground)
                 .child(Icon::new(IconName::TriangleAlert).small())
-                .child("Git is not installed. Changes are saved, not tracked.")
+                .child(t("shell.chrome.git_not_installed"))
                 .into_any_element();
         }
         let git = model.git();
@@ -274,21 +309,31 @@ impl Shell {
         let read_only = model.is_read_only();
         let place = match (&git.branch, has_remote) {
             (Some(branch), _) => branch.clone(),
-            (None, true) => "remote".to_owned(),
-            (None, false) => "Local".to_owned(),
+            (None, true) => t("shell.chrome.place_remote").to_owned(),
+            (None, false) => t("shell.chrome.place_local").to_owned(),
         };
-        let scope = if self.screen.git_prefixes().is_empty() { "in this workspace" } else { "on this screen" };
+        let scope = if self.screen.git_prefixes().is_empty() {
+            t("shell.chrome.scope_workspace")
+        } else {
+            t("shell.chrome.scope_screen")
+        };
         let state = match (rollup.changed.len(), rollup.action) {
-            (0, Some(_)) if !read_only => "Commits waiting to be pushed".to_owned(),
-            (0, _) => "Up to date".to_owned(),
-            (count, _) if read_only => format!("{} {scope}, on this device only", plural(count, "change")),
-            (count, _) => format!("{} {scope}", plural(count, "unpublished change")),
+            (0, Some(_)) if !read_only => t("shell.chrome.commits_waiting").to_owned(),
+            (0, _) => t("shell.chrome.up_to_date").to_owned(),
+            (count, _) if read_only => t_with(
+                if count == 1 { "shell.chrome.read_only_one" } else { "shell.chrome.read_only_other" },
+                &[("count", &count), ("scope", &scope)],
+            ),
+            (count, _) => t_with(
+                if count == 1 { "shell.chrome.unpublished_one" } else { "shell.chrome.unpublished_other" },
+                &[("count", &count), ("scope", &scope)],
+            ),
         };
         let action_label = match rollup.action {
-            Some(PublishAction::Publish) => "Publish",
-            Some(PublishAction::Sync) | None => "Sync",
+            Some(PublishAction::Publish) => t("shell.chrome.publish"),
+            Some(PublishAction::Sync) | None => t("shell.chrome.sync"),
         };
-        let tooltip = if has_remote { "Commit these changes and push them" } else { "Commit these changes" };
+        let tooltip = if has_remote { t("shell.chrome.commit_push_tooltip") } else { t("shell.chrome.commit_tooltip") };
         let paths = rollup.changed.clone();
         let app_model = self.model.clone();
 
@@ -296,7 +341,7 @@ impl Shell {
             .gap_2()
             .child(Icon::new(IconName::Github).small().text_color(theme.muted_foreground))
             .child(div().child(place))
-            .when(read_only, |this| this.child(Tag::secondary().small().child("Read-only")))
+            .when(read_only, |this| this.child(Tag::secondary().small().child(t("shell.chrome.read_only"))))
             .child(div().text_color(theme.muted_foreground).child(state))
             .when(rollup.action.is_some() && !read_only, |this| {
                 this.child(
@@ -326,14 +371,14 @@ impl Shell {
         let update = model.update().announced().map(|update| update.version.clone());
 
         let proxy_label = match (&proxy.error, proxy.running) {
-            (Some(_), _) => format!("Forward proxy :{} unavailable", proxy.port),
-            (None, true) => format!("Forward proxy :{} running", proxy.port),
-            (None, false) => format!("Forward proxy :{} stopped", proxy.port),
+            (Some(_), _) => t_with("shell.chrome.proxy_unavailable", &[("port", &proxy.port)]),
+            (None, true) => t_with("shell.chrome.proxy_running", &[("port", &proxy.port)]),
+            (None, false) => t_with("shell.chrome.proxy_stopped", &[("port", &proxy.port)]),
         };
         let proxy_tooltip: SharedString = match (&proxy.error, proxy.running) {
-            (Some(error), _) => format!("{error}. Select to try starting it again.").into(),
-            (None, true) => "Stop the forward proxy".into(),
-            (None, false) => "Start the forward proxy".into(),
+            (Some(error), _) => t_with("shell.chrome.proxy_error_tooltip", &[("error", error)]).into(),
+            (None, true) => t("shell.chrome.proxy_stop_tooltip").into(),
+            (None, false) => t("shell.chrome.proxy_start_tooltip").into(),
         };
         let app_model = self.model.clone();
 
@@ -347,8 +392,8 @@ impl Shell {
                             .ghost()
                             .xsmall()
                             .icon(IconName::ArrowUp)
-                            .label("Update available")
-                            .tooltip(format!("Version {version} is available. Open Settings to get it."))
+                            .label(t("shell.chrome.update_available"))
+                            .tooltip(t_with("shell.chrome.update_tooltip", &[("version", &version)]))
                             .on_click(cx.listener(|this, _, window, cx| this.show_screen(Screen::Settings, window, cx))),
                     )
                 })
@@ -374,9 +419,9 @@ impl Shell {
                         .text_color(if lost { theme.danger } else { theme.muted_foreground })
                         .child(Icon::new(if lost { IconName::CircleX } else { IconName::HardDrive }).small())
                         .child(if lost {
-                            "Engine disconnected".to_owned()
+                            t("shell.chrome.engine_disconnected").to_owned()
                         } else {
-                            format!("Engine {engine_version}")
+                            t_with("shell.chrome.engine_version", &[("version", &engine_version)])
                         }),
                 ),
         )
