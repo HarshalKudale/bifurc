@@ -418,6 +418,18 @@ impl Shell {
         self.entity_action(action, window, cx);
     }
 
+    /// Moves to the tab `by` places away. With `items_too`, the screens that list items instead of tabs (proxy
+    /// rules, flows) move their selection.
+    pub fn step_tab(&mut self, by: isize, items_too: bool, window: &mut Window, cx: &mut Context<Self>) {
+        match self.screen {
+            Screen::Requests => self.requests.update(cx, |screen, cx| screen.step(by, cx)),
+            Screen::Mocks => self.mocks.update(cx, |screen, cx| screen.step(by, cx)),
+            Screen::ProxyRules if items_too => self.proxy_rules.update(cx, |screen, cx| screen.step(by, window, cx)),
+            Screen::Flows if items_too => self.flows.update(cx, |screen, cx| screen.step(by, window, cx)),
+            _ => {}
+        }
+    }
+
     /// Send, or connect: the active request's main verb.
     pub fn run_active(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.screen == Screen::Requests {
