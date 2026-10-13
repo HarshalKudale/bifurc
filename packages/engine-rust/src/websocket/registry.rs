@@ -239,7 +239,7 @@ pub fn connect_socket(workspace_id: &str, socket_id: &str, url: &str, headers: O
     emit(events);
 
     let (request, generation) = outcome?;
-    let workspace_id = workspace_id.to_string();
+    let workspace_id = crate::cookies::jar_of(workspace_id);
     tokio::spawn(async move { crate::cookies::scoped(&workspace_id, run(key, generation, request, rx)).await });
     Ok(())
 }

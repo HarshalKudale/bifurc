@@ -735,6 +735,132 @@ async fn a_run_can_be_cancelled_times_out_and_is_the_only_one_of_its_flow() {
     assert_eq!(call("flow.cancel", json!({ "workspaceId": WS, "id": "never" })).await["ok"], false);
 }
 
+/// Start a load test and wait for its `flow.loadtest.finished` report.
+async fn load_test(id: &str, instances: u64, stop_after: Option<Duration>) -> Value {
+    let finished = Arc::new(Mutex::new(None::<Value>));
+    let (sink, flow_id) = (finished.clone(), id.to_string());
+    let listener = bus().on("flow.loadtest.finished", move |payload| {
+        if str_of(payload, "flowId") == flow_id {
+            *sink.lock() = Some(payload["report"].clone());
+        }
+    });
+    let target = json!({ "workspaceId": WS, "id": id });
+    let mut params = target.clone();
+    params["instances"] = json!(instances);
+    let started = call("flow.loadtest.start", params.clone()).await;
+    assert_eq!(started["ok"], true, "{started}");
+    if let Some(wait) = stop_after {
+        tokio::time::sleep(wait).await;
+        let again = call("flow.loadtest.start", params).await;
+        assert!(str_of(&again, "error").contains("already running"), "{again}");
+        assert_eq!(call("flow.loadtest.status", target.clone()).await["running"], instances);
+        assert_eq!(call("flow.loadtest.cancel", target).await, json!({ "ok": true }));
+    }
+    for _ in 0..400 {
+        if finished.lock().is_some() {
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(25)).await;
+    }
+    bus().off(listener);
+    finished.lock().take().expect("the load test finishes")
+}
+
+#[tokio::test]
+async fn a_load_test_runs_a_flow_many_times_at_once_and_counts_how_each_ended() {
+    let store = store();
+    super::loadtest::reset();
+    let base = test_server::start(HashMap::new()).await;
+    store.request("r-a", format!("{base}/a"), json!({}));
+    store.request("r-down", format!("{base}/status/503"), json!({}));
+    let chain = |request_id: &str| {
+        json!({
+            "settings": { "persistVariables": true },
+            "nodes": [start(), request("first", "r-a", json!({})), request("second", request_id, json!({ "name": "Second" }))],
+            "edges": [edge("start", "out", "first"), edge("first", "success", "second")],
+        })
+    };
+    store.flow("steady", chain("r-a"));
+    store.flow("broken", chain("r-down"));
+    store.flow("slow", json!({ "nodes": [start(), { "id": "wait", "type": "delay", "delayMs": 60_000 }], "edges": [edge("start", "out", "wait")] }));
+
+    // An instance reports to the load test, never as a run of its own.
+    let runs = Arc::new(Mutex::new(0));
+    let sink = runs.clone();
+    let listener = bus().on_any(move |event, _| *sink.lock() += usize::from(matches!(event, "flow.progress" | "flow.finished")));
+
+    let report = load_test("steady", 40, None).await;
+    assert_eq!(report["status"], "finished", "{report}");
+    assert_eq!((&report["instances"], &report["passed"], &report["failed"], &report["running"]), (&json!(40), &json!(40), &json!(0), &json!(0)));
+    let rows = array_of(&report, "rows");
+    assert_eq!(rows.len(), 40);
+    assert!(rows.iter().enumerate().all(|(index, row)| row["index"] == index && row["status"] == "succeeded" && row["at"] == "Second"), "{report}");
+    assert!(report["p99Ms"].is_u64() && report["perSecond"].as_f64().unwrap() > 0.0, "{report}");
+    let second = array_of(&report, "nodes").iter().find(|node| node["id"] == "second").expect("the node's times");
+    assert_eq!((&second["runs"], &second["failed"], &second["name"]), (&json!(40), &json!(0), &json!("Second")));
+    assert!(second["avgMs"].is_u64(), "{second}");
+
+    let report = load_test("broken", 12, None).await;
+    assert_eq!((&report["passed"], &report["failed"]), (&json!(0), &json!(12)), "{report}");
+    let row = &array_of(&report, "rows")[11];
+    assert_eq!((&row["status"], &row["at"]), (&json!("failed"), &json!("Second")));
+    assert!(str_of(row, "error").starts_with("Second: "), "{row}");
+    assert_eq!(array_of(&report, "nodes").iter().find(|node| node["id"] == "second").unwrap()["failed"], 12);
+
+    let report = load_test("slow", 5, Some(Duration::from_millis(150))).await;
+    assert_eq!((&report["status"], &report["failed"]), (&json!("cancelled"), &json!(5)), "{report}");
+    assert!(array_of(&report, "rows").iter().all(|row| row["status"] == "cancelled" && row["at"] == "wait"), "{report}");
+
+    bus().off(listener);
+    assert_eq!(*runs.lock(), 0);
+
+    // Each instance has a cookie jar of its own: it carries what it was given, and leaves the workspace's alone.
+    store.request("r-sign-in", format!("{base}/set-cookie/sid=s1"), json!({}));
+    let own = "test('own', () => expect(bc.cookies.get('sid')).to.equal('s1'));";
+    let none = "test('none', () => expect(bc.cookies.has('sid')).to.equal(false));";
+    store.request("r-me", format!("{base}/me"), json!({ "testScript": own }));
+    store.request("r-anon", format!("{base}/me"), json!({ "testScript": none }));
+    let chain = |first: &str, second: Value| {
+        json!({
+            "nodes": [start(), request("first", first, json!({})), second],
+            "edges": [edge("start", "out", "first"), edge("first", "success", "second")],
+        })
+    };
+    store.flow("users", chain("r-sign-in", request("second", "r-me", json!({}))));
+    let report = load_test("users", 8, None).await;
+    assert_eq!((&report["passed"], &report["failed"]), (&json!(8), &json!(0)), "{report}");
+    let jar = crate::cookies::for_url(WS, &base);
+    assert_eq!(jar, json!({}), "the workspace's jar is not the instances'");
+
+    // A failed test fails an instance where it fails a run: at a node that does not ignore its tests.
+    store.flow("strict", chain("r-a", request("second", "r-me", json!({}))));
+    store.flow("lenient", chain("r-a", request("second", "r-me", json!({ "ignoreTestErrors": true }))));
+    store.flow("anonymous", chain("r-a", request("second", "r-anon", json!({}))));
+    let report = load_test("strict", 3, None).await;
+    assert_eq!((&report["passed"], &report["failed"]), (&json!(0), &json!(3)), "{report}");
+    let report = load_test("lenient", 3, None).await;
+    assert_eq!((&report["passed"], &report["failed"]), (&json!(3), &json!(0)), "{report}");
+    assert_eq!(array_of(&report, "rows")[0]["failedTests"], 1);
+    assert_eq!(load_test("anonymous", 3, None).await["passed"], 3);
+
+    // A flow that calls an MCP server runs one instance at a time.
+    store.saved("mcpRequests", "r-mcp", json!({ "transport": "stdio", "url": "server", "workspaceId": WS }));
+    let tool = json!({ "id": "tool", "type": "mcp", "name": "Search", "requestKind": "mcpRequests", "requestId": "r-mcp",
+        "call": "tool", "target": "search" });
+    store.flow("tools", json!({ "nodes": [start(), tool], "edges": [edge("start", "out", "tool")] }));
+    let refused = call("flow.loadtest.start", json!({ "workspaceId": WS, "id": "tools", "instances": 2 })).await;
+    assert_eq!(refused["ok"], false);
+    assert!(str_of(&refused, "error").contains("MCP"), "{refused}");
+
+    for refused in [json!({}), json!({ "instances": 0 }), json!({ "instances": 10_001 })] {
+        let mut params = json!({ "workspaceId": WS, "id": "steady" });
+        params.as_object_mut().unwrap().extend(refused.as_object().unwrap().clone());
+        let (registry, ctx) = context();
+        assert!(registry.invoke("flow.loadtest.start", params, ctx).await.is_err());
+    }
+    assert_eq!(call("flow.loadtest.cancel", json!({ "workspaceId": WS, "id": "never" })).await["ok"], false);
+}
+
 #[tokio::test]
 async fn branches_of_one_port_all_run_and_a_retry_tries_again() {
     let store = store();

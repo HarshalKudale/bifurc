@@ -167,7 +167,7 @@ pub async fn request(run: &Arc<Run>, node: &Node, token: &Token, wired: &Wired) 
 
 /// The id of the connection a run keeps to the MCP server of one saved request.
 fn mcp_connection_id(run: &Run, node: &Node) -> String {
-    format!("flow:{}:{}", run.flow.id, node.request_id)
+    format!("{}:{}", run.live_prefix(), node.request_id)
 }
 
 /// Open the run's connection to the node's server, unless an earlier node already did.
