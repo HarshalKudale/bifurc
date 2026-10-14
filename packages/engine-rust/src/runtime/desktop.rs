@@ -1,7 +1,7 @@
 //! The engine's presence on a desktop: its tray icon, opening the interface, and when to stop.
 //!
 //! The engine outlives the interfaces that use it, so it needs a handle of its own that the user can reach:
-//! the tray icon. It is a small helper (`bifurc-tray`, built from `ui/crates/tray`) that the engine runs as a
+//! the tray icon. It is a small helper (`bifurc-tray`, built from `packages/ui-rust/crates/tray`) that the engine runs as a
 //! child. The two talk in lines over the helper's stdio: the helper prints `ready` once its icon is up, then
 //! `open`, `restart` or `quit` as the user picks them; the engine closes the helper's stdin to take the icon
 //! down. A helper that is missing, or that cannot show an icon on this platform, leaves the engine without
@@ -60,15 +60,15 @@ fn env_path(name: &str) -> Option<String> {
     std::env::var(name).ok().filter(|value| !value.is_empty())
 }
 
-/// The tray helper found by walking up from each start: beside the directory itself, or under `ui/target`.
+/// The tray helper found by walking up from each start: beside the directory itself, or under `packages/ui-rust/target`.
 fn search_upward(starts: &[PathBuf], binary: &str) -> Option<PathBuf> {
     for start in starts {
         let start = std::path::absolute(start).unwrap_or_else(|_| start.clone());
         for dir in start.ancestors() {
             let candidates = [
                 dir.join(binary),
-                dir.join("ui").join("target").join("release").join(binary),
-                dir.join("ui").join("target").join("debug").join(binary),
+                dir.join("packages").join("ui-rust").join("target").join("release").join(binary),
+                dir.join("packages").join("ui-rust").join("target").join("debug").join(binary),
             ];
             if let Some(found) = candidates.into_iter().find(|candidate| candidate.exists()) {
                 return Some(found);
@@ -101,7 +101,7 @@ fn resolve_companions(
 }
 
 /// Locate the helpers: the explicit paths, then `BIFURC_TRAY` / `BIFURC_UI`, then a search upward from the
-/// engine's executable and from the working directory (beside the engine in a packaged app, under `ui/target`
+/// engine's executable and from the working directory (beside the engine in a packaged app, under `packages/ui-rust/target`
 /// in a checkout). The interface defaults to the one built next to the helper.
 pub fn find_desktop_companions(tray: Option<&str>, ui: Option<&str>) -> DesktopCompanions {
     let mut starts = Vec::new();
@@ -342,13 +342,13 @@ mod tests {
         let root = dir.path();
         let nested = root.join("a").join("b");
         std::fs::create_dir_all(&nested).unwrap();
-        touch(&root.join("ui").join("target").join("debug").join(tray_binary()));
+        touch(&root.join("packages").join("ui-rust").join("target").join("debug").join(tray_binary()));
         let found = resolve_companions(None, None, None, None, &[nested.clone()]);
-        assert_eq!(found.tray, Some(root.join("ui").join("target").join("debug").join(tray_binary())));
+        assert_eq!(found.tray, Some(root.join("packages").join("ui-rust").join("target").join("debug").join(tray_binary())));
 
-        touch(&root.join("ui").join("target").join("release").join(tray_binary()));
+        touch(&root.join("packages").join("ui-rust").join("target").join("release").join(tray_binary()));
         let found = resolve_companions(None, None, None, None, &[nested.clone()]);
-        assert_eq!(found.tray, Some(root.join("ui").join("target").join("release").join(tray_binary())));
+        assert_eq!(found.tray, Some(root.join("packages").join("ui-rust").join("target").join("release").join(tray_binary())));
 
         touch(&root.join(tray_binary()));
         let found = resolve_companions(None, None, None, None, &[nested]);
