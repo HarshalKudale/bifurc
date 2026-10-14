@@ -23,11 +23,11 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: ui
+          workspaces: packages/ui-rust
       - name: Install GPUI's build dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential clang cmake pkg-config libasound2-dev libfontconfig-dev \
             libwayland-dev libx11-xcb-dev libxkbcommon-x11-dev libssl-dev libzstd-dev libvulkan1
       - name: Test the UI
-        run: cargo test --workspace --manifest-path ui/Cargo.toml
+        run: cargo test --workspace --manifest-path packages/ui-rust/Cargo.toml
