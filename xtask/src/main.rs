@@ -36,7 +36,7 @@
 //! resources/bifurc-cli[.exe]   the CLI (`packages/cli-rust`)
 //! ```
 //!
-//! `ui/crates/engine-client/src/sidecar.rs` and `ui/crates/cli/src/main.rs` look for exactly these paths
+//! `packages/ui-rust/crates/engine-client/src/sidecar.rs` and `packages/ui-rust/crates/cli/src/main.rs` look for exactly these paths
 //! beside their own executable, and the engine finds the tray helper beside itself, so the folder works from
 //! wherever it is put and no installer has to write a configuration.
 //!
@@ -430,12 +430,12 @@ fn build(ctx: &Ctx) -> Result<()> {
         .args(["build", "--release", "--locked", "-p", "bifurc-engine", "-p", "bifurc-cli", "-p", "bifurc-mcp"])
         .env("RUSTFLAGS", &rustflags)
         .current_dir(&ctx.repo);
-    // The UI workspace: the app, which builds the tray helper beside it (`ui/crates/app/build.rs`), and the
+    // The UI workspace: the app, which builds the tray helper beside it (`packages/ui-rust/crates/app/build.rs`), and the
     // `bifurc` launcher that goes on PATH.
     let mut ui = Command::new("cargo");
     ui.args(["build", "--release", "--locked", "-p", "bifurc-ui", "-p", "bifurc-cli"])
         .env("RUSTFLAGS", &rustflags)
-        .current_dir(ctx.repo.join("ui"));
+        .current_dir(ctx.repo.join("packages").join("ui-rust"));
     // The two workspaces have their own target directories, so they build side by side: a fat-LTO link runs on
     // one core, and the other build uses the rest.
     std::thread::scope(|scope| {
@@ -448,7 +448,7 @@ fn build(ctx: &Ctx) -> Result<()> {
 
 /// A release build from `workspace` (the repository root, or `ui`).
 fn cargo_output(ctx: &Ctx, name: &str, root: bool) -> Result<PathBuf> {
-    let base = if root { ctx.repo.clone() } else { ctx.repo.join("ui") };
+    let base = if root { ctx.repo.clone() } else { ctx.repo.join("packages").join("ui-rust") };
     let target_dir = env_path("CARGO_TARGET_DIR").map_or_else(|| base.join("target"), |dir| base.join(dir));
     let file = target_dir.join("release").join(name);
     if file.exists() { Ok(file) } else { Err(format!("{} is missing — build first (drop --skip-build)", file.display())) }
