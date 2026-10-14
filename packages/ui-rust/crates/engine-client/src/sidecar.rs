@@ -200,26 +200,38 @@ fn start(config: &SidecarConfig, client_version: &str) -> Result<(EngineClient, 
         .map_err(|e| ClientError::Protocol(format!("could not start the engine `{}`: {e}.", binary.display())))?;
 
     let deadline = Instant::now() + START_TIMEOUT;
+    // What the last look found, so a failure can say why and not only that it took too long.
+    let mut seen = String::from("the engine wrote no runtime.json");
     while Instant::now() < deadline {
         if let Ok(Some(status)) = child.try_wait() {
             return Err(ClientError::Protocol(format!(
-                "the engine exited ({status}) before it was ready.\n{}",
+                "the engine exited ({status}) before it was ready.
+{}",
                 log_tail(&log_path)
             )));
         }
-        if let Some(info) =
-            read_runtime_info(&config.data_dir).filter(|i| i.pid == child.id() && i.transport == "socket")
-            && let Ok((client, hello)) = EngineClient::connect_attempts(&info.address, client_version, 1)
-        {
-            let sidecar = Sidecar { info, data_dir: config.data_dir.clone(), started_here: true };
-            return Ok((client, hello, sidecar));
+        match read_runtime_info(&config.data_dir) {
+            None => {}
+            Some(info) if info.pid != child.id() || info.transport != "socket" => {
+                seen = format!("runtime.json names pid {} over {}, the engine started here is pid {}", info.pid, info.transport, child.id());
+            }
+            Some(info) => match EngineClient::connect_attempts(&info.address, client_version, 1) {
+                Ok((client, hello)) => {
+                    let sidecar = Sidecar { info, data_dir: config.data_dir.clone(), started_here: true };
+                    return Ok((client, hello, sidecar));
+                }
+                Err(error) => seen = format!("connecting to {} failed: {error}", info.address),
+            },
         }
         thread::sleep(Duration::from_millis(150));
     }
     let _ = child.kill();
     let _ = child.wait();
     Err(ClientError::Protocol(format!(
-        "the engine did not become ready within {}s. See {}.\n{}",
+        "the engine ({}, pid {}) did not become ready within {}s: {seen}. See {}.
+{}",
+        binary.display(),
+        child.id(),
         START_TIMEOUT.as_secs(),
         log_path.display(),
         log_tail(&log_path)

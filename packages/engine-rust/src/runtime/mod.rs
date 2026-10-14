@@ -7,6 +7,8 @@ pub mod entity_status;
 pub mod host;
 pub mod instances;
 pub mod ports;
+#[cfg(unix)]
+pub mod shell_path;
 
 use std::sync::atomic::{AtomicBool, Ordering};
 

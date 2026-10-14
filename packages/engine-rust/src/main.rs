@@ -6,7 +6,7 @@ use bifurc_engine::{
         args::{HOST_USAGE, HostArgsResult, TransportKind, parse_host_args},
         desktop::find_desktop_companions,
         host::{HostOptions, HostTransport, run_workspace_host},
-        route_notices_to_stderr,
+        notice, route_notices_to_stderr,
     },
 };
 
@@ -24,6 +24,14 @@ fn main() {
         HostArgsResult::Args(args) => args,
     };
     bifurc_protocol::crash::install("engine", ENGINE_VERSION, args.data_dir.clone());
+
+    // A DMG install has no installer to put `bifurc` on PATH, so the engine does it.
+    #[cfg(target_os = "macos")]
+    if bifurc_engine::updates::channel::detect() == bifurc_engine::updates::channel::Channel::Dmg {
+        if let Some(dir) = std::env::current_exe().ok().as_deref().and_then(std::path::Path::parent) {
+            bifurc_engine::runtime::shell_path::ensure(dir);
+        }
+    }
 
     let transport = match args.transport {
         TransportKind::Stdio => HostTransport::Stdio,
@@ -47,6 +55,8 @@ fn main() {
         engine_version: ENGINE_VERSION.to_string(),
         desktop,
     };
+
+    notice(&format!("starting: engine {ENGINE_VERSION}, pid {}", std::process::id()));
 
     // Outbound TLS and the interception proxy share one crypto provider.
     let _ = rustls::crypto::ring::default_provider().install_default();
