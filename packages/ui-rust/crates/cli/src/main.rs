@@ -27,7 +27,9 @@ const PACKAGED_ENGINE: &str = "bifurc-engine";
 
 fn main() -> ExitCode {
     let args: Vec<_> = env::args_os().skip(1).collect();
-    let Ok(exe) = env::current_exe() else {
+    // On a PATH symlink (macOS keeps the one it is called by) the install is where the link points.
+    let exe = env::current_exe().and_then(|exe| if cfg!(unix) { exe.canonicalize() } else { Ok(exe) });
+    let Ok(exe) = exe else {
         eprintln!("bifurc: could not tell where this executable is");
         return ExitCode::FAILURE;
     };

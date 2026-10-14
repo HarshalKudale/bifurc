@@ -37,6 +37,7 @@ PACKAGES = [
     (re.compile(r"^Bifurc-.+-(x86_64|aarch64)\.AppImage$"), "appimage-{0}"),
     (re.compile(r"^bifurc_.+_(amd64|arm64)\.deb$"), "deb-{0}"),
     (re.compile(r"^Bifurc-.+-linux-(x86_64|aarch64)\.tar\.gz$"), "tarball-{0}"),
+    (re.compile(r"^Bifurc-.+-mac-(x64|arm64)\.dmg$"), "dmg-{0}"),
 ]
 VERSION = re.compile(r"^\d+\.\d+\.\d+$")
 # The exit code of `release` for a folder with none of those files: a release from before them, which the

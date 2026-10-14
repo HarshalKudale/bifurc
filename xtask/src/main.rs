@@ -4,6 +4,7 @@
 //! cargo xtask package                       # everything this platform has: packages and store manifests
 //! cargo xtask package --target nsis,msix    # windows: installer exe, Store package
 //! cargo xtask package --target appimage,deb # linux
+//! cargo xtask package --target dmg          # macos: the whole thing is the default there
 //! cargo xtask package --target dir          # the staged folder only
 //! cargo xtask package --skip-build          # package what is already built
 //! cargo xtask package --release-tag v1.2.3  # the release the manifests download from (default: v<version>)
@@ -20,6 +21,7 @@
 //! | `deb`      | linux    | `bifurc_<version>_<arch>.deb`                                             |
 //! | `tarball`  | linux    | `Bifurc-<version>-linux-<arch>.tar.gz`, the staged folder as it is        |
 //! | `aur`      | linux    | `manifests/aur/…`: `PKGBUILD`, `.SRCINFO`, `bifurc.install`               |
+//! | `dmg`      | macos    | `Bifurc-<version>-mac-<arch>.dmg`: `Bifurc.app` and an Applications link  |
 //!
 //! A manifest names the file a package manager downloads and its hash, so its target builds that file too:
 //! `winget` the installer, `scoop` the zip, `aur` the tarball. The download is the file of that
@@ -30,7 +32,7 @@
 //! ```text
 //! bifurc-ui[.exe]      the interface
 //! bifurc-engine[.exe]  the engine
-//! bifurc-tray.exe      the engine's tray icon (Windows)
+//! bifurc-tray[.exe]    the engine's tray icon (Windows) or menu-bar icon (macOS)
 //! bin/bifurc[.exe]     the `bifurc` command — the only folder that goes on PATH; runs resources/bifurc-cli
 //! resources/bifurc-mcp[.exe]  the MCP server (`packages/mcp-rust`), started by `bifurc --mcp`; not on PATH
 //! resources/bifurc-cli[.exe]   the CLI (`packages/cli-rust`)
@@ -71,6 +73,11 @@ fn deb_arch() -> &'static str {
     if env::consts::ARCH == "aarch64" { "arm64" } else { "amd64" }
 }
 
+/// What the disk image's name calls it.
+fn mac_arch() -> &'static str {
+    if env::consts::ARCH == "aarch64" { "arm64" } else { "x64" }
+}
+
 /// What Scoop calls it.
 fn scoop_arch() -> &'static str {
     if env::consts::ARCH == "aarch64" { "arm64" } else { "64bit" }
@@ -79,6 +86,8 @@ fn scoop_arch() -> &'static str {
 /// Every target of each platform, in the order they are made: a manifest after the file it describes.
 const WINDOWS_TARGETS: [&str; 5] = ["nsis", "msix", "zip", "winget", "scoop"];
 const LINUX_TARGETS: [&str; 4] = ["appimage", "deb", "tarball", "aur"];
+const MACOS_TARGETS: [&str; 1] = ["dmg"];
+const MACOS: bool = cfg!(target_os = "macos");
 
 /// The package a manifest's target describes, which is built with it.
 fn needs(target: &str) -> Option<&'static str> {
@@ -147,9 +156,10 @@ fn run() -> Result<()> {
         Some("package") => {}
         _ => {
             return Err(format!(
-                "usage: cargo xtask package [--target dir,{},{}] [--skip-build] [--release-tag <tag>]",
+                "usage: cargo xtask package [--target dir,{},{},{}] [--skip-build] [--release-tag <tag>]",
                 WINDOWS_TARGETS.join(","),
-                LINUX_TARGETS.join(",")
+                LINUX_TARGETS.join(","),
+                MACOS_TARGETS.join(",")
             ));
         }
     }
@@ -161,7 +171,13 @@ fn run() -> Result<()> {
             None => Ok(None),
         }
     };
-    let platform_targets: &[&str] = if WINDOWS { &WINDOWS_TARGETS } else { &LINUX_TARGETS };
+    let platform_targets: &[&str] = if WINDOWS {
+        &WINDOWS_TARGETS
+    } else if MACOS {
+        &MACOS_TARGETS
+    } else {
+        &LINUX_TARGETS
+    };
     let mut targets: Vec<&str> = match value_of("--target")? {
         Some(spec) => spec.split(',').filter(|t| !t.is_empty()).collect(),
         None => platform_targets.to_vec(),
@@ -170,10 +186,24 @@ fn run() -> Result<()> {
         if *target == "dir" || platform_targets.contains(target) {
             continue;
         }
-        if WINDOWS_TARGETS.contains(target) || LINUX_TARGETS.contains(target) {
-            return Err(format!("{target} is built on {}; this is {}", if WINDOWS { "linux" } else { "windows" }, env::consts::OS));
+        let built_on = if WINDOWS_TARGETS.contains(target) {
+            Some("windows")
+        } else if LINUX_TARGETS.contains(target) {
+            Some("linux")
+        } else if MACOS_TARGETS.contains(target) {
+            Some("macos")
+        } else {
+            None
+        };
+        if let Some(built_on) = built_on {
+            return Err(format!("{target} is built on {built_on}; this is {}", env::consts::OS));
         }
-        return Err(format!("unknown target \"{target}\" (dir, {}, {})", WINDOWS_TARGETS.join(", "), LINUX_TARGETS.join(", ")));
+        return Err(format!(
+            "unknown target \"{target}\" (dir, {}, {}, {})",
+            WINDOWS_TARGETS.join(", "),
+            LINUX_TARGETS.join(", "),
+            MACOS_TARGETS.join(", ")
+        ));
     }
     for needed in targets.clone().into_iter().filter_map(needs) {
         if !targets.contains(&needed) {
@@ -213,6 +243,9 @@ fn run() -> Result<()> {
         if wanted("scoop") {
             made.push(manifest_scoop(&ctx, &zip)?);
         }
+    }
+    if wanted("dmg") {
+        made.push(package_dmg(&ctx, &staged)?);
     }
     if wanted("appimage") {
         made.push(package_appimage(&ctx, &staged)?);
@@ -459,11 +492,18 @@ fn cargo_output(ctx: &Ctx, name: &str, root: bool) -> Result<PathBuf> {
 // ---------------------------------------------------------------------------------------------------------
 
 fn stage(ctx: &Ctx) -> Result<PathBuf> {
-    let dir = ctx.out_dir.join(if WINDOWS { "win-unpacked" } else { "linux-unpacked" });
+    let dir = ctx.out_dir.join(if WINDOWS {
+        "win-unpacked"
+    } else if MACOS {
+        "mac-unpacked"
+    } else {
+        "linux-unpacked"
+    });
     empty_dir(&dir)?;
     copy_file(&cargo_output(ctx, &format!("bifurc-ui{EXE}"), false)?, &dir.join(format!("bifurc-ui{EXE}")))?;
-    if WINDOWS {
-        copy_file(&cargo_output(ctx, "bifurc-tray.exe", false)?, &dir.join("bifurc-tray.exe"))?;
+    if WINDOWS || MACOS {
+        copy_file(&cargo_output(ctx, &format!("bifurc-tray{EXE}"), false)?, &dir.join(format!("bifurc-tray{EXE}")))?;
+        make_executable(&dir.join(format!("bifurc-tray{EXE}")))?;
     }
     // The launcher (ui workspace) is `bin/bifurc`; the CLI it runs (repository workspace) and the engine are the others.
     copy_file(&cargo_output(ctx, &format!("bifurc{EXE}"), false)?, &dir.join("bin").join(format!("bifurc{EXE}")))?;
@@ -665,6 +705,65 @@ fn manifest_scoop(ctx: &Ctx, zip: &Path) -> Result<PathBuf> {
     let out = dir.join("bifurc.json");
     write_file(&out, &manifest(ctx, "windows/scoop/bifurc.json", &values)?)?;
     Ok(out)
+}
+
+// ---------------------------------------------------------------------------------------------------------
+// macOS: disk image
+// ---------------------------------------------------------------------------------------------------------
+
+/// `Bifurc.app` in a disk image beside an Applications link. The staged folder is the app's `Contents/MacOS`,
+/// so the interface, the engine, the tray helper and `bin/` and `resources/` stay where they look for each other.
+/// `bin/bifurc` goes on PATH the first time the engine of this install runs (`runtime/shell_path.rs`).
+///
+/// Not signed or notarized: a downloaded copy is opened once with right click, Open.
+fn package_dmg(ctx: &Ctx, staged: &Path) -> Result<PathBuf> {
+    let root = ctx.out_dir.join("dmg-root");
+    empty_dir(&root)?;
+    let contents = root.join("Bifurc.app").join("Contents");
+    let macos = contents.join("MacOS");
+    copy_dir(staged, &macos)?;
+    mark(&macos, "dmg")?;
+    write_file(&contents.join("Info.plist"), &template(ctx, "macos/Info.plist", &[("VERSION", VERSION)])?)?;
+    make_icns(ctx, &contents.join("Resources").join("Bifurc.icns"))?;
+    symlink("/Applications", &root.join("Applications"))?;
+
+    let out = ctx.out_dir.join(format!("Bifurc-{VERSION}-mac-{}.dmg", mac_arch()));
+    let _ = fs::remove_file(&out);
+    let mut command = Command::new("hdiutil");
+    command.args(["create", "-volname", "Bifurc", "-fs", "HFS+", "-format", "UDZO", "-ov", "-srcfolder"]);
+    command.arg(&root).arg(&out).current_dir(&ctx.repo);
+    exec(command, false)?;
+    // Not left behind: Spotlight would list this copy of the app beside the installed one.
+    let _ = fs::remove_dir_all(&root);
+    let _ = fs::remove_dir_all(ctx.out_dir.join("Bifurc.iconset"));
+    Ok(out)
+}
+
+/// The app icon in the format macOS wants, from the 512 px PNG.
+fn make_icns(ctx: &Ctx, out: &Path) -> Result<()> {
+    let iconset = ctx.out_dir.join("Bifurc.iconset");
+    empty_dir(&iconset)?;
+    let png = ctx.repo.join("build").join("icon.png");
+    for (size, name) in [
+        (16, "16x16"),
+        (32, "16x16@2x"),
+        (32, "32x32"),
+        (64, "32x32@2x"),
+        (128, "128x128"),
+        (256, "128x128@2x"),
+        (256, "256x256"),
+        (512, "256x256@2x"),
+        (512, "512x512"),
+        (1024, "512x512@2x"),
+    ] {
+        let mut sips = Command::new("sips");
+        sips.args(["-z", &size.to_string(), &size.to_string()]).arg(&png).arg("--out").arg(iconset.join(format!("icon_{name}.png")));
+        exec(sips, true)?;
+    }
+    fs::create_dir_all(out.parent().ok_or("no folder for the icon")?).map_err(|e| format!("{}: {e}", out.display()))?;
+    let mut iconutil = Command::new("iconutil");
+    iconutil.args(["-c", "icns"]).arg(&iconset).arg("-o").arg(out);
+    exec(iconutil, true)
 }
 
 // ---------------------------------------------------------------------------------------------------------
