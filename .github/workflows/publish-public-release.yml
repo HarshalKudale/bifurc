@@ -117,10 +117,11 @@ jobs:
               --pattern '*-win-*.zip' \
               --pattern '*.deb' \
               --pattern '*.AppImage' \
-              --pattern '*-linux-*.tar.gz'
+              --pattern '*-linux-*.tar.gz' \
+              --pattern '*-mac-*.dmg'
 
             if [ -z "$(ls -A "$work/assets")" ]; then
-              echo "::error::$tag has no installable files (exe, zip, deb, AppImage, tar.gz) to publish."
+              echo "::error::$tag has no installable files (exe, zip, deb, AppImage, tar.gz, dmg) to publish."
               exit 1
             fi
 

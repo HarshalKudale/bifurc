@@ -134,7 +134,9 @@ fn workspace_dir_exists(ws_id: &str) -> bool {
 /// Make every workspace's directory a usable repository, resume auto-sync, and make sure the active
 /// workspace exists (creating "Workspace 1" in an empty data directory).
 async fn bootstrap_workspaces(mut settings: AppSettings) -> Result<AppSettings> {
+    notice("starting: looking for git");
     let git_installed = check_git_installed().await;
+    notice("starting: git looked for");
     if !git_installed {
         notice("git is not installed: workspaces are plain files, with no history, audit log or sync");
     }
@@ -178,6 +180,7 @@ impl WorkspaceHost {
             )));
         }
 
+        notice("starting: no other engine is running here");
         let mut registry = CommandRegistry::new();
         register_all_engine_commands(&mut registry);
         let stop = shutdown.clone();
@@ -193,12 +196,16 @@ impl WorkspaceHost {
 
         set_data_root(&opts.data_dir)?;
         // Before anything that can fail, so that what fails while starting is reported too.
+        notice("starting: data directory set");
         crate::analytics::start(opts.transport.kind().as_str());
+        notice("starting: analytics started");
         let log = EventLog::new(bus());
         crate::capture::start_capture_recording();
         let sweeper = crate::workspace::blob::start_blob_sweeper();
 
+        notice("starting: capture and blob sweeper started");
         let mut settings = load_settings();
+        notice("starting: settings loaded");
         if let Some(wanted) = &opts.workspace_ids {
             for id in wanted {
                 if settings.workspace(id).is_none() {
@@ -211,6 +218,7 @@ impl WorkspaceHost {
             settings.workspaces_mut().retain(|w| wanted.iter().any(|id| id == str_of(w, "id")));
         }
         let settings = bootstrap_workspaces(settings).await?;
+        notice("starting: workspaces prepared");
 
         let forward_proxy = crate::proxy::create_proxy_server();
         let forward_port = settings.forward_proxy_port();
