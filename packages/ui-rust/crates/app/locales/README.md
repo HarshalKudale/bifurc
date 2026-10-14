@@ -1,7 +1,7 @@
 # UI text and languages
 
 Every sentence the window shows comes from `src/i18n.rs`, looked up by key in the language the user chose
-(first step of the first run; stored in `desktop-ui.json` as `language`). Only `ui/crates/app` is covered:
+(first step of the first run; stored in `desktop-ui.json` as `language`). Only `packages/ui-rust/crates/app` is covered:
 the engine, CLI and MCP server keep their own text.
 
 ## Layout
