@@ -122,7 +122,7 @@ mod tray {
     /// repository stops holding the moment it is packaged. Both failures below are broken-build failures,
     /// not runtime conditions.
     fn tray_icon_from_png() -> tray_icon::icon::Icon {
-        const PNG: &[u8] = include_bytes!("../../../../build/tray-icon.png");
+        const PNG: &[u8] = include_bytes!("../../../../../build/tray-icon.png");
 
         let decoded = (|| {
             let mut reader = png::Decoder::new(PNG).read_info()?;

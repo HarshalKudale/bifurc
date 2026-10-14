@@ -45,7 +45,7 @@ jobs:
         with:
           workspaces: |
             .
-            ui
+            packages/ui-rust
           shared-key: release
           cache-on-failure: true
 
@@ -89,7 +89,7 @@ jobs:
         with:
           workspaces: |
             .
-            ui
+            packages/ui-rust
           shared-key: release
           cache-on-failure: true
 

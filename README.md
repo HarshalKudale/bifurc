@@ -23,7 +23,7 @@ It brings together `*.localhost` mappings, proxy rules, capture tooling, REST/Gr
 
 The engine (`packages/engine-rust`), the `bifurc` CLI (`packages/cli-rust`), the `bifurc-mcp` MCP server
 (`packages/mcp-rust`), the shared wire types
-(`packages/protocol-rust`) and the desktop UI (`ui/`) are all Rust. There is no Node runtime.
+(`packages/protocol-rust`) and the desktop UI (`packages/ui-rust`) are all Rust. There is no Node runtime.
 
 ```bash
 cargo dev:engine     # the engine, in this terminal (logs here; Ctrl+C or `cargo dev:cli engine stop` ends it)
@@ -61,7 +61,7 @@ Bifurc/
 │   ├── engine-rust/    # The engine: proxies, mocks, requests, workspaces, git
 │   ├── cli-rust/       # The `bifurc` CLI
 │   └── mcp-rust/       # The `bifurc-mcp` MCP server: the CLI's commands as tools
-├── ui/                 # Desktop UI (GPUI), tray helper and the installed `bifurc` launcher
+├── packages/ui-rust/   # Desktop UI (GPUI), tray helper and the installed `bifurc` launcher
 ├── xtask/              # `cargo xtask package`
 ├── packaging/          # Installer, Store package and AppImage templates
 └── build/              # Icons
@@ -97,7 +97,7 @@ Load the `bifurc-extension` repository's folder unpacked in Chrome or Edge to:
 
 ```bash
 cargo test --workspace                                  # protocol, engine, CLI
-cargo test --workspace --manifest-path ui/Cargo.toml    # UI
+cargo test --workspace --manifest-path packages/ui-rust/Cargo.toml    # UI
 ```
 
 ## Licensing
