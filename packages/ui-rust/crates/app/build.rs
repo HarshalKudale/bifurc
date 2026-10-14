@@ -42,7 +42,7 @@ fn main() {
 /// taskbar show an executable's first icon — with no resource there is nothing for either to show.
 #[cfg(windows)]
 fn embed_icon() -> Result<(), String> {
-    let icon = Path::new(&env::var("CARGO_MANIFEST_DIR").map_err(|e| e.to_string())?).join("../../../build/icon.ico");
+    let icon = Path::new(&env::var("CARGO_MANIFEST_DIR").map_err(|e| e.to_string())?).join("../../../../build/icon.ico");
     println!("cargo:rerun-if-changed={}", icon.display());
     let mut resource = winresource::WindowsResource::new();
     resource.set_icon_with_id(&icon.to_string_lossy(), "1");
@@ -60,7 +60,7 @@ fn build_tray_helper() -> Result<(), String> {
     let tray = Path::new(&var("CARGO_MANIFEST_DIR")?).join("..").join("tray");
     println!("cargo:rerun-if-changed={}", tray.join("src").display());
     println!("cargo:rerun-if-changed={}", tray.join("Cargo.toml").display());
-    println!("cargo:rerun-if-changed={}", tray.join("../../../build/tray-icon.png").display());
+    println!("cargo:rerun-if-changed={}", tray.join("../../../../build/tray-icon.png").display());
 
     // OUT_DIR is `<target>/<profile>/build/<package>-<hash>/out`.
     let out_dir = PathBuf::from(var("OUT_DIR")?);
