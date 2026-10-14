@@ -6,7 +6,7 @@ license.workspace = true
 authors.workspace = true
 
 [dependencies]
-bifurc-protocol = { path = "../../../packages/protocol-rust" }
+bifurc-protocol = { path = "../../../protocol-rust" }
 futures = "0.3"
 interprocess = "2"
 serde = { version = "1", features = ["derive"] }
