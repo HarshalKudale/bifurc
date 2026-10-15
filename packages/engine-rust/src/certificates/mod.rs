@@ -24,7 +24,6 @@ pub fn register(registry: &mut CommandRegistry) {
 mod tests {
     use std::sync::Arc;
 
-    use rsa::pkcs8::{EncodePrivateKey, LineEnding};
     use rustls::{ClientConfig, ClientConnection, RootCertStore, ServerConnection, pki_types::ServerName};
     use serde_json::json;
 
@@ -86,7 +85,7 @@ mod tests {
         let cert_pem = std::fs::read_to_string(&generated.cert_path).unwrap();
         let key_pem = std::fs::read_to_string(&generated.key_path).unwrap();
         assert!(cert_pem.starts_with("-----BEGIN CERTIFICATE-----"));
-        assert!(key_pem.starts_with("-----BEGIN RSA PRIVATE KEY-----"));
+        assert!(key_pem.starts_with("-----BEGIN PRIVATE KEY-----"));
 
         let identity = identify_cert(&cert_pem).unwrap();
         assert_eq!(identity, generated.identity);
@@ -108,9 +107,7 @@ mod tests {
         assert!(!handshake(config, &ca_der, "other.com"));
         assert!(handshake(host_server_config("127.0.0.1").unwrap(), &ca_der, "127.0.0.1"));
 
-        // A PKCS#8 key (what other tools write) loads as well.
-        let pkcs8 = key.to_pkcs8_pem(LineEnding::LF).unwrap();
-        std::fs::write(ca_key_path(), pkcs8.as_bytes()).unwrap();
+        // Reloading clears the cache.
         assert!(load_ca(&ca_cert_path(), &ca_key_path()));
         assert!(cached_hosts().is_empty());
         assert!(handshake(host_server_config("example.com").unwrap(), &ca_der, "example.com"));
@@ -131,6 +128,68 @@ mod tests {
         assert!(remove_ca(&dir));
         assert!(!remove_ca(&dir));
         assert_eq!(get_cert_status(&dir), (false, None));
+    }
+
+    /// A CA written by an earlier version: RSA 2048, PKCS#1 PEM key.
+    const LEGACY_RSA_CA_CERT: &str = "-----BEGIN CERTIFICATE-----
+MIIDIDCCAgigAwIBAgIUDFSoeEIFONTvHVN4+CKAoxMuR/IwDQYJKoZIhvcNAQEL
+BQAwGDEWMBQGA1UEAwwNTGVnYWN5IFJTQSBDQTAgFw0yNjEwMTUxNTU4MDZaGA8y
+MTI2MDkyMTE1NTgwNlowGDEWMBQGA1UEAwwNTGVnYWN5IFJTQSBDQTCCASIwDQYJ
+KoZIhvcNAQEBBQADggEPADCCAQoCggEBAPRUiuytxviTOXP9XzA+RM6jnhb0g8mT
+Zi6nIc5z2cpIvQ+fWUCkX831czzV/ozt/8IWw0PUCfcjJ9KVUK54fgkn93oAEQ9J
+PqC/Djm73e4vjYxZnB0UWGtWq+lFBD5JefSQdpizEwi+vKJUf+e05v2QKGJL5SdV
+E5Lxz4LZRMm//KLY4J1BWuLWPLXR/V+9wO0Gkmuna+iYbRdnAz3Lh682vazXnsZd
+tlLB0/Zx3WMBwxFHOEtcTiMgXEDJXxgH7FfKr97uAy5LyVsTyH+WukrzbpDMQAD+
+WNpd4gqO91clbEZNYhgd3dJneniDV3mFlApCtPKvlySXm50VcppZbckCAwEAAaNg
+MF4wHQYDVR0OBBYEFFJcOBFEZxZYfAETRLpsDxwP/XOGMB8GA1UdIwQYMBaAFFJc
+OBFEZxZYfAETRLpsDxwP/XOGMA8GA1UdEwEB/wQFMAMBAf8wCwYDVR0PBAQDAgIE
+MA0GCSqGSIb3DQEBCwUAA4IBAQDAULK377aYmN6MkjaSxuJdnh+63IYyMbxAo5ZV
+aGtEORJFpkw1ILdhrcYXDhSDZ3uEPNEk/ezWvC9Ll18ASL7j6lzbhMbNDoWFfkBQ
+S9dFFwnwU2c/i8KyT9i3GVEuy6RxKF8+jo3yboTi3IN+Myz12woAOpE1C1AThx0b
+517Z98U/HQQtsHyCUVhWegVUER+IcO4Iet11D1OXfG8Al2P0M1QUr8OIZ8KD3k3g
+eAFkBQehkLgfOGPQF7lw8maLPhV6HxLzP5xzS4wMstShJjYr+vWRBrpP4CH46uh2
+A+jWXuWpKh3tXlOiVfsLTDL1n+NLRkEbRsjj7YxjPcPNkcF8
+-----END CERTIFICATE-----
+";
+    const LEGACY_RSA_CA_KEY: &str = "-----BEGIN RSA PRIVATE KEY-----
+MIIEowIBAAKCAQEA9FSK7K3G+JM5c/1fMD5EzqOeFvSDyZNmLqchznPZyki9D59Z
+QKRfzfVzPNX+jO3/whbDQ9QJ9yMn0pVQrnh+CSf3egARD0k+oL8OObvd7i+NjFmc
+HRRYa1ar6UUEPkl59JB2mLMTCL68olR/57Tm/ZAoYkvlJ1UTkvHPgtlEyb/8otjg
+nUFa4tY8tdH9X73A7QaSa6dr6JhtF2cDPcuHrza9rNeexl22UsHT9nHdYwHDEUc4
+S1xOIyBcQMlfGAfsV8qv3u4DLkvJWxPIf5a6SvNukMxAAP5Y2l3iCo73VyVsRk1i
+GB3d0md6eINXeYWUCkK08q+XJJebnRVymlltyQIDAQABAoIBABsf3BzupWNQ99y/
+PQ8uaIXevvUaL9vD4gENo6iHbr8g4GFQvdA591tWc5TGRohHf0BhNcwMyQ7vT5NW
+qYJ3BLn4PoaEJaCyb1IZ58bDyx1vWMnjJFxLlw3SjUr8Mx6FmnUKySnGXpd20lr8
+ocb7y7WMaJlSBuZ9EMtcTj7e5z602riOSf9400dU2fdG0d1r/P6L8kQdntP+vjAb
+TLRiqDEiTGx+ftLchEUh8zY4f+8Elut76nbOOWqOJuBcpFCdcBL8DIoj779B8cU9
+uXvCFBrMqOuOeK60p1M6L4tSAZlpUTDEYn4ECFsOxdoQ1F82ndKBRlviXbDsX0Jf
+B/dA8iECgYEA/4PBNKiprS9JdMW+YE3VYoDok3EiWk9OnsnaGkzVSuP3viONyG7J
+4O3w2Kvunf0HkctjQ1CBXspIxqHwt2Yg++FDcQjxDtBdXJDHk3rhkGNKJw5NIBS1
+XQWJfFiBesD8tXkNTPmuTRV+EBal+TFC7zsQ23cA8Vil3e4lvDzqNiECgYEA9MtZ
+d7Qw1rNh8v8c628PFu12gi9XpCczHP9NOJ0H0+cwQNOnBmOiYNtjxjGdlVSn/K0Z
+4ryqiaHTAh7RK/w0vNbPdr1gWID4R8tgHC19jXxMrOCZ1MyQ+SBRANSOHuKBuyPO
+IMKZefXr9x+Cwf5RQOYdbuqzAzAKsvBMHLGBcqkCgYA4eVF5pxGhkoMEyTPzqyBP
+njhJZkb2ePLii7CmAXdfDxXRs6ABveLm0RBbg1zBFIzYv4BX/3IolkMRi/ddQbhm
+k3pJgHVvFcSc0e8afJ1gQWHBUhrfzVPslG23ywQLMp5oKbIz4jeRF//95FOYyTeH
+EqH+L8ZIkZRPgfRbL4eAoQKBgF67eyoZ73SHAvbYx0ZNOlezGdOToqUCDoPAQRAR
+pP/aThAoWFDeqe41uMzwUn2Bv2jHTGc0gAK3P0NozaXp+jbCIpNfAjP95RdTmyQM
+brQcUEfuu1lguRHP8ckSeNV27qGPX6vJ4z8Rbnm6Fg4g7yzgYK+V4CTxqJJK8AmC
+oAfRAoGBAIJxZALFtImYwvRENAkGlgZ5YzsVL44DGjER28kXiIcqI64kisx3dZ0/
+NKTBJxK7QCfDcsI1kk5Oc1P8vA6N8Kj1cDAlkC81V/MTKo0VQmVaQDA80BrF2oQv
+FVs1an5osA4S/Ox+lQY4PPy81x+qkBQ4U8kS8dirD0Bu+cjkU2Ew
+-----END RSA PRIVATE KEY-----
+";
+
+    #[test]
+    fn a_legacy_rsa_ca_still_loads_and_signs_host_certificates() {
+        let _root = scratch_data_root();
+        std::fs::write(ca_cert_path(), LEGACY_RSA_CA_CERT).unwrap();
+        std::fs::write(ca_key_path(), LEGACY_RSA_CA_KEY).unwrap();
+        assert!(LEGACY_RSA_CA_KEY.starts_with("-----BEGIN RSA PRIVATE KEY-----"));
+        assert!(load_ca(&ca_cert_path(), &ca_key_path()));
+        let ca_der = manager::first_cert_der(LEGACY_RSA_CA_CERT).unwrap();
+        assert!(handshake(host_server_config("example.com").unwrap(), &ca_der, "example.com"));
+        unload_ca();
     }
 
     #[test]
