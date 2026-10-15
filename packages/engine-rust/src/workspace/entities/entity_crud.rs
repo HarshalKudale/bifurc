@@ -465,10 +465,13 @@ mod tests {
         );
         assert_eq!(read_names_index(WS, "requests")[&id]["name"], "Sign in");
 
+        let kept = crate::workspace::response_history::failed("x".into(), "GET".into(), "u".into());
+        crate::workspace::response_history::record(WS, &id, kept);
         assert_eq!(
             call(&ctx, "entity.delete", json!({ "kind": "requests", "id": id })).await.unwrap(),
             json!({ "ok": true, "pending": false })
         );
+        assert!(crate::workspace::response_history::entries(WS, &id).is_empty());
         assert!(!entity_dir(WS, "requests").join("Auth").join(format!("{id}.json")).exists());
         assert!(read_names_index(WS, "requests").get(&id).is_none());
         let gone = call(&ctx, "entity.load", json!({ "workspaceId": WS, "kind": "requests", "id": id })).await.unwrap();

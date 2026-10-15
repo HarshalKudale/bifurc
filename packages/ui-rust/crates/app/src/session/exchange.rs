@@ -12,6 +12,7 @@ use gpui_kit::component::{
     alert::Alert,
     button::{Button, ButtonVariants as _},
     h_flex,
+    menu::{DropdownMenu as _, PopupMenuItem},
     tab::{Tab, TabBar},
     tag::Tag,
     v_flex,
@@ -22,9 +23,11 @@ use gpui_kit::{
     ParentElement as _, Render, ScrollHandle, SharedString, StatefulInteractiveElement as _, Styled as _, Window, div,
     list, px,
 };
-use serde_json::Value;
+use bifurc_engine_client::EngineClient;
+use serde_json::{Value, json};
 
 use crate::{
+    engine::call_in,
     i18n::{t, t_with},
     components::{
         BodyPane, Syntax,
@@ -33,10 +36,12 @@ use crate::{
         page,
     },
     model::{
+        history::{self, HistoryEntry},
         http::{BodyEncoding, HttpResponse, TestOutcome, pretty_json, status_text},
         media::{self, BodyClass},
         stream::MAX_MESSAGES,
     },
+    screens::audit::{now_ms, relative_time},
 };
 
 #[derive(Clone, Copy, PartialEq, Eq)]
@@ -131,8 +136,31 @@ pub fn grpc_status_name(code: i64) -> &'static str {
     }
 }
 
+/// How a past response is shown again: as the result of the send that made it.
+#[derive(Clone, Copy)]
+pub enum Replay {
+    Http(BodyEncoding),
+    Grpc,
+}
+
+/// Where a request's response history is kept: the engine, under the workspace and the request's id.
+#[derive(Clone)]
+pub struct HistorySource {
+    pub client: EngineClient,
+    pub workspace_id: String,
+    /// `None` for a draft, which has no history.
+    pub entity_id: Option<String>,
+    pub replay: Replay,
+}
+
 pub struct Exchange {
     phase: Phase,
+    /// The saved responses of the request, newest first, and the one shown instead of the latest.
+    history: Vec<HistoryEntry>,
+    source: Option<HistorySource>,
+    viewing: Option<usize>,
+    /// The latest outcome (a result, or the error), kept to come back to after looking at a past response.
+    last: Option<Result<Value, String>>,
     section: Section,
     body: Entity<BodyPane>,
     /// The body as bytes, when it is an image or other data rather than text.
@@ -154,6 +182,10 @@ impl Exchange {
         let body = cx.new(|cx| BodyPane::new(window, cx));
         Self {
             phase: Phase::Idle,
+            history: Vec::new(),
+            source: None,
+            viewing: None,
+            last: None,
             section: Section::Body,
             body,
             binary: None,
@@ -171,6 +203,8 @@ impl Exchange {
     }
 
     pub fn begin(&mut self, cx: &mut Context<Self>) {
+        self.viewing = None;
+        self.last = None;
         self.phase = Phase::Sending;
         cx.notify();
     }
@@ -199,6 +233,8 @@ impl Exchange {
             live.running = false;
             live.message = message;
         } else {
+            self.viewing = None;
+            self.last = Some(Err(message.clone()));
             self.phase = Phase::Failed(message);
         }
         cx.notify();
@@ -271,6 +307,8 @@ impl Exchange {
         }
         self.binary = None;
         self.saved_note = None;
+        self.viewing = None;
+        self.last = Some(Ok(result.clone()));
         let (raw, pretty, syntax, status) = match HttpResponse::from_value(result, encoding) {
             Some(response) => {
                 let content_type = response.content_type().unwrap_or_default().to_owned();
@@ -311,6 +349,81 @@ impl Exchange {
         self.body.update(cx, |body, cx| body.set(raw, pretty, syntax, window, cx));
         cx.notify();
         status
+    }
+
+    /// Reads the request's saved responses again, and remembers where they are kept.
+    pub fn refresh_history(&mut self, source: HistorySource, window: &Window, cx: &mut Context<Self>) {
+        let client = source.client.clone();
+        let payload = source.entity_id.as_ref().map(|id| json!({ "workspaceId": source.workspace_id, "id": id }));
+        self.source = Some(source);
+        let Some(payload) = payload else {
+            self.history.clear();
+            cx.notify();
+            return;
+        };
+        call_in(&client, window, cx, "response.history", payload, |this, outcome, _, cx| {
+            if let Ok(result) = outcome {
+                this.history = history::parse(&result);
+                cx.notify();
+            }
+        });
+    }
+
+    fn clear_history(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(HistorySource { client, workspace_id, entity_id: Some(id), .. }) = self.source.clone() else { return };
+        let payload = json!({ "workspaceId": workspace_id, "id": id });
+        call_in(&client, window, cx, "response.clearHistory", payload, |this, outcome, window, cx| {
+            if outcome.is_ok() {
+                this.history.clear();
+                if this.viewing.is_some() {
+                    this.back_to_latest(window, cx);
+                }
+                cx.notify();
+            }
+        });
+    }
+
+    /// Shows a saved response in place of the latest one.
+    fn view_past(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let (Some(entry), Some(source)) = (self.history.get(ix).cloned(), self.source.clone()) else { return };
+        if self.arriving().is_some() {
+            return;
+        }
+        let outcome = match (entry.is_unanswered(), source.replay) {
+            (true, _) => Err(entry.error.clone().unwrap_or_default()),
+            (false, Replay::Grpc) => Ok(entry.as_grpc_result()),
+            (false, Replay::Http(encoding)) => Ok(entry.as_http_result(encoding)),
+        };
+        let last = self.last.clone();
+        self.show(&outcome, source.replay, window, cx);
+        self.last = last;
+        self.viewing = Some(ix);
+    }
+
+    fn back_to_latest(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let (Some(source), Some(last)) = (self.source.clone(), self.last.clone()) else {
+            self.viewing = None;
+            self.phase = Phase::Idle;
+            cx.notify();
+            return;
+        };
+        self.show(&last, source.replay, window, cx);
+    }
+
+    fn show(&mut self, outcome: &Result<Value, String>, replay: Replay, window: &mut Window, cx: &mut Context<Self>) {
+        match (outcome, replay) {
+            (Err(message), _) => {
+                self.binary = None;
+                self.viewing = None;
+                self.last = Some(Err(message.clone()));
+                self.phase = Phase::Failed(message.clone());
+                cx.notify();
+            }
+            (Ok(result), Replay::Grpc) => self.finish_grpc(result, window, cx),
+            (Ok(result), Replay::Http(encoding)) => {
+                self.finish(result, encoding, window, cx);
+            }
+        }
     }
 
     /// A live gRPC call starts: the panel shows its messages as they arrive.
@@ -363,6 +476,8 @@ impl Exchange {
     pub fn finish_grpc(&mut self, result: &Value, window: &mut Window, cx: &mut Context<Self>) {
         self.binary = None;
         self.saved_note = None;
+        self.viewing = None;
+        self.last = Some(Ok(result.clone()));
         let responses: Vec<&str> =
             result.get("responses").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str).collect();
         let text = match responses.as_slice() {
@@ -832,8 +947,79 @@ impl Exchange {
     }
 }
 
+impl Exchange {
+    /// The row above the response: the saved responses to pick from, and while one is shown, a way back.
+    fn render_history(&self, cx: &mut Context<Self>) -> Option<gpui_kit::AnyElement> {
+        let replay = self.source.as_ref()?.replay;
+        if self.history.is_empty() || matches!(self.phase, Phase::Sending) {
+            return None;
+        }
+        let theme = cx.theme().clone();
+        let now = now_ms();
+        let view = cx.weak_entity();
+        let labels: Vec<SharedString> = self
+            .history
+            .iter()
+            .map(|entry| {
+                let status = match replay {
+                    _ if entry.is_unanswered() => t("session.history.no_answer").to_owned(),
+                    Replay::Grpc => grpc_status_name(entry.status).to_owned(),
+                    Replay::Http(_) => entry.status.to_string(),
+                };
+                let duration = t_with("session.response.duration", &[("ms", &entry.duration_ms)]);
+                format!("{} \u{b7} {status} \u{b7} {duration}", relative_time(now, entry.at)).into()
+            })
+            .collect();
+        let viewing = self.viewing.filter(|ix| *ix < self.history.len());
+        let button = Button::new("response-history")
+            .ghost()
+            .small()
+            .label(t_with("session.history.button", &[("count", &self.history.len())]))
+            .dropdown_menu(move |menu, _, _| {
+                let menu = labels.iter().enumerate().fold(menu, |menu, (ix, label)| {
+                    let view = view.clone();
+                    menu.item(PopupMenuItem::new(label.clone()).checked(viewing == Some(ix)).on_click(
+                        move |_, window, cx| {
+                            view.update(cx, |this, cx| this.view_past(ix, window, cx)).ok();
+                        },
+                    ))
+                });
+                let view = view.clone();
+                menu.separator().item(PopupMenuItem::new(t("session.history.clear")).on_click(move |_, window, cx| {
+                    view.update(cx, |this, cx| this.clear_history(window, cx)).ok();
+                }))
+            });
+        Some(
+            h_flex()
+                .flex_none()
+                .px_3()
+                .pt_2()
+                .gap_2()
+                .items_center()
+                .child(button)
+                .when_some(viewing.and_then(|ix| self.history.get(ix)), |this, entry| {
+                    this.child(Tag::warning().child(t("session.history.past")))
+                        .child(div().text_sm().text_color(theme.muted_foreground).child(relative_time(now, entry.at)))
+                        .when(entry.truncated, |this| {
+                            this.child(div().text_sm().text_color(theme.muted_foreground).child(t("session.history.truncated")))
+                        })
+                        .child(
+                            Button::new("response-history-latest")
+                                .ghost()
+                                .small()
+                                .icon(IconName::Undo)
+                                .label(t("session.history.back"))
+                                .on_click(cx.listener(|this, _, window, cx| this.back_to_latest(window, cx))),
+                        )
+                })
+                .into_any_element(),
+        )
+    }
+}
+
 impl Render for Exchange {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        let strip = self.render_history(cx);
         let body = match &self.phase {
             Phase::Idle => page::empty(t("session.response.idle_title"), t("session.response.idle_description")),
             Phase::Sending => page::loading(t("session.response.waiting")),
@@ -870,6 +1056,8 @@ impl Render for Exchange {
                 element
             }
         };
-        div().size_full().bg(cx.theme().background).child(body)
+        div().size_full().bg(cx.theme().background).child(
+            v_flex().size_full().children(strip).child(div().flex_1().min_h_0().child(body)),
+        )
     }
 }

@@ -14,7 +14,7 @@ use crate::{
         http::RequestSettings,
         json::{opt_str, str_of},
     },
-    workspace::config::load_entity,
+    workspace::{config::load_entity, response_history},
 };
 
 const INTROSPECTION_QUERY: &str = r#"
@@ -109,8 +109,10 @@ pub fn register(registry: &mut CommandRegistry) {
         if let Some(settings) = stored.get("settings").filter(|v| v.is_object()) {
             payload["settings"] = settings.clone();
         }
-        let mut result =
-            crate::cookies::scoped(ws_id, ctx.registry.invoke("graphql.execute", payload, ctx.clone())).await?;
+        let url = str_of(&payload, "url").to_string();
+        let outcome = crate::cookies::scoped(ws_id, ctx.registry.invoke("graphql.execute", payload, ctx.clone())).await;
+        response_history::record_text(ws_id, &params, "POST", &url, &outcome);
+        let mut result = outcome?;
         crate::vault::redact_value(ws_id, &mut result);
         Ok(result)
     });

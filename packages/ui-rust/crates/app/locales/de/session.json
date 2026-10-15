@@ -270,5 +270,11 @@
   "wsdl.none_title": "Keine Operationen gefunden",
   "wsdl.none_description": "Die WSDL enthält keine SOAP-Operationen.",
   "wsdl.soap_version": "SOAP {version}",
-  "wsdl.fetch_failed_title": "WSDL konnte nicht abgerufen werden"
+  "wsdl.fetch_failed_title": "WSDL konnte nicht abgerufen werden",
+  "history.button": "Verlauf ({count})",
+  "history.clear": "Verlauf löschen",
+  "history.past": "Frühere Antwort",
+  "history.back": "Zurück zur neuesten",
+  "history.truncated": "Inhalt bei 1 MiB abgeschnitten",
+  "history.no_answer": "Keine Antwort"
 }
