@@ -76,6 +76,8 @@
   "loading": "Loading the exchange…",
   "save_as_request": "Save as request",
   "save_as_mock": "Save as mock",
+  "copy_curl": "Copy as cURL",
+  "copied_curl": "Copied the request as cURL",
   "remove_tooltip": "Remove from the list",
   "close_detail_tooltip": "Close the detail",
   "create_flow": "Create flow",

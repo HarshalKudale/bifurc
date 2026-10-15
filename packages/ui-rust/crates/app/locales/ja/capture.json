@@ -76,6 +76,8 @@
   "loading": "やり取りを読み込んでいます…",
   "save_as_request": "リクエストとして保存",
   "save_as_mock": "モックとして保存",
+  "copy_curl": "cURL としてコピー",
+  "copied_curl": "リクエストを cURL としてコピーしました",
   "remove_tooltip": "一覧から削除",
   "close_detail_tooltip": "詳細を閉じる",
   "create_flow": "フローを作成",
