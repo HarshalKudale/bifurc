@@ -582,6 +582,22 @@
       "string",
       "null"
      ]
+    },
+    "requestDefaults": {
+     "type": "object",
+     "properties": {
+      "verifyTls": {
+       "type": "boolean"
+      },
+      "followRedirects": {
+       "type": "boolean"
+      },
+      "timeoutMs": {
+       "type": "integer",
+       "minimum": 0
+      }
+     },
+     "additionalProperties": false
     }
    },
    "additionalProperties": false
@@ -771,6 +787,22 @@
      "additionalProperties": {
       "type": "string"
      }
+    },
+    "settings": {
+     "type": "object",
+     "properties": {
+      "verifyTls": {
+       "type": "boolean"
+      },
+      "followRedirects": {
+       "type": "boolean"
+      },
+      "timeoutMs": {
+       "type": "integer",
+       "minimum": 0
+      }
+     },
+     "additionalProperties": false
     }
    },
    "required": [
@@ -802,6 +834,22 @@
     },
     "operationName": {
      "type": "string"
+    },
+    "settings": {
+     "type": "object",
+     "properties": {
+      "verifyTls": {
+       "type": "boolean"
+      },
+      "followRedirects": {
+       "type": "boolean"
+      },
+      "timeoutMs": {
+       "type": "integer",
+       "minimum": 0
+      }
+     },
+     "additionalProperties": false
     }
    },
    "required": [
@@ -818,6 +866,22 @@
    "properties": {
     "url": {
      "type": "string"
+    },
+    "settings": {
+     "type": "object",
+     "properties": {
+      "verifyTls": {
+       "type": "boolean"
+      },
+      "followRedirects": {
+       "type": "boolean"
+      },
+      "timeoutMs": {
+       "type": "integer",
+       "minimum": 0
+      }
+     },
+     "additionalProperties": false
     }
    },
    "required": [
@@ -845,6 +909,22 @@
     },
     "body": {
      "type": "string"
+    },
+    "settings": {
+     "type": "object",
+     "properties": {
+      "verifyTls": {
+       "type": "boolean"
+      },
+      "followRedirects": {
+       "type": "boolean"
+      },
+      "timeoutMs": {
+       "type": "integer",
+       "minimum": 0
+      }
+     },
+     "additionalProperties": false
     }
    },
    "required": [
@@ -2540,6 +2620,22 @@
     },
     "streamId": {
      "type": "string"
+    },
+    "settings": {
+     "type": "object",
+     "properties": {
+      "verifyTls": {
+       "type": "boolean"
+      },
+      "followRedirects": {
+       "type": "boolean"
+      },
+      "timeoutMs": {
+       "type": "integer",
+       "minimum": 0
+      }
+     },
+     "additionalProperties": false
     }
    },
    "required": [
@@ -2547,6 +2643,18 @@
     "url",
     "headers",
     "body"
+   ],
+   "additionalProperties": false
+  },
+  "request.cancel": {
+   "type": "object",
+   "properties": {
+    "streamId": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "streamId"
    ],
    "additionalProperties": false
   },
@@ -3018,6 +3126,22 @@
           ],
           "additionalProperties": false
          }
+        },
+        "settings": {
+         "type": "object",
+         "properties": {
+          "verifyTls": {
+           "type": "boolean"
+          },
+          "followRedirects": {
+           "type": "boolean"
+          },
+          "timeoutMs": {
+           "type": "integer",
+           "minimum": 0
+          }
+         },
+         "additionalProperties": false
         }
        },
        "required": [
@@ -3100,6 +3224,22 @@
         },
         "operationName": {
          "type": "string"
+        },
+        "settings": {
+         "type": "object",
+         "properties": {
+          "verifyTls": {
+           "type": "boolean"
+          },
+          "followRedirects": {
+           "type": "boolean"
+          },
+          "timeoutMs": {
+           "type": "integer",
+           "minimum": 0
+          }
+         },
+         "additionalProperties": false
         }
        },
        "required": [
@@ -3164,6 +3304,22 @@
         },
         "body": {
          "type": "string"
+        },
+        "settings": {
+         "type": "object",
+         "properties": {
+          "verifyTls": {
+           "type": "boolean"
+          },
+          "followRedirects": {
+           "type": "boolean"
+          },
+          "timeoutMs": {
+           "type": "integer",
+           "minimum": 0
+          }
+         },
+         "additionalProperties": false
         }
        },
        "required": [

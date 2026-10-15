@@ -911,6 +911,12 @@
    "workspaceId": 42
   }
  },
+ "request.cancel": {
+  "valid": {
+   "streamId": "s1"
+  },
+  "invalid": {}
+ },
  "request.parseCurl": {
   "valid": {
    "curl": "curl http://x"

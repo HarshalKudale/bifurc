@@ -1,9 +1,9 @@
 //! Payload validation against the protocol's command schemas.
 //!
-//! `schemas/commands.json` holds one JSON Schema per command; it is currently generated from
-//! `@bifurc/protocol`'s zod schemas (`scripts/gen-engine-rust-schemas.mjs`). This validator covers the JSON Schema subset that generator
-//! emits and reproduces what a zod `parse` hands the handler: a strict object rejects unknown keys, a plain
-//! object drops them, and a union yields the first member that accepts the value.
+//! `schemas/commands.json` holds one JSON Schema per command and is edited by hand (it was first generated from
+//! the TypeScript protocol's zod schemas). This validator covers the JSON Schema subset those use and keeps zod's
+//! `parse` semantics: a strict object rejects unknown keys, a plain object drops them, and a union yields the
+//! first member that accepts the value.
 
 use std::{collections::HashMap, sync::OnceLock};
 
