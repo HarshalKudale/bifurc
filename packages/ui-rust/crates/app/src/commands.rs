@@ -45,6 +45,7 @@ actions!(
         SyncEntity,
         DeleteEntity,
         RunRequest,
+        CancelRequest,
         CloseRequestTab,
         NextTab,
         PreviousTab,
@@ -96,6 +97,8 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("secondary-shift-m", NewMock, None),
         KeyBinding::new("secondary-s", SaveRequest, None),
         KeyBinding::new("secondary-enter", RunRequest, None),
+        // The only binding with a key context: Esc cancels a send only from inside a request editor.
+        KeyBinding::new("escape", CancelRequest, Some("RestEditor")),
         KeyBinding::new("secondary-w", CloseRequestTab, None),
         KeyBinding::new("ctrl-right", NextTab, None),
         KeyBinding::new("ctrl-left", PreviousTab, None),
