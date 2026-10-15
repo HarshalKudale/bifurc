@@ -28,7 +28,7 @@ use gpui_kit::{
 };
 use serde_json::{Map, Value, json};
 
-use super::{Carry, LoadState, SaveMode, SessionEvent, engine_folder, exchange::Exchange};
+use super::{Carry, LoadState, SaveMode, SessionEvent, engine_folder, exchange::Exchange, graphql::SchemaPanel};
 use crate::{
     i18n::{t, t_with},
     app_model::{AppModel, ModelEvent},
@@ -37,6 +37,7 @@ use crate::{
     model::{
         RequestKind,
         http::{BodyEncoding, header_map, header_pairs},
+        graphql::Schema,
         snippet::RequestParts,
     },
 };
@@ -295,6 +296,8 @@ pub struct ProtocolSession {
     exchange: Entity<Exchange>,
     /// Only a gRPC request has one.
     grpc: Option<GrpcPicker>,
+    /// Only a GraphQL request has one: the schema read from its endpoint, kept in memory.
+    schema: Option<SchemaPanel>,
     /// What the engine knows this tab's live call as.
     stream_id: String,
     /// A live call is open (or opening) for this request.
@@ -386,6 +389,20 @@ impl ProtocolSession {
             })
             .collect();
 
+        let schema = (kind == RequestKind::GraphQl).then(|| {
+            let panel = SchemaPanel::new(window, cx);
+            subscriptions.push(cx.subscribe(&panel.filter, |_, _, event: &InputEvent, cx| {
+                if matches!(event, InputEvent::Change) {
+                    cx.notify();
+                }
+            }));
+            let query = fields_of(kind).iter().position(|spec| spec.key == "query");
+            if let Some(Control::Text(editor)) = query.and_then(|ix| controls.get(ix)) {
+                editor.state().update(cx, |state, _| state.lsp_mut().completion_provider = Some(panel.completions()));
+            }
+            panel
+        });
+
         let grpc = (kind == RequestKind::Grpc).then(|| {
             let service_box = cx.new(|cx| ComboboxState::new(Vec::<String>::new(), vec![], window, cx).searchable(true));
             let method_box = cx.new(|cx| ComboboxState::new(Vec::<MethodItem>::new(), vec![], window, cx).searchable(true));
@@ -433,6 +450,7 @@ impl ProtocolSession {
             baseline: (String::new(), Vec::new()),
             exchange,
             grpc,
+            schema,
             stream_id: format!("grpc-{}", cx.entity_id().as_u64()),
             live: false,
             connected: false,
@@ -961,6 +979,70 @@ impl ProtocolSession {
             .into_any_element()
     }
 
+    pub(super) fn schema_panel_mut(&mut self) -> Option<&mut SchemaPanel> {
+        self.schema.as_mut()
+    }
+
+    /// Reads the endpoint's schema. The URL and header values are resolved here, as sending would, because
+    /// `graphql.introspect` calls exactly what it is given.
+    pub(super) fn fetch_schema(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        /// Separates the texts resolved in one call; no URL or header value holds it.
+        const SEPARATOR: char = '\u{1f}';
+        let url = self.text_of("endpointUrl", cx).unwrap_or_default().replace(['\r', '\n'], "").trim().to_owned();
+        if url.is_empty() {
+            window.push_notification(
+                Notification::warning(t_with("session.protocol.enter_target_first", &[("target", &self.target_label())]))
+                    .title(t("session.schema.fetch_failed_title")),
+                cx,
+            );
+            return;
+        }
+        let headers = self.pairs_of("headers", cx).unwrap_or_default();
+        let Some(panel) = self.schema.as_mut().filter(|panel| !panel.fetching) else { return };
+        panel.fetching = true;
+        cx.notify();
+        let unresolved: Vec<String> = std::iter::once(url).chain(headers.iter().map(|(_, value)| value.clone())).collect();
+        let resolve = json!({ "workspaceId": self.workspace_id, "text": unresolved.join(&SEPARATOR.to_string()) });
+        let client = self.model.read(cx).client().clone();
+        let introspect_client = client.clone();
+        call_in(&client, window, cx, "env.resolveText", resolve, move |_, outcome, window, cx| {
+            let resolved = outcome
+                .ok()
+                .and_then(|result| {
+                    result.get("text").and_then(Value::as_str).map(|text| text.split(SEPARATOR).map(str::to_owned).collect::<Vec<_>>())
+                })
+                .filter(|parts| parts.len() == unresolved.len())
+                .unwrap_or(unresolved);
+            let values = resolved[1..].iter().cloned();
+            let pairs: Vec<(String, String)> = headers.into_iter().map(|(name, _)| name).zip(values).collect();
+            let payload = json!({ "url": resolved[0], "headers": header_map(&pairs) });
+            call_in(&introspect_client, window, cx, "graphql.introspect", payload, |this, outcome, window, cx| {
+                let failure = match outcome {
+                    Ok(result) if result.get("ok").and_then(Value::as_bool) == Some(true) => {
+                        match Schema::parse(result.get("sdl").and_then(Value::as_str).unwrap_or_default()) {
+                            Ok(schema) => {
+                                if let Some(panel) = this.schema.as_mut() {
+                                    panel.set_schema(schema);
+                                }
+                                None
+                            }
+                            Err(message) => Some(message),
+                        }
+                    }
+                    Ok(result) => Some(result.get("error").and_then(Value::as_str).unwrap_or_default().to_owned()),
+                    Err(error) => Some(describe(&error)),
+                };
+                if let Some(panel) = this.schema.as_mut() {
+                    panel.fetching = false;
+                }
+                if let Some(message) = failure {
+                    window.push_notification(Notification::error(message).title(t("session.schema.fetch_failed_title")), cx);
+                }
+                cx.notify();
+            });
+        });
+    }
+
     /// The first field is the target; a request without one cannot be written.
     fn target_is_empty(values: &(String, Vec<FieldValue>)) -> bool {
         matches!(values.1.first(), Some(FieldValue::Text(text)) if text.is_empty())
@@ -1296,6 +1378,18 @@ impl Render for ProtocolSession {
             LoadState::Ready => {}
         }
 
+        let sections = self.sections();
+        // A GraphQL request has one more tab than it has documents: the schema.
+        let tabs = sections.len() + usize::from(self.schema.is_some());
+        let section = self.section.min(tabs.saturating_sub(1));
+        let content = match (sections.get(section), &self.schema) {
+            (Some((ix, _)), _) => Some(match &self.controls[*ix] {
+                Control::Text(editor) => Editor::new(editor.state()).bordered(false).h_full().into_any_element(),
+                Control::Pairs(table) => table.clone().into_any_element(),
+            }),
+            (None, Some(panel)) => Some(panel.view(cx)),
+            (None, None) => None,
+        };
         let specs = fields_of(self.kind);
         let line = |ix: usize| match &self.controls[ix] {
             Control::Text(editor) => editor.line_field(cx).into_any_element(),
@@ -1309,12 +1403,6 @@ impl Render for ProtocolSession {
             .filter(|(_, spec)| spec.kind == FieldKind::Line)
             .map(|(ix, _)| ix)
             .collect();
-        let sections = self.sections();
-        let section = self.section.min(sections.len().saturating_sub(1));
-        let content = sections.get(section).map(|(ix, _)| match &self.controls[*ix] {
-            Control::Text(editor) => Editor::new(editor.state()).bordered(false).h_full().into_any_element(),
-            Control::Pairs(table) => table.clone().into_any_element(),
-        });
 
         // What a method the client streams to adds: after the call is invoked, each message is sent by hand.
         let mut secondary = Vec::new();
@@ -1380,7 +1468,8 @@ impl Render for ProtocolSession {
                             this.section = *ix;
                             cx.notify();
                         }))
-                        .children(sections.iter().map(|(_, spec)| Tab::new().label(t(spec.label)))),
+                        .children(sections.iter().map(|(_, spec)| Tab::new().label(t(spec.label))))
+                        .children(self.schema.is_some().then(|| Tab::new().label(t("session.schema.tab")))),
                 ),
             )
             .child(div().flex_1().min_h_0().children(content))

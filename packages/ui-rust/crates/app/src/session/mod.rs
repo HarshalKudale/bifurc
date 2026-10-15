@@ -7,6 +7,7 @@
 
 pub mod connection;
 pub mod exchange;
+pub mod graphql;
 pub mod mcp;
 pub mod mcp_connection;
 pub mod protocol;
