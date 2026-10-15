@@ -235,6 +235,49 @@ pub fn pretty_json(text: &str) -> Option<String> {
     serde_json::to_string_pretty(&value).ok()
 }
 
+/// What one request overrides of the app-wide request defaults. `None` falls back to the default.
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct RequestSettings {
+    pub verify_tls: Option<bool>,
+    pub follow_redirects: Option<bool>,
+    pub timeout_ms: Option<u64>,
+}
+
+impl RequestSettings {
+    pub fn from_entity(entity: &Map<String, Value>) -> Self {
+        let settings = entity.get("settings");
+        let flag = |key| settings.and_then(|s| s.get(key)).and_then(Value::as_bool);
+        Self {
+            verify_tls: flag("verifyTls"),
+            follow_redirects: flag("followRedirects"),
+            timeout_ms: settings.and_then(|s| s.get("timeoutMs")).and_then(Value::as_u64),
+        }
+    }
+
+    /// Only the overridden keys; `None` when nothing is, so an untouched request is stored as it was.
+    pub fn to_json(&self) -> Option<Value> {
+        let mut settings = Map::new();
+        if let Some(on) = self.verify_tls {
+            settings.insert("verifyTls".into(), on.into());
+        }
+        if let Some(on) = self.follow_redirects {
+            settings.insert("followRedirects".into(), on.into());
+        }
+        if let Some(ms) = self.timeout_ms {
+            settings.insert("timeoutMs".into(), ms.into());
+        }
+        (!settings.is_empty()).then(|| Value::Object(settings))
+    }
+
+    /// Writes `settings` into the entity, or removes it when nothing is overridden.
+    pub fn write_to(&self, entity: &mut Map<String, Value>) {
+        match self.to_json() {
+            Some(settings) => entity.insert("settings".into(), settings),
+            None => entity.remove("settings"),
+        };
+    }
+}
+
 #[derive(Debug, Clone, PartialEq)]
 pub struct TestOutcome {
     pub name: String,
@@ -384,6 +427,19 @@ pub fn status_text(status: u16) -> &'static str {
 mod tests {
     use super::*;
     use serde_json::json;
+
+    #[test]
+    fn request_settings_write_only_the_overridden_keys_and_none_when_empty() {
+        let mut entity = json!({ "url": "u" }).as_object().unwrap().clone();
+        RequestSettings::default().write_to(&mut entity);
+        assert_eq!(entity, json!({ "url": "u" }).as_object().unwrap().clone());
+        let settings = RequestSettings { verify_tls: Some(false), timeout_ms: Some(0), ..Default::default() };
+        settings.write_to(&mut entity);
+        assert_eq!(entity["settings"], json!({ "verifyTls": false, "timeoutMs": 0 }));
+        assert_eq!(RequestSettings::from_entity(&entity), settings);
+        RequestSettings::default().write_to(&mut entity);
+        assert!(!entity.contains_key("settings"));
+    }
 
     #[test]
     fn headers_round_trip_through_text_in_order() {
