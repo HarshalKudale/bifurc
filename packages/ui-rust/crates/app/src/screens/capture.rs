@@ -45,6 +45,7 @@ use crate::{
         git::date_time_utc,
         http::{pretty_json, status_text},
         media::{self, BodyClass},
+        snippet::{RequestParts, SnippetKind, snippet},
         traffic::{self, Exchange, Handler, RESPONSE_BODY_LIMIT, ResourceType, TrafficEntry, body_class, clock_utc},
         vault::VaultState,
     },
@@ -1029,6 +1030,20 @@ impl CaptureScreen {
         cx.notify();
     }
 
+    /// Puts the selected exchange's request on the clipboard as a cURL command, like the REST editor's snippet.
+    fn copy_curl(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Detail::Ready(shown) = &self.detail else { return };
+        let exchange = &shown.exchange;
+        let parts = RequestParts {
+            method: exchange.method.clone(),
+            url: exchange.url.clone(),
+            headers: exchange.request_headers.clone(),
+            body: shown.request.text(BodyView::Raw).unwrap_or_default(),
+        };
+        cx.write_to_clipboard(ClipboardItem::new_string(snippet(SnippetKind::Curl, &parts)));
+        window.push_notification(Notification::success(t("capture.copied_curl")), cx);
+    }
+
     /// Asks where to save the body of one side and writes it there.
     fn save_body(&mut self, side: Side, cx: &mut Context<Self>) {
         let Detail::Ready(shown) = &self.detail else { return };
@@ -1590,6 +1605,15 @@ impl CaptureScreen {
                             .label(t("capture.save_as_mock"))
                             .disabled(self.saving)
                             .on_click(cx.listener(|this, _, window, cx| this.save_as(true, window, cx))),
+                    )
+                    .child(
+                        Button::new("capture-copy-curl")
+                            .ghost()
+                            .small()
+                            .icon(IconName::Copy)
+                            .tooltip(t("capture.copy_curl"))
+                            .disabled(!matches!(self.detail, Detail::Ready(_)))
+                            .on_click(cx.listener(|this, _, window, cx| this.copy_curl(window, cx))),
                     )
                     .child(
                         Button::new("capture-remove")

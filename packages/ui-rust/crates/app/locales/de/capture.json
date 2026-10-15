@@ -76,6 +76,8 @@
   "loading": "Austausch wird geladen…",
   "save_as_request": "Als Anfrage speichern",
   "save_as_mock": "Als Mock speichern",
+  "copy_curl": "Als cURL kopieren",
+  "copied_curl": "Anfrage als cURL kopiert",
   "remove_tooltip": "Aus der Liste entfernen",
   "close_detail_tooltip": "Details schließen",
   "create_flow": "Flow erstellen",
