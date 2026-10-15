@@ -212,7 +212,7 @@
  },
  "capture.shareJson": {
   "valid": {
-   "entries": [],
+   "ids": [],
    "workspaceId": "ws1"
   },
   "invalid": {}

@@ -2639,9 +2639,11 @@
   "capture.shareJson": {
    "type": "object",
    "properties": {
-    "entries": {
+    "ids": {
      "type": "array",
-     "items": {}
+     "items": {
+      "type": "string"
+     }
     },
     "suggestedName": {
      "type": "string"
@@ -2651,7 +2653,7 @@
     }
    },
    "required": [
-    "entries"
+    "ids"
    ],
    "additionalProperties": false
   },

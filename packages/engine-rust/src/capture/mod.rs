@@ -15,7 +15,7 @@ use crate::{
     },
 };
 
-pub use entities::{captured_to_mock, captured_to_request};
+pub use entities::{captured_to_har, captured_to_mock, captured_to_request};
 pub use store::{
     MAX_CAPTURE_ENTRIES, clear_capture, get_capture, is_capture_paused, list_capture, record_capture, remove_capture,
     resolve_capture_entry, set_capture_paused,
