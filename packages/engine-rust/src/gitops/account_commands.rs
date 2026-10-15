@@ -5,7 +5,8 @@ use serde_json::{Value, json};
 
 use super::{
     auto_sync::{start_auto_sync, stop_auto_sync},
-    console,
+// Console shelved (free app): no console to name.
+    // console,
     git_state::get_workspace_git_state,
     github,
     login::{cancel_login, login_status, start_login},
@@ -100,7 +101,8 @@ pub fn register(registry: &mut CommandRegistry) {
             "gitVersion": version,
             "signInAvailable": github::client_id().is_some(),
             "teamSync": team_sync(),
-            "consoleUrl": console::url(),
+// Console shelved (free app): the setup state no longer names a console.
+            // "consoleUrl": console::url(),
             "host": github::host(),
             "needsWorkspace": settings.workspaces().is_empty(),
             "accounts": public_accounts(),

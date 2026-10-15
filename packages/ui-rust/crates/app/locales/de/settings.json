@@ -61,7 +61,6 @@
   "keywords.network": "netzwerk",
   "keywords.telemetry": "telemetrie",
   "keywords.tracking": "tracking",
-  "keywords.organization": "organisation",
 
   "engine.name": "Engine",
   "engine.runtime_group": "Engine-Laufzeit",
@@ -145,16 +144,8 @@
   "about.desktop_app": "Desktop-App",
   "about.protocol": "Protokoll",
   "about.engine_process": "Engine-Prozess",
-  "about.organization_owner": "seine Organisation",
-  "about.managed_title": "Nutzungsanalysen für {name}",
   "about.terms": "Nutzungsbedingungen",
   "about.privacy_policy": "Datenschutzerklärung",
-  "about.footer": "Ein Arbeitsbereich, der zu einer Organisation gehört, folgt der Einstellung dieser Organisation, nicht dieser hier.",
-
-  "analytics.on": "An",
-  "analytics.off": "Aus",
-  "analytics.managed_on": "Verwaltet vom Eigentümer von {owner}. Welche Art von Aktion in diesem Arbeitsbereich erfolgt, wird ihm mit dem GitHub-Konto gemeldet, niemals der Inhalt. Der Schalter oben ändert dies nicht.",
-  "analytics.managed_off": "Verwaltet vom Eigentümer von {owner}, der Nutzungsanalysen nicht aktiviert hat. Nichts, was in diesem Arbeitsbereich geschieht, wird gemeldet.",
 
   "telemetry.title": "Anonyme Nutzungsanalysen",
   "telemetry.description": "Standardmäßig aktiviert. Welche Art von Aktion in der App und in den eigenen Arbeitsbereichen erfolgt und an welcher Stelle im Code von Bifurc ein Absturz oder Fehler auftrat, niemals der Inhalt. Bei Deaktivierung wird nur gemeldet, dass Bifurc auf diesem Gerät installiert wurde, einmalig.",
