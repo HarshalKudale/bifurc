@@ -11,6 +11,9 @@
 
   var input = parse(globalThis.__input);
   delete globalThis.__input;
+  // The host's HTTP sender; absent in proxy scripts.
+  var hostSend = globalThis.__send;
+  delete globalThis.__send;
 
   function copy(o) {
     var out = {};
@@ -422,6 +425,54 @@
     },
   };
 
+  // Postman's `pm.sendRequest(req, cb)`, run synchronously: with a callback it is called as `cb(err, res)`;
+  // without one the response is returned and a failure throws. `req` is a URL or `{url, method, header, body}`
+  // with a raw or urlencoded body (shortcut: no formdata, add when a script needs it).
+  function sendRequest(req, cb) {
+    if (typeof req === "string") req = { url: req };
+    var headers = {};
+    var h = req.header || req.headers || [];
+    if (isArray(h)) {
+      h.forEach(function (e) {
+        if (!e.disabled) headers[e.key] = e.value;
+      });
+    } else {
+      headers = copy(h);
+    }
+    var body = req.body;
+    var text = null;
+    if (typeof body === "string") text = body;
+    else if (body && body.mode === "raw") text = StringCtor(body.raw);
+    else if (body && body.mode === "urlencoded") {
+      text = (body.urlencoded || [])
+        .filter(function (e) {
+          return !e.disabled;
+        })
+        .map(function (e) {
+          return encodeURIComponent(e.key) + "=" + encodeURIComponent(e.value);
+        })
+        .join("&");
+      if (findKey(headers, "content-type") === undefined) headers["Content-Type"] = "application/x-www-form-urlencoded";
+    } else if (body && body.mode) {
+      throw new ErrorCtor("bc.sendRequest does not support a " + body.mode + " body");
+    }
+    var pairs = keys(headers).map(function (k) {
+      return [k, StringCtor(headers[k])];
+    });
+    var out = parse(
+      hostSend(stringify({ url: StringCtor(req.url), method: req.method || "GET", headers: pairs, body: text })),
+    );
+    if (out.error !== undefined) {
+      var err = new ErrorCtor(out.error);
+      if (typeof cb !== "function") throw err;
+      cb(err, null);
+      return undefined;
+    }
+    var res = responseApi(out);
+    if (typeof cb === "function") cb(null, res);
+    return res;
+  }
+
   // Every scope Postman names reads and writes the one merged environment a request runs with.
   function scopes(bc) {
     bc.environment = bc.variables = bc.globals = bc.collectionVariables = envApi;
@@ -447,6 +498,9 @@
     };
     var proxyBc = {};
     proxyBc[mode === "proxyRequest" ? "request" : "response"] = side;
+    proxyBc.sendRequest = function () {
+      throw new ErrorCtor("bc.sendRequest is not available in proxy scripts");
+    };
     // `lp` is the name scripts saved before the rename to `bc` still use.
     globalThis.bc = globalThis.lp = proxyBc;
     result = function (err) {
@@ -468,6 +522,7 @@
       vars: input.vars,
       nodes: input.nodes,
       flow: input.flow,
+      sendRequest: sendRequest,
       console: consoleApi,
     });
     globalThis.console = consoleApi;
@@ -593,7 +648,7 @@
       },
     };
 
-    var bc = scopes({ request: requestApi, cookies: cookieApi });
+    var bc = scopes({ request: requestApi, cookies: cookieApi, sendRequest: sendRequest });
     if (res) bc.response = responseApi(res);
     bc.test = function (name, fn) {
       var start = now();
