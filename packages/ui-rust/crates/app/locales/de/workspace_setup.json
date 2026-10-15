@@ -16,7 +16,7 @@
   "login.waiting": "Warten auf GitHub",
 
   "account.heading": "GitHub-Konto",
-  "account.help_team": "Der Arbeitsbereich wird als dieses Konto synchronisiert, mit dem Zugriff, den das Konto erhalten hat. Der Arbeitsbereich einer anderen Person muss in der Bifurc Console diesem Konto übergeben werden, bevor er importiert werden kann.",
+  "account.help_team": "Der Arbeitsbereich wird als dieses Konto synchronisiert, mit dem Zugriff, den das Konto erhalten hat. Ein Arbeitsbereich, der auf GitHub mit diesem Konto geteilt wurde, als Eigentümer oder Mitarbeiter, kann importiert werden.",
   "account.help_owner": "Der Arbeitsbereich wird als dieses Konto synchronisiert. Nur das Konto, dem ein Arbeitsbereich gehört, kann ihn verwenden.",
   "account.help_optional": "Optional. Nur nötig, um diesen Arbeitsbereich mit einem Remote-Repository zu synchronisieren; kann später hinzugefügt werden.",
   "account.not_set_up": "Die GitHub-Anmeldung ist in diesem Build nicht eingerichtet, daher bleiben Arbeitsbereiche auf diesem Computer.",

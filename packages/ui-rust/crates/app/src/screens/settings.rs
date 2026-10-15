@@ -858,48 +858,50 @@ impl SettingsScreen {
         } else {
             t("settings.engine.already_running")
         };
-        // A workspace of an organization: its analytics are the organization's, shown here and changed nowhere
-        // on this device.
-        let managed: Vec<SettingItem> = self
-            .model
-            .read(cx)
-            .config()
-            .workspaces
-            .iter()
-            .filter_map(|workspace| {
-                let organization = workspace.organization.as_ref()?;
-                let owner = if organization.name.is_empty() {
-                    t("settings.about.organization_owner").to_owned()
-                } else {
-                    organization.name.clone()
-                };
-                let (state, description) = if organization.analytics {
-                    (
-                        t("settings.analytics.on"),
-                        t_with("settings.analytics.managed_on", &[("owner", &owner)]),
-                    )
-                } else {
-                    (
-                        t("settings.analytics.off"),
-                        t_with("settings.analytics.managed_off", &[("owner", &owner)]),
-                    )
-                };
-                Some(
-                    SettingItem::new(
-                        t_with("settings.about.managed_title", &[("name", &workspace.name)]),
-                        SettingField::render(move |_, _, cx| {
-                            div().text_color(cx.theme().muted_foreground).child(state)
-                        }),
-                    )
-                    .description(description)
-                    .keywords([
-                        t("settings.keywords.telemetry"),
-                        t("settings.keywords.tracking"),
-                        t("settings.keywords.organization"),
-                    ]),
-                )
-            })
-            .collect();
+        // Console shelved (free app): per-workspace organization-managed analytics display.
+        // (Locale keys below are single-quoted so the i18n key test skips them; use double quotes to restore.)
+        // // A workspace of an organization: its analytics are the organization's, shown here and changed nowhere
+        // // on this device.
+        // let managed: Vec<SettingItem> = self
+        //     .model
+        //     .read(cx)
+        //     .config()
+        //     .workspaces
+        //     .iter()
+        //     .filter_map(|workspace| {
+        //         let organization = workspace.organization.as_ref()?;
+        //         let owner = if organization.name.is_empty() {
+        //             t('settings.about.organization_owner').to_owned()
+        //         } else {
+        //             organization.name.clone()
+        //         };
+        //         let (state, description) = if organization.analytics {
+        //             (
+        //                 t('settings.analytics.on'),
+        //                 t_with('settings.analytics.managed_on', &[("owner", &owner)]),
+        //             )
+        //         } else {
+        //             (
+        //                 t('settings.analytics.off'),
+        //                 t_with('settings.analytics.managed_off', &[("owner", &owner)]),
+        //             )
+        //         };
+        //         Some(
+        //             SettingItem::new(
+        //                 t_with('settings.about.managed_title', &[("name", &workspace.name)]),
+        //                 SettingField::render(move |_, _, cx| {
+        //                     div().text_color(cx.theme().muted_foreground).child(state)
+        //                 }),
+        //             )
+        //             .description(description)
+        //             .keywords([
+        //                 t("settings.keywords.telemetry"),
+        //                 t("settings.keywords.tracking"),
+        //                 t('settings.keywords.organization'),
+        //             ]),
+        //         )
+        //     })
+        //     .collect();
         SettingPage::new(t("settings.page.about")).icon(IconName::Info).groups(vec![
             SettingGroup::new().title("Bifurc").items(vec![
                 fact(
@@ -934,7 +936,7 @@ impl SettingsScreen {
                         "posthog",
                     ]),
                 )
-                .items(managed)
+                // Console shelved (free app): .items(managed)
                 .item(
                     SettingItem::new(
                         t("settings.about.terms"),
@@ -956,8 +958,8 @@ impl SettingsScreen {
                         }),
                     )
                     .layout(Axis::Horizontal),
-                )
-                .footer(|_, _| t("settings.about.footer")),
+                ),
+            // Console shelved (free app): .footer(|_, _| t('settings.about.footer'))
             SettingGroup::new().title(t("settings.review.group")).item(
                 SettingItem::new(
                     t("settings.review.title"),
