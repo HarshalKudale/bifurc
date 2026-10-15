@@ -20,7 +20,7 @@ fn without_whitespace(text: &str) -> String {
 
 /// Base64 to text. Input that is not valid base64 comes back as it was, so a body that was never base64
 /// shows as-is instead of vanishing.
-fn b64_to_text(b64: &str) -> String {
+pub(super) fn b64_to_text(b64: &str) -> String {
     if b64.is_empty() {
         return String::new();
     }
@@ -41,7 +41,7 @@ fn is_utf8_base64(b64: &str) -> bool {
 }
 
 /// Case-insensitive header lookup; `""` when absent.
-fn header_of<'a>(headers: Option<&'a Value>, name: &str) -> &'a str {
+pub(super) fn header_of<'a>(headers: Option<&'a Value>, name: &str) -> &'a str {
     headers
         .and_then(Value::as_object)
         .and_then(|headers| headers.iter().find(|(k, _)| k.eq_ignore_ascii_case(name)))

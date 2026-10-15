@@ -12,6 +12,8 @@ use gpui_kit::component::{
     alert::Alert,
     button::{Button, ButtonGroup, ButtonVariants as _},
     checkbox::Checkbox,
+    dialog::DialogFooter,
+    form::{Field, Form},
     h_flex,
     input::{Editor, EditorState, Input, InputEvent, InputState},
     list::ListItem,
@@ -26,6 +28,7 @@ use gpui_kit::{
     ParentElement as _, Render, SharedString, StatefulInteractiveElement as _, Styled as _, Subscription,
     UniformListScrollHandle, Window, div, px, uniform_list,
 };
+use gpui_kit::prelude::FluentBuilder as _;
 use serde_json::{Value, json};
 use std::{collections::HashSet, ops::Range};
 
@@ -43,6 +46,7 @@ use crate::{
         http::{pretty_json, status_text},
         media::{self, BodyClass},
         traffic::{self, Exchange, Handler, RESPONSE_BODY_LIMIT, ResourceType, TrafficEntry, body_class, clock_utc},
+        vault::VaultState,
     },
 };
 
@@ -56,6 +60,44 @@ struct SaveRun {
     saved: usize,
     last: Option<String>,
     first_failure: Option<String>,
+}
+
+/// Where the credentials found in exchanges being saved as requests go.
+#[derive(Clone, Copy, PartialEq, Eq)]
+enum SecretsTo {
+    /// Left written in the requests.
+    Keep,
+    /// Variables of the selected environment.
+    Environment,
+    Vault,
+}
+
+impl SecretsTo {
+    const ALL: [SecretsTo; 3] = [SecretsTo::Vault, SecretsTo::Environment, SecretsTo::Keep];
+
+    fn wire(self) -> &'static str {
+        match self {
+            SecretsTo::Keep => "keep",
+            SecretsTo::Environment => "environment",
+            SecretsTo::Vault => "vault",
+        }
+    }
+
+    fn label(self) -> &'static str {
+        t(match self {
+            SecretsTo::Keep => "capture.import.keep",
+            SecretsTo::Environment => "capture.import.environment",
+            SecretsTo::Vault => "capture.import.vault",
+        })
+    }
+}
+
+/// What the dialog before saving requests asks for a vault: a new one's name and passphrase, or a sealed one's.
+#[derive(Clone)]
+struct VaultFields {
+    name: Entity<InputState>,
+    passphrase: Entity<InputState>,
+    repeat: Entity<InputState>,
 }
 
 /// What happened on this screen that the window should act on.
@@ -172,8 +214,19 @@ pub struct CaptureScreen {
     response_body: Entity<EditorState>,
     /// A save as request or mock is in flight.
     saving: bool,
+    /// What the user chose, in the dialog before saving requests, for the credentials and cookies they carry.
+    secrets_to: SecretsTo,
+    cookies_to_jar: bool,
+    /// The vault credentials go into; `None` creates one.
+    import_vault: Option<String>,
     scroll: UniformListScrollHandle,
     _subscriptions: Vec<Subscription>,
+}
+
+/// The name of a folder several saved exchanges go into: when they were saved.
+fn new_folder_name() -> String {
+    let now = traffic::now_ms();
+    format!("capture-{}-{:02}", date_time_utc(now).replace(' ', "_").replace(':', "-"), now / 1000 % 60)
 }
 
 fn read_only_editor(window: &mut Window, cx: &mut Context<CaptureScreen>) -> Entity<EditorState> {
@@ -238,6 +291,9 @@ impl CaptureScreen {
             request_body,
             response_body,
             saving: false,
+            secrets_to: SecretsTo::Vault,
+            cookies_to_jar: true,
+            import_vault: None,
             scroll: UniformListScrollHandle::new(),
             _subscriptions: subscriptions,
         };
@@ -450,6 +506,311 @@ impl CaptureScreen {
         cx.notify();
     }
 
+    /// Saves exchanges as requests through the engine, which first says which credentials and cookies they
+    /// carry; when they carry any, the user chooses whether they are taken out. `flow` also chains them into a
+    /// flow in the order they were captured.
+    fn import_requests(&mut self, ids: Vec<String>, flow: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if self.saving || ids.is_empty() {
+            return;
+        }
+        let model = self.model.read(cx);
+        let client = model.client().clone();
+        let payload = json!({ "workspaceId": model.workspace_id(), "ids": ids });
+        self.saving = true;
+        cx.notify();
+        call_in(&client, window, cx, "capture.inspectImport", payload, move |this, outcome, window, cx| {
+            if let Some(message) = failure(&outcome) {
+                return this.save_failed(t("capture.error.save_some"), message, cx);
+            }
+            let found = outcome.ok().unwrap_or_default();
+            let list = |key: &str| found.get(key).and_then(Value::as_array).cloned().unwrap_or_default();
+            let (secrets, cookies) = (list("secrets"), list("cookies"));
+            if secrets.is_empty() && cookies.is_empty() {
+                return this.run_import(ids, flow, SecretsTo::Keep, None, false, window, cx);
+            }
+            this.saving = false;
+            this.secrets_to = SecretsTo::Vault;
+            this.cookies_to_jar = true;
+            // An unsealed vault needs no passphrase, so it is offered first; with none, a new one.
+            let vaults = this.model.read(cx).vaults();
+            let first = vaults.iter().find(|vault| vault.state == VaultState::Unsealed).or(vaults.first());
+            this.import_vault = first.map(|vault| vault.id.clone());
+            cx.notify();
+            this.ask_import(ids, flow, secrets, cookies, window, cx);
+        });
+    }
+
+    /// Shows what was found and lets the user choose where credentials go, and whether cookies go to the jar.
+    fn ask_import(
+        &mut self,
+        ids: Vec<String>,
+        flow: bool,
+        secrets: Vec<Value>,
+        cookies: Vec<Value>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let masked = |placeholder: &'static str, window: &mut Window, cx: &mut Context<Self>| {
+            cx.new(|cx| InputState::new(window, cx).placeholder(placeholder).masked(true))
+        };
+        let fields = VaultFields {
+            name: cx.new(|cx| InputState::new(window, cx).placeholder("api_keys")),
+            passphrase: masked(t("vaults.passphrase_hint"), window, cx),
+            repeat: masked("", window, cx),
+        };
+        let screen = cx.entity();
+        window.defer(cx, move |window, cx| {
+            window.open_dialog(cx, move |dialog, _, cx| {
+                let theme = cx.theme().clone();
+                let (secrets_to, jar, picked) = {
+                    let screen = screen.read(cx);
+                    (screen.secrets_to, screen.cookies_to_jar, screen.import_vault.clone())
+                };
+                let vaults = screen.read(cx).model.read(cx).vaults().to_vec();
+                let picked = picked.and_then(|id| vaults.iter().find(|vault| vault.id == id).cloned());
+                let row = |label: String, detail: String| {
+                    v_flex()
+                        .min_w_0()
+                        .child(div().text_sm().font_family(theme.mono_font_family.clone()).child(label))
+                        .child(
+                            div()
+                                .text_xs()
+                                .text_color(theme.muted_foreground)
+                                .overflow_hidden()
+                                .text_ellipsis()
+                                .whitespace_nowrap()
+                                .child(detail),
+                        )
+                };
+                let section = |id: &'static str, body: &'static str, rows: Vec<gpui_kit::Div>| {
+                    v_flex()
+                        .gap_2()
+                        .child(div().text_sm().text_color(theme.muted_foreground).child(body))
+                        .child(div().id(id).max_h(px(180.)).overflow_y_scroll().child(v_flex().gap_2().children(rows)))
+                };
+                let secret_rows = secrets
+                    .iter()
+                    .map(|secret| {
+                        let places: Vec<&str> =
+                            secret["places"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
+                        let preview = secret["preview"].as_str().unwrap_or("");
+                        row(format!("{}  {preview}", secret["name"].as_str().unwrap_or("")), places.join(", "))
+                    })
+                    .collect();
+                let cookie_rows = cookies
+                    .iter()
+                    .map(|domain| {
+                        let names: Vec<&str> =
+                            domain["names"].as_array().into_iter().flatten().filter_map(Value::as_str).collect();
+                        row(domain["domain"].as_str().unwrap_or("").to_owned(), names.join(", "))
+                    })
+                    .collect();
+
+                let to_screen = screen.clone();
+                let destinations = SecretsTo::ALL.iter().fold(
+                    TabBar::new("capture-import-secrets-to")
+                        .segmented()
+                        .small()
+                        .selected_index(SecretsTo::ALL.iter().position(|to| *to == secrets_to).unwrap_or(0))
+                        .on_click(move |ix: &usize, window, cx| {
+                            to_screen.update(cx, |screen, _| screen.secrets_to = SecretsTo::ALL[*ix]);
+                            window.refresh();
+                        }),
+                    |bar, to| bar.child(Tab::new().label(to.label())),
+                );
+                let vault_screen = screen.clone();
+                let vault_ids: Vec<String> = vaults.iter().map(|vault| vault.id.clone()).collect();
+                let picker = ButtonGroup::new("capture-import-vaults")
+                    .outline()
+                    .small()
+                    .children(vaults.iter().enumerate().map(|(ix, vault)| {
+                        let label = match vault.state {
+                            VaultState::Unsealed => vault.name.clone(),
+                            VaultState::Sealed => format!("{} · {}", vault.name, vault.state.label()),
+                        };
+                        Button::new(("capture-import-vault", ix))
+                            .label(label)
+                            .selected(picked.as_ref().is_some_and(|picked| picked.id == vault.id))
+                    }))
+                    .child(Button::new("capture-import-new-vault").label(t("capture.import.new_vault")).selected(picked.is_none()))
+                    .on_click(move |selected: &Vec<usize>, window, cx| {
+                        let id = selected.first().and_then(|ix| vault_ids.get(*ix)).cloned();
+                        vault_screen.update(cx, |screen, _| screen.import_vault = id);
+                        window.refresh();
+                    });
+                let vault_form = match &picked {
+                    None => Form::new()
+                        .child(Field::new().label(t("vaults.name")).child(Input::new(&fields.name).py_1p5()))
+                        .child(Field::new().label(t("vaults.passphrase")).child(Input::new(&fields.passphrase).py_1p5().mask_toggle()))
+                        .child(Field::new().label(t("vaults.repeat_passphrase")).child(Input::new(&fields.repeat).py_1p5().mask_toggle())),
+                    Some(vault) if vault.state == VaultState::Sealed => Form::new()
+                        .child(Field::new().label(t("vaults.passphrase")).child(Input::new(&fields.passphrase).py_1p5().mask_toggle())),
+                    Some(_) => Form::new(),
+                };
+
+                let (jar_screen, save_screen) = (screen.clone(), screen.clone());
+                let (ids, fields) = (ids.clone(), fields.clone());
+                dialog
+                    .title(t("capture.import.title"))
+                    .w(px(600.))
+                    .child(
+                        v_flex()
+                            .gap_5()
+                            .when(!secrets.is_empty(), |this| {
+                                this.child(
+                                    section("capture-import-secrets", t("capture.import.secrets_body"), secret_rows)
+                                        .child(destinations)
+                                        .when(secrets_to == SecretsTo::Vault, |this| this.child(picker).child(vault_form)),
+                                )
+                            })
+                            .when(!cookies.is_empty(), |this| {
+                                this.child(section("capture-import-cookies", t("capture.import.cookies_body"), cookie_rows).child(
+                                    Checkbox::new("capture-import-jar").label(t("capture.import.jar")).checked(jar).on_change(
+                                        move |checked: &bool, window, cx| {
+                                            jar_screen.update(cx, |screen, _| screen.cookies_to_jar = *checked);
+                                            window.refresh();
+                                        },
+                                    ),
+                                ))
+                            }),
+                    )
+                    .footer(
+                        DialogFooter::new()
+                            .child(
+                                Button::new("capture-import-cancel")
+                                    .outline()
+                                    .label(t("components.cancel"))
+                                    .on_click(|_, window, cx| window.close_dialog(cx)),
+                            )
+                            .child(Button::new("capture-import-save").primary().label(t("capture.import.save")).on_click(
+                                move |_, window, cx| {
+                                    let ids = ids.clone();
+                                    let started = save_screen
+                                        .update(cx, |screen, cx| screen.confirm_import(ids, flow, &fields, window, cx));
+                                    if started {
+                                        window.close_dialog(cx);
+                                    }
+                                },
+                            )),
+                    )
+            });
+        });
+    }
+
+    /// Saves as the dialog says. For a vault that is new or sealed, it is created or unsealed first with what was
+    /// typed. `false` when something needed was not typed, and the dialog stays.
+    fn confirm_import(
+        &mut self,
+        ids: Vec<String>,
+        flow: bool,
+        fields: &VaultFields,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> bool {
+        let (to, jar) = (self.secrets_to, self.cookies_to_jar);
+        if to != SecretsTo::Vault {
+            self.run_import(ids, flow, to, None, jar, window, cx);
+            return true;
+        }
+        let value = |input: &Entity<InputState>, cx: &Context<Self>| input.read(cx).value().trim().to_owned();
+        let (name, passphrase, repeat) = (value(&fields.name, cx), value(&fields.passphrase, cx), value(&fields.repeat, cx));
+        let model = self.model.read(cx);
+        let (client, workspace_id) = (model.client().clone(), model.workspace_id().to_owned());
+        let vault = self.import_vault.as_ref().and_then(|id| model.vaults().iter().find(|vault| &vault.id == id).cloned());
+        let refuse = |text: &str, window: &mut Window, cx: &mut Context<Self>| {
+            window.push_notification(Notification::warning(text.to_owned()).title(t("components.dialogs.cant_continue")), cx);
+            false
+        };
+        match vault {
+            Some(vault) if vault.state == VaultState::Unsealed => {
+                self.run_import(ids, flow, to, Some(vault.id), jar, window, cx);
+            }
+            Some(vault) => {
+                if passphrase.is_empty() {
+                    return refuse(t("components.dialogs.fill_required"), window, cx);
+                }
+                let payload = json!({ "workspaceId": workspace_id, "id": vault.id, "passphrase": passphrase });
+                call_in(&client, window, cx, "vault.unseal", payload, move |this, outcome, window, cx| {
+                    match failure(&outcome) {
+                        Some(message) => this.report(t("vaults.error_unseal"), message, cx),
+                        None => this.run_import(ids, flow, to, Some(vault.id), jar, window, cx),
+                    }
+                });
+            }
+            None => {
+                if name.is_empty() || passphrase.is_empty() {
+                    return refuse(t("components.dialogs.fill_required"), window, cx);
+                }
+                if passphrase != repeat {
+                    return refuse(t("vaults.passphrases_differ"), window, cx);
+                }
+                let payload = json!({ "workspaceId": workspace_id, "name": name, "passphrase": passphrase });
+                call_in(&client, window, cx, "vault.create", payload, move |this, outcome, window, cx| {
+                    if let Some(message) = failure(&outcome) {
+                        return this.report(t("vaults.error_create"), message, cx);
+                    }
+                    let id = outcome.ok().and_then(|vault| vault.get("id")?.as_str().map(str::to_owned));
+                    this.import_vault = id.clone();
+                    this.run_import(ids, flow, to, id, jar, window, cx);
+                });
+            }
+        }
+        true
+    }
+
+    /// Saves exchanges as requests (in a new folder when there are several), as the user chose.
+    #[allow(clippy::too_many_arguments)]
+    fn run_import(
+        &mut self,
+        ids: Vec<String>,
+        flow: bool,
+        to: SecretsTo,
+        vault_id: Option<String>,
+        jar: bool,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let model = self.model.read(cx);
+        let client = model.client().clone();
+        let folder = new_folder_name();
+        let mut payload = json!({
+            "workspaceId": model.workspace_id(), "ids": ids, "secrets": to.wire(), "cookiesToJar": jar, "flow": flow,
+            "folderName": folder,
+        });
+        if let Some(vault_id) = vault_id {
+            payload["vaultId"] = json!(vault_id);
+        }
+        self.saving = true;
+        cx.notify();
+        call_in(&client, window, cx, "capture.import", payload, move |this, outcome, window, cx| {
+            if let Some(message) = failure(&outcome) {
+                return this.save_failed(t("capture.error.save_some"), message, cx);
+            }
+            this.saving = false;
+            let result = outcome.ok().unwrap_or_default();
+            let names = |key: &str| -> Vec<String> {
+                result[key].as_array().into_iter().flatten().filter_map(|id| id.as_str().map(str::to_owned)).collect()
+            };
+            let (saved, kept) = (names("requestIds"), names("keptInRequests"));
+            let count = saved.len();
+            let text = match (result["flowId"].is_string(), count) {
+                (true, _) => t_with("capture.saved_flow", &[("count", &count), ("folder", &folder)]),
+                (false, 1) => t("capture.saved_as_request").to_owned(),
+                (false, _) => t_with("capture.saved_requests_in_folder_other", &[("count", &count), ("folder", &folder)]),
+            };
+            window.push_notification(Notification::success(text), cx);
+            if !kept.is_empty() {
+                let text = t_with("capture.import.kept", &[("names", &kept.join(", "))]);
+                window.push_notification(Notification::warning(text), cx);
+            }
+            if let [id] = saved.as_slice() {
+                cx.emit(CaptureEvent::SavedRequest { id: id.clone() });
+            }
+            this.checked.clear();
+            cx.notify();
+        });
+    }
+
     /// Saves the selected exchange as a request or as a mock. The engine builds the entity from the entry it
     /// holds; what it built is created as it is, named after the exchange when it has no name (the method is shown beside the name already).
     fn save_as(&mut self, mock: bool, window: &mut Window, cx: &mut Context<Self>) {
@@ -457,6 +818,9 @@ impl CaptureScreen {
             return;
         }
         let Some(entry) = self.selected_entry() else { return };
+        if !mock {
+            return self.import_requests(vec![entry.id.clone()], false, window, cx);
+        }
         let run = SaveRun {
             pending: vec![(entry.id.clone(), entry.name())],
             mock,
@@ -487,6 +851,9 @@ impl CaptureScreen {
             return;
         }
         let pending = self.checked_exchanges();
+        if !mock {
+            return self.import_requests(pending.into_iter().map(|(id, _)| id).collect(), false, window, cx);
+        }
         if pending.len() < 2 {
             if pending.is_empty() {
                 return;
@@ -496,9 +863,7 @@ impl CaptureScreen {
             let run = SaveRun { pending, mock, folder: None, saved: 0, last: None, first_failure: None };
             return self.save_next(run, window, cx);
         }
-        let now = traffic::now_ms();
-        let name = format!("capture-{}-{:02}", date_time_utc(now).replace(' ', "_").replace(':', "-"), now / 1000 % 60);
-        self.create_folder_then_save(pending, mock, name, window, cx);
+        self.create_folder_then_save(pending, mock, new_folder_name(), window, cx);
     }
 
     fn create_folder_then_save(
@@ -712,6 +1077,18 @@ impl CaptureScreen {
                     })),
             )
             .child(div().flex_1())
+            .child(
+                Button::new("capture-create-flow")
+                    .small()
+                    .outline()
+                    .label(t("capture.create_flow"))
+                    .tooltip(t("capture.create_flow_tooltip"))
+                    .disabled(self.saving || ticked < 2)
+                    .on_click(cx.listener(|this, _, window, cx| {
+                        let ids = this.checked_exchanges().into_iter().map(|(id, _)| id).collect();
+                        this.import_requests(ids, true, window, cx);
+                    })),
+            )
             .children((ticked > 0).then(|| {
                 h_flex()
                     .gap_2()
