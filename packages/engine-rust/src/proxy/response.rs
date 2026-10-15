@@ -1,13 +1,12 @@
 //! The forward half's upstream requests and response handling: passthrough that streams the answer to the
 //! caller, the buffered fetch that runs a rule's scripts, and the header and body plumbing both share.
 
-use std::{sync::OnceLock, time::Instant};
+use std::time::Instant;
 
 use base64::Engine as _;
 use reqwest::{
     Client, Method, Response,
     header::{HeaderMap, HeaderName, HeaderValue},
-    redirect::Policy,
 };
 use serde_json::Value;
 use tokio::io::{AsyncWrite, AsyncWriteExt};
@@ -18,7 +17,7 @@ use crate::{
     scripting::execute_response_script,
     utils::{
         decompress::{decompress_body, strip_content_encoding},
-        http::is_hop_by_hop,
+        http::{ClientOptions, client as http_client, is_hop_by_hop, root_message},
         json::str_of,
         send_html::html_response,
     },
@@ -71,32 +70,8 @@ const FIRST_WINS: [&str; 18] = [
 
 /// The client for every upstream: HTTP/1.1, no redirects, no pooling, no system proxy, and certificates are
 /// not verified (the proxy shows what the server sends, including a server with a self-signed certificate).
-fn client() -> Result<&'static Client, String> {
-    static CLIENT: OnceLock<Client> = OnceLock::new();
-    if let Some(client) = CLIENT.get() {
-        return Ok(client);
-    }
-    let _ = rustls::crypto::ring::default_provider().install_default();
-    let built = Client::builder()
-        .http1_only()
-        .redirect(Policy::none())
-        .pool_max_idle_per_host(0)
-        .no_proxy()
-        .danger_accept_invalid_certs(true)
-        .build()
-        .map_err(|err| err.to_string())?;
-    Ok(CLIENT.get_or_init(|| built))
-}
-
-/// The innermost message of an error chain, which is the one that names the cause.
-fn root_message(err: &dyn std::error::Error) -> String {
-    let mut message = err.to_string();
-    let mut source = err.source();
-    while let Some(inner) = source {
-        message = inner.to_string();
-        source = inner.source();
-    }
-    message
+fn client() -> Result<Client, String> {
+    http_client(ClientOptions::PROXY_UPSTREAM)
 }
 
 /// A header value's bytes as text, one char per byte (Node decodes header values as latin1).

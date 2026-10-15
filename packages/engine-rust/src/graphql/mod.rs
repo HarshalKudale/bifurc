@@ -9,8 +9,11 @@ use crate::{
     env::{load_merged_environment, resolve_headers, resolve_vars},
     kernel::CommandRegistry,
     protocol::EngineError,
-    rest::direct_http::{exchange, header_pairs},
-    utils::json::{opt_str, str_of},
+    rest::direct_http::{exchange_with, header_pairs},
+    utils::{
+        http::RequestSettings,
+        json::{opt_str, str_of},
+    },
     workspace::config::load_entity,
 };
 
@@ -62,7 +65,8 @@ pub fn register(registry: &mut CommandRegistry) {
     registry.register("graphql.introspect", |params: Value, _| async move {
         let body = json!({ "query": INTROSPECTION_QUERY }).to_string();
         let headers = post_headers(params.get("headers").unwrap_or(&Value::Null));
-        Ok(match exchange("POST", str_of(&params, "url"), &headers, Some(&body)).await {
+        let settings = RequestSettings::resolve(params.get("settings"));
+        Ok(match exchange_with("POST", str_of(&params, "url"), &headers, Some(&body), &settings).await {
             Ok(response) => json!({ "ok": true, "sdl": response.body }),
             Err(error) => json!({ "ok": false, "error": error }),
         })
@@ -73,8 +77,10 @@ pub fn register(registry: &mut CommandRegistry) {
             execute_body(str_of(&params, "query"), str_of(&params, "variables"), str_of(&params, "operationName"));
         let headers = post_headers(params.get("headers").unwrap_or(&Value::Null));
         let start = Instant::now();
-        let response =
-            exchange("POST", str_of(&params, "url"), &headers, Some(&body)).await.map_err(EngineError::engine)?;
+        let settings = RequestSettings::resolve(params.get("settings"));
+        let response = exchange_with("POST", str_of(&params, "url"), &headers, Some(&body), &settings)
+            .await
+            .map_err(EngineError::engine)?;
         Ok(json!({
             "status": response.status,
             "headers": response.headers,
@@ -93,13 +99,16 @@ pub fn register(registry: &mut CommandRegistry) {
         };
         let env = load_merged_environment(ws_id);
         let env = env.as_ref();
-        let payload = json!({
+        let mut payload = json!({
             "url": resolve_vars(str_of(&stored, "endpointUrl"), env),
             "headers": resolve_headers(stored.get("headers").unwrap_or(&Value::Null), env),
             "query": resolve_vars(str_of(&stored, "query"), env),
             "variables": resolve_vars(str_of(&stored, "variables"), env),
             "operationName": resolve_vars(str_of(&stored, "operationName"), env),
         });
+        if let Some(settings) = stored.get("settings").filter(|v| v.is_object()) {
+            payload["settings"] = settings.clone();
+        }
         let mut result =
             crate::cookies::scoped(ws_id, ctx.registry.invoke("graphql.execute", payload, ctx.clone())).await?;
         crate::vault::redact_value(ws_id, &mut result);

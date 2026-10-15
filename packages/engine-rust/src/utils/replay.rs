@@ -1,16 +1,16 @@
 //! `replay_request`: send a request to its target and return the response, for `request.replay` and for
 //! the proxies' own request path.
 //!
-//! Every request gets a fresh connection (`connection: close`, no pooling) so a server that answers
-//! `keep-alive` cannot hand a half-closed socket to the next request to the same origin.
+//! `replay_request` (the proxies' own path) gives every request a fresh connection (`connection: close`,
+//! no pooling) so a server that answers `keep-alive` cannot hand a half-closed socket to the next request to
+//! the same origin. `replay_streamed` (what the user sends) pools connections.
 
-use std::{sync::OnceLock, time::Duration};
+use std::time::Duration;
 
 use base64::Engine as _;
 use reqwest::{
-    Client, Method,
+    Method,
     header::{HeaderMap, HeaderName, HeaderValue},
-    redirect::Policy,
 };
 use serde_json::{Value, json};
 use tokio::time::Instant;
@@ -21,7 +21,7 @@ use crate::{
     utils::{
         content_type::is_text_content_type,
         decompress::{decompress_body, strip_content_encoding},
-        http::is_hop_by_hop,
+        http::{Cancellable, ClientOptions, RequestSettings, client as http_client, is_hop_by_hop, root_message},
         id::now_ms,
     },
 };
@@ -83,32 +83,6 @@ pub fn decode_base64_lenient(text: &str) -> Vec<u8> {
     out
 }
 
-fn client() -> Result<&'static Client, String> {
-    static CLIENT: OnceLock<Client> = OnceLock::new();
-    if let Some(client) = CLIENT.get() {
-        return Ok(client);
-    }
-    let _ = rustls::crypto::ring::default_provider().install_default();
-    let built = Client::builder()
-        .http1_only()
-        .redirect(Policy::none())
-        .pool_max_idle_per_host(0)
-        .build()
-        .map_err(|err| err.to_string())?;
-    Ok(CLIENT.get_or_init(|| built))
-}
-
-/// The innermost message of an error chain, which is the one that names the cause.
-fn root_message(err: &dyn std::error::Error) -> String {
-    let mut message = err.to_string();
-    let mut source = err.source();
-    while let Some(inner) = source {
-        message = inner.to_string();
-        source = inner.source();
-    }
-    message
-}
-
 /// Node's wording for a refused connection or an unknown host, the innermost message of the chain otherwise.
 fn connect_message(err: &reqwest::Error, host: &str, port: u16) -> String {
     let mut source = std::error::Error::source(err);
@@ -150,14 +124,15 @@ fn response_headers(map: &HeaderMap) -> Headers {
 
 /// Send `method url` with `headers` and the base64 `body_base64`; the response body comes back decompressed
 /// and base64 encoded, without its `content-encoding` header and without hop-by-hop headers. Redirects are
-/// not followed. There is no timeout.
+/// not followed, certificates are verified and there is no timeout.
 pub async fn replay_request(
     method: &str,
     url: &str,
     headers: &Headers,
     body_base64: &str,
 ) -> Result<ReplayResponse, String> {
-    replay_streamed(method, url, headers, body_base64, None).await
+    let client = http_client(ClientOptions { pooled: false, ..ClientOptions::sending(true, false) })?;
+    send(client, false, &RequestSettings::default(), method, url, headers, body_base64, None).await
 }
 
 /// How long text that arrived waits for more before it is reported, so a fast stream is a few events a second
@@ -278,7 +253,33 @@ async fn read_reporting(
 /// `{streamId, messages}`, the first one with the `status` and `headers` too. A message is `{id, ts, data}`:
 /// one event of a `text/event-stream` body (with its `event` name and `eventId`), or the text that arrived
 /// since the last message of any other body. The result is the whole response either way.
+///
+/// `settings` pick the client (certificate checks, redirects) and the time limit: it covers connecting and
+/// waiting for the headers, and for a body that is not reported while it arrives, reading it. A body that is
+/// reported while it arrives is not cut by it. With a `stream_id` the send can be stopped by `request.cancel`,
+/// which fails it with [`CANCELLED`](crate::utils::http::CANCELLED).
 pub async fn replay_streamed(
+    method: &str,
+    url: &str,
+    headers: &Headers,
+    body_base64: &str,
+    stream_id: Option<&str>,
+    settings: &RequestSettings,
+) -> Result<ReplayResponse, String> {
+    let client = settings.client()?;
+    let cancellable = stream_id.map(Cancellable::register);
+    let sending = send(client, true, settings, method, url, headers, body_base64, stream_id);
+    match &cancellable {
+        Some(cancellable) => cancellable.run(sending).await,
+        None => sending.await,
+    }
+}
+
+#[allow(clippy::too_many_arguments)]
+async fn send(
+    client: reqwest::Client,
+    pooled: bool,
+    settings: &RequestSettings,
     method: &str,
     url: &str,
     headers: &Headers,
@@ -308,23 +309,26 @@ pub async fn replay_streamed(
             .map_err(|_| format!("Invalid character in header content [\"{name}\"]"))?;
         request_headers.append(name, value);
     }
-    request_headers.insert(HeaderName::from_static("connection"), HeaderValue::from_static("close"));
+    if !pooled {
+        request_headers.insert(HeaderName::from_static("connection"), HeaderValue::from_static("close"));
+    }
     crate::cookies::attach(parsed.as_str(), &mut request_headers);
 
     let method = Method::from_bytes(method.as_bytes())
         .map_err(|_| format!("Method must be a valid HTTP token [\"{method}\"]"))?;
-    let mut request = client()?.request(method, target).headers(request_headers);
+    let mut request = client.request(method, target).headers(request_headers);
     if !body.is_empty() {
         request = request.body(body);
     }
 
-    let response = request.send().await.map_err(|err| connect_message(&err, host, port))?;
+    let deadline = settings.deadline();
+    let response = deadline.run(request.send()).await?.map_err(|err| connect_message(&err, host, port))?;
     let status = response.status().as_u16();
     crate::cookies::collect(parsed.as_str(), response.headers());
     let mut headers = response_headers(response.headers());
     let raw = match stream_id.filter(|_| arrives_in_pieces(response.headers())) {
         Some(id) => read_reporting(response, id, status, &headers).await?,
-        None => response.bytes().await.map_err(|err| root_message(&err))?.to_vec(),
+        None => deadline.run(response.bytes()).await?.map_err(|err| root_message(&err))?.to_vec(),
     };
 
     let encoding = headers.get("content-encoding").cloned().unwrap_or_default();
@@ -465,8 +469,16 @@ mod tests {
                 }
             }
         });
-        let result =
-            replay_streamed("GET", &format!("http://{addr}/"), &Headers::new(), "", Some("s-pieces")).await.unwrap();
+        let result = replay_streamed(
+            "GET",
+            &format!("http://{addr}/"),
+            &Headers::new(),
+            "",
+            Some("s-pieces"),
+            &RequestSettings::default(),
+        )
+        .await
+        .unwrap();
         bus().off(listening);
 
         let seen = seen.lock();
@@ -494,14 +506,30 @@ mod tests {
                 sink.lock().extend(payload["messages"].as_array().unwrap().clone());
             }
         });
-        let result = replay_streamed("GET", &format!("{base}/"), &Headers::new(), "", Some("s-events")).await.unwrap();
+        let result = replay_streamed(
+            "GET",
+            &format!("{base}/"),
+            &Headers::new(),
+            "",
+            Some("s-events"),
+            &RequestSettings::default(),
+        )
+        .await
+        .unwrap();
         bus().off(listening);
 
         let seen = seen.lock();
         assert_eq!(seen.len(), 2, "{seen:?}");
-        assert_eq!((&seen[0]["event"], &seen[0]["eventId"], &seen[0]["data"]), (&json!("delta"), &json!("7"), &json!("{\"n\":1}")));
+        assert_eq!(
+            (&seen[0]["event"], &seen[0]["eventId"], &seen[0]["data"]),
+            (&json!("delta"), &json!("7"), &json!("{\"n\":1}"))
+        );
         assert_eq!((&seen[1]["event"], &seen[1]["data"]), (&json!("message"), &json!("[DONE]")));
-        assert!(String::from_utf8(base64::engine::general_purpose::STANDARD.decode(&result.body).unwrap()).unwrap().ends_with("[DONE]\n\n"));
+        assert!(
+            String::from_utf8(base64::engine::general_purpose::STANDARD.decode(&result.body).unwrap())
+                .unwrap()
+                .ends_with("[DONE]\n\n")
+        );
     }
 
     #[tokio::test]
@@ -514,7 +542,16 @@ mod tests {
                 *sink.lock() += 1;
             }
         });
-        let result = replay_streamed("GET", &format!("{base}/"), &Headers::new(), "", Some("s-whole")).await.unwrap();
+        let result = replay_streamed(
+            "GET",
+            &format!("{base}/"),
+            &Headers::new(),
+            "",
+            Some("s-whole"),
+            &RequestSettings::default(),
+        )
+        .await
+        .unwrap();
         bus().off(listening);
         assert_eq!(*seen.lock(), 0);
         assert_eq!(base64::engine::general_purpose::STANDARD.decode(&result.body).unwrap(), b"hello");
@@ -542,5 +579,131 @@ mod tests {
         drop(listener);
         let err = replay_request("GET", &format!("http://127.0.0.1:{port}/"), &Headers::new(), "").await.unwrap_err();
         assert!(!err.is_empty());
+    }
+
+    /// A server that accepts connections and never answers.
+    async fn silent_server() -> String {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let mut held = Vec::new();
+            while let Ok((socket, _)) = listener.accept().await {
+                held.push(socket);
+            }
+        });
+        format!("http://{addr}/")
+    }
+
+    fn settings(timeout_ms: u64, follow_redirects: bool) -> RequestSettings {
+        RequestSettings { timeout_ms, follow_redirects, ..RequestSettings::default() }
+    }
+
+    #[tokio::test]
+    async fn a_send_that_gets_no_answer_times_out() {
+        let url = silent_server().await;
+        let err = replay_streamed("GET", &url, &Headers::new(), "", None, &settings(200, false)).await.unwrap_err();
+        assert_eq!(err, "Timed out after 200 ms");
+        assert!(crate::utils::http::is_timeout(&err));
+    }
+
+    #[tokio::test]
+    async fn the_time_limit_does_not_cut_a_body_that_is_reported_while_it_arrives() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buf = [0u8; 4096];
+            let _ = socket.read(&mut buf).await.unwrap();
+            let head = b"HTTP/1.1 200 OK\r\ncontent-type: text/plain\r\ntransfer-encoding: chunked\r\n\r\n";
+            socket.write_all(head).await.unwrap();
+            socket.write_all(b"2\r\nhi\r\n").await.unwrap();
+            tokio::time::sleep(Duration::from_millis(500)).await;
+            socket.write_all(b"1\r\n!\r\n0\r\n\r\n").await.unwrap();
+            let _ = socket.shutdown().await;
+        });
+        let result = replay_streamed(
+            "GET",
+            &format!("http://{addr}/"),
+            &Headers::new(),
+            "",
+            Some("s-limit"),
+            &settings(200, false),
+        )
+        .await
+        .unwrap();
+        assert_eq!(base64::engine::general_purpose::STANDARD.decode(&result.body).unwrap(), b"hi!");
+    }
+
+    #[tokio::test]
+    async fn a_cancelled_send_fails_as_cancelled() {
+        let url = silent_server().await;
+        let sending = tokio::spawn(async move {
+            replay_streamed("GET", &url, &Headers::new(), "", Some("s-cancel"), &RequestSettings::default()).await
+        });
+        while !crate::utils::http::cancel("s-cancel") {
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        assert_eq!(sending.await.unwrap().unwrap_err(), crate::utils::http::CANCELLED);
+        assert!(!crate::utils::http::cancel("s-cancel"));
+    }
+
+    #[tokio::test]
+    async fn redirects_are_followed_only_when_asked() {
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            while let Ok((mut socket, _)) = listener.accept().await {
+                tokio::spawn(async move {
+                    let mut buf = [0u8; 4096];
+                    let n = socket.read(&mut buf).await.unwrap();
+                    let first = String::from_utf8_lossy(&buf[..n]).lines().next().unwrap_or_default().to_string();
+                    let reply = if first.contains("/start") {
+                        "HTTP/1.1 302 Found\r\nlocation: /end\r\ncontent-length: 0\r\n\r\n"
+                    } else {
+                        "HTTP/1.1 200 OK\r\ncontent-length: 4\r\n\r\ndone"
+                    };
+                    socket.write_all(reply.as_bytes()).await.unwrap();
+                    let _ = socket.shutdown().await;
+                });
+            }
+        });
+        let url = format!("http://{addr}/start");
+        let kept = replay_streamed("GET", &url, &Headers::new(), "", None, &settings(0, false)).await.unwrap();
+        assert_eq!(kept.status, 302);
+        let followed = replay_streamed("GET", &url, &Headers::new(), "", None, &settings(0, true)).await.unwrap();
+        assert_eq!(followed.status, 200);
+        assert_eq!(base64::engine::general_purpose::STANDARD.decode(&followed.body).unwrap(), b"done");
+    }
+
+    #[tokio::test]
+    async fn certificates_are_checked_unless_the_settings_say_not_to() {
+        let certified = rcgen::generate_simple_self_signed(vec!["localhost".to_string()]).unwrap();
+        let key = rustls::pki_types::PrivateKeyDer::try_from(certified.signing_key.serialize_der()).unwrap();
+        let _ = rustls::crypto::ring::default_provider().install_default();
+        let config = rustls::ServerConfig::builder()
+            .with_no_client_auth()
+            .with_single_cert(vec![certified.cert.der().clone()], key)
+            .unwrap();
+        let acceptor = tokio_rustls::TlsAcceptor::from(std::sync::Arc::new(config));
+        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let port = listener.local_addr().unwrap().port();
+        tokio::spawn(async move {
+            while let Ok((socket, _)) = listener.accept().await {
+                let acceptor = acceptor.clone();
+                tokio::spawn(async move {
+                    let Ok(mut tls) = acceptor.accept(socket).await else { return };
+                    let mut buf = [0u8; 4096];
+                    let _ = tls.read(&mut buf).await;
+                    let _ = tls.write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\n\r\nok").await;
+                    let _ = tls.shutdown().await;
+                });
+            }
+        });
+        let url = format!("https://localhost:{port}/");
+        let verified = replay_streamed("GET", &url, &Headers::new(), "", None, &RequestSettings::default()).await;
+        assert!(verified.is_err(), "a self-signed certificate must be refused by default");
+        let lax = RequestSettings { verify_tls: false, ..RequestSettings::default() };
+        let result = replay_streamed("GET", &url, &Headers::new(), "", None, &lax).await.unwrap();
+        assert_eq!(result.status, 200);
     }
 }
