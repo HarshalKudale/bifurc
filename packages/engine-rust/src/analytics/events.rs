@@ -281,11 +281,6 @@ pub fn describe(action: &str, params: &Value) -> Option<Event> {
 
         "vault.create" => event("vault created", json!({})),
         "vault.setSecret" => event("vault secret set", json!({})),
-        "application.save" => event("application saved", json!({})),
-        "application.start" => {
-            let mode = if opt_str(params, "mode") == Some("debug") { "debug" } else { "run" };
-            event("application started", json!({ "mode": mode }))
-        }
         // Saving the list is an event only when it creates a check, which the result says ([`complete`]).
         "healthbar.saveServices" => event("health check created", json!({})),
         // Only a check the user asked for: the ones an interface runs on a timer are not sent. Checking a

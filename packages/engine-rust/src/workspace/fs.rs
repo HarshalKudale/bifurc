@@ -103,7 +103,7 @@ pub fn workspace_identity(info: &Value) -> Option<(String, String)> {
 pub fn init_workspace_dir(ws_id: &str, name: &str) -> std::io::Result<()> {
     let root = ws_dir(ws_id);
     std::fs::create_dir_all(&root)?;
-    for kind in ["mappings", "rules", "environments", "flows", "mocks", "requests", "capture", "applications"] {
+    for kind in ["mappings", "rules", "environments", "flows", "mocks", "requests", "capture"] {
         std::fs::create_dir_all(root.join(kind))?;
     }
     let ws_file = root.join("workspace.json");

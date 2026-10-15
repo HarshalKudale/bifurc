@@ -24,7 +24,6 @@ pub fn register_all_engine_commands(registry: &mut CommandRegistry) {
     crate::sse::register(registry);
     crate::socketio::register(registry);
     crate::mcp::register(registry);
-    crate::applications::register(registry);
     crate::gitops::register(registry);
     crate::websocket::register(registry);
     crate::capture::register(registry);

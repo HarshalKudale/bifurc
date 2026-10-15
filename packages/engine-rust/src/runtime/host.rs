@@ -465,7 +465,6 @@ impl WorkspaceHost {
         }
         self.edge.stop();
         self.forward_proxy.stop();
-        crate::applications::stop_all();
         crate::gitops::stop_all_auto_sync();
         crate::gitops::stop_history_watch();
         crate::capture::flush_capture();
