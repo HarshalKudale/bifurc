@@ -1,10 +1,10 @@
-//! The collection runner: run a folder's requests and keep its reports and run configuration under
+//! The collection runner: run a folder's requests and keep its run configuration under
 //! `<workspace>/requests/.runs/<folderId>/`.
 
 pub mod report_html;
 pub mod runs;
 
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
 use serde_json::{Value, json};
 
@@ -20,55 +20,6 @@ use crate::{
 
 fn runs_dir(ws_id: &str) -> PathBuf {
     ws_dir(ws_id).join("requests").join(".runs")
-}
-
-/// `String(n)` for a JSON number: integers print without a fraction.
-fn number_text(value: Option<&Value>) -> String {
-    match value {
-        Some(Value::Number(number)) => match number.as_f64() {
-            Some(f) if f.fract() == 0.0 && f.abs() < 1e21 => format!("{}", f as i64),
-            _ => number.to_string(),
-        },
-        Some(Value::String(text)) => text.clone(),
-        Some(other) => other.to_string(),
-        None => "undefined".to_string(),
-    }
-}
-
-pub(crate) fn save_report(params: &Value) -> std::io::Result<()> {
-    let report = &params["report"];
-    let run_dir = runs_dir(str_of(params, "workspaceId"))
-        .join(str_of(report, "folderId"))
-        .join(number_text(report.get("startedAt")));
-    std::fs::create_dir_all(&run_dir)?;
-    std::fs::write(run_dir.join("report.json"), serde_json::to_string_pretty(report)?)?;
-    std::fs::write(run_dir.join("report.html"), render_runner_html(report))?;
-    Ok(())
-}
-
-fn history_entry(runs_dir: &Path, name: &str) -> Option<Value> {
-    let data = read_json(&runs_dir.join(name).join("report.json"))?;
-    let count = |key: &str| data.get(key).filter(|v| !v.is_null()).cloned().unwrap_or(json!(0));
-    let timestamp = name.trim().parse::<f64>().ok().filter(|t| t.is_finite()).map(|t| json!(t as i64));
-    Some(json!({
-        "timestamp": timestamp.unwrap_or(Value::Null),
-        "summary": { "total": count("totalTests"), "passed": count("passedTests"), "failed": count("failedTests") },
-    }))
-}
-
-fn history(ws_id: &str, folder_id: &str) -> Vec<Value> {
-    let dir = runs_dir(ws_id).join(folder_id);
-    let Ok(listing) = std::fs::read_dir(&dir) else { return Vec::new() };
-    let mut names: Vec<String> = listing
-        .filter_map(|entry| entry.ok())
-        .filter(|entry| entry.path().is_dir())
-        .filter_map(|entry| entry.file_name().into_string().ok())
-        .collect();
-    names.sort();
-    let mut entries: Vec<Value> = names.iter().filter_map(|name| history_entry(&dir, name)).collect();
-    let stamp = |entry: &Value| entry["timestamp"].as_i64().unwrap_or(i64::MIN);
-    entries.sort_by_key(|entry| std::cmp::Reverse(stamp(entry)));
-    entries
 }
 
 fn folder_ids(ws_id: &str) -> Vec<Value> {
@@ -105,13 +56,6 @@ fn export_report(params: &Value) -> crate::protocol::Result<Value> {
 }
 
 pub fn register(registry: &mut CommandRegistry) {
-    registry.register_sync("runner.saveReport", |params, _| {
-        Ok(match save_report(&params) {
-            Ok(()) => json!({ "ok": true }),
-            Err(error) => json!({ "ok": false, "error": error.to_string() }),
-        })
-    });
-
     registry.register_sync("runner.exportReport", |params, _| export_report(&params));
 
     registry.register_sync("runner.saveConfig", |params, _| {
@@ -125,10 +69,6 @@ pub fn register(registry: &mut CommandRegistry) {
     registry.register_sync("runner.loadConfig", |params, _| {
         let file = runs_dir(str_of(&params, "workspaceId")).join(str_of(&params, "folderId")).join("runner.json");
         Ok(read_json(&file).unwrap_or(Value::Null))
-    });
-
-    registry.register_sync("runner.getHistory", |params, _| {
-        Ok(Value::Array(history(str_of(&params, "workspaceId"), str_of(&params, "folderId"))))
     });
 
     registry.register_sync("runner.listFolderIds", |params, _| {
@@ -205,24 +145,6 @@ mod tests {
         assert_eq!(loaded, json!({ "delayMs": 5, "requestOrder": ["a"] }));
         let ids = call("runner.listFolderIds", json!({ "workspaceId": WS })).await.unwrap();
         assert_eq!(ids, json!(["f1"]));
-    }
-
-    #[tokio::test]
-    async fn reports_are_saved_and_listed_newest_first() {
-        let root = scratch_data_root();
-        for started in [1000, 3000, 2000] {
-            let saved =
-                call("runner.saveReport", json!({ "workspaceId": WS, "report": report(started) })).await.unwrap();
-            assert_eq!(saved, json!({ "ok": true }));
-        }
-        let dir = ws_dir(root.ws_id).join("requests").join(".runs").join("f1").join("3000");
-        assert!(dir.join("report.json").exists() && dir.join("report.html").exists());
-        let history = call("runner.getHistory", json!({ "workspaceId": WS, "folderId": "f1" })).await.unwrap();
-        let stamps: Vec<i64> = history.as_array().unwrap().iter().map(|e| e["timestamp"].as_i64().unwrap()).collect();
-        assert_eq!(stamps, vec![3000, 2000, 1000]);
-        assert_eq!(history[0]["summary"], json!({ "total": 2, "passed": 1, "failed": 1 }));
-        let none = call("runner.getHistory", json!({ "workspaceId": WS, "folderId": "other" })).await.unwrap();
-        assert_eq!(none, json!([]));
     }
 
     #[tokio::test]
@@ -309,7 +231,5 @@ mod tests {
         assert!(row["responseHeaders"].is_object());
         assert!(row["responseBody"].is_string());
         assert!(row["requestHeaders"].is_object() || row["requestHeaders"].is_array());
-        let saved = call("runner.getHistory", json!({ "workspaceId": WS, "folderId": f1 })).await.unwrap();
-        assert_eq!(saved[0]["summary"], json!({ "total": 2, "passed": 2, "failed": 0 }));
     }
 }
