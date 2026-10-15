@@ -104,6 +104,19 @@ fn fields_of(kind: RequestKind) -> &'static [FieldSpec] {
     }
 }
 
+/// The fields `*.send` takes inline for a request of this kind, taken from the edited entity.
+fn inline_request(kind: RequestKind, entity: &Map<String, Value>) -> Value {
+    let mut request = Map::new();
+    for spec in fields_of(kind) {
+        request.insert(spec.key.into(), entity.get(spec.key).cloned().unwrap_or(Value::Null));
+    }
+    if kind == RequestKind::Grpc {
+        request.insert("protoFileId".into(), entity.get("protoFileId").cloned().unwrap_or(Value::Null));
+        request.insert("useReflection".into(), entity.get("useReflection").cloned().unwrap_or(json!(false)));
+    }
+    Value::Object(request)
+}
+
 /// The name a request of this kind has until it is given another.
 fn default_name(kind: RequestKind) -> String {
     format!("New {} request", kind.label())
@@ -1375,7 +1388,7 @@ impl ProtocolSession {
         });
     }
 
-    /// Sends the stored request. Unsaved edits are saved first, because the engine sends what it has stored.
+    /// Sends the request: a saved, unedited one by id, anything else as the editor holds it.
     pub fn send(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(action) = self.kind.send_command() else { return };
         if self.kind == RequestKind::Grpc {
@@ -1391,21 +1404,27 @@ impl ProtocolSession {
         if self.sending || self.load != LoadState::Ready {
             return;
         }
-        // The write in flight may not hold the latest edit; the send waits for it and looks again.
-        if self.saving {
-            self.send_after_save = true;
-            return;
-        }
-        let Some(id) = self.saved_id.clone().filter(|_| !self.is_dirty(cx)) else {
-            self.send_after_save = true;
-            self.save(SaveMode::Explicit, window, cx);
-            return;
+        let values = self.values(cx);
+        let payload = match self.saved_id.clone().filter(|_| !self.is_dirty(cx)) {
+            Some(id) => json!({ "workspaceId": self.workspace_id, "id": id }),
+            // A draft, or an edit not yet saved, is sent as the editor holds it, without saving it.
+            None => {
+                if Self::target_is_empty(&values) {
+                    window.push_notification(
+                        Notification::warning(t_with("session.protocol.enter_target_first", &[("target", &self.target_label())]))
+                            .title(t("session.rest.send_no_url_title")),
+                        cx,
+                    );
+                    return;
+                }
+                let entity = self.edited_entity(&values);
+                json!({ "workspaceId": self.workspace_id, "request": inline_request(self.kind, &entity) })
+            }
         };
         self.sending = true;
         self.exchange.update(cx, |exchange, cx| exchange.begin(cx));
         self.changed(cx);
         let client = self.model.read(cx).client().clone();
-        let payload = json!({ "workspaceId": self.workspace_id, "id": id });
         call_in(&client, window, cx, action, payload, move |this, outcome, window, cx| {
             this.sending = false;
             match outcome {
@@ -1556,5 +1575,26 @@ impl Render for ProtocolSession {
             )
             .child(div().flex_1().min_h_0().children(content))
             .into_any_element()
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn an_inline_request_holds_only_what_the_engine_takes() {
+        let entity = json!({
+            "id": "r1", "name": "n", "workspaceId": "w", "endpointUrl": "u", "query": "{ a }", "variables": "",
+            "operationName": "", "headers": { "a": "b" },
+        });
+        let request = inline_request(RequestKind::GraphQl, entity.as_object().unwrap());
+        assert_eq!(
+            request,
+            json!({ "endpointUrl": "u", "operationName": "", "query": "{ a }", "variables": "", "headers": { "a": "b" } })
+        );
+        let grpc = inline_request(RequestKind::Grpc, json!({ "serverAddress": "s", "metadata": {} }).as_object().unwrap());
+        assert_eq!(grpc["useReflection"], json!(false));
+        assert_eq!(grpc["protoFileId"], Value::Null);
     }
 }
