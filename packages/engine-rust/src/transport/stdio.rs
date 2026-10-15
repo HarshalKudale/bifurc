@@ -248,6 +248,7 @@ mod tests {
             on_session_end: None,
             refuse_command: None,
             peer: None,
+            allowed_events: None,
         };
         let (client, server) = duplex(64 * 1024);
         let (reader, writer) = tokio::io::split(server);

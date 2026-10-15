@@ -3,7 +3,10 @@
 
 use std::collections::HashSet;
 
-use crate::kernel::Scope;
+use crate::{
+    kernel::Scope,
+    protocol::{EngineError, ErrorCode},
+};
 
 const SCOPE_BY_COMMAND: &[(&str, Scope)] = &[
     ("entity.create", Scope::Write),
@@ -201,9 +204,19 @@ pub fn shell_scopes() -> HashSet<Scope> {
     HashSet::from([Scope::Read, Scope::Write, Scope::Execute, Scope::Admin])
 }
 
-/// The browser extension: it reads and saves, and runs nothing.
+/// The browser extension's scopes. The companion endpoint is unauthenticated, so scopes are not what limits it:
+/// see [`companion_refusal`] and [`COMPANION_EVENTS`].
 pub fn companion_scopes() -> HashSet<Scope> {
     HashSet::from([Scope::Read, Scope::Write])
+}
+
+/// The only events the companion endpoint delivers: what the browser extension listens for.
+pub const COMPANION_EVENTS: &[&str] = &["event.settings.changed", "event.server.error", "event.engine.stopping"];
+
+/// Why the companion endpoint refuses `action`, if it does: it serves the proxy status and nothing else.
+pub fn companion_refusal(action: &str) -> Option<EngineError> {
+    (action != "server.status")
+        .then(|| EngineError::new(ErrorCode::Forbidden, "the companion endpoint only serves status".to_string()))
 }
 
 pub fn read_only_scopes() -> HashSet<Scope> {
