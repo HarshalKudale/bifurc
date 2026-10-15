@@ -4,7 +4,7 @@
 //!
 //! - **Appearance** is this client's (theme, text size). It is kept in [`Preferences`] and never reaches the
 //!   engine.
-//! - **Servers**, **HTTPS** are the engine's. Every change is a `settings.update`, `server.*` or `tls.*`
+//! - **Servers**, **Requests**, **HTTPS** are the engine's. Every change is a `settings.update`, `server.*` or `tls.*`
 //!   command, and what the page shows is what the engine reports back. The only things done on this computer
 //!   are the ones the engine cannot reach: restarting its process, and trusting its certificate.
 //! - **About** says what is running.
@@ -33,7 +33,10 @@ use crate::{
     components::{certificate::Certificate, dialogs::confirm_danger},
     engine::{call, call_in, failure},
     i18n::{self, t, t_with},
-    model::{config::AccountInfo, update::UpdateAction},
+    model::{
+        config::{AccountInfo, RequestDefaults},
+        update::UpdateAction,
+    },
     preferences::Preferences,
     screens::workspace_setup::{Purpose, open_setup_dialog},
     theme,
@@ -193,6 +196,15 @@ pub struct SettingsScreen {
     /// The account being signed out.
     signing_out: Option<String>,
     _subscriptions: Vec<Subscription>,
+}
+
+/// `settings.update` replaces the whole `requestDefaults` object, so a change sends all three keys.
+fn set_request_default(model: &Entity<AppModel>, cx: &mut App, change: impl FnOnce(&mut RequestDefaults)) {
+    model.update(cx, |model, cx| {
+        let mut defaults = model.config().request_defaults.clone();
+        change(&mut defaults);
+        model.update_settings(json!({ "requestDefaults": defaults.to_json() }), cx)
+    })
 }
 
 impl SettingsScreen {
@@ -559,6 +571,56 @@ impl SettingsScreen {
                 ))
                 .item(companions)
                 .footer(|_, _| t("settings.companion.footer")),
+        ])
+    }
+
+    /// The defaults a request's own Settings tab overrides.
+    fn requests_page(&self) -> SettingPage {
+        let model = &self.model;
+        let flag = |title, description, read: fn(&RequestDefaults) -> bool, change: fn(&mut RequestDefaults, bool)| {
+            let (reader, writer) = (model.clone(), model.clone());
+            SettingItem::new(
+                t(title),
+                SettingField::switch(
+                    move |cx: &App| read(&reader.read(cx).config().request_defaults),
+                    move |value: bool, cx: &mut App| set_request_default(&writer, cx, |defaults| change(defaults, value)),
+                ),
+            )
+            .description(t(description))
+        };
+        let (timeout_reader, timeout_writer) = (model.clone(), model.clone());
+        SettingPage::new(t("settings.page.requests")).icon(IconName::Globe).groups(vec![
+            SettingGroup::new()
+                .title(t("settings.requests.group"))
+                .item(flag(
+                    "settings.requests.verify_tls.title",
+                    "settings.requests.verify_tls.description",
+                    |defaults| defaults.verify_tls,
+                    |defaults, value| defaults.verify_tls = value,
+                ))
+                .item(flag(
+                    "settings.requests.follow_redirects.title",
+                    "settings.requests.follow_redirects.description",
+                    |defaults| defaults.follow_redirects,
+                    |defaults, value| defaults.follow_redirects = value,
+                ))
+                .item(
+                    SettingItem::new(
+                        t("settings.requests.timeout.title"),
+                        SettingField::number_input(
+                            NumberFieldOptions { min: 0., max: 3_600_000., step: 1000. },
+                            move |cx: &App| timeout_reader.read(cx).config().request_defaults.timeout_ms as f64,
+                            move |value: f64, cx: &mut App| {
+                                // The field reports every keystroke; only a whole, non-negative number is sent.
+                                if value >= 0.0 && value.fract() == 0.0 {
+                                    set_request_default(&timeout_writer, cx, |defaults| defaults.timeout_ms = value as u64)
+                                }
+                            },
+                        ),
+                    )
+                    .description(t("settings.requests.timeout.description")),
+                )
+                .footer(|_, _| t("settings.requests.footer")),
         ])
     }
 
@@ -1105,6 +1167,7 @@ impl Render for SettingsScreen {
             self.appearance_page(cx),
             self.accounts_page(cx),
             self.servers_page(cx),
+            self.requests_page(),
             self.https_page(),
             self.about_page(cx),
             super::licenses::page(),

@@ -194,6 +194,39 @@ pub struct FolderInfo {
     pub deleted: bool,
 }
 
+/// The app-wide request settings, which a request's own `settings` override. A key the engine has not been
+/// given is shown at its built-in value.
+#[derive(Debug, Clone, PartialEq)]
+pub struct RequestDefaults {
+    pub verify_tls: bool,
+    pub follow_redirects: bool,
+    /// 0 is no timeout.
+    pub timeout_ms: u64,
+}
+
+impl Default for RequestDefaults {
+    fn default() -> Self {
+        Self { verify_tls: true, follow_redirects: false, timeout_ms: 0 }
+    }
+}
+
+impl RequestDefaults {
+    pub fn from_value(value: Option<&Value>) -> Self {
+        let built_in = Self::default();
+        let get = |key| value.and_then(|v| v.get(key));
+        Self {
+            verify_tls: get("verifyTls").and_then(Value::as_bool).unwrap_or(built_in.verify_tls),
+            follow_redirects: get("followRedirects").and_then(Value::as_bool).unwrap_or(built_in.follow_redirects),
+            timeout_ms: get("timeoutMs").and_then(Value::as_u64).unwrap_or(built_in.timeout_ms),
+        }
+    }
+
+    /// `settings.update` replaces the whole object, so all three are sent.
+    pub fn to_json(&self) -> Value {
+        serde_json::json!({ "verifyTls": self.verify_tls, "followRedirects": self.follow_redirects, "timeoutMs": self.timeout_ms })
+    }
+}
+
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct ConfigSnapshot {
     pub workspaces: Vec<WorkspaceInfo>,
@@ -213,6 +246,7 @@ pub struct ConfigSnapshot {
     /// The proxy rules a newer Bifurc last saved. `entity.list` does not return them either.
     pub locked_rules: Vec<LockedRule>,
     pub settings: EngineSettings,
+    pub request_defaults: RequestDefaults,
 }
 
 /// The array of the request tree's folders in `config.get`.
@@ -402,6 +436,7 @@ impl ConfigSnapshot {
                     Some(LockedRule { version: locked_to(r)?, id: text(r, "id")?, name: text(r, "name").unwrap_or_default() })
                 })
                 .collect(),
+            request_defaults: RequestDefaults::from_value(config.get("requestDefaults")),
             settings: EngineSettings {
                 proxy_port: port("port"),
                 forward_proxy_port: port("forwardProxyPort"),
@@ -542,6 +577,18 @@ mod tests {
             "socketioRequests": [{"id": "i1", "name": "Chat", "url": "https://io.test", "namespace": "/chat", "folderId": "if"}],
             "mcpRequests": [{"id": "m1", "name": "Tools", "transport": "stdio", "url": "npx my-server", "folderId": "mf"}],
         })
+    }
+
+    #[test]
+    fn request_defaults_fall_back_to_the_built_in_values_per_key() {
+        let unset = ConfigSnapshot::from_value(&json!({ "activeWorkspaceId": "w1", "requestDefaults": {} })).unwrap();
+        assert_eq!(unset.request_defaults, RequestDefaults { verify_tls: true, follow_redirects: false, timeout_ms: 0 });
+        let set = ConfigSnapshot::from_value(
+            &json!({ "activeWorkspaceId": "w1", "requestDefaults": { "verifyTls": false, "timeoutMs": 30000 } }),
+        )
+        .unwrap();
+        assert_eq!(set.request_defaults, RequestDefaults { verify_tls: false, follow_redirects: false, timeout_ms: 30000 });
+        assert_eq!(set.request_defaults.to_json(), json!({ "verifyTls": false, "followRedirects": false, "timeoutMs": 30000 }));
     }
 
     #[test]

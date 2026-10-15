@@ -23,17 +23,20 @@ use gpui_kit::component::{
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    AppContext as _, Context, Entity, EventEmitter, IntoElement, ParentElement as _, Render, SharedString, Styled as _,
+    AppContext as _, Context, Entity, EventEmitter, InteractiveElement as _, IntoElement, ParentElement as _, Render,
+    SharedString, Styled as _,
     Subscription, Window, div,
 };
 use serde_json::{Map, Value, json};
 
 use super::{Carry, LoadState, SaveMode, SessionEvent, engine_folder, exchange::Exchange};
 use crate::{
+    commands::CancelRequest,
     i18n::{t, t_with},
     app_model::{AppModel, ModelEvent},
     components::{
-        Autosave, FileData, KeyValueEvent, KeyValueTable, Part, PartValue, PartsEvent, PartsTable, Syntax, VarEditor,
+        Autosave, FileData, KeyValueEvent, KeyValueTable, Part, PartValue, PartsEvent, PartsTable, SettingsChanged,
+        SettingsForm, Syntax, VarEditor,
         binary::{BinaryBody, pick_file},
         page,
         parts_table::{parts_from_json, parts_to_json},
@@ -43,7 +46,7 @@ use crate::{
     model::{
         RequestKind,
         http::{
-            BodyEncoding, BodyMode, HTTP_METHODS, decode_form, encode_form, header_map, header_pairs, join_query,
+            BodyEncoding, BodyMode, HTTP_METHODS, RequestSettings, decode_form, encode_form, header_map, header_pairs, join_query,
             pretty_json, split_query,
         },
         media::{BodyClass, classify, size_label},
@@ -68,6 +71,7 @@ struct Fields {
     pre_script: String,
     post_script: String,
     test_script: String,
+    settings: RequestSettings,
 }
 
 /// The file as it can be previewed: an image is decoded once, when the file arrives.
@@ -85,9 +89,10 @@ enum Section {
     Headers,
     Body,
     Scripts,
+    Settings,
 }
 
-const SECTIONS: [Section; 4] = [Section::Params, Section::Headers, Section::Body, Section::Scripts];
+const SECTIONS: [Section; 5] = [Section::Params, Section::Headers, Section::Body, Section::Scripts, Section::Settings];
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum Script {
@@ -127,12 +132,15 @@ pub struct RestSession {
     pre_script: VarEditor,
     post_script: VarEditor,
     test_script: VarEditor,
+    settings: Entity<SettingsForm>,
     section: Section,
     script: Script,
     baseline: Fields,
     exchange: Entity<Exchange>,
     /// Names this session's sends, so the engine's reports of a response that is still arriving find it.
     stream_id: String,
+    /// How many sends this session has made; part of `stream_id`, so a cancel can only reach the latest send.
+    sends: u64,
     sending: bool,
     saving: bool,
     autosave: Autosave,
@@ -161,9 +169,11 @@ impl RestSession {
         let pre_script = VarEditor::code(Syntax::JavaScript, t("session.rest.pre_script_placeholder"), window, cx);
         let post_script = VarEditor::code(Syntax::JavaScript, t("session.rest.post_script_placeholder"), window, cx);
         let test_script = VarEditor::code(Syntax::JavaScript, "// bc.test(\"status is 200\", () => { ... })", window, cx);
+        let settings = cx.new(|cx| SettingsForm::new(model.clone(), window, cx));
         let exchange = cx.new(|cx| Exchange::new(window, cx));
 
         let mut subscriptions = Vec::new();
+        subscriptions.push(cx.subscribe(&settings, |this, _, _: &SettingsChanged, cx| this.changed(cx)));
         subscriptions.push(cx.subscribe_in(&name, window, |this, _, event: &InputEvent, window, cx| match event {
             InputEvent::Change => this.changed(cx),
             InputEvent::PressEnter { .. } | InputEvent::Blur => this.commit_name(window, cx),
@@ -236,6 +246,7 @@ impl RestSession {
             pre_script,
             post_script,
             test_script,
+            settings,
             section: Section::Params,
             script: Script::Pre,
             baseline: Fields {
@@ -249,9 +260,11 @@ impl RestSession {
                 pre_script: String::new(),
                 post_script: String::new(),
                 test_script: String::new(),
+                settings: RequestSettings::default(),
             },
             exchange,
-            stream_id: format!("rest-{}", cx.entity_id().as_u64()),
+            stream_id: String::new(),
+            sends: 0,
             sending: false,
             saving: false,
             autosave: Autosave::new(window),
@@ -435,6 +448,7 @@ impl RestSession {
             pre_script: self.pre_script.value(cx),
             post_script: self.post_script.value(cx),
             test_script: self.test_script.value(cx),
+            settings: self.settings.read(cx).value(cx),
         }
     }
 
@@ -594,6 +608,8 @@ impl RestSession {
         self.pre_script.set_value(text("preScript"), window, cx);
         self.post_script.set_value(text("postScript"), window, cx);
         self.test_script.set_value(text("testScript"), window, cx);
+        let settings = RequestSettings::from_entity(&entity);
+        self.settings.update(cx, |form, cx| form.set(&settings, window, cx));
 
         self.entity = entity;
         // The baseline is read back from the controls, so that what they normalise (a trimmed name, a form
@@ -671,6 +687,7 @@ impl RestSession {
         entity.insert("preScript".into(), json!(fields.pre_script));
         entity.insert("postScript".into(), json!(fields.post_script));
         entity.insert("testScript".into(), json!(fields.test_script));
+        fields.settings.write_to(&mut entity);
         entity
     }
 
@@ -764,6 +781,8 @@ impl RestSession {
             window.push_notification(Notification::warning(t("session.rest.send_no_url")).title(t("session.rest.send_no_url_title")), cx);
             return;
         }
+        self.sends += 1;
+        self.stream_id = format!("rest-{}-{}", cx.entity_id().as_u64(), self.sends);
         let payload = match (&self.saved_id, fields == self.baseline) {
             (Some(id), true) => json!({ "workspaceId": self.workspace_id, "id": id, "streamId": self.stream_id }),
             _ => {
@@ -788,6 +807,9 @@ impl RestSession {
                 } else {
                     request.insert("body".into(), json!(fields.body));
                 }
+                if let Some(settings) = fields.settings.to_json() {
+                    request.insert("settings".into(), settings);
+                }
                 json!({
                     "workspaceId": self.workspace_id,
                     "request": request,
@@ -804,6 +826,9 @@ impl RestSession {
         call_in(&client, window, cx, "request.send", payload, move |this, outcome, window, cx| {
             this.sending = false;
             match outcome {
+                Ok(result) if result.get("cancelled").and_then(Value::as_bool) == Some(true) => {
+                    this.exchange.update(cx, |exchange, cx| exchange.cancelled(cx));
+                }
                 Ok(result) => {
                     this.exchange.update(cx, |exchange, cx| exchange.finish(&result, BodyEncoding::Base64, window, cx));
                 }
@@ -814,6 +839,12 @@ impl RestSession {
             }
             this.changed(cx);
         });
+    }
+
+    /// Stops the send that is in flight; its result then arrives as cancelled.
+    fn cancel(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let client = self.model.read(cx).client().clone();
+        call_in(&client, window, cx, "request.cancel", json!({ "streamId": self.stream_id }), |_, _, _, _| {});
     }
 
     fn render_sections(&self, cx: &mut Context<Self>) -> TabBar {
@@ -842,6 +873,7 @@ impl RestSession {
                 t_with("session.rest.tab_body_mode", &[("mode", &self.body_mode.label())])
             }))
             .child(Tab::new().label(count(scripts, "session.rest.tab_scripts", "session.rest.tab_scripts_count")))
+            .child(Tab::new().label(t("session.rest.tab_settings")))
     }
 
     fn render_body(&self, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
@@ -999,18 +1031,27 @@ impl Render for RestSession {
             Section::Headers => self.headers.clone().into_any_element(),
             Section::Body => self.render_body(cx),
             Section::Scripts => self.render_scripts(cx),
+            Section::Settings => self.settings.clone().into_any_element(),
         };
+        let sending = self.sending;
+        // Esc cancels only from inside this editor; a dialog or menu above it handles its own Esc first.
         v_flex()
+            .key_context("RestEditor")
+            .on_action(cx.listener(|this, _: &CancelRequest, window, cx| {
+                if this.sending { this.cancel(window, cx) } else { cx.propagate() }
+            }))
             .size_full()
             .bg(theme.background)
             .child(request_bar(
                 Some(div().w_32().flex_none().child(Select::new(&self.method).h(row_height)).into_any_element()),
                 self.url.line_field(cx),
                 Button::new("send-request")
-                    .primary()
-                    .label(t("session.rest.send"))
-                    .loading(self.sending)
-                    .on_click(cx.listener(|this, _, window, cx| this.send(window, cx))),
+                    .when(sending, |button| button.outline())
+                    .when(!sending, |button| button.primary())
+                    .label(if sending { t("session.rest.cancel") } else { t("session.rest.send") })
+                    .on_click(cx.listener(move |this, _, window, cx| {
+                        if sending { this.cancel(window, cx) } else { this.send(window, cx) }
+                    })),
                 [],
                 cx,
             ))
