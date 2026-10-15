@@ -247,5 +247,15 @@
   "schema.kind_enum": "Enum",
   "schema.kind_input": "Eingabe",
   "schema.kind_union": "Union",
-  "schema.kind_scalar": "Skalar"
+  "schema.kind_scalar": "Skalar",
+  "wsdl.tab": "WSDL",
+  "wsdl.fetch": "WSDL abrufen",
+  "wsdl.refresh": "WSDL aktualisieren",
+  "wsdl.url_placeholder": "Standard: Endpunkt-URL plus ?wsdl",
+  "wsdl.empty_title": "Noch keine WSDL",
+  "wsdl.empty_description": "Rufen Sie die WSDL ab, um die Operationen des Dienstes aufzulisten. Mit der Auswahl werden SOAPAction und ein Envelope eingetragen.",
+  "wsdl.none_title": "Keine Operationen gefunden",
+  "wsdl.none_description": "Die WSDL enthält keine SOAP-Operationen.",
+  "wsdl.soap_version": "SOAP {version}",
+  "wsdl.fetch_failed_title": "WSDL konnte nicht abgerufen werden"
 }

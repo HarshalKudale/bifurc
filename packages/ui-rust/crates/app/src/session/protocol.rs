@@ -28,7 +28,7 @@ use gpui_kit::{
 };
 use serde_json::{Map, Value, json};
 
-use super::{Carry, LoadState, SaveMode, SessionEvent, engine_folder, exchange::Exchange, graphql::SchemaPanel};
+use super::{Carry, LoadState, SaveMode, SessionEvent, engine_folder, exchange::Exchange, graphql::SchemaPanel, wsdl::WsdlPanel};
 use crate::{
     i18n::{t, t_with},
     app_model::{AppModel, ModelEvent},
@@ -38,6 +38,7 @@ use crate::{
         RequestKind,
         http::{BodyEncoding, header_map, header_pairs},
         graphql::Schema,
+        wsdl,
         snippet::RequestParts,
     },
 };
@@ -298,6 +299,8 @@ pub struct ProtocolSession {
     grpc: Option<GrpcPicker>,
     /// Only a GraphQL request has one: the schema read from its endpoint, kept in memory.
     schema: Option<SchemaPanel>,
+    /// Only a SOAP request has one: the operations read from its WSDL, kept in memory.
+    wsdl: Option<WsdlPanel>,
     /// What the engine knows this tab's live call as.
     stream_id: String,
     /// A live call is open (or opening) for this request.
@@ -403,6 +406,8 @@ impl ProtocolSession {
             panel
         });
 
+        let wsdl = (kind == RequestKind::Soap).then(|| WsdlPanel::new(window, cx));
+
         let grpc = (kind == RequestKind::Grpc).then(|| {
             let service_box = cx.new(|cx| ComboboxState::new(Vec::<String>::new(), vec![], window, cx).searchable(true));
             let method_box = cx.new(|cx| ComboboxState::new(Vec::<MethodItem>::new(), vec![], window, cx).searchable(true));
@@ -451,6 +456,7 @@ impl ProtocolSession {
             exchange,
             grpc,
             schema,
+            wsdl,
             stream_id: format!("grpc-{}", cx.entity_id().as_u64()),
             live: false,
             connected: false,
@@ -1043,6 +1049,78 @@ impl ProtocolSession {
         });
     }
 
+    /// Reads the service's WSDL: the typed address, else the endpoint's with `?wsdl`. Resolved here, as sending would.
+    pub(super) fn fetch_wsdl(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(panel) = self.wsdl.as_ref().filter(|panel| !panel.fetching) else { return };
+        let mut url = panel.url.read(cx).value().trim().to_owned();
+        if url.is_empty() {
+            url = self.text_of("endpointUrl", cx).unwrap_or_default().replace(['\r', '\n'], "").trim().to_owned();
+            if url.is_empty() {
+                window.push_notification(
+                    Notification::warning(t_with("session.protocol.enter_target_first", &[("target", &self.target_label())]))
+                        .title(t("session.wsdl.fetch_failed_title")),
+                    cx,
+                );
+                return;
+            }
+            if !url.contains('?') {
+                url.push_str("?wsdl");
+            }
+        }
+        if let Some(panel) = self.wsdl.as_mut() {
+            panel.fetching = true;
+        }
+        cx.notify();
+        let client = self.model.read(cx).client().clone();
+        let fetch_client = client.clone();
+        let resolve = json!({ "workspaceId": self.workspace_id, "text": url });
+        call_in(&client, window, cx, "env.resolveText", resolve, move |_, outcome, window, cx| {
+            let resolved = outcome.ok().and_then(|result| result.get("text").and_then(Value::as_str).map(str::to_owned)).unwrap_or(url);
+            call_in(&fetch_client, window, cx, "soap.fetchWsdl", json!({ "url": resolved }), |this, outcome, window, cx| {
+                let failure = match outcome {
+                    Ok(result) if result.get("ok").and_then(Value::as_bool) == Some(true) => {
+                        match wsdl::parse(result.get("content").and_then(Value::as_str).unwrap_or_default()) {
+                            Ok(operations) => {
+                                if let Some(panel) = this.wsdl.as_mut() {
+                                    panel.set_operations(operations);
+                                }
+                                None
+                            }
+                            Err(message) => Some(message),
+                        }
+                    }
+                    Ok(result) => Some(result.get("error").and_then(Value::as_str).unwrap_or_default().to_owned()),
+                    Err(error) => Some(describe(&error)),
+                };
+                if let Some(panel) = this.wsdl.as_mut() {
+                    panel.fetching = false;
+                }
+                if let Some(message) = failure {
+                    window.push_notification(Notification::error(message).title(t("session.wsdl.fetch_failed_title")), cx);
+                }
+                cx.notify();
+            });
+        });
+    }
+
+    /// Fills the SOAPAction, the endpoint when it is empty, and the envelope when the body is empty or is still
+    /// an envelope this tab generated for one of the operations; a body the user has written is left alone.
+    pub(super) fn choose_operation(&mut self, ix: usize, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(panel) = self.wsdl.as_mut() else { return };
+        let Some(operation) = panel.operations().get(ix).cloned() else { return };
+        let generated: Vec<String> = panel.operations().iter().map(wsdl::skeleton).collect();
+        panel.select(ix);
+        self.set_text("soapAction", operation.action.clone(), window, cx);
+        if self.text_of("endpointUrl", cx).unwrap_or_default().trim().is_empty() && !operation.endpoint.is_empty() {
+            self.set_text("endpointUrl", operation.endpoint.clone(), window, cx);
+        }
+        let body = self.text_of("body", cx).unwrap_or_default();
+        if body.trim().is_empty() || generated.contains(&body) {
+            self.set_text("body", wsdl::skeleton(&operation), window, cx);
+        }
+        cx.notify();
+    }
+
     /// The first field is the target; a request without one cannot be written.
     fn target_is_empty(values: &(String, Vec<FieldValue>)) -> bool {
         matches!(values.1.first(), Some(FieldValue::Text(text)) if text.is_empty())
@@ -1379,16 +1457,20 @@ impl Render for ProtocolSession {
         }
 
         let sections = self.sections();
-        // A GraphQL request has one more tab than it has documents: the schema.
-        let tabs = sections.len() + usize::from(self.schema.is_some());
+        // A GraphQL request has one more tab than it has documents: the schema. A SOAP request's is the WSDL.
+        let (extra_label, extra_view) = match (&self.schema, &self.wsdl) {
+            (Some(panel), _) => (Some("session.schema.tab"), Some(panel.view(cx))),
+            (_, Some(panel)) => (Some("session.wsdl.tab"), Some(panel.view(cx))),
+            _ => (None, None),
+        };
+        let tabs = sections.len() + usize::from(extra_label.is_some());
         let section = self.section.min(tabs.saturating_sub(1));
-        let content = match (sections.get(section), &self.schema) {
-            (Some((ix, _)), _) => Some(match &self.controls[*ix] {
+        let content = match sections.get(section) {
+            Some((ix, _)) => Some(match &self.controls[*ix] {
                 Control::Text(editor) => Editor::new(editor.state()).bordered(false).h_full().into_any_element(),
                 Control::Pairs(table) => table.clone().into_any_element(),
             }),
-            (None, Some(panel)) => Some(panel.view(cx)),
-            (None, None) => None,
+            None => extra_view,
         };
         let specs = fields_of(self.kind);
         let line = |ix: usize| match &self.controls[ix] {
@@ -1469,7 +1551,7 @@ impl Render for ProtocolSession {
                             cx.notify();
                         }))
                         .children(sections.iter().map(|(_, spec)| Tab::new().label(t(spec.label))))
-                        .children(self.schema.is_some().then(|| Tab::new().label(t("session.schema.tab")))),
+                        .children(extra_label.map(|key| Tab::new().label(t(key)))),
                 ),
             )
             .child(div().flex_1().min_h_0().children(content))
