@@ -7,20 +7,28 @@
 use std::{
     sync::{
         Arc,
-        atomic::{AtomicBool, Ordering},
+        atomic::{AtomicBool, AtomicU64, AtomicUsize, Ordering},
     },
     time::{Duration, Instant},
 };
 
 use rquickjs::{Context, Ctx, Error, Function, Object, Persistent, Runtime, Value, context::EvalOptions};
 use serde_json::{Value as Json, json};
+use tokio::runtime::Handle;
 
-use crate::kernel::telemetry::Headers;
+use crate::{
+    kernel::telemetry::Headers,
+    utils::http::{RequestSettings, root_message},
+};
 
 /// How long a script may run before it is aborted.
 pub const SCRIPT_TIMEOUT_MS: u64 = 5000;
 const MEMORY_LIMIT: usize = 64 * 1024 * 1024;
 const STACK_LIMIT: usize = 512 * 1024;
+/// What `bc.sendRequest` may do in one script run: how many calls, how long each waits, how much body is kept.
+const SEND_LIMIT: usize = 20;
+const SEND_TIMEOUT: Duration = Duration::from_secs(30);
+const SEND_BODY_LIMIT: usize = 5 * 1024 * 1024;
 const PRELUDE: &str = include_str!("prelude.js");
 
 /// What a proxy rule script produced.
@@ -30,9 +38,54 @@ pub struct ProxyScriptResult {
     pub error: Option<String>,
 }
 
+/// One `bc.sendRequest`: `req` is `{url, method, headers: [[k, v]], body}` as JSON text; the answer is
+/// `{status, headers, body, responseTime}` or `{error}`.
+async fn send_request(req: String) -> Json {
+    let go = async {
+        let req: Json = serde_json::from_str(&req).map_err(|e| e.to_string())?;
+        let method = req["method"].as_str().unwrap_or("GET").to_ascii_uppercase();
+        let method = reqwest::Method::from_bytes(method.as_bytes()).map_err(|e| e.to_string())?;
+        let url = req["url"].as_str().unwrap_or_default();
+        let mut builder = RequestSettings::default().client()?.request(method, url).timeout(SEND_TIMEOUT);
+        for pair in req["headers"].as_array().into_iter().flatten() {
+            if let (Some(k), Some(v)) = (pair[0].as_str(), pair[1].as_str()) {
+                builder = builder.header(k, v);
+            }
+        }
+        if let Some(body) = req["body"].as_str() {
+            builder = builder.body(body.to_string());
+        }
+        let start = Instant::now();
+        let mut res = builder.send().await.map_err(|e| root_message(&e))?;
+        let mut headers = serde_json::Map::new();
+        for (k, v) in res.headers() {
+            let v = String::from_utf8_lossy(v.as_bytes()).into_owned();
+            let joined = match headers.get(k.as_str()).and_then(Json::as_str) {
+                Some(old) => format!("{old}, {v}"),
+                None => v,
+            };
+            headers.insert(k.as_str().to_string(), json!(joined));
+        }
+        let status = res.status().as_u16();
+        let mut body = Vec::new();
+        while let Some(chunk) = res.chunk().await.map_err(|e| root_message(&e))? {
+            body.extend_from_slice(&chunk);
+            if body.len() >= SEND_BODY_LIMIT {
+                body.truncate(SEND_BODY_LIMIT);
+                break;
+            }
+        }
+        let body = String::from_utf8_lossy(&body).into_owned();
+        let responded = start.elapsed().as_millis() as u64;
+        Ok::<_, String>(json!({ "status": status, "headers": headers, "body": body, "responseTime": responded }))
+    };
+    go.await.unwrap_or_else(|error| json!({ "error": error }))
+}
+
 /// Run `script` against `input` (the prelude's JSON input). Returns the prelude's collected result, or a message
-/// when the sandbox itself failed before a result could be collected.
-fn run_sandbox(input: String, script: String, timeout: Duration) -> Result<Json, String> {
+/// when the sandbox itself failed before a result could be collected. `send` (the runtime to run requests on)
+/// gives the script `bc.sendRequest`.
+fn run_sandbox(input: String, script: String, timeout: Duration, send: Option<Handle>) -> Result<Json, String> {
     let rt = Runtime::new().map_err(|e| e.to_string())?;
     rt.set_memory_limit(MEMORY_LIMIT);
     rt.set_max_stack_size(STACK_LIMIT);
@@ -40,9 +93,12 @@ fn run_sandbox(input: String, script: String, timeout: Duration) -> Result<Json,
     let deadline = Instant::now() + timeout;
     let armed = Arc::new(AtomicBool::new(true));
     let timed_out = Arc::new(AtomicBool::new(false));
+    // Microseconds spent waiting on `bc.sendRequest`, which do not count against the script's time.
+    let waited = Arc::new(AtomicU64::new(0));
     {
-        let (armed, timed_out) = (armed.clone(), timed_out.clone());
+        let (armed, timed_out, waited) = (armed.clone(), timed_out.clone(), waited.clone());
         rt.set_interrupt_handler(Some(Box::new(move || {
+            let deadline = deadline + Duration::from_micros(waited.load(Ordering::Relaxed));
             if armed.load(Ordering::Relaxed) && Instant::now() >= deadline {
                 timed_out.store(true, Ordering::Relaxed);
                 true
@@ -56,6 +112,21 @@ fn run_sandbox(input: String, script: String, timeout: Duration) -> Result<Json,
     type Saved = (Persistent<Function<'static>>, Persistent<Function<'static>>, Option<String>);
     let saved: Saved = ctx.with(|ctx| -> Result<Saved, String> {
         ctx.globals().set("__input", input).map_err(|e| e.to_string())?;
+        if let Some(handle) = send {
+            let sent = AtomicUsize::new(0);
+            let host = Function::new(ctx.clone(), move |req: String| -> String {
+                if sent.fetch_add(1, Ordering::Relaxed) >= SEND_LIMIT {
+                    let error = format!("bc.sendRequest is limited to {SEND_LIMIT} calls per script");
+                    return json!({ "error": error }).to_string();
+                }
+                let start = Instant::now();
+                let out = handle.block_on(send_request(req));
+                waited.fetch_add(start.elapsed().as_micros() as u64, Ordering::Relaxed);
+                out.to_string()
+            })
+            .map_err(|e| e.to_string())?;
+            ctx.globals().set("__send", host).map_err(|e| e.to_string())?;
+        }
         let api: Object = ctx.eval(PRELUDE).map_err(|e| describe(&ctx, e))?;
         let collect: Function = api.get("collect").map_err(|e| e.to_string())?;
         let fmt: Function = api.get("fmt").map_err(|e| e.to_string())?;
@@ -110,15 +181,16 @@ fn describe_with<'js>(ctx: &Ctx<'js>, fmt: &Function<'js>, e: Error) -> String {
     }
 }
 
-async fn run_blocking(input: Json, script: &str, timeout: Duration) -> Result<Json, String> {
+async fn run_blocking(input: Json, script: &str, timeout: Duration, send: bool) -> Result<Json, String> {
     let (input, script) = (input.to_string(), script.to_string());
-    tokio::task::spawn_blocking(move || run_sandbox(input, script, timeout)).await.map_err(|e| e.to_string())?
+    let send = send.then(Handle::current);
+    tokio::task::spawn_blocking(move || run_sandbox(input, script, timeout, send)).await.map_err(|e| e.to_string())?
 }
 
 async fn run_proxy(key: &str, script: &str, headers: &Headers, body: &str, timeout: Duration) -> ProxyScriptResult {
     let mode = if key == "request" { "proxyRequest" } else { "proxyResponse" };
     let input = json!({ "mode": mode, "headers": headers, "body": body });
-    match run_blocking(input, script, timeout).await {
+    match run_blocking(input, script, timeout, false).await {
         Ok(out) => ProxyScriptResult {
             headers: out
                 .get("headers")
@@ -172,7 +244,7 @@ pub(crate) async fn execute_ipc_script_with(opts: Json, timeout: Duration) -> Js
     };
     // What `bc.cookies` reads; the script's changes come back as the result's `cookies`, for the caller to apply.
     input["cookies"] = opts.get("cookies").cloned().unwrap_or_default();
-    match run_blocking(input, &script, timeout).await {
+    match run_blocking(input, &script, timeout, true).await {
         Ok(out) => out,
         Err(e) => json!({ "envVars": env_vars, "error": e }),
     }
@@ -183,7 +255,7 @@ pub(crate) async fn execute_ipc_script_with(opts: Json, timeout: Duration) -> Js
 pub async fn execute_flow_script(script: &str, mut data: Json, env_vars: Json) -> Json {
     data["mode"] = json!("flow");
     data["envVars"] = env_vars;
-    match run_blocking(data, script, Duration::from_millis(SCRIPT_TIMEOUT_MS)).await {
+    match run_blocking(data, script, Duration::from_millis(SCRIPT_TIMEOUT_MS), true).await {
         Ok(out) => out,
         Err(e) => json!({ "error": e }),
     }
@@ -333,8 +405,7 @@ mod tests {
 
     #[tokio::test]
     async fn scripts_written_the_postman_way_run() {
-        let script =
-            "bc.test('response', function(){ bc.response.to.have.status(200); bc.response.to.be.ok; bc.response.to.be.success;\
+        let script = "bc.test('response', function(){ bc.response.to.have.status(200); bc.response.to.be.ok; bc.response.to.be.success;\
                bc.response.to.not.be.error; bc.response.to.be.json; bc.response.to.have.jsonBody();\
                bc.response.to.have.header('Content-Type'); bc.response.to.have.header('content-type', 'application/json');\
                bc.response.to.have.body(/hi/); bc.expect(bc.response).to.have.status(200); bc.expect(bc.response.code).to.eql(200); });\
@@ -360,8 +431,10 @@ mod tests {
         assert_eq!(out["cookies"][1], json!({ "op": "set", "name": "obj", "value": "y", "url": "http://o.test/" }));
         assert_eq!(out["cookies"][2], json!({ "op": "unset", "name": "far", "url": "http://o.test/" }));
 
-        let out = pre("bc.request.headers.add({ key: 'C', value: '3' }); bc.request.headers.upsert({ key: 'a', value: '9' });\
-            bc.request.headers.remove('B');")
+        let out = pre(
+            "bc.request.headers.add({ key: 'C', value: '3' }); bc.request.headers.upsert({ key: 'a', value: '9' });\
+            bc.request.headers.remove('B');",
+        )
         .await;
         assert_eq!(out["request"]["headers"], json!({ "a": "9", "C": "3" }));
     }
@@ -413,7 +486,8 @@ mod tests {
 
     #[tokio::test]
     async fn console_and_bare_test_helpers_exist_in_every_context() {
-        let out = pre("console.log('a', 1); bc.environment.set('c', typeof console + typeof test + typeof expect)").await;
+        let out =
+            pre("console.log('a', 1); bc.environment.set('c', typeof console + typeof test + typeof expect)").await;
         assert_eq!(out["envVars"]["c"], "objectfunctionfunction");
         assert_eq!(out["logs"], json!(["a 1"]));
         let out = test("test('bare', () => { expect(bc.response.status).to.equal(200); expect(1).to.be.ok; });").await;
@@ -436,7 +510,11 @@ mod tests {
             out["envVars"],
             json!({ "m": "GET", "u": "http://a/b", "t": "12", "ct": "application/json", "txt": "20", "has": "true" })
         );
-        let out = both("test", "bc.environment.set('fromTest', 1); bc.test('r', () => expect(bc.request.headers.get('a')).to.equal('1'));").await;
+        let out = both(
+            "test",
+            "bc.environment.set('fromTest', 1); bc.test('r', () => expect(bc.request.headers.get('a')).to.equal('1'));",
+        )
+        .await;
         assert_eq!(out["envVars"], json!({ "fromTest": "1" }));
         assert_eq!(tests_of(&out), vec![("r".to_string(), true, None)]);
         let out = pre("bc.request.headers.set('a', '9'); bc.environment.set('h', bc.request.headers.get('A'));").await;
@@ -535,5 +613,133 @@ mod tests {
         pre("globalThis.leak = 1; var other = 2;").await;
         let out = pre("bc.environment.set('v', typeof leak + typeof other)").await;
         assert_eq!(out["envVars"]["v"], "undefinedundefined");
+    }
+
+    /// A one-shot HTTP server on localhost: after `delay` it answers the first request with a fixed JSON body
+    /// and hands that request's text back.
+    async fn serve_once(delay: Duration) -> (String, tokio::task::JoinHandle<String>) {
+        use tokio::io::{AsyncReadExt, AsyncWriteExt};
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/p", listener.local_addr().unwrap());
+        let task = tokio::spawn(async move {
+            let (mut socket, _) = listener.accept().await.unwrap();
+            let mut buf = vec![0u8; 8192];
+            let n = socket.read(&mut buf).await.unwrap();
+            tokio::time::sleep(delay).await;
+            let body = "{\"ok\":true}";
+            let reply = format!(
+                "HTTP/1.1 201 Created\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{body}",
+                body.len()
+            );
+            socket.write_all(reply.as_bytes()).await.unwrap();
+            String::from_utf8_lossy(&buf[..n]).into_owned()
+        });
+        (url, task)
+    }
+
+    #[tokio::test]
+    async fn send_request_returns_the_response_with_or_without_a_callback() {
+        let (url, _) = serve_once(Duration::ZERO).await;
+        let out = pre(&format!(
+            "var seen; bc.sendRequest('{url}', function(e, r){{ seen = [e, r.code, r.json().ok]; bc.expect(r).to.have.status(201); }});\
+             bc.environment.set('cb', seen.join());"
+        ))
+        .await;
+        assert_eq!(out["envVars"]["cb"], ",201,true", "{out}");
+        assert!(out.get("error").is_none(), "{out}");
+
+        let (url, _) = serve_once(Duration::ZERO).await;
+        let out = pre(&format!(
+            "var r = bc.sendRequest({{ url: '{url}' }}); bc.environment.set('v', r.code + r.headers.get('Content-Type') + r.text());"
+        ))
+        .await;
+        assert_eq!(out["envVars"]["v"], "201application/json{\"ok\":true}", "{out}");
+    }
+
+    #[tokio::test]
+    async fn send_request_posts_a_body_and_headers() {
+        let (url, server) = serve_once(Duration::ZERO).await;
+        let out = test(&format!(
+            "bc.sendRequest({{ url: '{url}', method: 'POST', header: [{{ key: 'X-A', value: '1' }}],\
+               body: {{ mode: 'raw', raw: '{{\"a\":1}}' }} }}, function(){{}});"
+        ))
+        .await;
+        assert!(out.get("error").is_none(), "{out}");
+        let got = server.await.unwrap();
+        assert!(got.starts_with("POST /p "), "{got}");
+        assert!(got.to_ascii_lowercase().contains("x-a: 1"), "{got}");
+        assert!(got.ends_with("{\"a\":1}"), "{got}");
+
+        let (url, server) = serve_once(Duration::ZERO).await;
+        pre(&format!(
+            "bc.sendRequest({{ url: '{url}', method: 'POST', body: {{ mode: 'urlencoded', urlencoded: [{{ key: 'k', value: 'a b' }}] }} }});"
+        ))
+        .await;
+        let got = server.await.unwrap();
+        assert!(
+            got.ends_with("k=a%20b") && got.to_ascii_lowercase().contains("application/x-www-form-urlencoded"),
+            "{got}"
+        );
+    }
+
+    #[tokio::test]
+    async fn send_request_reports_a_failed_connection_to_the_callback() {
+        let free = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let url = format!("http://{}/", free.local_addr().unwrap());
+        drop(free);
+        let out = pre(&format!(
+            "bc.sendRequest('{url}', function(e, r){{ bc.environment.set('e', (e instanceof Error) + ':' + r); }});"
+        ))
+        .await;
+        assert_eq!(out["envVars"]["e"], "true:null", "{out}");
+        let out = pre(&format!("bc.sendRequest('{url}');")).await;
+        assert!(out["error"].is_string());
+    }
+
+    #[tokio::test]
+    async fn send_request_is_for_request_and_flow_scripts_not_proxy_ones() {
+        let out = execute_request_script("bc.sendRequest('http://127.0.0.1:1/')", &headers(&[]), "").await;
+        assert_eq!(out.error.as_deref(), Some("Error: bc.sendRequest is not available in proxy scripts"));
+        let out = execute_flow_script(
+            "bc.sendRequest('http://127.0.0.1:1/', function(e){ bc.output = !!e; })",
+            json!({ "output": 1 }),
+            json!({}),
+        )
+        .await;
+        assert_eq!(out["output"], true);
+    }
+
+    #[tokio::test]
+    async fn send_request_is_capped_per_run() {
+        let out = pre("var n = 0; for (var i = 0; i < 22; i++) bc.sendRequest('not a url', function(e){ if (/limited/.test(e.message)) n++; });\
+            bc.environment.set('n', n);")
+        .await;
+        assert_eq!(out["envVars"]["n"], "2", "{out}");
+    }
+
+    #[tokio::test]
+    async fn waiting_on_a_request_does_not_use_up_the_script_time() {
+        let (url, _) = serve_once(Duration::from_millis(300)).await;
+        let opts = json!({ "script": format!("bc.sendRequest('{url}'); for (var i = 0; i < 100000; i++);"),
+            "context": "pre", "request": req(), "envVars": {} });
+        let out = execute_ipc_script_with(opts, Duration::from_millis(100)).await;
+        assert!(out.get("error").is_none(), "{out}");
+        let out = execute_ipc_script_with(
+            json!({ "script": "for(;;);", "context": "pre", "request": req(), "envVars": {} }),
+            Duration::from_millis(100),
+        )
+        .await;
+        assert!(out["error"].as_str().unwrap().contains("timed out"));
+    }
+
+    #[tokio::test]
+    async fn postman_cookie_calls_read_and_write() {
+        let out = execute_ipc_script(json!({
+            "script": "bc.environment.set('g', bc.cookies.get('sid') + bc.cookies.has('sid'));\
+                bc.cookies.jar().set('http://o.test/', 'n', 'v', function(e, c){ bc.environment.set('c', e + c.name); });",
+            "context": "pre", "request": req(), "envVars": {}, "cookies": { "sid": "s1" } }))
+        .await;
+        assert_eq!(out["envVars"], json!({ "g": "s1true", "c": "nulln" }), "{out}");
+        assert_eq!(out["cookies"][0], json!({ "op": "set", "name": "n", "value": "v", "url": "http://o.test/" }));
     }
 }
