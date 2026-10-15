@@ -227,5 +227,25 @@
   "mcp.lines_one": "{count} 行",
   "mcp.lines_other": "{count} 行",
   "mcp.waiting": "{count} 件待機中",
-  "mcp.failed": "{count} 件失敗"
+  "mcp.failed": "{count} 件失敗",
+
+  "schema.tab": "スキーマ",
+  "schema.fetch": "スキーマを取得",
+  "schema.refresh": "スキーマを更新",
+  "schema.back": "戻る",
+  "schema.filter_placeholder": "名前で絞り込み",
+  "schema.empty_title": "スキーマはまだありません",
+  "schema.empty_description": "エンドポイントからスキーマを取得すると、型を参照したり、クエリでフィールドの候補を表示したりできます。",
+  "schema.fetch_failed_title": "スキーマを取得できませんでした",
+  "schema.query": "クエリ",
+  "schema.mutation": "ミューテーション",
+  "schema.subscription": "サブスクリプション",
+  "schema.types": "型",
+  "schema.more_rows": "{total} 件中 {shown} 件を表示しています。絞り込んでください。",
+  "schema.kind_object": "オブジェクト",
+  "schema.kind_interface": "インターフェース",
+  "schema.kind_enum": "列挙型",
+  "schema.kind_input": "入力型",
+  "schema.kind_union": "ユニオン",
+  "schema.kind_scalar": "スカラー"
 }
