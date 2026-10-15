@@ -1,14 +1,15 @@
 //! Usage analytics, sent to PostHog: what kind of thing the user did, from which client and on which
 //! platform. Never a payload, a name, a URL or a path.
 //!
-//! Whose decision they are depends on where the thing was done ([`route`]):
-//! - In a workspace of an organization ([`crate::gitops::workspace_organization`]), it is the organization's,
-//!   made in the Bifurc Console. On, what is done in the workspace is reported with the organization's public
-//!   id, the console's id of the workspace and the GitHub id of the account it was done as, whatever the
-//!   switch and the environment of this device say. Off, nothing done in that workspace is reported at all.
-//! - Anywhere else (a workspace that is the user's own, and what belongs to no workspace: the engine starting,
-//!   signing in), it is the user's: anonymous, on by default, and off with the switch or the environment. The
-//!   only identifier is then a random id made for this data directory, which no organization's event carries.
+//! Whose decision they are: the user's, with one app-level switch. They are anonymous, on by default, and off
+//! with `"telemetryEnabled": false` in `app.json` or the environment. The only identifier is a random id made
+//! for this data directory. Every event of something done in a workspace ([`events::workspace_of`]) carries
+//! that workspace's own id as `workspace_id`, whatever the workspace is (local only, a git repository, synced,
+//! imported by its owner or by a collaborator); an event that belongs to no workspace carries none.
+//!
+//! Console shelved (free app): there are no organizations, so no event is routed to an organization's
+//! analytics, named with an organization or an account, or managed in the Bifurc Console. An `organization`
+//! an older version left in a workspace of `app.json` is ignored.
 //!
 //! A command a client sends becomes at most one event ([`events::finished`]), sent within [`EVENTS_EVERY`]:
 //! - what [`events::describe`] makes of it when it succeeds (`mock created`, `request sent`);
@@ -34,7 +35,8 @@
 pub mod events;
 
 use std::{
-    collections::HashMap,
+    // Console shelved (free app): no per-workspace routing map.
+    // collections::HashMap,
     sync::{Arc, LazyLock},
     time::{Duration, Instant},
 };
@@ -48,7 +50,9 @@ use crate::{
     runtime::notice,
     utils::{
         id::now_ms,
-        json::{merged, opt_str, read_json, truthy, write_json_pretty},
+        // Console shelved (free app): `opt_str` read the organization.
+        // json::{merged, opt_str, read_json, truthy, write_json_pretty},
+        json::{merged, read_json, truthy, write_json_pretty},
     },
     workspace::{paths::data_dir, settings::load_settings},
 };
@@ -60,7 +64,7 @@ const MAX_QUEUED: usize = 500;
 const SEND_TIMEOUT: Duration = Duration::from_secs(5);
 /// How long the last flush may hold up a stopping engine.
 const SHUTDOWN_FLUSH: Duration = Duration::from_secs(2);
-/// How long what `app.json` says about the switch and the organizations is taken as still so. A command is
+/// How long what `app.json` says about the switch is taken as still so. A command is
 /// routed by it, and `app.json` is not read for every one.
 const ROUTING_TTL: Duration = Duration::from_secs(5);
 /// How many crash reports stay in the data directory for the user to look at or attach to an issue.
@@ -80,27 +84,68 @@ struct Target {
 struct Queued {
     replaces: Option<String>,
     event: Value,
-    /// An organization's: sent whatever this device's switch says.
-    managed: bool,
+// Console shelved (free app): no organization's events are sent whatever the switch says.
+    // /// An organization's: sent whatever this device's switch says.
+    // managed: bool,
 }
 
-/// What an organization decided for one of its workspaces on this device.
-#[derive(Debug, Clone, PartialEq, Eq)]
-struct Managed {
-    public_id: String,
-    /// The console's id of the workspace.
-    workspace_id: String,
-    /// The GitHub id of the account the workspace is used as here.
-    github_user_id: u64,
-    analytics: bool,
-}
+// Console shelved (free app): organization routing is gone: one app-level switch decides, for every workspace.
+// /// What an organization decided for one of its workspaces on this device.
+// #[derive(Debug, Clone, PartialEq, Eq)]
+// struct Managed {
+//     public_id: String,
+//     /// The console's id of the workspace.
+//     workspace_id: String,
+//     /// The GitHub id of the account the workspace is used as here.
+//     github_user_id: u64,
+//     analytics: bool,
+// }
+//
+// /// What decides where an event goes: the user's own choice, and the organizations' for their workspaces,
+// /// keyed by the workspace's id on this device.
+// #[derive(Debug, Default)]
+// struct Routing {
+//     anonymous: bool,
+//     managed: HashMap<String, Managed>,
+// }
+//
+// /// Where the one event of a command goes.
+// #[derive(Debug, Clone, PartialEq, Eq)]
+// enum Route {
+//     /// To the anonymous analytics, as this data directory.
+//     Anonymous,
+//     /// To the organization's analytics, as the account its workspace is used as.
+//     Organization(Managed),
+//     Nowhere,
+// }
+//
+// /// A workspace of an organization follows the organization, and only it; everything else follows the user.
+// fn route(routing: &Routing, workspace: Option<&str>) -> Route {
+//     match workspace.and_then(|id| routing.managed.get(id)) {
+//         Some(managed) if managed.analytics => Route::Organization(managed.clone()),
+//         Some(_) => Route::Nowhere,
+//         None if routing.anonymous => Route::Anonymous,
+//         None => Route::Nowhere,
+//     }
+// }
+//
+// /// What a workspace's settings say of its organization, if they name one in full.
+// fn managed_of(workspace: &Value) -> Option<(String, Managed)> {
+//     let organization = workspace.get("organization").filter(|organization| organization.is_object())?;
+//     let text = |key: &str| opt_str(organization, key).filter(|text| !text.is_empty()).map(str::to_string);
+//     let managed = Managed {
+//         public_id: text("publicId")?,
+//         workspace_id: text("workspaceId")?,
+//         github_user_id: organization.get("githubUserId").and_then(Value::as_u64)?,
+//         analytics: organization.get("analytics").and_then(Value::as_bool) == Some(true),
+//     };
+//     Some((opt_str(workspace, "id")?.to_string(), managed))
+// }
 
-/// What decides where an event goes: the user's own choice, and the organizations' for their workspaces,
-/// keyed by the workspace's id on this device.
+/// What decides where an event goes: the user's own choice, and nothing else.
 #[derive(Debug, Default)]
 struct Routing {
     anonymous: bool,
-    managed: HashMap<String, Managed>,
 }
 
 /// Where the one event of a command goes.
@@ -108,39 +153,20 @@ struct Routing {
 enum Route {
     /// To the anonymous analytics, as this data directory.
     Anonymous,
-    /// To the organization's analytics, as the account its workspace is used as.
-    Organization(Managed),
     Nowhere,
 }
 
-/// A workspace of an organization follows the organization, and only it; everything else follows the user.
-fn route(routing: &Routing, workspace: Option<&str>) -> Route {
-    match workspace.and_then(|id| routing.managed.get(id)) {
-        Some(managed) if managed.analytics => Route::Organization(managed.clone()),
-        Some(_) => Route::Nowhere,
-        None if routing.anonymous => Route::Anonymous,
-        None => Route::Nowhere,
-    }
-}
-
-/// What a workspace's settings say of its organization, if they name one in full.
-fn managed_of(workspace: &Value) -> Option<(String, Managed)> {
-    let organization = workspace.get("organization").filter(|organization| organization.is_object())?;
-    let text = |key: &str| opt_str(organization, key).filter(|text| !text.is_empty()).map(str::to_string);
-    let managed = Managed {
-        public_id: text("publicId")?,
-        workspace_id: text("workspaceId")?,
-        github_user_id: organization.get("githubUserId").and_then(Value::as_u64)?,
-        analytics: organization.get("analytics").and_then(Value::as_bool) == Some(true),
-    };
-    Some((opt_str(workspace, "id")?.to_string(), managed))
+/// Every workspace, and what belongs to none, follows the user's switch.
+fn route(routing: &Routing) -> Route {
+    if routing.anonymous { Route::Anonymous } else { Route::Nowhere }
 }
 
 fn read_routing() -> Routing {
     let settings = load_settings();
     Routing {
         anonymous: !env_opted_out() && settings.telemetry_enabled(),
-        managed: settings.workspaces().iter().filter_map(managed_of).collect(),
+        // Console shelved (free app): organizations' routing is gone.
+        // managed: settings.workspaces().iter().filter_map(managed_of).collect(),
     }
 }
 
@@ -242,25 +268,31 @@ fn routing() -> Arc<Routing> {
     fresh
 }
 
-/// What an organization decided about a workspace changed: the next command is routed by the new answer.
-pub fn policies_changed() {
-    STATE.lock().routing = None;
-}
-
-/// What an organization's event says on top of what was done: whose workspace, which one, and which account.
-/// The account is a number GitHub gave it; its name is never sent.
-fn organization_properties(managed: &Managed) -> Value {
-    json!({
-        "org_public_id": managed.public_id,
-        "workspace_id": managed.workspace_id,
-        "github_user_id": managed.github_user_id,
-    })
-}
-
-/// Whom an organization's event is from: the account, within the organization. Never the install id, so that
-/// nothing ties what an account does for an organization to what the same device reports anonymously.
-fn organization_distinct_id(managed: &Managed) -> String {
-    format!("{}:{}", managed.public_id, managed.github_user_id)
+// Console shelved (free app): nothing an organization decides to be told of.
+// /// What an organization decided about a workspace changed: the next command is routed by the new answer.
+// pub fn policies_changed() {
+//     STATE.lock().routing = None;
+// }
+//
+// /// What an organization's event says on top of what was done: whose workspace, which one, and which account.
+// /// The account is a number GitHub gave it; its name is never sent.
+// fn organization_properties(managed: &Managed) -> Value {
+//     json!({
+//         "org_public_id": managed.public_id,
+//         "workspace_id": managed.workspace_id,
+//         "github_user_id": managed.github_user_id,
+//     })
+// }
+//
+// /// Whom an organization's event is from: the account, within the organization. Never the install id, so that
+// /// nothing ties what an account does for an organization to what the same device reports anonymously.
+// fn organization_distinct_id(managed: &Managed) -> String {
+//     format!("{}:{}", managed.public_id, managed.github_user_id)
+// }
+/// What an event done in a workspace says on top of what was done: the workspace's own id on this device, which
+/// is a random id and no name. Nothing about the account or any organization.
+fn workspace_properties(workspace_id: &str) -> Value {
+    json!({ "workspace_id": workspace_id })
 }
 
 fn event(distinct_id: &str, name: &str, properties: Value) -> Value {
@@ -295,7 +327,7 @@ async fn send(target: &Target, batch: Vec<Value>) -> Result<(), String> {
 
 /// Turn analytics on for this engine, if the build has a project key and the terms and the policy were
 /// accepted. Before they are accepted nothing is sent; [`resume`] begins then. What is sent from then on is
-/// decided event by event ([`route`]).
+/// decided by the one switch ([`route`]).
 pub fn start(transport: &str) {
     STATE.lock().transport = Some(transport.to_string());
     begin();
@@ -326,13 +358,14 @@ fn begin() {
     let install_id = (!env_opted_out()).then(install_id);
     let target = Target { key, host: host(), install_id };
     let routing = routing();
-    let reporting = routing.managed.values().filter(|managed| managed.analytics).count();
-    if reporting > 0 {
-        notice(&format!(
-            "usage analytics are on for {reporting} workspace(s) of an organization and managed by its owner in the \
-             Bifurc Console: what kind of thing is done in them, and as which GitHub account, never its content"
-        ));
-    }
+    // Console shelved (free app): no workspace's analytics are managed by an organization.
+    // let reporting = routing.managed.values().filter(|managed| managed.analytics).count();
+    // if reporting > 0 {
+    //     notice(&format!(
+    //         "usage analytics are on for {reporting} workspace(s) of an organization and managed by its owner in the \
+    //          Bifurc Console: what kind of thing is done in them, and as which GitHub account, never its content"
+    //     ));
+    // }
     let mut first: Vec<Value> = Vec::new();
     let mut reports_install = false;
     if let Some(install_id) = &target.install_id {
@@ -391,50 +424,60 @@ fn enqueue(queue: &mut Vec<Queued>, item: Queued) {
 pub struct Command {
     described: Option<events::Event>,
     route: Route,
+    /// The workspace it is done in, when the payload names one.
+    workspace: Option<String>,
 }
 
 /// What `action` becomes if it succeeds, and where it goes; ask before the handler takes the payload, and
 /// before the command changes which workspaces there are. `None` when nothing of it is sent.
 pub fn describe(action: &str, payload: &Value) -> Option<Command> {
     STATE.lock().target.as_ref()?;
-    let route = route(&routing(), events::workspace_of(action, payload));
-    (route != Route::Nowhere).then(|| Command { described: events::describe(action, payload), route })
+    let route = route(&routing());
+    (route != Route::Nowhere).then(|| Command {
+        described: events::describe(action, payload),
+        route,
+        workspace: events::workspace_of(action, payload).map(str::to_string),
+    })
 }
 
 /// Queue the one event of a finished command, if it has one. `command` is what [`describe`] said before the
 /// command ran, and `result` what it answered: its data, or its error code. `action` must be a registered
 /// command and `client` a known client name, so that nothing a caller made up is ever sent.
 pub fn record_command(command: Option<Command>, action: &str, client: &str, result: Result<&Value, &str>) {
-    let Some(Command { described, route }) = command else { return };
+    let Some(Command { described, route, workspace }) = command else { return };
     let mut state = STATE.lock();
     let Some(target) = &state.target else { return };
-    let (distinct_id, extra) = match &route {
+    let distinct_id = match &route {
         Route::Anonymous => match &target.install_id {
-            Some(install_id) => (install_id.clone(), json!({})),
+            Some(install_id) => install_id.clone(),
             None => return,
         },
-        Route::Organization(managed) => (organization_distinct_id(managed), organization_properties(managed)),
         Route::Nowhere => return,
+    };
+    // A command that makes a workspace only knows its id from what it answered.
+    let made = result.ok().and_then(|data| events::made_workspace(action, data));
+    let extra = match workspace.as_deref().or(made) {
+        Some(id) => workspace_properties(id),
+        None => json!({}),
     };
     let Some(mut finished) = events::finished(described, action, result) else { return };
     finished.properties.insert("client".into(), json!(client));
     let mut body = event(&distinct_id, &finished.name, merged(&Value::Object(finished.properties), &extra));
     body["timestamp"] = json!(iso_string(now_ms()));
-    let managed = matches!(route, Route::Organization(_));
-    enqueue(&mut state.queue, Queued { replaces: finished.replaces, event: body, managed });
+    enqueue(&mut state.queue, Queued { replaces: finished.replaces, event: body });
 }
 
 /// Queue an event that is no command's and no workspace's: anonymous, so only if the user's own analytics are
 /// on. `at` is when it happened.
 fn record(found: events::Event, at: i64) {
-    if route(&routing(), None) != Route::Anonymous {
+    if route(&routing()) != Route::Anonymous {
         return;
     }
     let mut state = STATE.lock();
     let Some(install_id) = state.target.as_ref().and_then(|target| target.install_id.clone()) else { return };
     let mut body = event(&install_id, &found.name, Value::Object(found.properties));
     body["timestamp"] = json!(iso_string(at));
-    enqueue(&mut state.queue, Queued { replaces: found.replaces, event: body, managed: false });
+    enqueue(&mut state.queue, Queued { replaces: found.replaces, event: body });
 }
 
 /// Something failed in the engine with no command to answer for it. `what` is a fixed word, never the
@@ -475,11 +518,11 @@ pub async fn flush() {
         let Some(target) = state.target.clone() else { return };
         (target, std::mem::take(&mut state.queue))
     };
-    // Switched off since they were queued: the anonymous ones are dropped. An organization's are not the
-    // user's to drop.
-    let anonymous = !opted_out();
-    let queue: Vec<Queued> = queue.into_iter().filter(|queued| queued.managed || anonymous).collect();
-    if queue.is_empty() {
+    // Switched off since they were queued: they are dropped.
+    // Console shelved (free app): an organization's were not the user's to drop.
+    // let anonymous = !opted_out();
+    // let queue: Vec<Queued> = queue.into_iter().filter(|queued| queued.managed || anonymous).collect();
+    if opted_out() || queue.is_empty() {
         return;
     }
     let batch: Vec<Value> = queue.iter().map(|queued| queued.event.clone()).collect();
@@ -556,7 +599,7 @@ mod tests {
     #[test]
     fn a_later_save_replaces_the_one_still_waiting() {
         let item =
-            |key: Option<&str>, n: u32| Queued { replaces: key.map(str::to_string), event: json!(n), managed: false };
+            |key: Option<&str>, n: u32| Queued { replaces: key.map(str::to_string), event: json!(n) };
         let mut queue = Vec::new();
         enqueue(&mut queue, item(Some("mocks/a"), 1));
         enqueue(&mut queue, item(None, 2));
@@ -571,72 +614,167 @@ mod tests {
         assert_eq!(queue.len(), MAX_QUEUED);
     }
 
-    fn managed(analytics: bool) -> Managed {
-        Managed { public_id: "pub_acme".into(), workspace_id: "ws_team".into(), github_user_id: 7, analytics }
-    }
+// Console shelved (free app): the organization tests are gone with the organization routing.
+    // fn managed(analytics: bool) -> Managed {
+    //     Managed { public_id: "pub_acme".into(), workspace_id: "ws_team".into(), github_user_id: 7, analytics }
+    // }
+    //
+    // #[test]
+    // fn an_organizations_workspace_follows_the_organization_and_nothing_else() {
+    //     let routing = |anonymous: bool| Routing {
+    //         anonymous,
+    //         managed: HashMap::from([("team".to_string(), managed(true)), ("quiet".to_string(), managed(false))]),
+    //     };
+    //     for anonymous in [true, false] {
+    //         // The organization has them on: reported, whatever the user's own switch says.
+    //         assert_eq!(route(&routing(anonymous), Some("team")), Route::Organization(managed(true)));
+    //         // The organization has them off: not reported, not even anonymously.
+    //         assert_eq!(route(&routing(anonymous), Some("quiet")), Route::Nowhere);
+    //     }
+    //     // The user's own workspace, and what belongs to no workspace, follow the user's switch.
+    //     assert_eq!(route(&routing(true), Some("mine")), Route::Anonymous);
+    //     assert_eq!(route(&routing(true), None), Route::Anonymous);
+    //     assert_eq!(route(&routing(false), Some("mine")), Route::Nowhere);
+    //     assert_eq!(route(&routing(false), None), Route::Nowhere);
+    // }
+    //
+    // #[test]
+    // fn a_workspace_is_an_organizations_only_when_its_settings_say_so_in_full() {
+    //     let organization = json!({
+    //         "publicId": "pub_acme", "name": "Acme", "workspaceId": "ws_team", "analytics": true, "githubUserId": 7,
+    //     });
+    //     let known = managed_of(&json!({ "id": "team", "name": "Team", "organization": organization })).unwrap();
+    //     assert_eq!(known, ("team".to_string(), managed(true)));
+    //
+    //     // A workspace as every version before organizations wrote it, and one the console said nothing of.
+    //     assert!(managed_of(&json!({ "id": "mine", "name": "Mine", "syncConfig": { "repo": "octo/mine" } })).is_none());
+    //     assert!(managed_of(&json!({ "id": "mine", "organization": null })).is_none());
+    //     for missing in ["publicId", "workspaceId", "githubUserId"] {
+    //         let mut partial = organization.clone();
+    //         partial.as_object_mut().unwrap().remove(missing);
+    //         assert!(managed_of(&json!({ "id": "team", "organization": partial })).is_none(), "{missing}");
+    //     }
+    //     let mut off = organization.clone();
+    //     off.as_object_mut().unwrap().remove("analytics");
+    //     assert_eq!(managed_of(&json!({ "id": "team", "organization": off })).unwrap().1, managed(false));
+    // }
+    //
+    // #[test]
+    // fn an_organizations_event_names_the_organization_the_workspace_and_the_account_and_not_the_install() {
+    //     let managed = managed(true);
+    //     let properties =
+    //         merged(&json!({ "client": "desktop", "request_type": "rest" }), &organization_properties(&managed));
+    //     let sent = event(&organization_distinct_id(&managed), "request sent", properties);
+    //
+    //     assert_eq!(sent["distinct_id"], "pub_acme:7");
+    //     let properties = sent["properties"].as_object().unwrap();
+    //     assert_eq!(properties["org_public_id"], "pub_acme");
+    //     assert_eq!(properties["workspace_id"], "ws_team");
+    //     assert_eq!(properties["github_user_id"], 7);
+    //     assert_eq!(properties["$process_person_profile"], false);
+    //     assert_eq!(properties["$ip"], "0.0.0.0");
+    //     let mut keys: Vec<&str> = properties.keys().map(String::as_str).collect();
+    //     keys.sort_unstable();
+    //     assert_eq!(
+    //         keys,
+    //         [
+    //             "$geoip_disable", "$ip", "$lib", "$process_person_profile", "arch", "client", "engine_version",
+    //             "github_user_id", "org_public_id", "os", "request_type", "workspace_id",
+    //         ]
+    //     );
+    // }
 
-    #[test]
-    fn an_organizations_workspace_follows_the_organization_and_nothing_else() {
-        let routing = |anonymous: bool| Routing {
-            anonymous,
-            managed: HashMap::from([("team".to_string(), managed(true)), ("quiet".to_string(), managed(false))]),
-        };
-        for anonymous in [true, false] {
-            // The organization has them on: reported, whatever the user's own switch says.
-            assert_eq!(route(&routing(anonymous), Some("team")), Route::Organization(managed(true)));
-            // The organization has them off: not reported, not even anonymously.
-            assert_eq!(route(&routing(anonymous), Some("quiet")), Route::Nowhere);
+    /// A scratch data root with `app.json` holding `settings`, and analytics running as install `install-1` the
+    /// way `begin` leaves them. Hand back the root: dropping it releases the store for the next test.
+    fn running(settings: Value) -> crate::testing::ScratchRoot {
+        let root = crate::testing::scratch_data_root();
+        let mut stored = load_settings();
+        for (key, value) in settings.as_object().unwrap() {
+            stored.set(key, value.clone());
         }
-        // The user's own workspace, and what belongs to no workspace, follow the user's switch.
-        assert_eq!(route(&routing(true), Some("mine")), Route::Anonymous);
-        assert_eq!(route(&routing(true), None), Route::Anonymous);
-        assert_eq!(route(&routing(false), Some("mine")), Route::Nowhere);
-        assert_eq!(route(&routing(false), None), Route::Nowhere);
+        crate::workspace::settings::save_settings(&stored).unwrap();
+        let mut state = STATE.lock();
+        state.target = Some(Target { key: "key".into(), host: "http://localhost".into(), install_id: Some("install-1".into()) });
+        state.queue.clear();
+        state.routing = None;
+        root
+    }
+
+    fn stop_running() -> Vec<Value> {
+        let mut state = STATE.lock();
+        state.target = None;
+        state.routing = None;
+        std::mem::take(&mut state.queue).into_iter().map(|queued| queued.event).collect()
+    }
+
+    /// The events a command leaves behind once it answered `result`.
+    fn sent_by(action: &str, payload: Value, result: Result<&Value, &str>) -> Vec<Value> {
+        let command = describe(action, &payload);
+        record_command(command, action, "desktop", result);
+        std::mem::take(&mut STATE.lock().queue).into_iter().map(|queued| queued.event).collect()
     }
 
     #[test]
-    fn a_workspace_is_an_organizations_only_when_its_settings_say_so_in_full() {
+    fn every_event_done_in_a_workspace_carries_the_workspace_id_and_the_rest_do_not() {
+        let _root = running(json!({ "telemetryEnabled": true }));
+        let done = json!({});
+        // Local only, local git, synced, imported by its owner or by a collaborator: all the same to analytics.
+        for workspace in ["local-only", "local-git", "synced", "owner-import", "collaborator-import"] {
+            let sent = sent_by("request.parseCurl", json!({ "workspaceId": workspace }), Ok(&done));
+            assert_eq!(sent.len(), 1, "{workspace}");
+            let properties = sent[0]["properties"].as_object().unwrap();
+            assert_eq!(properties["workspace_id"], workspace);
+            assert_eq!(sent[0]["distinct_id"], "install-1");
+            assert!(!properties.keys().any(|key| key.contains("org") || key.contains("github")), "{workspace}");
+        }
+        // A command that belongs to no workspace has none to name.
+        let sent = sent_by("request.parseCurl", json!({}), Ok(&done));
+        assert!(sent[0]["properties"].get("workspace_id").is_none());
+        // Making a workspace names the new one, known only from the answer.
+        let added = sent_by("workspace.add", json!({ "name": "n" }), Ok(&json!({ "id": "fresh", "name": "n" })));
+        assert_eq!((added[0]["event"].as_str(), added[0]["properties"]["workspace_id"].as_str()), (Some("workspace created"), Some("fresh")));
+        let imported = sent_by(
+            "workspace.import",
+            json!({ "accountId": "a", "repo": "octo/team" }),
+            Ok(&json!({ "ok": true, "workspace": { "id": "brought" } })),
+        );
+        assert_eq!(imported[0]["properties"]["workspace_id"], "brought");
+        // An import that brought nothing has no workspace to name.
+        let refused = sent_by("workspace.import", json!({ "accountId": "a", "repo": "octo/x" }), Ok(&json!({ "ok": false, "error": "no" })));
+        assert!(refused.iter().all(|sent| sent["properties"].get("workspace_id").is_none()));
+        // What is no command's and no workspace's stays as it was.
+        failed("listener_bind");
+        let background = stop_running();
+        assert_eq!(background.len(), 1);
+        assert!(background[0]["properties"].get("workspace_id").is_none());
+    }
+
+    #[test]
+    fn with_the_switch_off_nothing_is_sent_whatever_an_old_app_json_says_of_organizations() {
         let organization = json!({
             "publicId": "pub_acme", "name": "Acme", "workspaceId": "ws_team", "analytics": true, "githubUserId": 7,
         });
-        let known = managed_of(&json!({ "id": "team", "name": "Team", "organization": organization })).unwrap();
-        assert_eq!(known, ("team".to_string(), managed(true)));
+        let workspaces = json!([{ "id": "team", "name": "Team", "accountId": "a", "organization": organization }]);
 
-        // A workspace as every version before organizations wrote it, and one the console said nothing of.
-        assert!(managed_of(&json!({ "id": "mine", "name": "Mine", "syncConfig": { "repo": "octo/mine" } })).is_none());
-        assert!(managed_of(&json!({ "id": "mine", "organization": null })).is_none());
-        for missing in ["publicId", "workspaceId", "githubUserId"] {
-            let mut partial = organization.clone();
-            partial.as_object_mut().unwrap().remove(missing);
-            assert!(managed_of(&json!({ "id": "team", "organization": partial })).is_none(), "{missing}");
+        // On: the old `organization` is ignored, the event is anonymous and names the workspace by its own id.
+        let root = running(json!({ "telemetryEnabled": true, "workspaces": workspaces }));
+        assert_eq!(load_settings().workspace("team").unwrap()["organization"]["publicId"], "pub_acme");
+        let sent = sent_by("request.parseCurl", json!({ "workspaceId": "team" }), Ok(&json!({})));
+        assert_eq!(sent.len(), 1);
+        assert_eq!(sent[0]["distinct_id"], "install-1");
+        let properties = sent[0]["properties"].as_object().unwrap();
+        assert_eq!(properties["workspace_id"], "team");
+        for gone in ["org_public_id", "github_user_id"] {
+            assert!(!properties.contains_key(gone), "{gone}");
         }
-        let mut off = organization.clone();
-        off.as_object_mut().unwrap().remove("analytics");
-        assert_eq!(managed_of(&json!({ "id": "team", "organization": off })).unwrap().1, managed(false));
-    }
+        stop_running();
+        drop(root);
 
-    #[test]
-    fn an_organizations_event_names_the_organization_the_workspace_and_the_account_and_not_the_install() {
-        let managed = managed(true);
-        let properties =
-            merged(&json!({ "client": "desktop", "request_type": "rest" }), &organization_properties(&managed));
-        let sent = event(&organization_distinct_id(&managed), "request sent", properties);
-
-        assert_eq!(sent["distinct_id"], "pub_acme:7");
-        let properties = sent["properties"].as_object().unwrap();
-        assert_eq!(properties["org_public_id"], "pub_acme");
-        assert_eq!(properties["workspace_id"], "ws_team");
-        assert_eq!(properties["github_user_id"], 7);
-        assert_eq!(properties["$process_person_profile"], false);
-        assert_eq!(properties["$ip"], "0.0.0.0");
-        let mut keys: Vec<&str> = properties.keys().map(String::as_str).collect();
-        keys.sort_unstable();
-        assert_eq!(
-            keys,
-            [
-                "$geoip_disable", "$ip", "$lib", "$process_person_profile", "arch", "client", "engine_version",
-                "github_user_id", "org_public_id", "os", "request_type", "workspace_id",
-            ]
-        );
+        // Off: the organization's `analytics: true` no longer overrides the switch.
+        let _root = running(json!({ "telemetryEnabled": false, "workspaces": workspaces }));
+        assert!(describe("request.parseCurl", &json!({ "workspaceId": "team" })).is_none());
+        assert!(sent_by("request.parseCurl", json!({ "workspaceId": "team" }), Ok(&json!({}))).is_empty());
+        failed("listener_bind");
+        assert!(stop_running().is_empty());
     }
 }

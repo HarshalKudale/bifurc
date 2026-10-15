@@ -17,18 +17,20 @@ pub struct WorkspaceInfo {
     pub account: Option<AccountInfo>,
     /// The remote repository this workspace syncs with, once it is published or was imported.
     pub sync: Option<SyncConfig>,
-    /// The organization the workspace belongs to, when it is one's and not its user's own.
-    pub organization: Option<OrganizationInfo>,
+    // Console shelved (free app): the organization a workspace belonged to.
+    // /// The organization the workspace belongs to, when it is one's and not its user's own.
+    // pub organization: Option<OrganizationInfo>,
 }
 
-/// The organization a workspace belongs to, as the Bifurc Console last said. Its usage analytics are decided
-/// there, by its owner: nothing on this device turns them on or off.
-#[derive(Debug, Clone, PartialEq)]
-pub struct OrganizationInfo {
-    pub name: String,
-    /// What is done in the workspace is reported to the organization.
-    pub analytics: bool,
-}
+// Console shelved (free app): organizations no longer exist; an `organization` object in an answer is ignored.
+// /// The organization a workspace belongs to, as the Bifurc Console last said. Its usage analytics are decided
+// /// there, by its owner: nothing on this device turns them on or off.
+// #[derive(Debug, Clone, PartialEq)]
+// pub struct OrganizationInfo {
+//     pub name: String,
+//     /// What is done in the workspace is reported to the organization.
+//     pub analytics: bool,
+// }
 
 /// A git account signed in on this device. The engine keeps its token; the UI never sees one.
 #[derive(Debug, Clone, PartialEq)]
@@ -256,11 +258,12 @@ impl ConfigSnapshot {
                     })
                 });
                 let account = w.get("account").and_then(AccountInfo::from_value);
-                let organization = w.get("organization").filter(|o| o.is_object()).map(|o| OrganizationInfo {
-                    name: text(o, "name").unwrap_or_default(),
-                    analytics: o.get("analytics").and_then(Value::as_bool).unwrap_or(false),
-                });
-                Some(WorkspaceInfo { id: text(w, "id")?, name: text(w, "name")?, account, sync, organization })
+                // Console shelved (free app): organization parsing.
+                // let organization = w.get("organization").filter(|o| o.is_object()).map(|o| OrganizationInfo {
+                //     name: text(o, "name").unwrap_or_default(),
+                //     analytics: o.get("analytics").and_then(Value::as_bool).unwrap_or(false),
+                // });
+                Some(WorkspaceInfo { id: text(w, "id")?, name: text(w, "name")?, account, sync })
             })
             .collect();
 
@@ -677,22 +680,32 @@ mod tests {
         assert_eq!(read_only(Value::Null), None);
     }
 
+    // Console shelved (free app): the organization test, kept for reference.
+    // #[test]
+    // fn a_workspace_of_an_organization_says_whose_it_is_and_whether_it_is_reported() {
+    //     let workspace = |organization: Value| {
+    //         let config = json!({
+    //             "activeWorkspaceId": "w1",
+    //             "workspaces": [{ "id": "w1", "name": "W", "organization": organization }],
+    //         });
+    //         ConfigSnapshot::from_value(&config).unwrap().workspaces[0].organization.clone()
+    //     };
+    //     let acme = |analytics: bool| Some(OrganizationInfo { name: "Acme".into(), analytics });
+    //     assert_eq!(workspace(json!({ "name": "Acme", "analytics": true })), acme(true));
+    //     assert_eq!(workspace(json!({ "name": "Acme", "analytics": false })), acme(false));
+    //     // The user's own workspace, and what an engine from before organizations answers.
+    //     assert_eq!(workspace(Value::Null), None);
+    //     let config = json!({ "activeWorkspaceId": "w1", "workspaces": [{ "id": "w1", "name": "W" }] });
+    //     assert_eq!(ConfigSnapshot::from_value(&config).unwrap().workspaces[0].organization, None);
+    // }
+
     #[test]
-    fn a_workspace_of_an_organization_says_whose_it_is_and_whether_it_is_reported() {
-        let workspace = |organization: Value| {
-            let config = json!({
-                "activeWorkspaceId": "w1",
-                "workspaces": [{ "id": "w1", "name": "W", "organization": organization }],
-            });
-            ConfigSnapshot::from_value(&config).unwrap().workspaces[0].organization.clone()
-        };
-        let acme = |analytics: bool| Some(OrganizationInfo { name: "Acme".into(), analytics });
-        assert_eq!(workspace(json!({ "name": "Acme", "analytics": true })), acme(true));
-        assert_eq!(workspace(json!({ "name": "Acme", "analytics": false })), acme(false));
-        // The user's own workspace, and what an engine from before organizations answers.
-        assert_eq!(workspace(Value::Null), None);
-        let config = json!({ "activeWorkspaceId": "w1", "workspaces": [{ "id": "w1", "name": "W" }] });
-        assert_eq!(ConfigSnapshot::from_value(&config).unwrap().workspaces[0].organization, None);
+    fn an_organization_in_an_old_answer_is_ignored() {
+        let config = json!({
+            "activeWorkspaceId": "w1",
+            "workspaces": [{ "id": "w1", "name": "W", "organization": { "name": "Acme", "analytics": true } }],
+        });
+        assert_eq!(ConfigSnapshot::from_value(&config).unwrap().workspaces[0].name, "W");
     }
 
     #[test]
