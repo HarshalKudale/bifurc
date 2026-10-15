@@ -227,5 +227,25 @@
   "mcp.lines_one": "{count} Zeile",
   "mcp.lines_other": "{count} Zeilen",
   "mcp.waiting": "{count} wartend",
-  "mcp.failed": "{count} fehlgeschlagen"
+  "mcp.failed": "{count} fehlgeschlagen",
+
+  "schema.tab": "Schema",
+  "schema.fetch": "Schema abrufen",
+  "schema.refresh": "Schema aktualisieren",
+  "schema.back": "Zurück",
+  "schema.filter_placeholder": "Nach Name filtern",
+  "schema.empty_title": "Noch kein Schema",
+  "schema.empty_description": "Rufe das Schema vom Endpunkt ab, um seine Typen zu durchsuchen und Feldvorschläge in der Abfrage zu erhalten.",
+  "schema.fetch_failed_title": "Schema konnte nicht abgerufen werden",
+  "schema.query": "Query",
+  "schema.mutation": "Mutation",
+  "schema.subscription": "Subscription",
+  "schema.types": "Typen",
+  "schema.more_rows": "{shown} von {total} angezeigt. Filtere, um die Liste einzugrenzen.",
+  "schema.kind_object": "Objekt",
+  "schema.kind_interface": "Interface",
+  "schema.kind_enum": "Enum",
+  "schema.kind_input": "Eingabe",
+  "schema.kind_union": "Union",
+  "schema.kind_scalar": "Skalar"
 }

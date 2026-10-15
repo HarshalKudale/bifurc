@@ -227,5 +227,25 @@
   "mcp.lines_one": "{count} line",
   "mcp.lines_other": "{count} lines",
   "mcp.waiting": "{count} waiting",
-  "mcp.failed": "{count} failed"
+  "mcp.failed": "{count} failed",
+
+  "schema.tab": "Schema",
+  "schema.fetch": "Fetch schema",
+  "schema.refresh": "Refresh schema",
+  "schema.back": "Back",
+  "schema.filter_placeholder": "Filter by name",
+  "schema.empty_title": "No schema yet",
+  "schema.empty_description": "Fetch the schema from the endpoint to browse its types and get field suggestions in the query.",
+  "schema.fetch_failed_title": "Could not fetch the schema",
+  "schema.query": "Query",
+  "schema.mutation": "Mutation",
+  "schema.subscription": "Subscription",
+  "schema.types": "Types",
+  "schema.more_rows": "Showing {shown} of {total}. Filter to narrow the list.",
+  "schema.kind_object": "object",
+  "schema.kind_interface": "interface",
+  "schema.kind_enum": "enum",
+  "schema.kind_input": "input",
+  "schema.kind_union": "union",
+  "schema.kind_scalar": "scalar"
 }
