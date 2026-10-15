@@ -1,5 +1,6 @@
 //! `request.send`: the request pipeline on the wire, for an inline request or a saved one.
 
+use base64::{Engine, engine::general_purpose::STANDARD};
 use serde_json::{Value, json};
 
 use super::{
@@ -10,7 +11,7 @@ use crate::{
     kernel::CommandRegistry,
     protocol::EngineError,
     utils::json::{array_of, is_truthy, opt_str, str_of},
-    workspace::config::load_entity,
+    workspace::{config::load_entity, response_history},
 };
 
 /// The stored entity's fields the pipeline consumes.
@@ -88,8 +89,28 @@ pub fn register(registry: &mut CommandRegistry) {
             Err(error) if error.details.as_ref().is_some_and(|d| d["cancelled"] == true) => {
                 return Ok(json!({ "ok": false, "cancelled": true, "error": error.message }));
             }
-            result => result?,
+            result => result,
         };
+        if let Some(id) = response_history::entity_id(&params) {
+            let sent = result.as_ref().ok().map_or(&request, |done| &done["request"]);
+            let (method, url) = (str_of(sent, "method").to_string(), str_of(sent, "url").to_string());
+            let capture = match &result {
+                Ok(done) => response_history::Capture {
+                    status: done["response"]["status"].as_i64().unwrap_or(0),
+                    status_text: None,
+                    headers: done["response"]["headers"].clone(),
+                    // `request.send` returns the bytes the upstream sent, base64-encoded.
+                    body: STANDARD.decode(str_of(&done["response"], "body").trim()).unwrap_or_default(),
+                    duration_ms: done["durationMs"].as_u64().unwrap_or(0),
+                    error: None,
+                    method,
+                    url,
+                },
+                Err(error) => response_history::failed(error.message.clone(), method, url),
+            };
+            response_history::record(&ws_id, id, capture);
+        }
+        let result = result?;
 
         let mut out = json!({
             "status": result["response"]["status"],
@@ -299,5 +320,62 @@ mod tests {
         let err = call("request.send", json!({ "workspaceId": "ws1", "id": "slow" })).await.unwrap_err();
         assert_eq!(err.code, ErrorCode::Timeout);
         assert_eq!(err.message, "Timed out after 200 ms");
+    }
+
+    #[tokio::test]
+    async fn a_send_with_an_entity_id_is_recorded_and_the_rest_are_not() {
+        let root = scratch_data_root();
+        let base = test_server::start(HashMap::new()).await;
+        let history = |id: &str| response_history::entries(root.ws_id, id);
+        write_entity(
+            root.ws_id,
+            "requests",
+            "r1",
+            &json!({ "id": "r1", "name": "r", "method": "GET", "url": format!("{base}/x"), "headers": {}, "body": "" }),
+            None,
+        )
+        .unwrap();
+        call("request.send", json!({ "workspaceId": "ws1", "id": "r1" })).await.unwrap();
+        let inline = json!({ "method": "POST", "url": format!("{base}/p"), "headers": {}, "body": "hi" });
+        call("request.send", json!({ "workspaceId": "ws1", "entityId": "r1", "request": inline, "scripts": {} }))
+            .await
+            .unwrap();
+        // A draft has no entity to keep a history for.
+        call("request.send", json!({ "workspaceId": "ws1", "request": inline, "scripts": {} })).await.unwrap();
+        let kept = history("r1");
+        assert_eq!(kept.len(), 2);
+        assert_eq!(
+            (kept[0]["request"]["method"].clone(), kept[1]["request"]["method"].clone()),
+            (json!("POST"), json!("GET"))
+        );
+        assert_eq!(kept[0]["status"], 200);
+        assert!(kept[0]["body"].as_str().unwrap().contains("\"body\":\"hi\""));
+
+        // A transport error is kept with its message; a cancelled send is not.
+        let refused = call(
+            "request.send",
+            json!({ "workspaceId": "ws1", "entityId": "r1", "scripts": {}, "request": { "method": "GET", "url": "http://127.0.0.1:1/", "headers": {}, "body": "" } }),
+        )
+        .await;
+        assert!(refused.is_err());
+        assert_eq!(history("r1").len(), 3);
+        assert!(history("r1")[0]["error"].is_string());
+
+        let url = silent_server().await;
+        let sending = tokio::spawn(async move {
+            call(
+                "request.send",
+                json!({
+                    "workspaceId": "ws1", "streamId": "s-hist", "entityId": "r2", "scripts": {},
+                    "request": { "method": "GET", "url": url, "headers": {}, "body": "" },
+                }),
+            )
+            .await
+        });
+        while call("request.cancel", json!({ "streamId": "s-hist" })).await.unwrap()["ok"] != true {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        assert_eq!(sending.await.unwrap().unwrap()["cancelled"], true);
+        assert!(history("r2").is_empty());
     }
 }

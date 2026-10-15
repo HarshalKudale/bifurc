@@ -365,7 +365,10 @@ pub fn remove_workspaces(ids: &[String]) -> std::io::Result<()> {
     }
     let mut settings = load_settings();
     settings.workspaces_mut().retain(|ws| !ids.iter().any(|id| id == str_of(ws, "id")));
-    ids.iter().for_each(|id| crate::cookies::forget(id));
+    ids.iter().for_each(|id| {
+        crate::cookies::forget(id);
+        crate::workspace::response_history::forget_workspace(id);
+    });
     if ids.contains(&settings.active_workspace_id()) {
         let next = settings.workspaces().first().map(|ws| str_of(ws, "id").to_string()).unwrap_or_default();
         settings.set("activeWorkspaceId", json!(next));

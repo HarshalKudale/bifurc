@@ -111,7 +111,7 @@ fn absolute_time(ts: i64) -> String {
 }
 
 /// How long before `now` a change was made, in the largest whole unit; a date once it is a month old.
-pub(super) fn relative_time(now: i64, ts: i64) -> String {
+pub(crate) fn relative_time(now: i64, ts: i64) -> String {
     let seconds = (now - ts).div_euclid(1000);
     match seconds {
         ..60 => t("audit.time.just_now").to_owned(),
@@ -122,7 +122,7 @@ pub(super) fn relative_time(now: i64, ts: i64) -> String {
     }
 }
 
-pub(super) fn now_ms() -> i64 {
+pub(crate) fn now_ms() -> i64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |elapsed| elapsed.as_millis() as i64)
 }
 

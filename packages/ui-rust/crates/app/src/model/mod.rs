@@ -8,6 +8,7 @@ pub mod explorer;
 pub mod flow;
 pub mod git;
 pub mod graphql;
+pub mod history;
 pub mod http;
 pub mod kind;
 pub mod mcp;
