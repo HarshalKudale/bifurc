@@ -5,10 +5,11 @@ use serde_json::{Value, json};
 use crate::{
     capture::{captured_to_request, resolve_capture_entry},
     kernel::{CommandRegistry, telemetry::Headers},
-    protocol::EngineError,
+    protocol::{EngineError, ErrorCode},
     rest::from_curl::{curl_to_mock, curl_to_request},
     utils::{
         curl::parse_curl,
+        http::{self, CANCELLED, RequestSettings},
         json::{opt_str, str_of, string_map},
         replay::replay_streamed,
     },
@@ -24,11 +25,23 @@ pub fn register(registry: &mut CommandRegistry) {
             &headers,
             str_of(&params, "body"),
             opt_str(&params, "streamId"),
+            &RequestSettings::resolve(params.get("settings")),
         )
         .await
-        .map_err(EngineError::engine)?;
+        .map_err(|message| match message {
+            message if http::is_timeout(&message) => EngineError::new(ErrorCode::Timeout, message),
+            message if message == CANCELLED => {
+                EngineError::with_details(ErrorCode::EngineError, message, json!({ "cancelled": true }))
+            }
+            message => EngineError::engine(message),
+        })?;
         Ok(json!({ "status": response.status, "headers": response.headers, "body": response.body }))
     });
+
+    // Stops the send that was started with `streamId` (`request.send` or `request.replay`): the send fails as
+    // cancelled. `ok` is whether there was one in flight.
+    registry
+        .register_sync("request.cancel", |params, _| Ok(json!({ "ok": http::cancel(str_of(&params, "streamId")) })));
 
     // The parse is returned unfiltered; dropping hop-by-hop headers is the caller's decision.
     registry.register_sync("request.parseCurl", |params, _| Ok(parse_curl(str_of(&params, "curl"))));

@@ -9,14 +9,18 @@ use crate::{
     env::{load_merged_environment, resolve_headers, resolve_vars},
     kernel::CommandRegistry,
     protocol::EngineError,
-    rest::direct_http::{exchange, header_pairs},
-    utils::json::{opt_str, str_of},
+    rest::direct_http::{exchange_with, header_pairs},
+    utils::{
+        http::RequestSettings,
+        json::{opt_str, str_of},
+    },
     workspace::config::load_entity,
 };
 
 pub fn register(registry: &mut CommandRegistry) {
     registry.register("soap.fetchWsdl", |params: Value, _| async move {
-        Ok(match exchange("GET", str_of(&params, "url"), &[], None).await {
+        let settings = RequestSettings::resolve(params.get("settings"));
+        Ok(match exchange_with("GET", str_of(&params, "url"), &[], None, &settings).await {
             Ok(response) => json!({ "ok": true, "content": response.body }),
             Err(error) if error.is_empty() => json!({ "ok": false, "error": "Failed to fetch WSDL" }),
             Err(error) => json!({ "ok": false, "error": error }),
@@ -31,9 +35,11 @@ pub fn register(registry: &mut CommandRegistry) {
             headers.push(("SOAPAction".to_string(), action.to_string()));
         }
         let start = Instant::now();
-        let response = exchange("POST", str_of(&params, "endpointUrl"), &headers, Some(str_of(&params, "body")))
-            .await
-            .map_err(EngineError::engine)?;
+        let settings = RequestSettings::resolve(params.get("settings"));
+        let response =
+            exchange_with("POST", str_of(&params, "endpointUrl"), &headers, Some(str_of(&params, "body")), &settings)
+                .await
+                .map_err(EngineError::engine)?;
         Ok(json!({
             "status": response.status,
             "headers": response.headers,
@@ -52,12 +58,15 @@ pub fn register(registry: &mut CommandRegistry) {
         };
         let env = load_merged_environment(ws_id);
         let env = env.as_ref();
-        let payload = json!({
+        let mut payload = json!({
             "endpointUrl": resolve_vars(str_of(&stored, "endpointUrl"), env),
             "soapAction": resolve_vars(str_of(&stored, "soapAction"), env),
             "headers": resolve_headers(stored.get("headers").unwrap_or(&Value::Null), env),
             "body": resolve_vars(str_of(&stored, "body"), env),
         });
+        if let Some(settings) = stored.get("settings").filter(|v| v.is_object()) {
+            payload["settings"] = settings.clone();
+        }
         let mut result =
             crate::cookies::scoped(ws_id, ctx.registry.invoke("soap.execute", payload, ctx.clone())).await?;
         crate::vault::redact_value(ws_id, &mut result);

@@ -27,6 +27,9 @@ fn request_from_entity(entity: &Value) -> Value {
     if let Some(parts) = entity.get("bodyParts").filter(|v| is_truthy(v)) {
         request["bodyParts"] = parts.clone();
     }
+    if let Some(settings) = entity.get("settings").filter(|v| v.is_object()) {
+        request["settings"] = settings.clone();
+    }
     request
 }
 
@@ -60,6 +63,8 @@ pub fn register(registry: &mut CommandRegistry) {
 
         let jar = ws_id.clone();
         let stream_id = params.get("streamId").filter(|id| id.is_string()).cloned();
+        // Resolved by `request.replay` against the app's defaults; the pipeline does not need them.
+        let settings = request.get("settings").filter(|v| v.is_object()).cloned();
         let result = run_request_pipeline(&ws_id, &request, &scripts, |resolved| async move {
             let encoded = encode_request_body(&resolved);
             let mut replay = json!({
@@ -71,10 +76,20 @@ pub fn register(registry: &mut CommandRegistry) {
             if let Some(id) = stream_id {
                 replay["streamId"] = id;
             }
+            if let Some(settings) = settings {
+                replay["settings"] = settings;
+            }
             let sent = ctx.registry.invoke("request.replay", replay, ctx.clone());
             crate::cookies::scoped(&jar, sent).await
         })
-        .await?;
+        .await;
+        // A send stopped by `request.cancel` is an outcome the caller can tell apart from a failure.
+        let result = match result {
+            Err(error) if error.details.as_ref().is_some_and(|d| d["cancelled"] == true) => {
+                return Ok(json!({ "ok": false, "cancelled": true, "error": error.message }));
+            }
+            result => result?,
+        };
 
         let mut out = json!({
             "status": result["response"]["status"],
@@ -210,7 +225,13 @@ mod tests {
             .collect();
         assert_eq!(
             outcomes,
-            [("status 200", true), ("post var visible", true), ("time + headers", true), ("json body", true), ("expected failure", false)]
+            [
+                ("status 200", true),
+                ("post var visible", true),
+                ("time + headers", true),
+                ("json body", true),
+                ("expected failure", false)
+            ]
         );
         assert_eq!(result["testLogs"], json!(["pre POST", "post application/json"]));
         let env = crate::workspace::fs::read_all_entities(root.ws_id, "environments");
@@ -224,5 +245,59 @@ mod tests {
             vars,
             [("k".into(), "200".into()), ("stamp".into(), "S1".into()), ("echoed".into(), "POST:{\"n\":1}".into())]
         );
+    }
+
+    /// A server that accepts connections and never answers.
+    async fn silent_server() -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            let mut held = Vec::new();
+            while let Ok((socket, _)) = listener.accept().await {
+                held.push(socket);
+            }
+        });
+        format!("http://{addr}/")
+    }
+
+    #[tokio::test]
+    async fn a_send_that_hangs_can_be_cancelled_and_says_so() {
+        let _root = scratch_data_root();
+        let url = silent_server().await;
+        let sending = tokio::spawn(async move {
+            call(
+                "request.send",
+                json!({
+                    "workspaceId": "ws1", "streamId": "s-hang", "scripts": {},
+                    "request": { "method": "GET", "url": url, "headers": {}, "body": "" },
+                }),
+            )
+            .await
+        });
+        while call("request.cancel", json!({ "streamId": "s-hang" })).await.unwrap()["ok"] != true {
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        let outcome = sending.await.unwrap().unwrap();
+        assert_eq!(outcome, json!({ "ok": false, "cancelled": true, "error": "Cancelled" }));
+        let nothing = call("request.cancel", json!({ "streamId": "s-hang" })).await.unwrap();
+        assert_eq!(nothing["ok"], false);
+    }
+
+    #[tokio::test]
+    async fn a_saved_requests_time_limit_applies_and_one_without_settings_has_none() {
+        let root = scratch_data_root();
+        let url = silent_server().await;
+        write_entity(
+            root.ws_id,
+            "requests",
+            "slow",
+            &json!({ "id": "slow", "name": "s", "method": "GET", "url": url, "headers": {}, "body": "",
+                     "settings": { "timeoutMs": 200 } }),
+            None,
+        )
+        .unwrap();
+        let err = call("request.send", json!({ "workspaceId": "ws1", "id": "slow" })).await.unwrap_err();
+        assert_eq!(err.code, ErrorCode::Timeout);
+        assert_eq!(err.message, "Timed out after 200 ms");
     }
 }
