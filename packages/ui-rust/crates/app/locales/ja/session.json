@@ -247,5 +247,15 @@
   "schema.kind_enum": "列挙型",
   "schema.kind_input": "入力型",
   "schema.kind_union": "ユニオン",
-  "schema.kind_scalar": "スカラー"
+  "schema.kind_scalar": "スカラー",
+  "wsdl.tab": "WSDL",
+  "wsdl.fetch": "WSDLを取得",
+  "wsdl.refresh": "WSDLを更新",
+  "wsdl.url_placeholder": "既定はエンドポイントURLに ?wsdl を付けたもの",
+  "wsdl.empty_title": "WSDLはまだありません",
+  "wsdl.empty_description": "WSDLを取得すると、サービスの操作が一覧表示されます。操作を選ぶと、SOAPActionとエンベロープが入力されます。",
+  "wsdl.none_title": "操作が見つかりません",
+  "wsdl.none_description": "このWSDLにはSOAP操作がありません。",
+  "wsdl.soap_version": "SOAP {version}",
+  "wsdl.fetch_failed_title": "WSDLを取得できませんでした"
 }

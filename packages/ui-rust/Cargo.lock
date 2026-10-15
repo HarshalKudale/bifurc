@@ -622,6 +622,7 @@ dependencies = [
  "futures",
  "gpui-kit",
  "lsp-types",
+ "roxmltree 0.21.1",
  "serde",
  "serde_json",
  "winresource",

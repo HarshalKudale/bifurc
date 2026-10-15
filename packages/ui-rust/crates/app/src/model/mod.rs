@@ -22,6 +22,7 @@ pub mod trust;
 pub mod update;
 pub mod variables;
 pub mod vault;
+pub mod wsdl;
 
 pub use config::ConfigSnapshot;
 pub use explorer::{ExplorerNode, NodeRef, build_explorer};
