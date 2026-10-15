@@ -16,7 +16,8 @@ fn port_suffix(scheme: &str, port: u16) -> String {
     if port == default { String::new() } else { format!(":{port}") }
 }
 
-const LOGO: &str = "<div class=\"logo\"><div class=\"logo-icon\"></div><span class=\"logo-name\">Bifurc</span></div>";
+/// The app icon (`build/icon.png`) drawn inline: the page has no file root to load an image from.
+const LOGO: &str = r##"<div class="logo"><svg class="logo-icon" viewBox="0 0 256 256" aria-hidden="true"><rect width="256" height="256" rx="56" fill="#1C2024"/><g transform="translate(6 0)" fill="none" stroke-linecap="round"><path d="M48 128H104C136 128 140 84 172 84H184M104 128C136 128 140 172 172 172H184" stroke="#F3F0E8" stroke-width="16"/><circle cx="48" cy="128" r="14" fill="#F3F0E8"/><circle cx="196" cy="84" r="14" fill="#F3F0E8"/><circle cx="196" cy="172" r="12" fill="#1C2024" stroke="#C0704F" stroke-width="7"/></g></svg><span class="logo-name">Bifurc</span></div>"##;
 
 /// The home page: the enabled mappings of `cfg`, each linking to its domain on the port the page is served on.
 pub fn build_home_page(cfg: &Value, scheme: &str, current_port: u16) -> String {
