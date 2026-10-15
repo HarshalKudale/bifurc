@@ -51,6 +51,8 @@ const SECTIONS: [Section; 3] = [Section::Body, Section::Headers, Section::Tests]
 enum Phase {
     Idle,
     Sending,
+    /// The user stopped the request before it was answered.
+    Cancelled,
     Failed(String),
     Http(HttpResponse),
     /// A result that is not HTTP-shaped (SOAP), shown as the JSON the engine returned.
@@ -179,6 +181,16 @@ impl Exchange {
             Phase::GrpcLive(live) if live.running && live.http.is_some() => Some(live),
             _ => None,
         }
+    }
+
+    pub fn cancelled(&mut self, cx: &mut Context<Self>) {
+        // A response that was arriving keeps the messages that came.
+        if let Some(live) = self.arriving() {
+            live.running = false;
+        } else {
+            self.phase = Phase::Cancelled;
+        }
+        cx.notify();
     }
 
     pub fn fail(&mut self, message: String, cx: &mut Context<Self>) {
@@ -825,6 +837,7 @@ impl Render for Exchange {
         let body = match &self.phase {
             Phase::Idle => page::empty(t("session.response.idle_title"), t("session.response.idle_description")),
             Phase::Sending => page::loading(t("session.response.waiting")),
+            Phase::Cancelled => page::empty(t("session.response.cancelled_title"), t("session.response.cancelled_description")),
             Phase::Failed(message) => div()
                 .p_3()
                 .child(

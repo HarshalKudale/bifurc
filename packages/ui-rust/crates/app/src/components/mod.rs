@@ -12,6 +12,7 @@ pub mod kv_table;
 pub mod page;
 pub mod parts_table;
 pub mod request_bar;
+pub mod request_settings;
 pub mod stream_log;
 pub mod tab_strip;
 pub mod tree_drag;
@@ -23,6 +24,7 @@ pub use curl_import::{CURL_TAB_BADGE, CURL_TAB_TITLE, CurlImport, CurlImportEven
 pub use entity_bar::{EntityAction, EntityBar, FolderPicker, entity_bar};
 pub use kv_table::{KeyValueEvent, KeyValueTable};
 pub use request_bar::request_bar;
+pub use request_settings::{SettingsChanged, SettingsForm};
 pub use parts_table::{FileData, Part, PartValue, PartsEvent, PartsTable};
 pub use tab_strip::{StripTab, TabAction, TabStrip, tab_strip};
 pub use var_editor::{Syntax, VarEditor};

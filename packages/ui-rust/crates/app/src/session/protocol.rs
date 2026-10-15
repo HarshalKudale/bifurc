@@ -32,11 +32,13 @@ use super::{Carry, LoadState, SaveMode, SessionEvent, engine_folder, exchange::E
 use crate::{
     i18n::{t, t_with},
     app_model::{AppModel, ModelEvent},
-    components::{Autosave, KeyValueEvent, KeyValueTable, Syntax, VarEditor, page, request_bar},
+    components::{
+        Autosave, KeyValueEvent, KeyValueTable, SettingsChanged, SettingsForm, Syntax, VarEditor, page, request_bar,
+    },
     engine::{call_in, describe},
     model::{
         RequestKind,
-        http::{BodyEncoding, header_map, header_pairs},
+        http::{BodyEncoding, RequestSettings, header_map, header_pairs},
         graphql::Schema,
         wsdl,
         snippet::RequestParts,
@@ -109,6 +111,9 @@ fn inline_request(kind: RequestKind, entity: &Map<String, Value>) -> Value {
     let mut request = Map::new();
     for spec in fields_of(kind) {
         request.insert(spec.key.into(), entity.get(spec.key).cloned().unwrap_or(Value::Null));
+    }
+    if let Some(settings) = entity.get("settings") {
+        request.insert("settings".into(), settings.clone());
     }
     if kind == RequestKind::Grpc {
         request.insert("protoFileId".into(), entity.get("protoFileId").cloned().unwrap_or(Value::Null));
@@ -290,6 +295,8 @@ enum Control {
 enum FieldValue {
     Text(String),
     Pairs(Vec<(String, String)>),
+    /// The request's own settings; the last value, and only for the kinds that have them.
+    Settings(RequestSettings),
 }
 
 pub struct ProtocolSession {
@@ -304,6 +311,8 @@ pub struct ProtocolSession {
     load: LoadState,
     name: Entity<InputState>,
     controls: Vec<Control>,
+    /// The Settings tab. gRPC has none: the engine does not apply these settings to it.
+    settings: Option<Entity<SettingsForm>>,
     /// Index into the fields that are shown as sections (documents and tables).
     section: usize,
     baseline: (String, Vec<FieldValue>),
@@ -344,6 +353,7 @@ impl ProtocolSession {
         let name =
             cx.new(|cx| InputState::new(window, cx).placeholder(t("session.rest.name_placeholder")).default_value(default_name(kind)));
         let exchange = cx.new(|cx| Exchange::new(window, cx));
+        let settings = (kind != RequestKind::Grpc).then(|| cx.new(|cx| SettingsForm::new(model.clone(), window, cx)));
 
         let mut subscriptions =
             vec![cx.subscribe_in(&name, window, |this, _, event: &InputEvent, window, cx| match event {
@@ -372,6 +382,9 @@ impl ProtocolSession {
                 _ => {}
             }
         }));
+        if let Some(settings) = &settings {
+            subscriptions.push(cx.subscribe(settings, |this, _, _: &SettingsChanged, cx| this.changed(cx)));
+        }
         let controls: Vec<Control> = fields_of(kind)
             .iter()
             .map(|spec| match spec.kind {
@@ -464,6 +477,7 @@ impl ProtocolSession {
             load: LoadState::Ready,
             name,
             controls,
+            settings,
             section: 0,
             baseline: (String::new(), Vec::new()),
             exchange,
@@ -1017,6 +1031,7 @@ impl ProtocolSession {
             return;
         }
         let headers = self.pairs_of("headers", cx).unwrap_or_default();
+        let settings = self.settings.as_ref().and_then(|form| form.read(cx).value(cx).to_json());
         let Some(panel) = self.schema.as_mut().filter(|panel| !panel.fetching) else { return };
         panel.fetching = true;
         cx.notify();
@@ -1034,7 +1049,10 @@ impl ProtocolSession {
                 .unwrap_or(unresolved);
             let values = resolved[1..].iter().cloned();
             let pairs: Vec<(String, String)> = headers.into_iter().map(|(name, _)| name).zip(values).collect();
-            let payload = json!({ "url": resolved[0], "headers": header_map(&pairs) });
+            let mut payload = json!({ "url": resolved[0], "headers": header_map(&pairs) });
+            if let Some(settings) = settings {
+                payload["settings"] = settings;
+            }
             call_in(&introspect_client, window, cx, "graphql.introspect", payload, |this, outcome, window, cx| {
                 let failure = match outcome {
                     Ok(result) if result.get("ok").and_then(Value::as_bool) == Some(true) => {
@@ -1083,13 +1101,18 @@ impl ProtocolSession {
         if let Some(panel) = self.wsdl.as_mut() {
             panel.fetching = true;
         }
+        let settings = self.settings.as_ref().and_then(|form| form.read(cx).value(cx).to_json());
         cx.notify();
         let client = self.model.read(cx).client().clone();
         let fetch_client = client.clone();
         let resolve = json!({ "workspaceId": self.workspace_id, "text": url });
         call_in(&client, window, cx, "env.resolveText", resolve, move |_, outcome, window, cx| {
             let resolved = outcome.ok().and_then(|result| result.get("text").and_then(Value::as_str).map(str::to_owned)).unwrap_or(url);
-            call_in(&fetch_client, window, cx, "soap.fetchWsdl", json!({ "url": resolved }), |this, outcome, window, cx| {
+            let mut payload = json!({ "url": resolved });
+            if let Some(settings) = settings {
+                payload["settings"] = settings;
+            }
+            call_in(&fetch_client, window, cx, "soap.fetchWsdl", payload, |this, outcome, window, cx| {
                 let failure = match outcome {
                     Ok(result) if result.get("ok").and_then(Value::as_bool) == Some(true) => {
                         match wsdl::parse(result.get("content").and_then(Value::as_str).unwrap_or_default()) {
@@ -1250,6 +1273,7 @@ impl ProtocolSession {
                 Control::Text(editor) => FieldValue::Text(editor.value(cx)),
                 Control::Pairs(table) => FieldValue::Pairs(table.read(cx).pairs(cx)),
             })
+            .chain(self.settings.iter().map(|form| FieldValue::Settings(form.read(cx).value(cx))))
             .collect();
         (self.name.read(cx).value().trim().to_owned(), fields)
     }
@@ -1266,6 +1290,10 @@ impl ProtocolSession {
                     table.update(cx, |table, cx| table.set_pairs(&pairs, window, cx));
                 }
             }
+        }
+        if let Some(form) = &self.settings {
+            let settings = RequestSettings::from_entity(entity);
+            form.update(cx, |form, cx| form.set(&settings, window, cx));
         }
     }
 
@@ -1292,8 +1320,12 @@ impl ProtocolSession {
                 match value {
                     FieldValue::Text(text) => json!(text),
                     FieldValue::Pairs(pairs) => Value::Object(header_map(pairs)),
+                    FieldValue::Settings(_) => continue,
                 },
             );
+        }
+        if let Some(FieldValue::Settings(settings)) = values.last() {
+            settings.write_to(&mut entity);
         }
         entity
     }
@@ -1482,13 +1514,14 @@ impl Render for ProtocolSession {
             (_, Some(panel)) => (Some("session.wsdl.tab"), Some(panel.view(cx))),
             _ => (None, None),
         };
-        let tabs = sections.len() + usize::from(extra_label.is_some());
+        let tabs = sections.len() + usize::from(extra_label.is_some()) + usize::from(self.settings.is_some());
         let section = self.section.min(tabs.saturating_sub(1));
         let content = match sections.get(section) {
             Some((ix, _)) => Some(match &self.controls[*ix] {
                 Control::Text(editor) => Editor::new(editor.state()).bordered(false).h_full().into_any_element(),
                 Control::Pairs(table) => table.clone().into_any_element(),
             }),
+            None if self.settings.is_some() && section == tabs - 1 => self.settings.clone().map(|form| form.into_any_element()),
             None => extra_view,
         };
         let specs = fields_of(self.kind);
@@ -1570,7 +1603,8 @@ impl Render for ProtocolSession {
                             cx.notify();
                         }))
                         .children(sections.iter().map(|(_, spec)| Tab::new().label(t(spec.label))))
-                        .children(extra_label.map(|key| Tab::new().label(t(key)))),
+                        .children(extra_label.map(|key| Tab::new().label(t(key))))
+                        .children(self.settings.as_ref().map(|_| Tab::new().label(t("session.rest.tab_settings")))),
                 ),
             )
             .child(div().flex_1().min_h_0().children(content))
@@ -1596,5 +1630,7 @@ mod tests {
         let grpc = inline_request(RequestKind::Grpc, json!({ "serverAddress": "s", "metadata": {} }).as_object().unwrap());
         assert_eq!(grpc["useReflection"], json!(false));
         assert_eq!(grpc["protoFileId"], Value::Null);
+        let entity = json!({ "endpointUrl": "u", "settings": { "timeoutMs": 5 } });
+        assert_eq!(inline_request(RequestKind::Soap, entity.as_object().unwrap())["settings"], json!({ "timeoutMs": 5 }));
     }
 }
