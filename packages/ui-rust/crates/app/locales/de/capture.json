@@ -76,5 +76,18 @@
   "save_as_request": "Als Anfrage speichern",
   "save_as_mock": "Als Mock speichern",
   "remove_tooltip": "Aus der Liste entfernen",
-  "close_detail_tooltip": "Details schließen"
+  "close_detail_tooltip": "Details schließen",
+  "create_flow": "Flow erstellen",
+  "create_flow_tooltip": "Die markierten Einträge als Anfragen speichern und in der Reihenfolge der Aufzeichnung zu einem Flow verketten. Mindestens zwei markieren.",
+  "saved_flow": "{count} Anfragen in „{folder}“ gespeichert und daraus einen Flow erstellt.",
+  "import.title": "Zugangsdaten und Cookies gefunden",
+  "import.secrets_body": "Diese Werte sehen nach Zugangsdaten aus. Wähle, wohin sie kommen: versiegelt in einen Tresor, der sich nur mit seiner Passphrase öffnet; in Variablen der gewählten Umgebung, die mit dem Arbeitsbereich synchronisiert werden; oder sie bleiben in den Anfragen stehen.",
+  "import.cookies_body": "Diese Anfragen enthielten Cookies. Die Cookie-Dose wird nie synchronisiert; eine Anfrage erhält ihre Cookies beim Senden daraus.",
+  "import.jar": "In die Cookie-Dose verschieben",
+  "import.save": "Speichern",
+  "import.vault": "Tresor",
+  "import.environment": "Umgebung",
+  "import.keep": "In Anfragen lassen",
+  "import.new_vault": "Neuer Tresor",
+  "import.kept": "Für einen Tresor zu kurz, in den Anfragen gelassen: {names}"
 }

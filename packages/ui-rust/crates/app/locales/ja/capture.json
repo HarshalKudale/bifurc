@@ -76,5 +76,18 @@
   "save_as_request": "リクエストとして保存",
   "save_as_mock": "モックとして保存",
   "remove_tooltip": "一覧から削除",
-  "close_detail_tooltip": "詳細を閉じる"
+  "close_detail_tooltip": "詳細を閉じる",
+  "create_flow": "フローを作成",
+  "create_flow_tooltip": "チェックした通信をリクエストとして保存し、記録された順にフローとしてつなげます。2 件以上チェックしてください。",
+  "saved_flow": "{count} 件のリクエストを「{folder}」に保存し、フローを作成しました。",
+  "import.title": "認証情報と Cookie が見つかりました",
+  "import.secrets_body": "これらの値は認証情報のようです。保存先を選んでください: パスフレーズでのみ開くボールトに封印する、ワークスペースと同期される選択中の環境の変数にする、またはリクエストに書いたままにする。",
+  "import.cookies_body": "これらのリクエストには Cookie が含まれていました。Cookie ジャーは同期されず、リクエストは送信時にそこから Cookie を受け取ります。",
+  "import.jar": "Cookie ジャーに移す",
+  "import.save": "保存",
+  "import.vault": "ボールト",
+  "import.environment": "環境",
+  "import.keep": "リクエストに残す",
+  "import.new_vault": "新しいボールト",
+  "import.kept": "ボールトには短すぎるため、リクエストに残しました: {names}"
 }
