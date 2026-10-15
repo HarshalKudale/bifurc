@@ -28,7 +28,7 @@ use gpui_kit::{
 };
 use serde_json::{Map, Value, json};
 
-use super::{Carry, LoadState, SaveMode, SessionEvent, engine_folder, exchange::Exchange, graphql::SchemaPanel, wsdl::WsdlPanel};
+use super::{Carry, LoadState, SaveMode, SessionEvent, engine_folder, exchange::{Exchange, HistorySource, Replay}, graphql::SchemaPanel, wsdl::WsdlPanel};
 use crate::{
     i18n::{t, t_with},
     app_model::{AppModel, ModelEvent},
@@ -541,6 +541,7 @@ impl ProtocolSession {
                 Ok(entity) => {
                     this.adopt_entity(entity, window, cx);
                     this.load = LoadState::Ready;
+                    this.refresh_history(window, cx);
                 }
                 Err(message) => this.load = LoadState::Failed(message),
             }
@@ -572,6 +573,17 @@ impl ProtocolSession {
 
     pub fn exchange(&self) -> &Entity<Exchange> {
         &self.exchange
+    }
+
+    /// Has the response panel read the saved responses of this request again.
+    fn refresh_history(&self, window: &mut Window, cx: &mut Context<Self>) {
+        let source = HistorySource {
+            client: self.model.read(cx).client().clone(),
+            workspace_id: self.workspace_id.clone(),
+            entity_id: self.saved_id.clone(),
+            replay: if self.kind == RequestKind::Grpc { Replay::Grpc } else { Replay::Http(BodyEncoding::Text) },
+        };
+        self.exchange.update(cx, |exchange, cx| exchange.refresh_history(source, window, cx));
     }
 
     pub fn title(&self, cx: &gpui_kit::App) -> SharedString {
@@ -1450,7 +1462,12 @@ impl ProtocolSession {
                     return;
                 }
                 let entity = self.edited_entity(&values);
-                json!({ "workspaceId": self.workspace_id, "request": inline_request(self.kind, &entity) })
+                let mut payload = json!({ "workspaceId": self.workspace_id, "request": inline_request(self.kind, &entity) });
+                // The send is of this saved request's edits, so its response belongs to its history.
+                if let Some(id) = &self.saved_id {
+                    payload["entityId"] = json!(id);
+                }
+                payload
             }
         };
         self.sending = true;
@@ -1479,6 +1496,7 @@ impl ProtocolSession {
                     this.exchange.update(cx, |exchange, cx| exchange.fail(message, cx));
                 }
             }
+            this.refresh_history(window, cx);
             this.changed(cx);
         });
     }

@@ -64,8 +64,11 @@ pub async fn remove_entity(ws_id: &str, kind: &CrudKind, entity: &Value) -> std:
             record = merged(&record, &name_entry(entity));
         }
         add_pending_deletion(ws_id, kind.kind, record)?;
-    } else if kind.name_entry.is_some() && !kind.is_flat {
-        remove_name_entry(ws_id, kind.kind, id)?;
+    } else {
+        super::response_history::forget(ws_id, id);
+        if kind.name_entry.is_some() && !kind.is_flat {
+            remove_name_entry(ws_id, kind.kind, id)?;
+        }
     }
 
     if kind.has_enabled_state {
@@ -82,6 +85,7 @@ pub fn record_path(kind: &str, record: &Value) -> String {
 /// Stop listing a deleted entity: its deletion is final.
 pub fn forget_deleted(ws_id: &str, kind: &str, id: &str) -> std::io::Result<()> {
     remove_pending_deletion(ws_id, kind, id)?;
+    super::response_history::forget(ws_id, id);
     if !FLAT_ENTITY_KINDS.contains(&kind) {
         remove_name_entry(ws_id, kind, id)?;
     }

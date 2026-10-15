@@ -954,6 +954,24 @@
    "scripts": {}
   }
  },
+ "response.clearHistory": {
+  "valid": {
+   "workspaceId": "ws1",
+   "id": "r1"
+  },
+  "invalid": {
+   "workspaceId": "ws1"
+  }
+ },
+ "response.history": {
+  "valid": {
+   "workspaceId": "ws1",
+   "id": "r1"
+  },
+  "invalid": {
+   "workspaceId": "ws1"
+  }
+ },
  "runner.cancel": {
   "valid": {
    "workspaceId": "ws1",

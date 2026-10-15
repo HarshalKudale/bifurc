@@ -19,7 +19,7 @@ use crate::{
     kernel::CommandRegistry,
     protocol::EngineError,
     utils::json::{opt_str, str_of, string_map},
-    workspace::config::load_entity,
+    workspace::{config::load_entity, response_history},
 };
 
 fn services_json(pool: &DescriptorPool, only: Option<&[String]>) -> Value {
@@ -144,7 +144,26 @@ pub fn register(registry: &mut CommandRegistry) {
             None => params.get("request").cloned().unwrap_or(Value::Null),
         };
         let payload = resolve_saved(ws_id, &stored);
-        let mut result = ctx.registry.invoke("grpc.execute", payload, ctx.clone()).await?;
+        let outcome = ctx.registry.invoke("grpc.execute", payload.clone(), ctx.clone()).await;
+        if let Some(id) = response_history::entity_id(&params) {
+            let method = format!("{}/{}", str_of(&payload, "serviceName"), str_of(&payload, "methodName"));
+            let address = str_of(&payload, "serverAddress").to_string();
+            let capture = match &outcome {
+                Ok(v) => response_history::Capture {
+                    status: v["status"].as_i64().unwrap_or(0),
+                    status_text: opt_str(v, "statusMessage").map(str::to_string),
+                    headers: v["metadata"].clone(),
+                    body: serde_json::to_vec_pretty(&v["responses"]).unwrap_or_default(),
+                    duration_ms: v["durationMs"].as_u64().unwrap_or(0),
+                    error: opt_str(v, "error").map(str::to_string),
+                    method,
+                    url: address,
+                },
+                Err(e) => response_history::failed(e.message.clone(), method, address),
+            };
+            response_history::record(ws_id, id, capture);
+        }
+        let mut result = outcome?;
         crate::vault::redact_value(ws_id, &mut result);
         Ok(result)
     });

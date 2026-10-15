@@ -29,7 +29,7 @@ use gpui_kit::{
 };
 use serde_json::{Map, Value, json};
 
-use super::{Carry, LoadState, SaveMode, SessionEvent, engine_folder, exchange::Exchange};
+use super::{Carry, LoadState, SaveMode, SessionEvent, engine_folder, exchange::{Exchange, HistorySource, Replay}};
 use crate::{
     commands::CancelRequest,
     i18n::{t, t_with},
@@ -304,6 +304,7 @@ impl RestSession {
                 Ok(entity) => {
                     this.adopt_entity(entity, window, cx);
                     this.load = LoadState::Ready;
+                    this.refresh_history(window, cx);
                 }
                 Err(message) => this.load = LoadState::Failed(message),
             }
@@ -331,6 +332,17 @@ impl RestSession {
 
     pub fn exchange(&self) -> &Entity<Exchange> {
         &self.exchange
+    }
+
+    /// Has the response panel read the saved responses of this request again.
+    fn refresh_history(&self, window: &mut Window, cx: &mut Context<Self>) {
+        let source = HistorySource {
+            client: self.model.read(cx).client().clone(),
+            workspace_id: self.workspace_id.clone(),
+            entity_id: self.saved_id.clone(),
+            replay: Replay::Http(BodyEncoding::Base64),
+        };
+        self.exchange.update(cx, |exchange, cx| exchange.refresh_history(source, window, cx));
     }
 
     pub fn title(&self, cx: &gpui_kit::App) -> SharedString {
@@ -810,12 +822,17 @@ impl RestSession {
                 if let Some(settings) = fields.settings.to_json() {
                     request.insert("settings".into(), settings);
                 }
-                json!({
+                let mut payload = json!({
                     "workspaceId": self.workspace_id,
                     "request": request,
                     "scripts": scripts,
                     "streamId": self.stream_id,
-                })
+                });
+                // The send is of this saved request's edits, so its response belongs to its history.
+                if let Some(id) = &self.saved_id {
+                    payload["entityId"] = json!(id);
+                }
+                payload
             }
         };
 
@@ -837,6 +854,7 @@ impl RestSession {
                     this.exchange.update(cx, |exchange, cx| exchange.fail(message, cx));
                 }
             }
+            this.refresh_history(window, cx);
             this.changed(cx);
         });
     }

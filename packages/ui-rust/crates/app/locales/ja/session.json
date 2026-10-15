@@ -270,5 +270,11 @@
   "wsdl.none_title": "操作が見つかりません",
   "wsdl.none_description": "このWSDLにはSOAP操作がありません。",
   "wsdl.soap_version": "SOAP {version}",
-  "wsdl.fetch_failed_title": "WSDLを取得できませんでした"
+  "wsdl.fetch_failed_title": "WSDLを取得できませんでした",
+  "history.button": "履歴（{count}）",
+  "history.clear": "履歴を消去",
+  "history.past": "過去のレスポンス",
+  "history.back": "最新に戻る",
+  "history.truncated": "本文は1 MiBで切り詰められています",
+  "history.no_answer": "応答なし"
 }
