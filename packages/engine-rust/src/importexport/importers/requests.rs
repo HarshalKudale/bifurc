@@ -506,6 +506,32 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn captured_traffic_exported_as_har_imports_back_as_the_same_requests() {
+        use base64::{Engine as _, engine::general_purpose::STANDARD};
+        let root = scratch_data_root();
+        let ws = root.ws_id.to_string();
+        let b64 = |s: &str| STANDARD.encode(s);
+        let entries = [
+            json!({ "id": "1", "ts": 1_700_000_000_000_i64, "method": "GET", "url": "http://h/a?x=1&y=two", "reqHeaders": { "X-A": "1" },
+                    "reqBody": "", "resHeaders": { "content-type": "text/plain" }, "resBody": b64("ok"), "resStatus": 200, "durationMs": 5 }),
+            json!({ "id": "2", "ts": 1_700_000_001_000_i64, "method": "POST", "url": "http://h/b", "reqHeaders": { "Content-Type": "application/json" },
+                    "reqBody": b64("{\"a\":1}"), "resHeaders": {}, "resBody": STANDARD.encode([0xff, 0xfe, 0x00]), "resStatus": 201 }),
+        ];
+        let har = crate::capture::captured_to_har(&entries).to_string();
+        assert_eq!(har_run(ws.clone(), source(&har, "captured-requests.har"), Strategy::Keep).await.unwrap().imported, 2);
+        let all = of_kind(&ws, "requests");
+        let get = all.iter().find(|r| r["method"] == "GET").unwrap();
+        assert_eq!((&get["url"], &get["headers"], &get["body"]), (&json!("http://h/a?x=1&y=two"), &json!({ "X-A": "1" }), &json!("")));
+        assert_eq!(get["createdAt"], 1_700_000_000_000_i64);
+        let post = all.iter().find(|r| r["method"] == "POST").unwrap();
+        assert_eq!((&post["url"], &post["body"]), (&json!("http://h/b"), &json!("{\"a\":1}")));
+        assert_eq!(post["headers"], json!({ "Content-Type": "application/json" }));
+        let har: Value = serde_json::from_str(&har).unwrap();
+        let content = &har["log"]["entries"][1]["response"]["content"];
+        assert_eq!((&content["encoding"], &content["size"]), (&json!("base64"), &json!(3)));
+    }
+
+    #[tokio::test]
     async fn har_entries_go_into_a_folder_named_by_the_comment() {
         let root = scratch_data_root();
         let ws = root.ws_id.to_string();

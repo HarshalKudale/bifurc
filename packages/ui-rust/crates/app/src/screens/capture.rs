@@ -40,7 +40,7 @@ use crate::{
         binary::{BinaryBody, save_to_file, suggested_file_name},
         page,
     },
-    engine::{call, call_in, describe, failure},
+    engine::{call, call_in, describe, failure, fetch_artifact},
     model::{
         git::date_time_utc,
         http::{pretty_json, status_text},
@@ -844,6 +844,32 @@ impl CaptureScreen {
             .collect()
     }
 
+    /// Saves the ticked exchanges, or every listed one when none are ticked, as a HAR file the request importer
+    /// reads back. The engine holds the bodies, so only the ids go out.
+    fn export_har(&mut self, cx: &mut Context<Self>) {
+        let ids: Vec<String> = if self.checked.is_empty() {
+            self.visible(cx).into_iter().rev().map(|entry| entry.id.clone()).collect()
+        } else {
+            self.checked_exchanges().into_iter().map(|(id, _)| id).collect()
+        };
+        let model = self.model.read(cx);
+        let client = model.client().clone();
+        let workspace = model.workspace_id().to_owned();
+        let payload = json!({ "ids": ids, "workspaceId": workspace });
+        call(&client.clone(), cx, "capture.shareJson", payload, move |this, outcome, cx| match outcome {
+            Ok(artifact) => fetch_artifact(this, &client, cx, &workspace, &artifact, |this, fetched, cx| match fetched {
+                Ok((bytes, name)) => save_to_file(bytes, name, cx, |this, outcome, cx| match outcome {
+                    Ok(path) => this.model.update(cx, |model, cx| {
+                        model.notice(t_with("capture.saved_to", &[("path", &path.display())]), cx)
+                    }),
+                    Err(message) => this.report(t("capture.error.save_file"), message, cx),
+                }),
+                Err(message) => this.report(t("capture.error.export"), message, cx),
+            }),
+            Err(error) => this.report(t("capture.error.export"), describe(&error), cx),
+        });
+    }
+
     /// Saves every ticked exchange as a request or a mock. One goes to the top level like a single save; several
     /// go into a new folder, which is asked for first.
     fn save_checked(&mut self, mock: bool, window: &mut Window, cx: &mut Context<Self>) {
@@ -1088,6 +1114,15 @@ impl CaptureScreen {
                         let ids = this.checked_exchanges().into_iter().map(|(id, _)| id).collect();
                         this.import_requests(ids, true, window, cx);
                     })),
+            )
+            .child(
+                Button::new("capture-export")
+                    .small()
+                    .outline()
+                    .label(t("capture.export"))
+                    .tooltip(t("capture.export_tooltip"))
+                    .disabled(self.entries.is_empty())
+                    .on_click(cx.listener(|this, _, _, cx| this.export_har(cx))),
             )
             .children((ticked > 0).then(|| {
                 h_flex()

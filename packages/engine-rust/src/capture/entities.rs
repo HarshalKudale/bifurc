@@ -98,6 +98,77 @@ pub fn captured_to_request(entry: &Value) -> Value {
     Value::Object(out)
 }
 
+fn har_headers(headers: Option<&Value>) -> Vec<Value> {
+    let pairs = headers.and_then(Value::as_object).into_iter().flatten();
+    pairs.map(|(name, value)| json!({ "name": name, "value": value.as_str().map_or_else(|| value.to_string(), str::to_string) })).collect()
+}
+
+/// Captured exchanges as a HAR 1.2 document. `request` carries what `requests-har` imports (method, URL,
+/// headers, `postData.text`); `response` and `timings` are for other tools. A binary request body has no HAR
+/// form, so its text is lossy; a binary response body is kept as base64 with `content.encoding`.
+pub fn captured_to_har(entries: &[Value]) -> Value {
+    let har_entries: Vec<Value> = entries
+        .iter()
+        .map(|entry| {
+            let url = entry.get("url").and_then(Value::as_str).unwrap_or("");
+            let query: Vec<Value> = url::Url::parse(url)
+                .map(|u| u.query_pairs().map(|(name, value)| json!({ "name": name, "value": value })).collect())
+                .unwrap_or_default();
+            let req_headers = entry.get("reqHeaders").filter(|v| !v.is_null());
+            let res_headers = entry.get("resHeaders").filter(|v| !v.is_null());
+            let req_body = entry.get("reqBody").and_then(Value::as_str).unwrap_or("");
+            let res_body = entry.get("resBody").and_then(Value::as_str).unwrap_or("");
+            let res_mime = header_of(res_headers, "content-type");
+            let mut request = json!({
+                "method": entry.get("method").and_then(Value::as_str).unwrap_or("GET"),
+                "url": url,
+                "httpVersion": "HTTP/1.1",
+                "cookies": [],
+                "headers": har_headers(req_headers),
+                "queryString": query,
+                "headersSize": -1,
+                "bodySize": if req_body.is_empty() { 0 } else { decode_base64_lenient(&without_whitespace(req_body)).len() as i64 },
+            });
+            if !req_body.is_empty() {
+                request["postData"] = json!({ "mimeType": header_of(req_headers, "content-type"), "text": b64_to_text(req_body) });
+            }
+            let utf8 = is_utf8_base64(res_body);
+            let mut content = json!({
+                "size": if res_body.is_empty() { 0 } else { decode_base64_lenient(&without_whitespace(res_body)).len() as i64 },
+                "mimeType": res_mime,
+                "text": if utf8 { b64_to_text(res_body) } else { res_body.to_string() },
+            });
+            if !utf8 {
+                content["encoding"] = json!("base64");
+            }
+            let duration = entry.get("durationMs").and_then(Value::as_i64).unwrap_or(0);
+            json!({
+                "startedDateTime": crate::runner::report_html::iso_string(entry.get("ts").and_then(Value::as_i64).unwrap_or(0)),
+                "time": duration,
+                "request": request,
+                "response": {
+                    "status": entry.get("resStatus").and_then(Value::as_u64).unwrap_or(0),
+                    "statusText": "",
+                    "httpVersion": "HTTP/1.1",
+                    "cookies": [],
+                    "headers": har_headers(res_headers),
+                    "content": content,
+                    "redirectURL": "",
+                    "headersSize": -1,
+                    "bodySize": -1,
+                },
+                "cache": {},
+                "timings": { "send": 0, "wait": duration, "receive": 0 },
+            })
+        })
+        .collect();
+    json!({ "log": {
+        "version": "1.2",
+        "creator": { "name": "Bifurc", "version": crate::ENGINE_VERSION },
+        "entries": har_entries,
+    } })
+}
+
 /// A captured exchange as a mock. The captured request headers are stored raw, hop-by-hop ones included, so
 /// the mock replays the capture byte for byte; the mock editor filters them for display.
 pub fn captured_to_mock(entry: &Value) -> Value {

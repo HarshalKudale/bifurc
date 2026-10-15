@@ -1,8 +1,9 @@
-//! `audit.export` and `capture.shareJson`: file-shaped results published inline or as a blob.
+//! `audit.export` and `capture.shareJson` (a HAR 1.2 file): file-shaped results published inline or as a blob.
 
 use serde_json::Value;
 
 use crate::{
+    capture::{captured_to_har, get_capture},
     kernel::CommandRegistry,
     utils::json::{array_of, opt_str, str_of},
     workspace::{
@@ -40,14 +41,17 @@ pub fn register(registry: &mut CommandRegistry) {
         publish_artifact(&content, &format!("audit-log.{format}"), mime, Some(&workspace_id))
     });
 
+    // The exchanges are named by id: the UI's list holds summaries, the engine holds the bodies.
     registry.register_sync("capture.shareJson", |params, _| {
-        let entries = Value::Array(array_of(&params, "entries").to_vec());
+        let ws_id = str_of(&params, "workspaceId");
+        let entries: Vec<Value> =
+            array_of(&params, "ids").iter().filter_map(Value::as_str).filter_map(|id| get_capture(ws_id, id)).collect();
         let name = match opt_str(&params, "suggestedName") {
             Some(name) if !name.is_empty() => name,
-            _ => "captured-requests.json",
+            _ => "captured-requests.har",
         };
         publish_artifact(
-            &serde_json::to_string_pretty(&entries)?,
+            &serde_json::to_string_pretty(&captured_to_har(&entries))?,
             name,
             "application/json",
             opt_str(&params, "workspaceId"),
@@ -116,19 +120,20 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn share_json_publishes_pretty_json_inline() {
+    async fn share_json_publishes_a_har_of_the_named_exchanges() {
         let _root = scratch_data_root();
+        crate::capture::record_capture(&json!({ "id": "e1", "workspaceId": "wsx", "ts": 0, "method": "GET", "url": "http://h/a?x=1" }));
         let mut registry = CommandRegistry::new();
         register(&mut registry);
         let registry = Arc::new(registry);
-        let out = registry
-            .invoke("capture.shareJson", json!({ "entries": [{ "a": 1 }], "suggestedName": "" }), ctx(&registry))
-            .await
-            .unwrap();
-        assert_eq!(out["suggestedName"], "captured-requests.json");
-        assert_eq!(out["mimeType"], "application/json");
+        let params = json!({ "ids": ["e1", "missing"], "workspaceId": "wsx", "suggestedName": "" });
+        let out = registry.invoke("capture.shareJson", params, ctx(&registry)).await.unwrap();
+        assert_eq!(out["suggestedName"], "captured-requests.har");
         let body = STANDARD.decode(out["inline"].as_str().unwrap()).unwrap();
-        assert_eq!(String::from_utf8(body).unwrap(), "[\n  {\n    \"a\": 1\n  }\n]");
+        let har: Value = serde_json::from_slice(&body).unwrap();
+        assert_eq!(har["log"]["version"], "1.2");
+        assert_eq!(har["log"]["entries"].as_array().unwrap().len(), 1);
+        assert_eq!(har["log"]["entries"][0]["request"]["queryString"][0]["name"], "x");
     }
 
     #[tokio::test]
