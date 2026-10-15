@@ -6,7 +6,6 @@
 //! block that thread for long (a user script) runs on the blocking pool.
 
 pub mod analytics;
-pub mod applications;
 pub mod capture;
 pub mod certificates;
 pub mod cookies;
