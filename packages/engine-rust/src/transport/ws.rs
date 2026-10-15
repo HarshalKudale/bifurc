@@ -278,6 +278,7 @@ mod tests {
             on_session_end: None,
             refuse_command: None,
             peer: None,
+            allowed_events: None,
         };
         (create_ws_server(0, opts).await.unwrap(), bus)
     }
