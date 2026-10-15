@@ -477,6 +477,28 @@ pub fn verbs() -> Vec<Verb> {
         .args(vec![operand("entry", "id", Take::Text, "The entry's id (see: capture list).")]),
         verb(&["capture", "remove"], "capture.remove", Effect::Deletes, "Remove captured entries.")
             .args(vec![operand("entry", "ids", Take::List, "The ids of the entries.")]),
+        verb(
+            &["capture", "secrets"],
+            "capture.inspectImport",
+            Effect::Reads,
+            "List the credentials and cookies that importing these entries would take out of the requests.",
+        )
+        .args(vec![operand("entry", "ids", Take::List, "The ids of the entries.")]),
+        verb(
+            &["capture", "import"],
+            "capture.import",
+            Effect::Adds,
+            "Save entries as requests, in a new folder when there are several, optionally chained into a flow.",
+        )
+        .details("Credentials go to the selected environment or an unsealed vault, cookies to the workspace's jar, when asked.")
+        .args(vec![
+            operand("entry", "ids", Take::List, "The ids of the entries."),
+            option("secrets", "secrets", Take::Choice(&["keep", "environment", "vault"]), "Where credentials go. Default: keep."),
+            option("vault", "vaultId", Take::Vault, "The unsealed vault, with --secrets vault."),
+            option("jar", "cookiesToJar", Take::Bool, "true: move cookies into the cookie jar."),
+            option("flow", "flow", Take::Bool, "true: also build a flow that sends them in the captured order."),
+            option("folder", "folderName", Take::Text, "The name of the new folder (and flow). Default: Captured."),
+        ]),
         verb(&["capture", "clear"], "capture.clear", Effect::Deletes, "Remove every captured entry of the workspace."),
         verb(&["capture", "pause"], "capture.setPaused", Effect::Changes, "Stop capturing traffic.")
             .fixed(r#"{"paused": true}"#),

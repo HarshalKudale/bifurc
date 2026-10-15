@@ -220,6 +220,38 @@
    "workspaceId": "ws1"
   }
  },
+ "capture.import": {
+  "valid": {
+   "workspaceId": "ws1",
+   "ids": [
+    "log-1"
+   ],
+   "secrets": "vault",
+   "vaultId": "v1",
+   "cookiesToJar": false,
+   "flow": true,
+   "folderName": "x"
+  },
+  "invalid": {
+   "workspaceId": "ws1",
+   "ids": [
+    "log-1"
+   ],
+   "flow": "yes"
+  }
+ },
+ "capture.inspectImport": {
+  "valid": {
+   "workspaceId": "ws1",
+   "ids": [
+    "log-1"
+   ]
+  },
+  "invalid": {
+   "workspaceId": "ws1",
+   "ids": []
+  }
+ },
  "capture.list": {
   "valid": {
    "workspaceId": "ws1"
