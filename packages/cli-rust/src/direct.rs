@@ -444,8 +444,6 @@ pub fn verbs() -> Vec<Verb> {
             Take::Text,
             FOLDER,
         )]),
-        verb(&["runner", "history"], "runner.getHistory", Effect::Reads, "List the saved reports of a folder's runs.")
-            .args(vec![operand("folder", "folderId", Take::Text, FOLDER)]),
         verb(
             &["runner", "config"],
             "runner.loadConfig",

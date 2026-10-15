@@ -974,15 +974,6 @@
    "format": "pdf"
   }
  },
- "runner.getHistory": {
-  "valid": {
-   "workspaceId": "ws1",
-   "folderId": "f1"
-  },
-  "invalid": {
-   "workspaceId": "ws1"
-  }
- },
  "runner.listFolderIds": {
   "valid": {
    "workspaceId": "ws1"
@@ -1011,19 +1002,6 @@
    "workspaceId": "ws1",
    "folderId": "f1",
    "config": 42
-  }
- },
- "runner.saveReport": {
-  "valid": {
-   "workspaceId": "ws1",
-   "report": {
-    "folderId": "f1",
-    "startedAt": 1
-   }
-  },
-  "invalid": {
-   "workspaceId": "ws1",
-   "report": {}
   }
  },
  "runner.start": {

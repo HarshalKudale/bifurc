@@ -1,4 +1,4 @@
-//! The HTML a collection run report is rendered to, for `runner.saveReport` and `runner.exportReport`.
+//! The HTML a collection run report is rendered to, for `runner.exportReport`.
 
 use serde_json::Value;
 use time::OffsetDateTime;
