@@ -247,5 +247,15 @@
   "schema.kind_enum": "enum",
   "schema.kind_input": "input",
   "schema.kind_union": "union",
-  "schema.kind_scalar": "scalar"
+  "schema.kind_scalar": "scalar",
+  "wsdl.tab": "WSDL",
+  "wsdl.fetch": "Fetch WSDL",
+  "wsdl.refresh": "Refresh WSDL",
+  "wsdl.url_placeholder": "Defaults to the endpoint URL plus ?wsdl",
+  "wsdl.empty_title": "No WSDL yet",
+  "wsdl.empty_description": "Fetch the WSDL to list the service's operations. Choosing one fills in the SOAPAction and an envelope.",
+  "wsdl.none_title": "No operations found",
+  "wsdl.none_description": "The WSDL has no SOAP operations.",
+  "wsdl.soap_version": "SOAP {version}",
+  "wsdl.fetch_failed_title": "Could not fetch the WSDL"
 }
