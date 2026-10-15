@@ -24,7 +24,7 @@
   "account.paused": "Sync is paused until @{login} signs in again.",
   "account.sign_in": "Sign in…",
   "owner.title": "Owner",
-  "owner.team_description": "The account that owns the workspace's repository. Whoever it gives the workspace to in the Bifurc Console can import it, and sync it if they were given write access.",
+  "owner.team_description": "The account that owns the workspace's repository. Anyone who was given access to that repository on GitHub can import it, and sync it if they were given write access.",
   "owner.description": "The account that owns the workspace's repository. Only the owner can import it or sync it.",
   "access.title": "Access",
   "access.read_only": "Read-only",

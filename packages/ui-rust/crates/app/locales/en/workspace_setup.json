@@ -16,7 +16,7 @@
   "login.waiting": "Waiting for GitHub",
 
   "account.heading": "GitHub account",
-  "account.help_team": "The workspace syncs as this account, with the access the account was given. Someone else's workspace has to be given to this account in the Bifurc Console before it can be imported.",
+  "account.help_team": "The workspace syncs as this account, with the access the account was given. A workspace shared with this account on GitHub, as an owner or collaborator, can be imported.",
   "account.help_owner": "The workspace syncs as this account. Only the account that owns a workspace can use it.",
   "account.help_optional": "Optional. Only needed to sync this workspace with a remote repository; it can be added later.",
   "account.not_set_up": "GitHub sign-in is not set up in this build, so workspaces stay on this computer.",
