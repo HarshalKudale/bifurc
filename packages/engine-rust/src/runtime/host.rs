@@ -22,7 +22,7 @@ use crate::{
     transport::{
         companions::CompanionRegistry,
         event_log::EventLog,
-        scopes::companion_scopes,
+        scopes::{COMPANION_EVENTS, companion_refusal, companion_scopes},
         session::SessionOptions,
         socket::{SocketServer, create_socket_server},
         stdio::run_stdio_server,
@@ -352,6 +352,7 @@ impl WorkspaceHost {
                 Some(refusal)
             })),
             peer: None,
+            allowed_events: None,
         };
 
         let mut companion_port = None;
@@ -360,8 +361,12 @@ impl WorkspaceHost {
             HostTransport::Socket { path } => {
                 // A browser extension can only speak WebSocket, so the companion endpoint is served beside the
                 // socket. The engine is whole without it, so one that cannot be served is only reported.
-                let companion_session =
-                    SessionOptions { scopes_for: Some(Arc::new(|_: &Value| companion_scopes())), ..session.clone() };
+                let companion_session = SessionOptions {
+                    scopes_for: Some(Arc::new(|_: &Value| companion_scopes())),
+                    refuse_command: Some(Arc::new(|_, action| companion_refusal(action))),
+                    allowed_events: Some(COMPANION_EVENTS),
+                    ..session.clone()
+                };
                 let base = settings.companion_port();
                 match find_free_port_from(base, &[edge_port, forward_port]).await {
                     Some(port) => match create_ws_server(port, companion_session).await {

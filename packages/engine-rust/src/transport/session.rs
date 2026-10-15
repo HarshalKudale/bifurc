@@ -56,6 +56,8 @@ pub struct SessionOptions {
     /// Asked before a command of an identified session runs: the error to refuse it with, if it is refused.
     pub refuse_command: Option<CommandGate>,
     pub peer: Option<String>,
+    /// The wire names a session may subscribe to; `None` is every event.
+    pub allowed_events: Option<&'static [&'static str]>,
 }
 
 /// Given the session and the command's name, why the command is refused, if it is.
@@ -321,6 +323,11 @@ impl Session {
         if let Some(unknown) = events.iter().find(|wire| !protocol::is_wire_event(wire)) {
             return Err(unsupported_event(unknown));
         }
+        if let Some(denied) =
+            self.inner.opts.allowed_events.and_then(|ok| events.iter().find(|w| !ok.contains(&w.as_str())))
+        {
+            return Err(EngineError::new(ErrorCode::Forbidden, format!("this endpoint cannot deliver \"{denied}\"")));
+        }
         let mut state = self.inner.state.lock();
         if state.identity.is_none() {
             return Err(EngineError::new(
@@ -423,6 +430,7 @@ mod tests {
                     .then(|| EngineError::new(ErrorCode::Forbidden, format!("not for {:?}", identity.client_name)))
             })),
             peer: None,
+            allowed_events: None,
         };
         (Session::new(opts, tx), rx, bus)
     }
@@ -438,6 +446,50 @@ mod tests {
         assert_eq!(reply["error"]["message"], "not for Some(\"cli\")");
         session.handle_frame(json!({ "id": "2", "action": "proxy.status", "payload": {} }));
         assert_eq!(frame(&mut rx).await["ok"], true);
+    }
+
+    #[tokio::test]
+    async fn a_companion_session_gets_status_and_the_extensions_events_only() {
+        use crate::transport::scopes::{COMPANION_EVENTS, companion_refusal, companion_scopes};
+        let bus: &'static EngineEventBus = Box::leak(Box::new(EngineEventBus::new()));
+        let mut registry = CommandRegistry::new();
+        for name in ["server.status", "capture.get", "env.getMerged", "entity.list"] {
+            registry.register_sync(name, |_, _| Ok(json!({})));
+        }
+        let (tx, mut rx) = unbounded_channel();
+        let session = Session::new(
+            SessionOptions {
+                registry: Arc::new(registry),
+                log: EventLog::new(bus),
+                engine_version: "0.0.0".into(),
+                host_domain: None,
+                capabilities: vec![],
+                scopes_for: Some(Arc::new(|_| companion_scopes())),
+                on_auth_failure: None,
+                on_session_start: None,
+                on_session_end: None,
+                refuse_command: Some(Arc::new(|_, action| companion_refusal(action))),
+                peer: None,
+                allowed_events: Some(COMPANION_EVENTS),
+            },
+            tx,
+        );
+        session.handle_frame(hello());
+        frame(&mut rx).await;
+        let mut ask = async |action: &str, payload: Value| {
+            session.handle_frame(json!({ "id": "x", "action": action, "payload": payload }));
+            frame(&mut rx).await
+        };
+        assert_eq!(ask("server.status", json!({})).await["ok"], true);
+        for action in ["capture.get", "env.getMerged", "entity.list"] {
+            let reply = ask(action, json!({})).await;
+            assert_eq!(reply["error"]["code"], "FORBIDDEN", "{action}");
+            assert_eq!(reply["error"]["message"], "the companion endpoint only serves status");
+        }
+        let events = json!({ "events": ["event.settings.changed", "event.server.error", "event.engine.stopping"] });
+        assert_eq!(ask("subscribe", events).await["ok"], true);
+        let reply = ask("subscribe", json!({ "events": ["event.ws.status"] })).await;
+        assert_eq!(reply["error"]["code"], "FORBIDDEN");
     }
 
     fn hello() -> Value {
