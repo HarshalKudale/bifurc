@@ -621,6 +621,7 @@ dependencies = [
  "bifurc-engine-client",
  "futures",
  "gpui-kit",
+ "lsp-types",
  "serde",
  "serde_json",
  "winresource",
