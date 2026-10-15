@@ -261,6 +261,10 @@ pub fn describe(action: &str, params: &Value) -> Option<Event> {
         }
         "capture.buildMock" => event("mock built from capture", json!({})),
         "capture.buildRequest" => event("request built from capture", json!({})),
+        "capture.import" => event(
+            "requests imported from capture",
+            json!({ "secrets": label(opt_str(params, "secrets").unwrap_or("keep")), "cookiesToJar": truthy(params, "cookiesToJar"), "flow": truthy(params, "flow") }),
+        ),
         "curl.buildMock" => event("mock built from curl", json!({})),
         "curl.buildRequest" => event("request built from curl", json!({})),
 

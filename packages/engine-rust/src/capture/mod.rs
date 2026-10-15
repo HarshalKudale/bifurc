@@ -1,6 +1,7 @@
 //! The engine's captured-traffic history (`capture.*`) and the capture to mock/request builders.
 
 pub mod entities;
+mod import;
 pub mod store;
 
 use serde_json::{Value, json};
@@ -21,6 +22,8 @@ pub use store::{
 };
 
 pub fn register(registry: &mut CommandRegistry) {
+    import::register(registry);
+
     registry.register_sync("capture.list", |params, _| {
         let ws_id = str_of(&params, "workspaceId");
         let entries = list_capture(ws_id);
