@@ -135,6 +135,8 @@ const SCOPE_BY_COMMAND: &[(&str, Scope)] = &[
     ("capture.clear", Scope::Write),
     ("capture.remove", Scope::Write),
     ("request.send", Scope::Execute),
+    ("response.history", Scope::Read),
+    ("response.clearHistory", Scope::Write),
     ("graphql.send", Scope::Execute),
     ("soap.send", Scope::Execute),
     ("grpc.send", Scope::Execute),

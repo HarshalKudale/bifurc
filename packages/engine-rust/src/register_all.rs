@@ -12,6 +12,7 @@ pub fn register_all_engine_commands(registry: &mut CommandRegistry) {
     crate::certificates::register(registry);
     crate::proxy::register(registry);
     crate::workspace::entities::register(registry);
+    crate::workspace::response_history::register(registry);
     crate::rest::register(registry);
     crate::scripting::register(registry);
     crate::services::register(registry);

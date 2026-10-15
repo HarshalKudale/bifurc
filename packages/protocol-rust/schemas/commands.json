@@ -3166,6 +3166,9 @@
         }
        },
        "additionalProperties": false
+      },
+      "entityId": {
+       "type": "string"
       }
      },
      "required": [
@@ -3250,6 +3253,9 @@
         "operationName"
        ],
        "additionalProperties": false
+      },
+      "entityId": {
+       "type": "string"
       }
      },
      "required": [
@@ -3329,6 +3335,9 @@
         "body"
        ],
        "additionalProperties": false
+      },
+      "entityId": {
+       "type": "string"
       }
      },
      "required": [
@@ -3407,6 +3416,9 @@
         "useReflection"
        ],
        "additionalProperties": false
+      },
+      "entityId": {
+       "type": "string"
       }
      },
      "required": [
@@ -3783,6 +3795,38 @@
     "workspaceId",
     "clearOnRestart"
    ]
+  },
+  "response.history": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "id": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "workspaceId",
+    "id"
+   ],
+   "additionalProperties": false
+  },
+  "response.clearHistory": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "id": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "workspaceId",
+    "id"
+   ],
+   "additionalProperties": false
   }
  }
 }
