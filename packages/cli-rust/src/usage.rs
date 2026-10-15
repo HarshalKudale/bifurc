@@ -27,7 +27,7 @@ Groups (bifurc <group> --help shows the arguments and options of each verb)
                                                                       REST, GraphQL, gRPC, SOAP, WebSocket, SSE, Socket.IO, MCP
   folders       list | create | rename | move | delete | confirm | restore
                                                                       Folders of the request, mock, flow and rule trees
-  runner        run | status | cancel | history | config | configure  Send every request of a folder
+  runner        run | status | cancel | config | configure             Send every request of a folder
   flows         list | show | create | update | validate | run | loadtest | loadstatus | loadcancel | status | cancel | duplicate | delete
                                                                       Saved chains of requests
   health        list | show | create | update | run | delete          Health checks
