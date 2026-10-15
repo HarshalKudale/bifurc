@@ -111,6 +111,7 @@ const SCOPE_BY_COMMAND: &[(&str, Scope)] = &[
     ("blob.release", Scope::Write),
     ("script.execute", Scope::Execute),
     ("request.replay", Scope::Execute),
+    ("request.cancel", Scope::Execute),
     ("request.parseCurl", Scope::Read),
     ("curl.buildRequest", Scope::Read),
     ("curl.buildMock", Scope::Read),

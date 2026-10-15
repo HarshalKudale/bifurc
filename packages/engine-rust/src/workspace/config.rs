@@ -411,6 +411,7 @@ fn settings_snapshot(settings: &super::settings::AppSettings, active_ws_id: &str
         "updateCheckEnabled": settings.update_check_enabled(),
         "tlsCaCertPath": settings.tls_ca_cert_path(),
         "tlsCaKeyPath": settings.tls_ca_key_path(),
+        "requestDefaults": raw.get("requestDefaults").filter(|v| v.is_object()).cloned().unwrap_or_else(|| json!({})),
         "workspaces": workspaces,
         "activeWorkspaceId": active_ws_id,
         "activeEnvironmentId": null,
