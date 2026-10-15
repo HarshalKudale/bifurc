@@ -262,7 +262,6 @@ pub async fn start_run(ctx: &CommandContext, ws_id: &str, folder_id: &str) -> Re
                     snapshot["completedAt"] = report["completedAt"].clone();
                     snapshot["report"] = report.clone();
                 }
-                let _ = super::save_report(&json!({ "workspaceId": ws_id, "report": report }));
                 bus().emit("runner.finished", json!({ "workspaceId": ws_id, "folderId": folder_id, "report": report }));
             }
             Err(error) => {

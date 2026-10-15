@@ -238,9 +238,9 @@ mod tests {
     #[test]
     fn declared_keys_come_back_in_schema_order() {
         let report = json!({ "folderId": "f", "totalRequests": 1, "completedAt": 3, "startedAt": 2, "folderName": "n" });
-        let out = validate("runner.saveReport", &json!({ "report": report, "workspaceId": "w" })).unwrap();
+        let out = validate("runner.exportReport", &json!({ "workspaceId": "w", "format": "html", "report": report })).unwrap();
         let keys = |value: &Value| value.as_object().unwrap().keys().cloned().collect::<Vec<_>>();
-        assert_eq!(keys(&out), ["workspaceId", "report"]);
+        assert_eq!(keys(&out), ["report", "format", "workspaceId"]);
         assert_eq!(keys(&out["report"]), ["folderId", "folderName", "startedAt", "completedAt", "totalRequests"]);
     }
 

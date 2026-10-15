@@ -26,8 +26,8 @@ use serde_json::{Map, Value, json};
 
 use crate::{
     app_model::{AppModel, ModelEvent},
-    components::page,
-    engine::{call, describe, failure},
+    components::{binary::save_to_file, page},
+    engine::{call, describe, failure, fetch_artifact},
     i18n::{t, t_with},
     model::{NodeRef, RequestKind, config::RequestStub},
 };
@@ -190,6 +190,8 @@ pub struct FolderRunner {
     order: Vec<String>,
     running: bool,
     cancelling: bool,
+    /// The report of the last finished run, which is what "Export report" saves.
+    report: Option<Value>,
     /// How many requests the run in progress, or the last one, set out to send.
     total: usize,
     completed: usize,
@@ -220,6 +222,7 @@ impl FolderRunner {
                 ModelEvent::RunnerFinished(payload) if this.is_about(payload, cx) => {
                     if let Some(report) = payload.get("report") {
                         this.take_results(report.get("results"));
+                        this.report = Some(report.clone());
                     }
                     this.set_running(false, cx);
                 }
@@ -235,6 +238,7 @@ impl FolderRunner {
             order: Vec::new(),
             running: false,
             cancelling: false,
+            report: None,
             total: 0,
             completed: 0,
             results: HashMap::new(),
@@ -313,6 +317,7 @@ impl FolderRunner {
             }
             this.total = run.get("total").and_then(Value::as_u64).unwrap_or(0) as usize;
             this.take_results(run.get("results"));
+            this.report = run.get("report").filter(|report| !report.is_null()).cloned();
             this.set_running(run.get("running").and_then(Value::as_bool).unwrap_or(false), cx);
         });
     }
@@ -363,6 +368,7 @@ impl FolderRunner {
             return;
         }
         self.results.clear();
+        self.report = None;
         self.expanded.clear();
         self.completed = 0;
         self.total = self.rows(cx).len();
@@ -387,6 +393,25 @@ impl FolderRunner {
                 this.set_running(false, cx);
                 this.report(t_with("requests.runner.errors.start", &[("message", &message)]), cx);
             }
+        });
+    }
+
+    /// Renders the last run's report as HTML in the engine, then asks where to save it.
+    fn export_report(&mut self, cx: &mut Context<Self>) {
+        let Some(report) = self.report.clone() else { return };
+        let model = self.model.read(cx);
+        let client = model.client().clone();
+        let workspace = model.workspace_id().to_owned();
+        let payload = json!({ "report": report, "format": "html", "workspaceId": workspace });
+        call(&client.clone(), cx, "runner.exportReport", payload, move |this, outcome, cx| match outcome {
+            Ok(artifact) => fetch_artifact(this, &client, cx, &workspace, &artifact, |this, fetched, cx| match fetched {
+                Ok((bytes, name)) => save_to_file(bytes, name, cx, |this, outcome, cx| match outcome {
+                    Ok(path) => this.report(t_with("requests.runner.exported", &[("path", &path.display())]), cx),
+                    Err(message) => this.report(t_with("requests.runner.errors.save_report", &[("message", &message)]), cx),
+                }),
+                Err(message) => this.report(t_with("requests.runner.errors.export", &[("message", &message)]), cx),
+            }),
+            Err(error) => this.report(t_with("requests.runner.errors.export", &[("message", &describe(&error))]), cx),
         });
     }
 
@@ -915,7 +940,13 @@ impl Render for FolderRunner {
                 .child(rows)
                 .into_any_element()
         };
-        page::screen(page::header(self.title(cx), self.summary(rows.len()), action, cx), body, cx)
+        let export = (!self.running && self.report.is_some()).then(|| {
+            Button::new("export-report")
+                .label(t("requests.runner.export"))
+                .on_click(cx.listener(|this, _, _, cx| this.export_report(cx)))
+        });
+        let actions = h_flex().gap_2().children(export).child(action);
+        page::screen(page::header(self.title(cx), self.summary(rows.len()), actions, cx), body, cx)
             .text_color(theme.foreground)
     }
 }
