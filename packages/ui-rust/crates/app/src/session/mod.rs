@@ -184,6 +184,24 @@ impl Session {
         }
     }
 
+    /// Puts the cursor in the address (or target) field with its text selected.
+    pub fn focus_url(&self, window: &mut Window, cx: &mut App) {
+        let editor = match self {
+            Session::Rest(s) => Some(s.read(cx).url_editor()),
+            Session::WebSocket(s) => Some(s.read(cx).url_editor()),
+            Session::Sse(s) => Some(s.read(cx).url_editor()),
+            Session::SocketIo(s) => Some(s.read(cx).url_editor()),
+            Session::Mcp(s) => Some(s.read(cx).url_editor()),
+            Session::Protocol(s) => s.read(cx).url_editor(),
+        };
+        if let Some(state) = editor.map(|editor| editor.state().clone()) {
+            state.update(cx, |state, cx| {
+                state.focus(window, cx);
+                state.select_all(window, cx);
+            });
+        }
+    }
+
     /// The folder the request is in, or will be created in.
     pub fn folder_id(&self, cx: &App) -> Option<String> {
         match self {

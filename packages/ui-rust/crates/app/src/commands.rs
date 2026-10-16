@@ -46,6 +46,10 @@ actions!(
         RevertRequest,
         SyncEntity,
         DeleteEntity,
+        DuplicateEntity,
+        RenameEntity,
+        FocusUrl,
+        DuplicateNode,
         RunRequest,
         CancelRequest,
         CloseRequestTab,
@@ -111,6 +115,11 @@ fn keys() -> Vec<KeyBinding> {
         KeyBinding::new("secondary-shift-n", NewWebSocketRequest, IN_SHELL),
         KeyBinding::new("secondary-shift-m", NewMock, IN_SHELL),
         KeyBinding::new("secondary-s", SaveRequest, IN_SHELL),
+        KeyBinding::new("secondary-d", DuplicateEntity, IN_SHELL),
+        // The flow canvas takes Ctrl+D for its selected node: its context is deeper than the shell's, so it wins.
+        KeyBinding::new("secondary-d", DuplicateNode, Some("Shell > FlowCanvas")),
+        KeyBinding::new("f2", RenameEntity, IN_SHELL),
+        KeyBinding::new("secondary-l", FocusUrl, IN_SHELL),
         KeyBinding::new("secondary-enter", RunRequest, IN_SHELL),
         // A text field binds Ctrl+Enter itself (a newline in a body, a submit in a line), and a deeper context
         // outranks `Shell`. This one sits at the field's own depth and comes later, so Send still wins there.
@@ -204,6 +213,9 @@ pub fn register_actions(cx: &mut App) {
     on_shell::<RevertRequest>(cx, |shell, window, cx| shell.act_on_active(EntityAction::Revert, window, cx));
     on_shell::<SyncEntity>(cx, |shell, window, cx| shell.act_on_active(EntityAction::Sync, window, cx));
     on_shell::<DeleteEntity>(cx, |shell, window, cx| shell.act_on_active(EntityAction::Delete, window, cx));
+    on_shell::<DuplicateEntity>(cx, |shell, window, cx| shell.duplicate_active(window, cx));
+    on_shell::<RenameEntity>(cx, |shell, window, cx| shell.rename_active(window, cx));
+    on_shell::<FocusUrl>(cx, |shell, window, cx| shell.focus_url(window, cx));
     on_shell::<CloseRequestTab>(cx, |shell, window, cx| shell.act_on_active(EntityAction::Close, window, cx));
     on_shell::<ReopenClosedTab>(cx, |shell, window, cx| shell.reopen_closed_tab(window, cx));
     on_shell::<NextTab>(cx, |shell, window, cx| shell.step_tab(1, false, window, cx));
@@ -293,6 +305,27 @@ mod tests {
         assert!(first_for("ctrl-enter", &dialog).unwrap().as_any().is::<InputEnter>());
         // Palette and finder stay reachable from anywhere.
         assert!(first_for("ctrl-k", &dialog).unwrap().as_any().is::<OpenCommandPalette>());
+    }
+
+    #[test]
+    fn duplicate_rename_and_focus_url_belong_to_the_shell() {
+        let field = ["Root", "Shell", "RestEditor", "Input"];
+        assert!(first_for("ctrl-d", &field).unwrap().as_any().is::<DuplicateEntity>());
+        assert!(first_for("f2", &field).unwrap().as_any().is::<RenameEntity>());
+        assert!(first_for("ctrl-l", &field).unwrap().as_any().is::<FocusUrl>());
+        let dialog = ["Root", "Dialog", "Input"];
+        for keys in ["ctrl-d", "f2", "ctrl-l"] {
+            assert!(first_for(keys, &dialog).is_none(), "{keys}");
+        }
+    }
+
+    #[test]
+    fn ctrl_d_on_the_flow_canvas_duplicates_the_node() {
+        let canvas = ["Root", "Shell", "FlowCanvas"];
+        assert!(first_for("ctrl-d", &canvas).unwrap().as_any().is::<DuplicateNode>());
+        // A field inside a node is in the canvas too.
+        assert!(first_for("ctrl-d", &["Root", "Shell", "FlowCanvas", "Input"]).unwrap().as_any().is::<DuplicateNode>());
+        assert!(first_for("ctrl-d", &["Root", "Shell", "FlowEditor"]).unwrap().as_any().is::<DuplicateEntity>());
     }
 
     #[test]

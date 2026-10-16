@@ -567,6 +567,14 @@ impl ProtocolSession {
         &self.name
     }
 
+    /// The target field, the first one, for the key that jumps to it.
+    pub fn url_editor(&self) -> Option<&VarEditor> {
+        match self.controls.first() {
+            Some(Control::Text(editor)) => Some(editor),
+            _ => None,
+        }
+    }
+
     pub fn is_saving(&self) -> bool {
         self.saving
     }

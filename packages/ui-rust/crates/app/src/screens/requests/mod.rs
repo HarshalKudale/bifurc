@@ -701,6 +701,41 @@ impl RequestsScreen {
         }
     }
 
+    /// Copies the saved request in front, as its tab's menu and the tree's do. Not a draft, a deleted one or one
+    /// a newer Bifurc saved.
+    pub fn duplicate_active(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(session) = self.active_session().cloned() else { return };
+        let Some(id) = session.saved_id(cx) else { return };
+        let node = NodeRef::Request { kind: session.kind(cx), id };
+        if is_deleted(self.model.read(cx), &node) || locked_to(self.model.read(cx), &node).is_some() {
+            return;
+        }
+        self.duplicate(node, window, cx);
+    }
+
+    /// Renames the request in front where its name is shown. The tree's prompt refuses an open request, as the
+    /// open one is renamed in its own field.
+    pub fn rename_active(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(session) = self.active_session().cloned() else { return };
+        if let Some(id) = session.saved_id(cx) {
+            let node = NodeRef::Request { kind: session.kind(cx), id };
+            if is_deleted(self.model.read(cx), &node) || locked_to(self.model.read(cx), &node).is_some() {
+                return;
+            }
+        }
+        session.name_input(cx).update(cx, |name, cx| {
+            name.focus(window, cx);
+            name.select_all(window, cx);
+        });
+    }
+
+    /// Puts the cursor in the address of the request in front, with its text selected.
+    pub fn focus_url(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(session) = self.active_session().cloned() {
+            session.focus_url(window, cx);
+        }
+    }
+
     /// A saved request that is gone from the workspace (deleted here, elsewhere, or with its folder) has
     /// nothing left to show, and nothing an edit could be written to. The same goes for the runner of a
     /// folder that is gone.
