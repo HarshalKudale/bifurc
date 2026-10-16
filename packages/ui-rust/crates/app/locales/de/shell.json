@@ -109,6 +109,7 @@
   "palette.revert_item": "Auf die zuletzt synchronisierte Version zurücksetzen…",
   "palette.delete_item": "Dieses Element löschen…",
   "palette.close_tab": "Tab schließen",
+  "palette.reopen_tab": "Geschlossenen Tab wieder öffnen",
   "palette.new_environment": "Neue Umgebung…",
   "palette.add_workspace": "Arbeitsbereich hinzufügen…",
   "palette.rename_workspace": "Diesen Arbeitsbereich umbenennen…",

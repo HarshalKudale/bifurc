@@ -109,6 +109,7 @@
   "palette.revert_item": "最後に同期したバージョンに戻す…",
   "palette.delete_item": "この項目を削除…",
   "palette.close_tab": "タブを閉じる",
+  "palette.reopen_tab": "閉じたタブを再度開く",
   "palette.new_environment": "新しい環境…",
   "palette.add_workspace": "ワークスペースを追加…",
   "palette.rename_workspace": "このワークスペースの名前を変更…",
