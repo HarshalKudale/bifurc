@@ -10,7 +10,7 @@ members = [
     "crates/engine-client",
     "crates/app",
     "crates/tray",
-    "crates/launcher",
+    "crates/bifurc",
     "xtask",
 ]
 # What a plain `cargo build` / `cargo test` at the root covers: everything but the GPUI app, whose build needs a
@@ -21,6 +21,7 @@ default-members = [
     "crates/engine",
     "crates/cli",
     "crates/mcp",
+    "crates/bifurc",
     "xtask",
 ]
 
@@ -46,6 +47,8 @@ codegen-units = 1
 [profile.release.package.bifurc-cli]
 codegen-units = 1
 [profile.release.package.bifurc-mcp]
+codegen-units = 1
+[profile.release.package.bifurc]
 codegen-units = 1
 
 # Argon2 is the one slow thing a vault does; unoptimised it takes seconds per key in debug builds and tests.

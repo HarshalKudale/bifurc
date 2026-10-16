@@ -1,5 +1,5 @@
 //! End to end against a real `bifurc-engine` on a temporary data directory. Ignored by default because it
-//! needs the engine built: `cargo build -p bifurc-engine -p bifurc-cli && cargo test -p bifurc-cli -- --ignored`.
+//! needs the engine built: `cargo build -p bifurc-engine -p bifurc && cargo test -p bifurc -- --ignored`.
 
 use std::{
     io::{Read, Write},

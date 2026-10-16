@@ -10,10 +10,6 @@ description = "The Bifurc command line: a client of a Bifurc engine over its soc
 name = "bifurc_cli"
 path = "src/lib.rs"
 
-[[bin]]
-name = "bifurc"
-path = "src/main.rs"
-
 [dependencies]
 bifurc-protocol = { path = "../protocol" }
 bifurc-client = { path = "../client" }
