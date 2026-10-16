@@ -22,8 +22,8 @@ use gpui_kit::component::{
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    AppContext as _, Context, Entity, InteractiveElement as _, IntoElement, ParentElement as _, Render, SharedString,
-    StatefulInteractiveElement as _, Styled as _, Subscription, Window, div,
+    AppContext as _, Context, Entity, IntoElement, ParentElement as _, Render, SharedString,
+    Styled as _, Subscription, Window, div,
 };
 use serde_json::{Map, Value, json};
 
@@ -32,7 +32,7 @@ use crate::{
     components::{
         Autosave, EntityAction, EntityBar, Syntax, VarEditor,
         dialogs::{confirm_danger, delete_consequence, needs_update, resolve_deleted},
-        entity_bar, page,
+        entity_bar, master_detail::{list_rows, master_detail}, page,
     },
     engine::{call, call_in, describe, failure},
     i18n::{t, t_with},
@@ -659,17 +659,7 @@ impl ProxyRulesScreen {
                 )
                 .on_click(move |_, window, cx| needs_update(name.clone(), version.clone(), window, cx))
         });
-        v_flex()
-            .id("rule-list")
-            .w_72()
-            .flex_none()
-            .h_full()
-            .overflow_y_scroll()
-            .border_r_1()
-            .border_color(theme.border)
-            .bg(theme.sidebar)
-            .p_2()
-            .gap_1()
+        list_rows("rule-list")
             .children(rows)
             .children(deleted_rows)
             .children(locked_rows)
@@ -853,11 +843,9 @@ impl Render for ProxyRulesScreen {
                 || !self.deleted_rules(cx).is_empty()
                 || !self.locked_rules(cx).is_empty()
                 || self.selection == Selection::Draft;
-        let body = h_flex()
-            .size_full()
-            .items_stretch()
-            .when(has_list, |this| this.child(self.render_list(cx)))
-            .child(div().flex_1().min_w_0().child(self.render_detail(cx)));
+        let list = has_list.then(|| self.render_list(cx).into_any_element());
+        let detail = self.render_detail(cx);
+        let body = master_detail(list, detail, cx);
         page::screen(header, body, cx)
     }
 }

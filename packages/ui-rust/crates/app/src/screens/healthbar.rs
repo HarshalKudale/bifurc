@@ -16,14 +16,13 @@ use gpui_kit::component::{
     input::{Editor, EditorState},
     list::ListItem,
     menu::{DropdownMenu as _, PopupMenuItem},
-    resizable::{resizable_panel, v_resizable},
     switch::Switch,
     tag::Tag,
     v_flex,
 };
 use gpui_kit::{
     AppContext as _, Context, Entity, InteractiveElement as _, IntoElement, ParentElement as _, Render,
-    StatefulInteractiveElement as _, Styled as _, Subscription, Task, Window, div, px,
+    StatefulInteractiveElement as _, Styled as _, Subscription, Task, Window, div,
 };
 use serde_json::{Map, Value, json};
 
@@ -33,7 +32,7 @@ use crate::{
     components::{
         Syntax,
         dialogs::{PromptField, confirm_danger, prompt},
-        page,
+        master_detail::list_over_detail, page,
     },
     engine::{call_in, describe, failure},
     model::{http::pretty_json, traffic::clock_utc},
@@ -597,11 +596,7 @@ impl Render for HealthBarScreen {
             return page::screen(header, empty, cx);
         }
         let detail = self.selected.clone().map(|id| self.render_detail(&id, cx));
-        let has_detail = detail.is_some();
-        // The split's size is a physical starting point the user resizes, not part of the rem scale.
-        let body = v_resizable("health-split").child(resizable_panel().child(self.render_list(cx))).child(
-            resizable_panel().visible(has_detail).size(px(320.)).size_range(px(160.)..px(900.)).children(detail),
-        );
+        let body = list_over_detail("health-split", self.render_list(cx), detail);
         page::screen(header, body, cx)
     }
 }

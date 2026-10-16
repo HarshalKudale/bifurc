@@ -37,7 +37,7 @@ use crate::{
         dialogs::{
             FOLDER_DELETE_CONSEQUENCE, PromptField, confirm_danger, delete_consequence, needs_update, prompt, resolve_deleted,
         },
-        entity_bar, page,
+        entity_bar, master_detail::master_detail, page,
     },
     engine::{call, call_in, failure, patch_entity},
     i18n::{t, t_with},
@@ -985,12 +985,7 @@ impl FlowsScreen {
 
 impl Render for FlowsScreen {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.theme().clone();
-        h_flex()
-            .size_full()
-            .items_stretch()
-            .bg(theme.background)
-            .child(div().w_64().flex_none().h_full().border_r_1().border_color(theme.border).child(self.tree.clone()))
-            .child(div().flex_1().min_w_0().child(self.render_detail(cx)))
+        let detail = self.render_detail(cx);
+        master_detail(Some(self.tree.clone()), detail, cx)
     }
 }
