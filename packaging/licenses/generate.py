@@ -3,13 +3,13 @@
 
     python packaging/licenses/generate.py
 
-It reads `cargo metadata` for the workspace (the engine and the desktop app in `packages/ui-rust`), follows normal
+It reads `cargo metadata` for the workspace (the engine and the desktop app in `crates/app`), follows normal
 dependencies only (build tools and test crates are not shipped), and for each crate takes its LICENSE/COPYING/
 NOTICE files from the cargo registry. A crate that publishes no license file gets the standard text of its
 license, with its authors as the copyright holder. Texts are grouped by license and de-duplicated, so a notice
 shared by several crates is stored once with all their names.
 
-Output: packages/ui-rust/crates/app/licenses/third-party.json (embedded by the Settings > Licenses page).
+Output: crates/app/licenses/third-party.json (embedded by the Settings > Licenses page).
 Re-run after changing dependencies. Cargo needs the registry sources, so run `cargo fetch` first on a fresh checkout.
 """
 import hashlib
@@ -21,8 +21,8 @@ import sys
 from pathlib import Path
 
 ROOT = Path(__file__).resolve().parents[2]
-OUT = ROOT / "packages/ui-rust/crates/app/licenses/third-party.json"
-THEMES = ROOT / "packages/ui-rust/crates/app/themes"
+OUT = ROOT / "crates/app/licenses/third-party.json"
+THEMES = ROOT / "crates/app/themes"
 
 NAMES = {
     "MIT": "MIT License", "Apache-2.0": "Apache License 2.0", "BSD-3-Clause": "BSD 3-Clause License",

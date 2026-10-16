@@ -34,16 +34,16 @@
 //! bifurc-engine[.exe]  the engine
 //! bifurc-tray[.exe]    the engine's tray icon (Windows), menu-bar icon (macOS) or StatusNotifierItem (Linux)
 //! bin/bifurc[.exe]     the `bifurc` command — the only folder that goes on PATH; runs resources/bifurc-cli
-//! resources/bifurc-mcp[.exe]  the MCP server (`packages/mcp-rust`), started by `bifurc --mcp`; not on PATH
-//! resources/bifurc-cli[.exe]   the CLI (`packages/cli-rust`)
+//! resources/bifurc-mcp[.exe]  the MCP server (`crates/mcp`), started by `bifurc --mcp`; not on PATH
+//! resources/bifurc-cli[.exe]   the CLI (`crates/cli`)
 //! ```
 //!
-//! `packages/ui-rust/crates/engine-client/src/sidecar.rs` and `packages/ui-rust/crates/cli/src/main.rs` (`bifurc-launcher`) look for exactly these paths
+//! `crates/engine-client/src/sidecar.rs` and `crates/launcher/src/main.rs` (`bifurc-launcher`) look for exactly these paths
 //! beside their own executable, and the engine finds the tray helper beside itself, so the folder works from
 //! wherever it is put and no installer has to write a configuration.
 //!
 //! The one thing a wrapper adds is `resources/install.json`, which names it (`{"package": "nsis"}`): how the
-//! engine knows how this copy is updated (`packages/engine-rust/src/updates/channel.rs`). The staged folder
+//! engine knows how this copy is updated (`crates/engine/src/updates/channel.rs`). The staged folder
 //! itself has none, and is a build.
 
 use std::{
@@ -457,7 +457,7 @@ fn release_rustflags(ctx: &Ctx) -> String {
 
 fn build(ctx: &Ctx) -> Result<()> {
     // One workspace, one cargo: the engine, CLI and MCP server, the app (which builds the tray helper beside it,
-    // `packages/ui-rust/crates/app/build.rs`) and the `bifurc` launcher that goes on PATH.
+    // `crates/app/build.rs`) and the `bifurc` launcher that goes on PATH.
     let mut cargo = Command::new("cargo");
     cargo
         .args(["build", "--release", "--locked"])
@@ -493,7 +493,7 @@ fn stage(ctx: &Ctx) -> Result<PathBuf> {
     // The launcher is `bin/bifurc`; the CLI it runs and the engine are the others.
     copy_file(&cargo_output(ctx, &format!("bifurc-launcher{EXE}"))?, &dir.join("bin").join(format!("bifurc{EXE}")))?;
     copy_file(&cargo_output(ctx, &format!("bifurc{EXE}"))?, &dir.join("resources").join(format!("bifurc-cli{EXE}")))?;
-    // The MCP server is a command of its own: it finds the engine above its `bin/` (`cli-rust/src/locate.rs`).
+    // The MCP server is a command of its own: it finds the engine above its `bin/` (`cli/src/locate.rs`).
     copy_file(&cargo_output(ctx, &format!("bifurc-mcp{EXE}"))?, &dir.join("resources").join(format!("bifurc-mcp{EXE}")))?;
     copy_file(&cargo_output(ctx, &format!("bifurc-engine{EXE}"))?, &dir.join(format!("bifurc-engine{EXE}")))?;
     copy_file(&ctx.repo.join("build").join("icon.png"), &dir.join("resources").join("icon.png"))?;
