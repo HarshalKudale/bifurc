@@ -30,7 +30,7 @@ use gpui_kit::{
 use serde_json::{Value, json};
 
 use self::runner::{FolderRunner, RunnerEvent};
-use self::tree::{RequestTree, RequestTreeEvent, is_deleted, locked_to, new_menu};
+use self::tree::{RequestExtra, RequestSource, RequestTree, RequestTreeEvent, is_deleted, locked_to};
 use crate::{
     app_model::{AppModel, Deleted, Load, ModelEvent},
     components::{
@@ -40,7 +40,7 @@ use crate::{
             FOLDER_DELETE_CONSEQUENCE, PromptField, confirm_danger, delete_consequence, needs_update, prompt,
             resolve_deleted,
         },
-        entity_bar, tab_strip,
+        entity_bar, folder_tree::new_menu, tab_strip,
     },
     engine::{call, call_in, describe, patch_entity},
     i18n::{t, t_with},
@@ -204,13 +204,15 @@ impl RequestsScreen {
     ) {
         match event {
             RequestTreeEvent::Open(node) => self.open_node(node, window, cx),
-            RequestTreeEvent::NewRequest { kind, folder } => self.new_request(*kind, folder.clone(), window, cx),
-            RequestTreeEvent::ImportCurl => self.import_curl(window, cx),
+            RequestTreeEvent::Extra(RequestExtra::NewRequest { kind, folder }) => {
+                self.new_request(*kind, folder.clone(), window, cx)
+            }
+            RequestTreeEvent::Extra(RequestExtra::ImportCurl) => self.import_curl(window, cx),
+            RequestTreeEvent::Extra(RequestExtra::RunFolder(folder)) => self.open_runner(folder, window, cx),
             RequestTreeEvent::NewFolder { parent } => self.prompt_new_folder(parent.clone(), window, cx),
             RequestTreeEvent::Rename(node) => self.prompt_rename(node.clone(), window, cx),
             RequestTreeEvent::Delete(node) => self.confirm_delete(node.clone(), window, cx),
             RequestTreeEvent::Duplicate(node) => self.duplicate(node.clone(), window, cx),
-            RequestTreeEvent::RunFolder(folder) => self.open_runner(folder, window, cx),
             RequestTreeEvent::RevertDelete(node) => {
                 let target = Self::deleted_target(node);
                 self.model.update(cx, |model, cx| model.revert_delete(target, cx));
@@ -219,7 +221,7 @@ impl RequestsScreen {
                 let target = Self::deleted_target(node);
                 self.model.update(cx, |model, cx| model.confirm_delete(target, cx));
             }
-            RequestTreeEvent::Move { node, folder } => self.move_node(node.clone(), folder.clone(), cx),
+            RequestTreeEvent::Move { key: node, folder } => self.move_node(node.clone(), folder.clone(), cx),
         }
     }
 
@@ -305,7 +307,7 @@ impl RequestsScreen {
 
     /// Selects a request in the tree, opening the folders above it.
     pub fn reveal(&mut self, node: &NodeRef, cx: &mut Context<Self>) {
-        self.tree.update(cx, |tree, cx| tree.reveal(node, cx));
+        self.tree.update(cx, |tree, cx| tree.reveal(Some(node), cx));
     }
 
     /// Brings a tab to the front and points the dock panels at it.
@@ -498,7 +500,7 @@ impl RequestsScreen {
                     let kind = session.kind(cx);
                     self.tabs[ix].key = TabKey::Saved { kind, id: id.clone() };
                     let node = NodeRef::Request { kind, id: id.clone() };
-                    self.tree.update(cx, |tree, cx| tree.reveal(&node, cx));
+                    self.tree.update(cx, |tree, cx| tree.reveal(Some(&node), cx));
                 }
                 cx.notify();
             }
@@ -960,7 +962,7 @@ impl RequestsScreen {
                 .ghost()
                 .small()
                 .tooltip(t("requests.tabs.new_request"))
-                .dropdown_menu(move |menu, window, cx| new_menu(menu, &tree, None, window, cx)),
+                .dropdown_menu(move |menu, _, _| new_menu::<RequestSource>(menu, None, &tree)),
         );
         tab_strip(self, strip, prefix, suffix, window, cx)
     }

@@ -8,6 +8,7 @@ pub mod commit_diffs;
 pub mod curl_import;
 pub mod dialogs;
 pub mod entity_bar;
+pub mod folder_tree;
 pub mod kv_table;
 pub mod page;
 pub mod parts_table;
