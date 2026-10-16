@@ -1,4 +1,4 @@
-//! The Bifurc engine's notification-area icon (Windows) and menu-bar icon (macOS).
+//! The Bifurc engine's notification-area icon (Windows), menu-bar icon (macOS) and StatusNotifierItem (Linux).
 //!
 //! The icon belongs to the engine, not to an interface: it is up while the engine runs, whoever started it,
 //! so an engine left behind by a closed window or a closed terminal can still be reached and stopped. The
@@ -19,29 +19,130 @@ fn main() {
     tray::run();
 }
 
-/// No icon is placed off Windows and macOS yet. The engine reads the missing `ready` as "no tray" and stops
-/// when its last interface closes instead.
-#[cfg(not(any(windows, target_os = "macos")))]
+#[cfg(target_os = "linux")]
+fn main() {
+    sni::run();
+}
+
+/// No icon is placed off Windows, macOS and Linux yet. The engine reads the missing `ready` as "no tray" and
+/// stops when its last interface closes instead.
+#[cfg(not(any(windows, target_os = "macos", target_os = "linux")))]
 fn main() {
     eprintln!("bifurc-tray: no tray icon on this platform");
     std::process::exit(1);
 }
 
+/// Tells the engine something. A line that cannot be written means the engine is gone, and so is the
+/// reason for the icon.
+#[cfg(any(windows, target_os = "macos", target_os = "linux"))]
+fn say(line: &str) {
+    use std::io::Write as _;
+    let mut out = std::io::stdout().lock();
+    if writeln!(out, "{line}").and_then(|()| out.flush()).is_err() {
+        std::process::exit(0);
+    }
+}
+
+/// RGBA bytes to the ARGB32 (network byte order, so the bytes read A, R, G, B) that StatusNotifierItem wants.
+#[cfg(any(target_os = "linux", test))]
+fn argb_from_rgba(rgba: &[u8]) -> Vec<u8> {
+    rgba.chunks_exact(4).flat_map(|p| [p[3], p[0], p[1], p[2]]).collect()
+}
+
+#[cfg(test)]
+#[test]
+fn rgba_becomes_big_endian_argb() {
+    assert_eq!(argb_from_rgba(&[1, 2, 3, 4, 5, 6, 7, 8]), [4, 1, 2, 3, 8, 5, 6, 7]);
+}
+
+/// A StatusNotifierItem over D-Bus, which KDE, Xfce, Cinnamon, MATE and GNOME with the AppIndicator extension
+/// show. Without a StatusNotifierWatcher the icon would exist and never be seen, so that is "no tray".
+#[cfg(target_os = "linux")]
+mod sni {
+    use std::io::Read as _;
+
+    use ksni::blocking::TrayMethods as _;
+    use ksni::menu::{MenuItem, StandardItem};
+    use ksni::{Icon, OfflineReason, ToolTip, Tray};
+
+    use super::say;
+
+    struct Bifurc;
+
+    fn item(label: &str, line: &'static str) -> MenuItem<Bifurc> {
+        StandardItem { label: label.into(), activate: Box::new(move |_| say(line)), ..Default::default() }.into()
+    }
+
+    impl Tray for Bifurc {
+        fn id(&self) -> String {
+            "bifurc".into()
+        }
+        fn title(&self) -> String {
+            "Bifurc".into()
+        }
+        fn tool_tip(&self) -> ToolTip {
+            ToolTip { title: "Bifurc".into(), ..Default::default() }
+        }
+        fn icon_pixmap(&self) -> Vec<Icon> {
+            vec![tray_icon_from_png()]
+        }
+        fn activate(&mut self, _x: i32, _y: i32) {
+            say("open");
+        }
+        fn menu(&self) -> Vec<MenuItem<Self>> {
+            vec![
+                item("Open Bifurc", "open"),
+                item("Restart engine", "restart"),
+                MenuItem::Separator,
+                item("Quit Bifurc", "quit"),
+            ]
+        }
+        /// An icon nobody can see is the same as none, and the engine must find out: exiting tells it.
+        fn watcher_offline(&self, _reason: OfflineReason) -> bool {
+            eprintln!("bifurc-tray: the StatusNotifierWatcher went away");
+            std::process::exit(1);
+        }
+    }
+
+    pub fn run() {
+        // `spawn` fails when no watcher or host is there to show the icon (no `assume_sni_available`), and
+        // when there is no D-Bus session; either way `ready` is never said.
+        let Ok(_handle) = Bifurc.spawn().inspect_err(|err| eprintln!("bifurc-tray: {err}")) else {
+            std::process::exit(1);
+        };
+        say("ready");
+
+        // The engine closing stdin (or dying, which closes it too) is the stop; the icon goes with the process.
+        let mut stdin = std::io::stdin().lock();
+        let mut buffer = [0u8; 64];
+        while matches!(stdin.read(&mut buffer), Ok(read) if read > 0) {}
+        std::process::exit(0);
+    }
+
+    /// The icon from the 32×32 PNG the other platforms embed too. Decode failures are broken-build failures.
+    fn tray_icon_from_png() -> Icon {
+        const PNG: &[u8] = include_bytes!("../../../../../build/tray-icon.png");
+
+        let decoded = (|| {
+            let mut reader = png::Decoder::new(PNG).read_info()?;
+            let mut rgba = vec![0; reader.output_buffer_size()];
+            let info = reader.next_frame(&mut rgba)?;
+            rgba.truncate(info.buffer_size());
+            Ok::<_, png::DecodingError>((info.width, info.height, rgba))
+        })();
+
+        let (width, height, rgba) = decoded.expect("the bundled tray icon should decode");
+        Icon { width: width as i32, height: height as i32, data: super::argb_from_rgba(&rgba) }
+    }
+}
+
 #[cfg(any(windows, target_os = "macos"))]
 mod tray {
-    use std::io::{Read as _, Write as _};
+    use super::say;
+    use std::io::Read as _;
 
     use tray_icon::menu::{Menu, MenuItem, PredefinedMenuItem};
     use tray_icon::TrayIconBuilder;
-
-    /// Tells the engine something. A line that cannot be written means the engine is gone, and so is the
-    /// reason for the icon.
-    fn say(line: &str) {
-        let mut out = std::io::stdout().lock();
-        if writeln!(out, "{line}").and_then(|()| out.flush()).is_err() {
-            std::process::exit(0);
-        }
-    }
 
     pub fn run() {
         // macOS wants its application object before any status item exists; Windows has nothing to do here.

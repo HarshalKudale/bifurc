@@ -51,7 +51,8 @@ The engine's lifetime is its own, whichever client started it:
 - **Quit** in the tray, or `bifurc engine stop`, stops the engine and every interface attached to it closes.
 - A **restart** (the tray, Settings → Servers, or `bifurc engine restart`) starts a new engine with the same
   command line; attached interfaces wait for it and reconnect.
-- Only with no tray icon at all (the platform has none yet) does the engine stop when its last interface
+- Only with no tray icon at all (the platform has none, or on Linux no StatusNotifierWatcher is running, as on
+  stock GNOME without the AppIndicator extension) does the engine stop when its last interface
   closes, so it is never left running out of reach.
 
 | Variable               | Meaning                                                                                 |
@@ -216,7 +217,6 @@ Everything else the palette lists has a command but no key.
 - Installing an update: the app says that a newer version exists and how this install gets it (Settings →
   About, and the footer), and leaves the installing to the Store, the package manager or the downloaded file.
 - Saving the dock layout between runs (the sidebar state and the theme are kept).
-- A tray icon on Linux, so there the engine stops when its last interface closes.
 - The engine is not stopped if the UI is killed rather than closed; `bifurc engine stop` stops it.
 
 ## Tests
