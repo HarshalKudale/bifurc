@@ -10,12 +10,18 @@ description = "The Bifurc engine's tray icon: a helper the engine runs, and talk
 name = "bifurc-tray"
 path = "src/main.rs"
 
-[target.'cfg(windows)'.dependencies]
+[target.'cfg(any(windows, target_os = "macos"))'.dependencies]
 tray-icon = "0.1"
 # The tray icon ships as a PNG.
 png = "0.17"
+
+[target.'cfg(windows)'.dependencies]
 windows = { version = "0.54", features = [
     "Win32_Foundation",
     "Win32_System_Threading",
     "Win32_UI_WindowsAndMessaging",
 ] }
+
+# The menu-bar icon needs AppKit's event loop; this is the version tray-icon itself uses.
+[target.'cfg(target_os = "macos")'.dependencies]
+cocoa = "0.24"
