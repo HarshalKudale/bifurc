@@ -123,7 +123,7 @@ fn start_problem(result: &Value) -> Option<String> {
         .into_iter()
         .filter_map(|(key, name)| {
             let listener = result.get(key)?;
-            let error = listener.get("error").and_then(Value::as_str)?;
+            let error = crate::engine::error_text(listener).filter(|error| !error.is_empty())?;
             let port = listener.get("port").and_then(Value::as_u64).unwrap_or_default();
             Some(t_with(
                 "onboarding.problem.server_start",

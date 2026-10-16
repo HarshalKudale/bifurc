@@ -93,7 +93,7 @@ impl Listener for EdgeRouter {
         self.shared.core.port()
     }
 
-    fn error(&self) -> Option<String> {
+    fn error(&self) -> Option<crate::protocol::EngineError> {
         self.shared.core.error()
     }
 }

@@ -243,7 +243,10 @@ pub fn register(registry: &mut CommandRegistry) {
     registry.register_sync("env.setActive", |params, _| -> Result<Value> {
         let id = params.get("id").cloned().unwrap_or(Value::Null);
         if id.as_str() == Some(GLOBAL_ENV_ID) {
-            return Ok(json!({ "ok": false, "error": "cannot_activate_global" }));
+            return Ok(json!({
+                "ok": false, "error": "cannot_activate_global", "errorKey": "env.cannot_activate_global",
+                "errorParams": {},
+            }));
         }
         let mut cfg = load_config();
         cfg["activeEnvironmentId"] = id.clone();

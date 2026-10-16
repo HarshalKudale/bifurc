@@ -231,7 +231,11 @@ pub fn register(registry: &mut CommandRegistry) {
     registry.register("account.login.start", |_, _| async move {
         match start_login().await {
             Ok(login) => Ok(login),
-            Err(message) => Ok(json!({ "status": "failed", "error": message })),
+            Err(error) => {
+                let mut failed = json!({ "status": "failed" });
+                crate::runtime::set_failure(&mut failed, &error);
+                Ok(failed)
+            }
         }
     });
 
@@ -297,10 +301,7 @@ pub fn register(registry: &mut CommandRegistry) {
                     repos.iter().filter(|repo| repo.is_workspace).map(|repo| listed_repo(repo, &account)).collect();
                 Ok(json!({ "ok": true, "repos": repos }))
             }
-            Err(message) => {
-                let detail = flag_if_rejected(id, message);
-                Ok(failed(&EngineError::upstream(detail.clone()).keyed("github.failed", json!({ "detail": detail }))))
-            }
+            Err(message) => Ok(failed(&github::failure(flag_if_rejected(id, message)))),
         }
     });
 

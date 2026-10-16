@@ -8,6 +8,7 @@ use serde_json::{Map, Value, json};
 use super::server::ProxyServer;
 use crate::{
     kernel::CommandRegistry,
+    protocol::EngineError,
     runtime::instances::{Listener, bind_forward_proxy, edge, forward_proxy},
     utils::json::opt_str,
     workspace::settings::load_settings,
@@ -49,11 +50,11 @@ fn reverse_port_in_force(reverse: &dyn Listener) -> u16 {
     }
 }
 
-fn status_of(running: bool, port: u16, error: Option<String>, params: &Value) -> Value {
+fn status_of(running: bool, port: u16, error: Option<EngineError>, params: &Value) -> Value {
     let mut out = Map::new();
     out.insert("running".to_string(), json!(running));
     out.insert("port".to_string(), json!(port));
-    out.insert("error".to_string(), json!(error));
+    crate::kernel::streams::put_error(&mut out, error.as_ref());
     // Whether the listener speaks HTTPS: the toggle is on and the CA it needs is loaded.
     out.insert("https".to_string(), json!(load_settings().tls_enabled() && crate::certificates::is_ca_loaded()));
     echo_workspace(params, &mut out);
@@ -65,7 +66,15 @@ pub fn register(registry: &mut CommandRegistry) {
         if is_reverse(&params) {
             return Ok(match edge() {
                 Some(reverse) => status_of(reverse.is_running(), reverse.port(), reverse.error(), &params),
-                None => status_of(false, 0, Some("There is no reverse proxy in this engine.".to_string()), &params),
+                None => status_of(
+                    false,
+                    0,
+                    Some(
+                        EngineError::engine("There is no reverse proxy in this engine.")
+                            .keyed("server.no_reverse", json!({})),
+                    ),
+                    &params,
+                ),
             });
         }
         Ok(match forward_proxy() {

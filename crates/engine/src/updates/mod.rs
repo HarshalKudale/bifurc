@@ -24,6 +24,7 @@ use self::channel::Channel;
 use crate::{
     ENGINE_VERSION,
     kernel::{CommandRegistry, bus},
+    protocol::EngineError,
     utils::{
         id::now_ms,
         json::{i64_of, merged, opt_str, read_json, str_of, write_json_pretty},
@@ -50,7 +51,7 @@ const CHECK_EVERY_MS: i64 = 24 * 60 * 60 * 1000;
 struct State {
     checking: bool,
     /// Why the last check failed; cleared by one that succeeds.
-    error: Option<String>,
+    error: Option<EngineError>,
     task: Option<tokio::task::JoinHandle<()>>,
 }
 
@@ -95,7 +96,7 @@ fn status_from(
     channel: Channel,
     enabled: bool,
     checking: bool,
-    error: Option<String>,
+    error: Option<EngineError>,
 ) -> Value {
     let manifest = stored.get("manifest").unwrap_or(&Value::Null);
     let mut available = manifest::plan(manifest, current, channel);
@@ -105,17 +106,18 @@ fn status_from(
         let skipped = !critical && update.get("version").and_then(Value::as_str) == opt_str(stored, "skipped");
         update.insert("skipped".to_string(), json!(skipped));
     }
-    json!({
+    let mut status = json!({
         "currentVersion": current,
         "channel": channel.as_str(),
         "enabled": enabled,
         "checking": checking,
         "checkedAt": stored.get("checkedAt").cloned().unwrap_or(Value::Null),
-        "error": error,
         "unsupported": manifest::unsupported(manifest, current),
         "action": action(channel, &available),
         "available": available,
-    })
+    });
+    crate::kernel::streams::put_error(status.as_object_mut().expect("an object"), error.as_ref());
+    status
 }
 
 pub fn status() -> Value {
@@ -126,19 +128,31 @@ pub fn status() -> Value {
     status_from(&stored(), ENGINE_VERSION, channel::detect(), enabled(), checking, error)
 }
 
-async fn fetch_from(client: &reqwest::Client, url: &str) -> Result<Value, String> {
-    let response = client.get(url).send().await.map_err(|e| format!("{url} could not be reached: {e}"))?;
+async fn fetch_from(client: &reqwest::Client, url: &str) -> Result<Value, EngineError> {
+    let response = client.get(url).send().await.map_err(|e| {
+        EngineError::upstream(format!("{url} could not be reached: {e}"))
+            .keyed("updates.unreachable", json!({ "url": url, "detail": e.to_string() }))
+    })?;
     if !response.status().is_success() {
-        return Err(format!("{url} answered {}", response.status()));
+        let status = response.status();
+        return Err(EngineError::upstream(format!("{url} answered {status}"))
+            .keyed("updates.bad_status", json!({ "url": url, "status": status.to_string() })));
     }
-    let body = response.bytes().await.map_err(|e| format!("{url} could not be read: {e}"))?;
+    let body = response.bytes().await.map_err(|e| {
+        EngineError::upstream(format!("{url} could not be read: {e}"))
+            .keyed("updates.unreadable", json!({ "url": url, "detail": e.to_string() }))
+    })?;
     if body.len() > MAX_MANIFEST_BYTES {
-        return Err(format!("{url} is too large to be an update manifest"));
+        return Err(EngineError::upstream(format!("{url} is too large to be an update manifest"))
+            .keyed("updates.too_large", json!({ "url": url })));
     }
     serde_json::from_slice::<Value>(&body)
         .ok()
         .filter(|manifest| manifest.get("releases").is_some_and(Value::is_array))
-        .ok_or_else(|| format!("{url} is not an update manifest"))
+        .ok_or_else(|| {
+            EngineError::upstream(format!("{url} is not an update manifest"))
+                .keyed("updates.not_manifest", json!({ "url": url }))
+        })
 }
 
 /// Where the manifest is read from, in the order tried. `BIFURC_UPDATE_URL` names another address.
@@ -150,11 +164,13 @@ fn manifest_urls() -> Vec<String> {
 }
 
 /// The manifest, from the first of `urls` that has it.
-async fn fetch(urls: Vec<String>) -> Result<Value, String> {
+async fn fetch(urls: Vec<String>) -> Result<Value, EngineError> {
     let _ = rustls::crypto::ring::default_provider().install_default();
-    let client =
-        reqwest::Client::builder().timeout(FETCH_TIMEOUT).user_agent(USER_AGENT).build().map_err(|e| e.to_string())?;
-    let mut failure = String::new();
+    let client = reqwest::Client::builder().timeout(FETCH_TIMEOUT).user_agent(USER_AGENT).build().map_err(|e| {
+        EngineError::engine(e.to_string()).keyed("updates.client_failed", json!({ "detail": e.to_string() }))
+    })?;
+    let mut failure =
+        EngineError::engine("There is no address to look for updates at.").keyed("updates.no_address", json!({}));
     for url in urls {
         match fetch_from(&client, &url).await {
             Ok(manifest) => return Ok(manifest),
@@ -348,6 +364,8 @@ mod tests {
 
         let failed = check_at(vec![other]).await;
         assert!(failed["error"].as_str().unwrap().ends_with("is not an update manifest"), "{failed}");
+        assert_eq!(failed["errorKey"], "updates.not_manifest");
+        assert!(failed["errorParams"]["url"].as_str().unwrap().starts_with("http://"), "{failed}");
         assert_eq!(failed["available"]["version"], "99.0.0");
         STATE.lock().error = None;
     }

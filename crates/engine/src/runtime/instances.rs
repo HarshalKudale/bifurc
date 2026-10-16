@@ -15,7 +15,7 @@ pub trait Listener: Send + Sync {
     fn is_running(&self) -> bool;
     /// The port last asked for; `0` before the first start.
     fn port(&self) -> u16;
-    fn error(&self) -> Option<String>;
+    fn error(&self) -> Option<crate::protocol::EngineError>;
     /// Re-read the routing config from disk.
     fn reload_config(&self) {}
     /// The config the listener routes with (the forward proxy only).
@@ -99,7 +99,11 @@ pub fn rebind_changed_listeners(next: &AppSettings, prev: &AppSettings) {
 }
 
 fn listener_status(listener: &dyn Listener) -> Value {
-    serde_json::json!({ "running": listener.is_running(), "port": listener.port(), "error": listener.error() })
+    let mut status = serde_json::Map::new();
+    status.insert("running".into(), listener.is_running().into());
+    status.insert("port".into(), listener.port().into());
+    crate::kernel::streams::put_error(&mut status, listener.error().as_ref());
+    Value::Object(status)
 }
 
 /// Starts each of the two listeners that is not already serving its configured port, and says how each fared
@@ -133,7 +137,10 @@ impl Listener for InertListener {
     fn port(&self) -> u16 {
         0
     }
-    fn error(&self) -> Option<String> {
-        Some("this listener is not available in this build".to_string())
+    fn error(&self) -> Option<crate::protocol::EngineError> {
+        Some(
+            crate::protocol::EngineError::engine("this listener is not available in this build")
+                .keyed("server.unavailable", serde_json::json!({})),
+        )
     }
 }

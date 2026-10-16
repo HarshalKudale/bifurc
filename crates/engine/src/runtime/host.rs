@@ -120,7 +120,8 @@ fn setup_refusal(client: Option<&str>, action: &str, onboarded: impl FnOnce() ->
         crate::protocol::ErrorCode::Forbidden,
         "Bifurc has not been set up yet. Finish the first-run setup in the Bifurc app, then run this command again.",
         json!({ "reason": SETUP_REQUIRED }),
-    ))
+    )
+    .keyed("engine.setup_required", json!({})))
 }
 
 fn workspace_dir_exists(ws_id: &str) -> bool {
@@ -173,7 +174,14 @@ impl WorkspaceHost {
                 opts.data_dir.display(),
                 running.transport,
                 running.address
-            )));
+            ))
+            .keyed(
+                "engine.already_running",
+                json!({
+                    "pid": running.pid, "dir": opts.data_dir.display().to_string(),
+                    "transport": running.transport, "address": running.address,
+                }),
+            ));
         }
 
         notice("starting: no other engine is running here");
@@ -185,7 +193,9 @@ impl WorkspaceHost {
         registry.register_sync("engine.companions", move |_, _| Ok(listed.snapshot()));
         registry.register_sync("engine.shutdown", move |params, _| {
             let restart = params.get("restart").and_then(Value::as_bool).unwrap_or(false);
-            stop.send(restart).map_err(|_| EngineError::engine("no engine is running in this process"))?;
+            stop.send(restart).map_err(|_| {
+                EngineError::engine("no engine is running in this process").keyed("engine.not_running", json!({}))
+            })?;
             Ok(json!({ "ok": true }))
         });
         let registry = Arc::new(registry);
@@ -405,6 +415,10 @@ impl WorkspaceHost {
                                 "No free companion port within {SCAN_LIMIT} of {} — set a different base in Settings → Ports.",
                                 settings.companion_port()
                             ))
+                            .keyed(
+                                "engine.no_free_port",
+                                json!({ "limit": SCAN_LIMIT, "base": settings.companion_port() }),
+                            )
                         },
                     )?,
                 };
@@ -566,7 +580,10 @@ mod tests {
     fn the_command_line_is_refused_until_the_first_run_setup_is_finished() {
         let refused = setup_refusal(Some("cli"), "config.get", || false).expect("refused");
         assert_eq!(refused.code.as_str(), "FORBIDDEN");
-        assert_eq!(refused.details, Some(json!({ "reason": SETUP_REQUIRED })));
+        assert_eq!(
+            refused.details,
+            Some(json!({ "reason": SETUP_REQUIRED, "key": "engine.setup_required", "params": {} }))
+        );
         assert!(setup_refusal(Some("cli"), "request.send", || false).is_some());
         assert!(setup_refusal(Some("cli"), "config.get", || true).is_none());
     }

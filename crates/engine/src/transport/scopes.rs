@@ -206,8 +206,10 @@ pub const COMPANION_EVENTS: &[&str] = &["event.settings.changed", "event.server.
 
 /// Why the companion endpoint refuses `action`, if it does: it serves the proxy status and nothing else.
 pub fn companion_refusal(action: &str) -> Option<EngineError> {
-    (action != "server.status")
-        .then(|| EngineError::new(ErrorCode::Forbidden, "the companion endpoint only serves status".to_string()))
+    (action != "server.status").then(|| {
+        EngineError::new(ErrorCode::Forbidden, "the companion endpoint only serves status".to_string())
+            .keyed("transport.companion_status_only", serde_json::json!({}))
+    })
 }
 
 pub fn read_only_scopes() -> HashSet<Scope> {

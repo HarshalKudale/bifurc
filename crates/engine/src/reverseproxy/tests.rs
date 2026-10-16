@@ -62,7 +62,7 @@ fn edge_with(cfg: Option<Value>) -> (Arc<dyn Listener>, u16) {
     let edge = create_edge_router(Arc::new(move || cfg.clone()));
     let port = futures::executor::block_on(free_port());
     edge.start(port);
-    assert_eq!(edge.error(), None);
+    assert!(edge.error().is_none());
     (edge, port)
 }
 

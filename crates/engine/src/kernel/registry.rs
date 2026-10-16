@@ -121,10 +121,12 @@ impl CommandRegistry {
     /// Validate `payload` and run the handler for `action`.
     pub async fn invoke(&self, action: &str, payload: Value, ctx: CommandContext) -> Result<Value> {
         let Some(handler) = self.handlers.get(action).cloned() else {
-            return Err(EngineError::new(ErrorCode::UnknownCommand, format!("Unknown command \"{action}\".")));
+            return Err(EngineError::new(ErrorCode::UnknownCommand, format!("Unknown command \"{action}\"."))
+                .keyed("kernel.unknown_command", serde_json::json!({ "action": action })));
         };
         let params = schema::validate(action, &payload).map_err(|reason| {
             EngineError::bad_request(format!("Invalid payload for command \"{action}\": {reason}"))
+                .keyed("kernel.invalid_payload", serde_json::json!({ "action": action, "reason": reason }))
         })?;
         handler(params, ctx).await
     }
