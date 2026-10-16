@@ -84,6 +84,21 @@ pub enum Session {
     Protocol(Entity<ProtocolSession>),
 }
 
+/// Expands `body` once per session kind with `$s` bound to that kind's `Entity`: the forwarding every
+/// uniform [`Session`] method needs, written once instead of as six identical arms.
+macro_rules! each_kind {
+    ($self:expr, $s:ident => $body:expr) => {
+        match $self {
+            Session::Rest($s) => $body,
+            Session::WebSocket($s) => $body,
+            Session::Sse($s) => $body,
+            Session::SocketIo($s) => $body,
+            Session::Mcp($s) => $body,
+            Session::Protocol($s) => $body,
+        }
+    };
+}
+
 impl Session {
     pub fn kind(&self, cx: &App) -> RequestKind {
         match self {
@@ -97,25 +112,11 @@ impl Session {
     }
 
     pub fn saved_id(&self, cx: &App) -> Option<String> {
-        match self {
-            Session::Rest(s) => s.read(cx).saved_id().map(str::to_owned),
-            Session::WebSocket(s) => s.read(cx).saved_id().map(str::to_owned),
-            Session::Sse(s) => s.read(cx).saved_id().map(str::to_owned),
-            Session::SocketIo(s) => s.read(cx).saved_id().map(str::to_owned),
-            Session::Mcp(s) => s.read(cx).saved_id().map(str::to_owned),
-            Session::Protocol(s) => s.read(cx).saved_id().map(str::to_owned),
-        }
+        each_kind!(self, s => s.read(cx).saved_id().map(str::to_owned))
     }
 
     pub fn title(&self, cx: &App) -> SharedString {
-        match self {
-            Session::Rest(s) => s.read(cx).title(cx),
-            Session::WebSocket(s) => s.read(cx).title(cx),
-            Session::Sse(s) => s.read(cx).title(cx),
-            Session::SocketIo(s) => s.read(cx).title(cx),
-            Session::Mcp(s) => s.read(cx).title(cx),
-            Session::Protocol(s) => s.read(cx).title(cx),
-        }
+        each_kind!(self, s => s.read(cx).title(cx))
     }
 
     /// What a tab leads with: the method for REST, the type's short badge for everything else.
@@ -139,14 +140,7 @@ impl Session {
     }
 
     pub fn is_dirty(&self, cx: &App) -> bool {
-        match self {
-            Session::Rest(s) => s.read(cx).is_dirty(cx),
-            Session::WebSocket(s) => s.read(cx).is_dirty(cx),
-            Session::Sse(s) => s.read(cx).is_dirty(cx),
-            Session::SocketIo(s) => s.read(cx).is_dirty(cx),
-            Session::Mcp(s) => s.read(cx).is_dirty(cx),
-            Session::Protocol(s) => s.read(cx).is_dirty(cx),
-        }
+        each_kind!(self, s => s.read(cx).is_dirty(cx))
     }
 
     /// The view that shows what the request produced: a response, or a message stream.
@@ -162,26 +156,12 @@ impl Session {
     }
 
     pub fn editor_view(&self) -> AnyView {
-        match self {
-            Session::Rest(s) => s.clone().into(),
-            Session::WebSocket(s) => s.clone().into(),
-            Session::Sse(s) => s.clone().into(),
-            Session::SocketIo(s) => s.clone().into(),
-            Session::Mcp(s) => s.clone().into(),
-            Session::Protocol(s) => s.clone().into(),
-        }
+        each_kind!(self, s => s.clone().into())
     }
 
     /// The field the request's name is typed in. The shell shows it in the breadcrumb.
     pub fn name_input(&self, cx: &App) -> Entity<InputState> {
-        match self {
-            Session::Rest(s) => s.read(cx).name_input().clone(),
-            Session::WebSocket(s) => s.read(cx).name_input().clone(),
-            Session::Sse(s) => s.read(cx).name_input().clone(),
-            Session::SocketIo(s) => s.read(cx).name_input().clone(),
-            Session::Mcp(s) => s.read(cx).name_input().clone(),
-            Session::Protocol(s) => s.read(cx).name_input().clone(),
-        }
+        each_kind!(self, s => s.read(cx).name_input().clone())
     }
 
     /// Puts the cursor in the address (or target) field with its text selected.
@@ -204,26 +184,12 @@ impl Session {
 
     /// The folder the request is in, or will be created in.
     pub fn folder_id(&self, cx: &App) -> Option<String> {
-        match self {
-            Session::Rest(s) => s.read(cx).folder_id().map(str::to_owned),
-            Session::WebSocket(s) => s.read(cx).folder_id().map(str::to_owned),
-            Session::Sse(s) => s.read(cx).folder_id().map(str::to_owned),
-            Session::SocketIo(s) => s.read(cx).folder_id().map(str::to_owned),
-            Session::Mcp(s) => s.read(cx).folder_id().map(str::to_owned),
-            Session::Protocol(s) => s.read(cx).folder_id().map(str::to_owned),
-        }
+        each_kind!(self, s => s.read(cx).folder_id().map(str::to_owned))
     }
 
     /// Puts the request in another folder.
     pub fn set_folder(&self, folder: Option<String>, cx: &mut App) {
-        match self {
-            Session::Rest(s) => s.update(cx, |s, cx| s.set_folder(folder, cx)),
-            Session::WebSocket(s) => s.update(cx, |s, cx| s.set_folder(folder, cx)),
-            Session::Sse(s) => s.update(cx, |s, cx| s.set_folder(folder, cx)),
-            Session::SocketIo(s) => s.update(cx, |s, cx| s.set_folder(folder, cx)),
-            Session::Mcp(s) => s.update(cx, |s, cx| s.set_folder(folder, cx)),
-            Session::Protocol(s) => s.update(cx, |s, cx| s.set_folder(folder, cx)),
-        }
+        each_kind!(self, s => s.update(cx, |s, cx| s.set_folder(folder, cx)))
     }
 
     /// The names of the folders the request is in, outermost first.
@@ -234,14 +200,7 @@ impl Session {
 
     /// What the tab's footer says about the request and offers to do with it.
     pub fn bar(&self, model: &AppModel, cx: &App) -> EntityBar {
-        let (saving, problem) = match self {
-            Session::Rest(s) => (s.read(cx).is_saving(), s.read(cx).problem(cx)),
-            Session::WebSocket(s) => (s.read(cx).is_saving(), s.read(cx).problem(cx)),
-            Session::Sse(s) => (s.read(cx).is_saving(), s.read(cx).problem(cx)),
-            Session::SocketIo(s) => (s.read(cx).is_saving(), s.read(cx).problem(cx)),
-            Session::Mcp(s) => (s.read(cx).is_saving(), s.read(cx).problem(cx)),
-            Session::Protocol(s) => (s.read(cx).is_saving(), s.read(cx).problem(cx)),
-        };
+        let (saving, problem) = each_kind!(self, s => (s.read(cx).is_saving(), s.read(cx).problem(cx)));
         let saved_id = self.saved_id(cx);
         EntityBar {
             saving,
@@ -255,62 +214,27 @@ impl Session {
 
     /// Creates a draft, or writes a saved request's edit now instead of a moment from now.
     pub fn save(&self, mode: SaveMode, window: &mut Window, cx: &mut App) {
-        match self {
-            Session::Rest(s) => s.update(cx, |s, cx| s.save(mode, window, cx)),
-            Session::WebSocket(s) => s.update(cx, |s, cx| s.save(mode, window, cx)),
-            Session::Sse(s) => s.update(cx, |s, cx| s.save(mode, window, cx)),
-            Session::SocketIo(s) => s.update(cx, |s, cx| s.save(mode, window, cx)),
-            Session::Mcp(s) => s.update(cx, |s, cx| s.save(mode, window, cx)),
-            Session::Protocol(s) => s.update(cx, |s, cx| s.save(mode, window, cx)),
-        }
+        each_kind!(self, s => s.update(cx, |s, cx| s.save(mode, window, cx)))
     }
 
     /// Writes a saved request's waiting edit now: its tab is about to close.
     pub fn flush(&self, window: &mut Window, cx: &mut App) {
-        match self {
-            Session::Rest(s) => s.update(cx, |s, cx| s.flush(window, cx)),
-            Session::WebSocket(s) => s.update(cx, |s, cx| s.flush(window, cx)),
-            Session::Sse(s) => s.update(cx, |s, cx| s.flush(window, cx)),
-            Session::SocketIo(s) => s.update(cx, |s, cx| s.flush(window, cx)),
-            Session::Mcp(s) => s.update(cx, |s, cx| s.flush(window, cx)),
-            Session::Protocol(s) => s.update(cx, |s, cx| s.flush(window, cx)),
-        }
+        each_kind!(self, s => s.update(cx, |s, cx| s.flush(window, cx)))
     }
 
     /// What this draft keeps if it becomes a request of another type.
     pub fn carry(&self, cx: &App) -> Carry {
-        match self {
-            Session::Rest(s) => s.read(cx).carry(cx),
-            Session::WebSocket(s) => s.read(cx).carry(cx),
-            Session::Sse(s) => s.read(cx).carry(cx),
-            Session::SocketIo(s) => s.read(cx).carry(cx),
-            Session::Mcp(s) => s.read(cx).carry(cx),
-            Session::Protocol(s) => s.read(cx).carry(cx),
-        }
+        each_kind!(self, s => s.read(cx).carry(cx))
     }
 
     /// Fills this draft with what was typed into a draft of another type.
     pub fn apply_carry(&self, carry: &Carry, window: &mut Window, cx: &mut App) {
-        match self {
-            Session::Rest(s) => s.update(cx, |s, cx| s.apply_carry(carry, window, cx)),
-            Session::WebSocket(s) => s.update(cx, |s, cx| s.apply_carry(carry, window, cx)),
-            Session::Sse(s) => s.update(cx, |s, cx| s.apply_carry(carry, window, cx)),
-            Session::SocketIo(s) => s.update(cx, |s, cx| s.apply_carry(carry, window, cx)),
-            Session::Mcp(s) => s.update(cx, |s, cx| s.apply_carry(carry, window, cx)),
-            Session::Protocol(s) => s.update(cx, |s, cx| s.apply_carry(carry, window, cx)),
-        }
+        each_kind!(self, s => s.update(cx, |s, cx| s.apply_carry(carry, window, cx)))
     }
 
     /// Fills this draft with a request of its type that the engine built, from a cURL command.
     pub fn adopt_import(&self, entity: serde_json::Map<String, serde_json::Value>, window: &mut Window, cx: &mut App) {
-        match self {
-            Session::Rest(s) => s.update(cx, |s, cx| s.adopt_import(entity, window, cx)),
-            Session::WebSocket(s) => s.update(cx, |s, cx| s.adopt_import(entity, window, cx)),
-            Session::Sse(s) => s.update(cx, |s, cx| s.adopt_import(entity, window, cx)),
-            Session::SocketIo(s) => s.update(cx, |s, cx| s.adopt_import(entity, window, cx)),
-            Session::Mcp(s) => s.update(cx, |s, cx| s.adopt_import(entity, window, cx)),
-            Session::Protocol(s) => s.update(cx, |s, cx| s.adopt_import(entity, window, cx)),
-        }
+        each_kind!(self, s => s.update(cx, |s, cx| s.adopt_import(entity, window, cx)))
     }
 
     /// The request's main verb: send it, or open its connection.
@@ -330,14 +254,7 @@ impl Session {
     }
 
     fn entity_id(&self) -> gpui_kit::EntityId {
-        match self {
-            Session::Rest(s) => s.entity_id(),
-            Session::WebSocket(s) => s.entity_id(),
-            Session::Sse(s) => s.entity_id(),
-            Session::SocketIo(s) => s.entity_id(),
-            Session::Mcp(s) => s.entity_id(),
-            Session::Protocol(s) => s.entity_id(),
-        }
+        each_kind!(self, s => s.entity_id())
     }
 
     /// Like [`subscribe`](Self::subscribe), for an owner that also needs the window, and which session spoke.
@@ -348,26 +265,7 @@ impl Session {
         handler: impl Fn(&mut T, &Session, &SessionEvent, &mut Window, &mut Context<T>) + 'static,
     ) -> gpui_kit::Subscription {
         let session = self.clone();
-        match self {
-            Session::Rest(s) => {
-                cx.subscribe_in(s, window, move |this, _, event, window, cx| handler(this, &session, event, window, cx))
-            }
-            Session::WebSocket(s) => {
-                cx.subscribe_in(s, window, move |this, _, event, window, cx| handler(this, &session, event, window, cx))
-            }
-            Session::Sse(s) => {
-                cx.subscribe_in(s, window, move |this, _, event, window, cx| handler(this, &session, event, window, cx))
-            }
-            Session::SocketIo(s) => {
-                cx.subscribe_in(s, window, move |this, _, event, window, cx| handler(this, &session, event, window, cx))
-            }
-            Session::Mcp(s) => {
-                cx.subscribe_in(s, window, move |this, _, event, window, cx| handler(this, &session, event, window, cx))
-            }
-            Session::Protocol(s) => {
-                cx.subscribe_in(s, window, move |this, _, event, window, cx| handler(this, &session, event, window, cx))
-            }
-        }
+        each_kind!(self, s => cx.subscribe_in(s, window, move |this, _, event, window, cx| handler(this, &session, event, window, cx)))
     }
 
     pub fn subscribe<T: 'static>(
@@ -375,13 +273,6 @@ impl Session {
         cx: &mut Context<T>,
         mut handler: impl FnMut(&mut T, &SessionEvent, &mut Context<T>) + 'static,
     ) -> gpui_kit::Subscription {
-        match self {
-            Session::Rest(s) => cx.subscribe(s, move |this, _, event, cx| handler(this, event, cx)),
-            Session::WebSocket(s) => cx.subscribe(s, move |this, _, event, cx| handler(this, event, cx)),
-            Session::Sse(s) => cx.subscribe(s, move |this, _, event, cx| handler(this, event, cx)),
-            Session::SocketIo(s) => cx.subscribe(s, move |this, _, event, cx| handler(this, event, cx)),
-            Session::Mcp(s) => cx.subscribe(s, move |this, _, event, cx| handler(this, event, cx)),
-            Session::Protocol(s) => cx.subscribe(s, move |this, _, event, cx| handler(this, event, cx)),
-        }
+        each_kind!(self, s => cx.subscribe(s, move |this, _, event, cx| handler(this, event, cx)))
     }
 }
