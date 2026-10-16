@@ -329,7 +329,7 @@ mod tests {
     async fn hello_commands_and_events() {
         let (server, bus) = server().await;
         let mut client = connect(&server).await;
-        call(&mut client, hello("web-ui")).await;
+        call(&mut client, hello("desktop-ui")).await;
         let reply = next_frame(&mut client).await;
         assert_eq!(reply["data"]["capabilities"], json!(["ws", "events.replay"]));
         assert_eq!(reply["data"]["hostDomain"], "localhost");
