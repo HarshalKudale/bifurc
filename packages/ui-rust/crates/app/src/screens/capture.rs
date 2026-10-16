@@ -18,7 +18,6 @@ use gpui_kit::component::{
     input::{Editor, EditorState, Input, InputEvent, InputState},
     list::ListItem,
     notification::Notification,
-    resizable::{resizable_panel, v_resizable},
     tab::{Tab, TabBar},
     tag::Tag,
     v_flex,
@@ -38,7 +37,7 @@ use crate::{
     components::{
         Syntax,
         binary::{BinaryBody, save_to_file, suggested_file_name},
-        page,
+        master_detail::list_over_detail, page,
     },
     engine::{call, call_in, describe, failure, fetch_artifact},
     model::{
@@ -1664,11 +1663,7 @@ impl Render for CaptureScreen {
             cx,
         );
         let detail = self.selected_entry().cloned().map(|entry| self.render_detail(&entry, cx));
-        let has_detail = detail.is_some();
-        // The split's size is a physical starting point the user resizes, not part of the rem scale.
-        let split = v_resizable("capture-split").child(resizable_panel().child(self.render_list(cx))).child(
-            resizable_panel().visible(has_detail).size(px(360.)).size_range(px(200.)..px(900.)).children(detail),
-        );
+        let split = list_over_detail("capture-split", self.render_list(cx), detail);
         let body = v_flex()
             .size_full()
             .child(self.render_toolbar(cx))

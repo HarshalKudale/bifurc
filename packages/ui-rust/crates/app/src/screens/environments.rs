@@ -19,8 +19,8 @@ use gpui_kit::component::{
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    AppContext as _, Context, Entity, InteractiveElement as _, IntoElement, ParentElement as _, Render, SharedString,
-    StatefulInteractiveElement as _, Styled as _, Subscription, Window, div,
+    AppContext as _, Context, Entity, IntoElement, ParentElement as _, Render, SharedString,
+    Styled as _, Subscription, Window, div,
 };
 use serde_json::{Map, Value, json};
 
@@ -30,7 +30,7 @@ use crate::{
     components::{
         Autosave, EntityAction, EntityBar, KeyValueEvent, KeyValueTable,
         dialogs::{PromptField, confirm_danger, delete_consequence, needs_update, prompt, resolve_deleted},
-        entity_bar, page,
+        entity_bar, master_detail::{list_rows, master_detail}, page,
     },
     engine::{call, failure, patch_entity},
     model::config::EnvironmentInfo,
@@ -388,17 +388,7 @@ impl EnvironmentsScreen {
         let mut environments: Vec<&EnvironmentInfo> = config.environments.iter().collect();
         environments.sort_by_key(|e| (!e.is_global(), e.name.to_lowercase()));
 
-        v_flex()
-            .id("environment-list")
-            .w_64()
-            .flex_none()
-            .h_full()
-            .overflow_y_scroll()
-            .border_r_1()
-            .border_color(theme.border)
-            .bg(theme.sidebar)
-            .p_2()
-            .gap_1()
+        list_rows("environment-list")
             .children(environments.into_iter().map(|environment| {
                 let id = environment.id.clone();
                 let is_active = active.as_deref() == Some(environment.id.as_str());
@@ -493,11 +483,9 @@ impl Render for EnvironmentsScreen {
                 .on_click(cx.listener(|this, _, window, cx| this.prompt_new(window, cx))),
             cx,
         );
-        let body = h_flex()
-            .size_full()
-            .items_stretch()
-            .child(self.render_list(cx))
-            .child(div().flex_1().min_w_0().child(self.render_detail(cx)));
+        let list = self.render_list(cx).into_any_element();
+        let detail = self.render_detail(cx);
+        let body = master_detail(Some(list), detail, cx);
         page::screen(header, body, cx)
     }
 }

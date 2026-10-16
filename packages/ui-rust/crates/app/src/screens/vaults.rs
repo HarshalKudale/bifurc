@@ -26,7 +26,7 @@ use crate::{
     components::{
         EntityAction, EntityBar,
         dialogs::{PromptField, confirm_danger, prompt},
-        entity_bar, page,
+        entity_bar, master_detail::{list_rows, master_detail}, page,
     },
     engine::{call, failure},
     model::vault::{VaultInfo, VaultState},
@@ -262,19 +262,8 @@ impl VaultsScreen {
     }
 
     fn render_list(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let theme = cx.theme().clone();
         let vaults = self.model.read(cx).vaults().to_vec();
-        v_flex()
-            .id("vault-list")
-            .w_64()
-            .flex_none()
-            .h_full()
-            .overflow_y_scroll()
-            .border_r_1()
-            .border_color(theme.border)
-            .bg(theme.sidebar)
-            .p_2()
-            .gap_1()
+        list_rows("vault-list")
             .children(vaults.into_iter().map(|vault| {
                 let id = vault.id.clone();
                 ListItem::new(gpui_kit::ElementId::Name(format!("vault-{}", vault.id).into()))
@@ -459,11 +448,9 @@ impl Render for VaultsScreen {
                 .on_click(cx.listener(|this, _, window, cx| this.prompt_new(window, cx))),
             cx,
         );
-        let body = h_flex()
-            .size_full()
-            .items_stretch()
-            .child(self.render_list(cx))
-            .child(div().flex_1().min_w_0().child(self.render_detail(cx)));
+        let list = self.render_list(cx).into_any_element();
+        let detail = self.render_detail(cx);
+        let body = master_detail(Some(list), detail, cx);
         page::screen(header, body, cx)
     }
 }

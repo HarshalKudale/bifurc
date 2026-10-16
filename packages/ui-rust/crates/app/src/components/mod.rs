@@ -10,6 +10,7 @@ pub mod dialogs;
 pub mod entity_bar;
 pub mod folder_tree;
 pub mod kv_table;
+pub mod master_detail;
 pub mod page;
 pub mod parts_table;
 pub mod request_bar;
