@@ -8,6 +8,30 @@
 
 use std::process::ExitCode;
 
+/// The text of a `PATH` with `dir` put on it (`present`) or taken off it, or `None` when it already is as
+/// asked. Other entries keep their text and order (so `%USERPROFILE%in` stays unexpanded); empty entries
+/// are dropped. Entries match `dir` ignoring case, surrounding spaces and quotes, and a trailing `\`; taking
+/// `dir` off removes every such entry, and only those (never a folder that merely starts with it).
+#[cfg_attr(not(windows), allow(dead_code))]
+fn edit_path(current: &str, dir: &str, present: bool) -> Option<String> {
+    let dir = dir.trim_end_matches('\\');
+    let same = |entry: &str| {
+        let entry = entry.trim();
+        let entry = entry.strip_prefix('"').and_then(|rest| rest.strip_suffix('"')).unwrap_or(entry);
+        entry.trim_end_matches('\\').eq_ignore_ascii_case(dir)
+    };
+    let mut entries: Vec<&str> = current.split(';').filter(|entry| !entry.trim().is_empty()).collect();
+    if entries.iter().any(|entry| same(entry)) == present {
+        return None;
+    }
+    if present {
+        entries.push(dir);
+    } else {
+        entries.retain(|entry| !same(entry));
+    }
+    Some(entries.join(";"))
+}
+
 fn main() -> ExitCode {
     let argv: Vec<String> = std::env::args().skip(1).collect();
 
@@ -56,6 +80,8 @@ fn report(outcome: std::io::Result<()>) -> ExitCode {
 mod user_path {
     use std::{io, path::Path};
 
+    use super::edit_path;
+
     use winreg::{
         RegKey, RegValue,
         enums::{HKEY_CURRENT_USER, KEY_READ, KEY_WRITE, REG_EXPAND_SZ, REG_SZ},
@@ -82,19 +108,11 @@ mod user_path {
             Err(error) => return Err(error),
         };
 
-        let same = |entry: &str| entry.trim().trim_end_matches('\\').eq_ignore_ascii_case(&dir);
-        let mut entries: Vec<&str> = current.split(';').filter(|entry| !entry.trim().is_empty()).collect();
-        let had = entries.iter().any(|entry| same(entry));
-        if had == present {
+        let Some(updated) = edit_path(&current, &dir, present) else {
             return Ok(());
-        }
-        if present {
-            entries.push(&dir);
-        } else {
-            entries.retain(|entry| !same(entry));
-        }
+        };
 
-        let bytes = entries.join(";").encode_utf16().chain([0]).flat_map(u16::to_le_bytes).collect();
+        let bytes = updated.encode_utf16().chain([0]).flat_map(u16::to_le_bytes).collect();
         key.set_raw_value(VALUE, &RegValue { bytes, vtype: kind })?;
         announce();
         Ok(())
@@ -136,5 +154,73 @@ mod user_path {
             timeout: u32,
             result: *mut usize,
         ) -> isize;
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::edit_path;
+
+    const DIR: &str = r"C:\Program Files\Bifurc";
+
+    #[test]
+    fn add_to_empty() {
+        assert_eq!(edit_path("", DIR, true).as_deref(), Some(DIR));
+        assert_eq!(edit_path(";; ;", DIR, true).as_deref(), Some(DIR));
+    }
+
+    #[test]
+    fn add_appends_and_keeps_the_others_in_order() {
+        let current = r"%USERPROFILE%in;C:\Tools;;%SystemRoot%\system32;";
+        assert_eq!(
+            edit_path(current, DIR, true).unwrap(),
+            format!(r"%USERPROFILE%in;C:\Tools;%SystemRoot%\system32;{DIR}")
+        );
+    }
+
+    #[test]
+    fn add_when_present_changes_nothing() {
+        for entry in [
+            DIR,
+            "C:\\Program Files\\Bifurc\\",
+            r"c:\program files\BIFURC",
+            r#""C:\Program Files\Bifurc""#,
+            r" C:\Program Files\Bifurc ",
+        ] {
+            assert_eq!(edit_path(&format!(r"C:\Tools;{entry}"), DIR, true), None, "{entry}");
+        }
+        assert_eq!(edit_path(r"C:\Tools;C:\Program Files\Bifurc", "C:\\Program Files\\Bifurc\\", true), None);
+    }
+
+    #[test]
+    fn add_ignores_a_folder_that_only_starts_the_same() {
+        let current = r"C:\Program Files\Bifurc2;C:\Program Files\Bifurcin";
+        assert_eq!(edit_path(current, DIR, true).unwrap(), format!("{current};{DIR}"));
+    }
+
+    #[test]
+    fn remove_when_present_keeps_the_rest() {
+        let current = format!(r"%USERPROFILE%in;{DIR}\\;C:\Tools;{}", DIR.to_uppercase());
+        assert_eq!(edit_path(&current, DIR, false).unwrap(), r"%USERPROFILE%in;C:\Tools");
+        assert_eq!(edit_path(DIR, DIR, false).as_deref(), Some(""));
+    }
+
+    #[test]
+    fn remove_when_absent_changes_nothing() {
+        assert_eq!(edit_path("", DIR, false), None);
+        assert_eq!(edit_path(r"C:\Tools;%USERPROFILE%in", DIR, false), None);
+    }
+
+    #[test]
+    fn remove_only_the_exact_folder() {
+        let current = r"C:\Program Files\Bifurc2;C:\Program Files\Bifurcin;C:\Program Files";
+        assert_eq!(edit_path(current, DIR, false), None);
+    }
+
+    #[test]
+    fn variable_entries_are_left_untouched() {
+        let current = r"%USERPROFILE%in;%PROGRAMFILES%\Bifurc";
+        assert_eq!(edit_path(current, DIR, false), None);
+        assert_eq!(edit_path(current, DIR, true).unwrap(), format!("{current};{DIR}"));
     }
 }
