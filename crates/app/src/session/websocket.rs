@@ -32,7 +32,7 @@ use super::{
 use crate::{
     app_model::{AppModel, ModelEvent},
     components::{Autosave, KeyValueEvent, KeyValueTable, Syntax, VarEditor, page, request_bar},
-    engine::{call, call_in, describe},
+    engine::{call, call_in, describe, error_text},
     i18n::{t, t_with},
     model::{
         RequestKind,
@@ -507,13 +507,9 @@ impl WsSession {
         let client = self.model.read(cx).client().clone();
         call_in(&client, window, cx, "ws.connect", payload, move |_this, outcome, window, cx| {
             let failure = match outcome {
-                Ok(result) if result.get("ok").and_then(Value::as_bool) == Some(false) => Some(
-                    result
-                        .get("error")
-                        .and_then(Value::as_str)
-                        .unwrap_or(t("session.websocket.open_failed"))
-                        .to_owned(),
-                ),
+                Ok(result) if result.get("ok").and_then(Value::as_bool) == Some(false) => {
+                    Some(error_text(&result).unwrap_or_else(|| t("session.websocket.open_failed").to_owned()))
+                }
                 Ok(_) => None,
                 Err(error) => Some(describe(&error)),
             };
@@ -553,13 +549,9 @@ impl WsSession {
         let payload = json!({ "workspaceId": self.workspace_id, "socketId": self.socket_id, "data": text });
         call_in(&client, window, cx, "ws.send", payload, |_this, outcome, window, cx| {
             let failure = match outcome {
-                Ok(result) if result.get("ok").and_then(Value::as_bool) == Some(false) => Some(
-                    result
-                        .get("error")
-                        .and_then(Value::as_str)
-                        .unwrap_or(t("session.websocket.send_failed"))
-                        .to_owned(),
-                ),
+                Ok(result) if result.get("ok").and_then(Value::as_bool) == Some(false) => {
+                    Some(error_text(&result).unwrap_or_else(|| t("session.websocket.send_failed").to_owned()))
+                }
                 Ok(_) => None,
                 Err(error) => Some(describe(&error)),
             };

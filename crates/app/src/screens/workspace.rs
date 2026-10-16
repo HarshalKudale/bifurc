@@ -31,7 +31,7 @@ use crate::{
         binary::{pick_file, save_to_file},
         dialogs::confirm_danger,
     },
-    engine::{call, describe, failure, fetch_artifact, upload_and_call},
+    engine::{call, describe, error_text, failure, fetch_artifact, upload_and_call},
     i18n::{t, t_with},
     model::git::FileState,
 };
@@ -81,7 +81,7 @@ impl SyncInfo {
         let time = |key: &str| value.get(key).and_then(Value::as_i64);
         Self {
             status: text("status").unwrap_or_else(|| "idle".to_owned()),
-            error: text("error"),
+            error: error_text(value).filter(|s| !s.is_empty()),
             last_pushed: time("lastPushedAt"),
             last_pulled: time("lastPulledAt"),
             progress: text("progressMessage"),
@@ -1081,5 +1081,13 @@ mod tests {
         assert!(!SyncInfo::from_value(&json!({})).is_working());
         assert_eq!(info.access, None);
         assert_eq!(SyncInfo::from_value(&json!({ "access": "read" })).access.as_deref(), Some("read"));
+    }
+
+    #[test]
+    fn a_sync_error_is_read_translated_when_the_engine_names_a_key() {
+        let keyed = json!({ "status": "error", "error": "No remote configured", "errorKey": "sync.no_remote", "errorParams": {} });
+        assert_eq!(SyncInfo::from_value(&keyed).error, Some(crate::i18n::t("errors.sync.no_remote").to_owned()));
+        let plain = json!({ "status": "error", "error": "No remote configured" });
+        assert_eq!(SyncInfo::from_value(&plain).error.as_deref(), Some("No remote configured"));
     }
 }

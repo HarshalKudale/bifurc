@@ -99,7 +99,7 @@ async fn discard_locked(ws_id: &str, rel_path: &str) -> Value {
         && let Some(folder_id) = opt_str(&record, "folderId")
         && let Err(e) = restore_folder_chain(ws_id, &kind, folder_id)
     {
-        return json!({ "ok": false, "error": e.to_string() });
+        return fs_failed(&e);
     }
 
     let mut checkout_succeeded =
@@ -127,7 +127,7 @@ async fn discard_locked(ws_id: &str, rel_path: &str) -> Value {
         if full_path.exists()
             && let Err(e) = std::fs::remove_file(&full_path)
         {
-            return json!({ "ok": false, "error": e.to_string() });
+            return fs_failed(&e);
         }
     }
 
@@ -139,7 +139,7 @@ async fn discard_locked(ws_id: &str, rel_path: &str) -> Value {
             if get_pending_deletions(ws_id, k).iter().any(|e| str_of(e, "id") == id)
                 && let Err(e) = remove_pending_deletion(ws_id, k, id)
             {
-                return json!({ "ok": false, "error": e.to_string() });
+                return fs_failed(&e);
             }
         }
 
@@ -154,7 +154,7 @@ async fn discard_locked(ws_id: &str, rel_path: &str) -> Value {
                 None => remove_name_entry(ws_id, &kind, id),
             };
             if let Err(e) = result {
-                return json!({ "ok": false, "error": e.to_string() });
+                return fs_failed(&e);
             }
         }
     }
@@ -197,4 +197,12 @@ pub async fn get_file_history(ws_id: &str, rel_path: &str, limit: Option<i64>, o
     })
     .await;
     json!({ "entries": entries, "total": total })
+}
+
+/// A result for a file operation that failed.
+fn fs_failed(error: &dyn std::fmt::Display) -> Value {
+    let detail = error.to_string();
+    crate::runtime::failed(
+        &crate::protocol::EngineError::engine(detail.clone()).keyed("files.failed", json!({ "detail": detail })),
+    )
 }

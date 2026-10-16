@@ -34,7 +34,7 @@ use crate::{
         master_detail::list_over_detail,
         page,
     },
-    engine::{call_in, describe, failure},
+    engine::{call_in, describe, error_text, failure},
     i18n::{t, t_with},
     model::{http::pretty_json, traffic::clock_utc},
 };
@@ -267,7 +267,7 @@ impl HealthBarScreen {
                         status: result.get("statusCode").and_then(Value::as_u64).and_then(|s| u16::try_from(s).ok()),
                         duration_ms: result.get("durationMs").and_then(Value::as_u64).unwrap_or(0),
                         body: result.get("body").and_then(Value::as_str).unwrap_or_default().to_owned(),
-                        error: result.get("error").and_then(Value::as_str).map(str::to_owned),
+                        error: error_text(&result),
                         checked_at: now_ms(),
                     },
                     Err(error) => Outcome::Done {

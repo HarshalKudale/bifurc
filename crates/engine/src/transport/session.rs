@@ -87,7 +87,9 @@ pub struct Session {
     inner: Arc<Inner>,
 }
 
-fn failure(id: &str, error: &EngineError) -> Value {
+/// The failed response frame for `id`, logged by `command` (when it is one), code and key — never the message.
+fn failure(id: &str, command: Option<&str>, error: &EngineError) -> Value {
+    crate::runtime::log_failure(command, error);
     json!({ "id": id, "ok": false, "error": error.to_rpc() })
 }
 
@@ -138,14 +140,14 @@ impl Session {
             "subscribe" => {
                 let reply = match self.subscribe(&payload) {
                     Ok(events) => success(id, json!({ "events": events })),
-                    Err(error) => failure(id, &error),
+                    Err(error) => failure(id, Some(action), &error),
                 };
                 self.send(reply);
             }
             "unsubscribe" => {
                 let reply = match self.unsubscribe(&payload) {
                     Ok(events) => success(id, json!({ "events": events })),
-                    Err(error) => failure(id, &error),
+                    Err(error) => failure(id, Some(action), &error),
                 };
                 self.send(reply);
             }
@@ -159,7 +161,7 @@ impl Session {
 
     /// Reply with an error; one that says the client has no valid identity also ends the connection.
     fn refuse(&self, id: &str, error: EngineError) {
-        let frame = failure(id, &error);
+        let frame = failure(id, None, &error);
         if matches!(error.code, ErrorCode::Unauthorized | ErrorCode::Unsupported) {
             let _ = self.inner.out.send(Outbound::FrameThenClose(frame));
         } else {
@@ -273,7 +275,7 @@ impl Session {
         };
 
         if let Some(error) = self.inner.opts.refuse_command.as_ref().and_then(|gate| gate(&identity, action)) {
-            self.send(failure(id, &error));
+            self.send(failure(id, Some(action), &error));
             return;
         }
 
@@ -285,6 +287,7 @@ impl Session {
                 names.sort_unstable();
                 self.send(failure(
                     id,
+                    Some(action),
                     &EngineError::with_details(
                         ErrorCode::Forbidden,
                         format!(
@@ -306,17 +309,20 @@ impl Session {
             let client = ctx.session.as_ref().and_then(|s| s.client_name.clone());
             let command = crate::analytics::describe(&action, &payload);
             // A handler that panics still answers: the client is not left waiting, and the failure is counted.
-            let result = std::panic::AssertUnwindSafe(registry.invoke(&action, payload, ctx))
-                .catch_unwind()
-                .await
-                .unwrap_or_else(|_| Err(EngineError::engine(format!("\"{action}\" crashed inside the engine"))));
+            let result = std::panic::AssertUnwindSafe(crate::runtime::with_command(
+                &action,
+                registry.invoke(&action, payload, ctx),
+            ))
+            .catch_unwind()
+            .await
+            .unwrap_or_else(|_| Err(EngineError::engine(format!("\"{action}\" crashed inside the engine"))));
             if let Some(client) = client.filter(|_| registry.is_registered(&action)) {
                 let outcome = result.as_ref().map_err(|error| error.code.as_str());
                 crate::analytics::record_command(command, &action, &client, outcome);
             }
             let reply = match result {
                 Ok(data) => success(&id, data),
-                Err(error) => failure(&id, &error),
+                Err(error) => failure(&id, Some(&action), &error),
             };
             session.send(reply);
         });

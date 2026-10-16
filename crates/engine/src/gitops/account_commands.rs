@@ -16,10 +16,12 @@ use super::{
 use crate::{
     features::team_sync,
     kernel::{CommandRegistry, bus},
-    protocol::EngineError,
+    protocol::{EngineError, ErrorCode},
     runtime::{
         entity_status::emit_entity_status,
+        failed,
         instances::{notify_config_changed, start_listeners},
+        set_failure,
     },
     utils::{
         id::now_ms,
@@ -58,11 +60,22 @@ fn port_denied(port: u16) -> bool {
 /// Gives this engine's program the capability to listen on ports below 1024. Only root may give it, so
 /// polkit asks for the password. A program gets its capabilities when it starts: this one has it from its
 /// next start.
-async fn allow_low_ports() -> Result<(), String> {
+async fn allow_low_ports() -> Result<(), EngineError> {
+    let refused = |message: String, key: &str, params: Value| EngineError::engine(message).keyed(key, params);
     if !cfg!(target_os = "linux") {
-        return Err("Only Linux has this permission to give".to_owned());
+        return Err(refused(
+            "Only Linux has this permission to give".to_owned(),
+            "setup.low_ports_unsupported",
+            json!({}),
+        ));
     }
-    let program = std::env::current_exe().map_err(|error| format!("The engine could not find itself. {error}"))?;
+    let program = std::env::current_exe().map_err(|error| {
+        refused(
+            format!("The engine could not find itself. {error}"),
+            "setup.engine_not_found",
+            json!({ "detail": error.to_string() }),
+        )
+    })?;
     // Through `sh`, so that setcap is looked for on root's PATH: a user's often has no /sbin.
     let output = crate::utils::process::hidden_command("pkexec")
         .args(["sh", "-c", "setcap cap_net_bind_service=+ep \"$1\"", "sh"])
@@ -70,21 +83,20 @@ async fn allow_low_ports() -> Result<(), String> {
         .stdin(std::process::Stdio::null())
         .output()
         .await
-        .map_err(|error| format!("pkexec: {error}"))?;
+        .map_err(|error| {
+            refused(format!("pkexec: {error}"), "setup.pkexec_failed", json!({ "detail": error.to_string() }))
+        })?;
     if output.status.success() {
         return Ok(());
     }
     // 126 is pkexec's own answer for a prompt that was dismissed or a password that was refused.
     if output.status.code() == Some(126) {
-        return Err("The password prompt was dismissed".to_owned());
+        return Err(refused("The password prompt was dismissed".to_owned(), "setup.password_dismissed", json!({})));
     }
     let said = String::from_utf8_lossy(&output.stderr);
-    Err(said
-        .lines()
-        .map(str::trim)
-        .rfind(|line| !line.is_empty())
-        .unwrap_or("pkexec failed without saying why")
-        .to_owned())
+    let detail =
+        said.lines().map(str::trim).rfind(|line| !line.is_empty()).unwrap_or("pkexec failed without saying why");
+    Err(refused(detail.to_owned(), "setup.low_ports_failed", json!({ "detail": detail })))
 }
 
 pub fn register(registry: &mut CommandRegistry) {
@@ -146,10 +158,16 @@ pub fn register(registry: &mut CommandRegistry) {
     registry.register_sync("setup.complete", |_, _| {
         let mut settings = load_settings();
         if !settings.terms_accepted() {
-            return Ok(json!({ "ok": false, "error": "The terms of service have not been accepted yet." }));
+            return Ok(failed(
+                &EngineError::conflict("The terms of service have not been accepted yet.")
+                    .keyed("setup.terms_not_accepted", json!({})),
+            ));
         }
         if !settings.privacy_accepted() {
-            return Ok(json!({ "ok": false, "error": "The privacy policy has not been accepted yet." }));
+            return Ok(failed(
+                &EngineError::conflict("The privacy policy has not been accepted yet.")
+                    .keyed("setup.privacy_not_accepted", json!({})),
+            ));
         }
         if !settings.onboarded() {
             // A walk that never passed the servers step ends with the proxies started all the same.
@@ -176,7 +194,9 @@ pub fn register(registry: &mut CommandRegistry) {
             }
         }
         if settings.port() == settings.forward_proxy_port() {
-            return Ok(json!({ "ok": false, "error": "The two proxies need different ports." }));
+            return Ok(failed(
+                &EngineError::bad_request("The two proxies need different ports.").keyed("setup.same_ports", json!({})),
+            ));
         }
         if !settings.servers_confirmed() {
             settings.set("serversConfirmedAt", json!(now_ms()));
@@ -204,7 +224,7 @@ pub fn register(registry: &mut CommandRegistry) {
     registry.register("setup.allowLowPorts", |_, _| async move {
         Ok(match allow_low_ports().await {
             Ok(()) => json!({ "ok": true }),
-            Err(message) => json!({ "ok": false, "error": message }),
+            Err(error) => failed(&error),
         })
     });
 
@@ -258,9 +278,17 @@ pub fn register(registry: &mut CommandRegistry) {
     // a workspace on this device.
     registry.register("account.repos", |params, _| async move {
         let id = str_of(&params, "accountId");
-        let account = find_account(id).ok_or_else(|| EngineError::not_found("That account is not on this device."))?;
+        let account = find_account(id).ok_or_else(|| {
+            EngineError::not_found("That account is not on this device.").keyed("account.not_found", json!({}))
+        })?;
         let Some(token) = account.token.clone() else {
-            return Ok(json!({ "ok": false, "error": format!("Sign in to GitHub as {} again first.", account.login) }));
+            return Ok(failed(
+                &EngineError::new(
+                    ErrorCode::Unauthorized,
+                    format!("Sign in to GitHub as {} again first.", account.login),
+                )
+                .keyed("account.sign_in_again", json!({ "login": account.login })),
+            ));
         };
         match github::list_repos(&token).await {
             Ok(repos) => {
@@ -269,7 +297,10 @@ pub fn register(registry: &mut CommandRegistry) {
                     repos.iter().filter(|repo| repo.is_workspace).map(|repo| listed_repo(repo, &account)).collect();
                 Ok(json!({ "ok": true, "repos": repos }))
             }
-            Err(message) => Ok(json!({ "ok": false, "error": flag_if_rejected(id, message) })),
+            Err(message) => {
+                let detail = flag_if_rejected(id, message);
+                Ok(failed(&EngineError::upstream(detail.clone()).keyed("github.failed", json!({ "detail": detail }))))
+            }
         }
     });
 
@@ -300,11 +331,11 @@ pub fn register(registry: &mut CommandRegistry) {
             let synced = sync_workspace(ws_id, None).await;
             if !succeeded(&synced) {
                 result["ok"] = json!(false);
-                result["error"] = json!(format!(
-                    "{} was created, but not everything was synced: {}",
-                    result.pointer("/repo/fullName").and_then(Value::as_str).unwrap_or("The repository"),
-                    str_of(&synced, "error")
-                ));
+                let repo = result.pointer("/repo/fullName").and_then(Value::as_str).unwrap_or("The repository");
+                let detail = str_of(&synced, "error");
+                let error = EngineError::engine(format!("{repo} was created, but not everything was synced: {detail}"))
+                    .keyed("sync.created_not_synced", json!({ "repo": repo, "detail": detail }));
+                set_failure(&mut result, &error);
             }
             result["sync"] = synced;
         }

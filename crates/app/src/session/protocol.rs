@@ -39,7 +39,7 @@ use crate::{
     components::{
         Autosave, KeyValueEvent, KeyValueTable, SettingsChanged, SettingsForm, Syntax, VarEditor, page, request_bar,
     },
-    engine::{call_in, describe},
+    engine::{call_in, describe, error_text},
     i18n::{t, t_with},
     model::{
         RequestKind,
@@ -735,9 +735,7 @@ impl ProtocolSession {
                     this.connected = this.live;
                     None
                 }
-                Ok(result) => Some(
-                    result.get("error").and_then(Value::as_str).unwrap_or(t("session.protocol.call_failed")).to_owned(),
-                ),
+                Ok(result) => Some(error_text(&result).unwrap_or_else(|| t("session.protocol.call_failed").to_owned())),
                 Err(error) => Some(describe(&error)),
             };
             if let Some(message) = failure {
@@ -753,9 +751,7 @@ impl ProtocolSession {
         let client = self.model.read(cx).client().clone();
         call_in(&client, window, cx, action, payload, move |_, outcome, window, cx| {
             let failure = match outcome {
-                Ok(result) if result.get("ok").and_then(Value::as_bool) == Some(false) => {
-                    result.get("error").and_then(Value::as_str).map(str::to_owned)
-                }
+                Ok(result) if result.get("ok").and_then(Value::as_bool) == Some(false) => error_text(&result),
                 Ok(_) => None,
                 Err(error) => Some(describe(&error)),
             };
@@ -837,13 +833,9 @@ impl ProtocolSession {
                     picker.state = Reflection::Ready;
                     None
                 }
-                Ok(result) => Some(
-                    result
-                        .get("error")
-                        .and_then(Value::as_str)
-                        .unwrap_or(t("session.protocol.server_no_answer"))
-                        .to_owned(),
-                ),
+                Ok(result) => {
+                    Some(error_text(&result).unwrap_or_else(|| t("session.protocol.server_no_answer").to_owned()))
+                }
                 Err(error) => Some(describe(&error)),
             };
             if let Some(message) = failure {
@@ -1122,7 +1114,7 @@ impl ProtocolSession {
                             Err(message) => Some(message),
                         }
                     }
-                    Ok(result) => Some(result.get("error").and_then(Value::as_str).unwrap_or_default().to_owned()),
+                    Ok(result) => Some(error_text(&result).unwrap_or_default()),
                     Err(error) => Some(describe(&error)),
                 };
                 if let Some(panel) = this.schema.as_mut() {
@@ -1190,7 +1182,7 @@ impl ProtocolSession {
                             Err(message) => Some(message),
                         }
                     }
-                    Ok(result) => Some(result.get("error").and_then(Value::as_str).unwrap_or_default().to_owned()),
+                    Ok(result) => Some(error_text(&result).unwrap_or_default()),
                     Err(error) => Some(describe(&error)),
                 };
                 if let Some(panel) = this.wsdl.as_mut() {
@@ -1544,11 +1536,8 @@ impl ProtocolSession {
                     let unanswered =
                         result.get("ok").and_then(Value::as_bool) == Some(false) && result.get("status").is_none();
                     if unanswered {
-                        let message = result
-                            .get("error")
-                            .and_then(Value::as_str)
-                            .unwrap_or(t("session.protocol.call_failed"))
-                            .to_owned();
+                        let message =
+                            error_text(&result).unwrap_or_else(|| t("session.protocol.call_failed").to_owned());
                         this.exchange.update(cx, |exchange, cx| exchange.fail(message, cx));
                     } else {
                         this.exchange.update(cx, |exchange, cx| exchange.finish_grpc(&result, window, cx));
