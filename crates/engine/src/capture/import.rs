@@ -520,12 +520,15 @@ fn entries_of(params: &Value) -> Result<Vec<Value>> {
     let ws_id = str_of(params, "workspaceId");
     let mut entries = Vec::new();
     for id in array_of(params, "ids").iter().filter_map(Value::as_str) {
-        let entry = get_capture(ws_id, id)
-            .ok_or_else(|| EngineError::not_found(format!("No captured entry \"{id}\" in workspace \"{ws_id}\".")))?;
+        let entry = get_capture(ws_id, id).ok_or_else(|| {
+            EngineError::not_found(format!("No captured entry \"{id}\" in workspace \"{ws_id}\"."))
+                .keyed("capture.entry_not_found", serde_json::json!({ "id": id }))
+        })?;
         entries.push(entry);
     }
     if entries.is_empty() {
-        return Err(EngineError::bad_request("Name at least one captured entry.".to_string()));
+        return Err(EngineError::bad_request("Name at least one captured entry.".to_string())
+            .keyed("capture.name_entry", serde_json::json!({})));
     }
     entries.sort_by_key(|entry| entry.get("ts").and_then(Value::as_i64).unwrap_or(0));
     Ok(entries)
@@ -557,7 +560,10 @@ pub fn register(registry: &mut CommandRegistry) {
                 variables.vault = Some(secrets.into_iter().collect());
                 Some((vault_id.to_string(), vault_name))
             }
-            ("vault", None) => return Err(EngineError::bad_request("Name the vault the secrets go into.".to_string())),
+            ("vault", None) => {
+                return Err(EngineError::bad_request("Name the vault the secrets go into.".to_string())
+                    .keyed("capture.name_vault", serde_json::json!({})));
+            }
             _ => None,
         };
         let mut prepared =

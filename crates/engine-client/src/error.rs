@@ -13,6 +13,16 @@ pub struct EngineError {
 }
 
 impl EngineError {
+    /// The stable key (`details.key`) a client can translate this error by, when the engine named one.
+    pub fn key(&self) -> Option<&str> {
+        self.details.as_ref()?.get("key")?.as_str()
+    }
+
+    /// The values (`details.params`) the key's sentence needs.
+    pub fn params(&self) -> Option<&serde_json::Map<String, Value>> {
+        self.details.as_ref()?.get("params")?.as_object()
+    }
+
     pub(crate) fn from_wire(raw: &Value) -> Self {
         let text = |key: &str| raw.get(key).and_then(Value::as_str).map(str::to_owned);
         match (text("code"), text("message")) {
@@ -53,5 +63,22 @@ impl From<bifurc_client::frame::FrameError> for ClientError {
             bifurc_client::frame::FrameError::Io(e) => ClientError::Io(e),
             bifurc_client::frame::FrameError::Protocol(message) => ClientError::Protocol(message),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    #[test]
+    fn the_key_and_params_of_a_wire_error_are_read_and_old_errors_have_none() {
+        let keyed = EngineError::from_wire(&json!({
+            "code": "BAD_REQUEST", "message": "m", "details": { "key": "a.b", "params": { "x": "1" } }
+        }));
+        assert_eq!((keyed.key(), keyed.params().unwrap()["x"].as_str()), (Some("a.b"), Some("1")));
+        let plain = EngineError::from_wire(&json!({ "code": "BAD_REQUEST", "message": "m" }));
+        assert_eq!((plain.key(), plain.params()), (None, None));
     }
 }
