@@ -55,14 +55,10 @@ pub const HELLO_ACTION: &str = "hello";
 /// Transport control actions; never commands.
 pub const RESERVED_ACTIONS: [&str; 2] = ["subscribe", "unsubscribe"];
 
-pub const CLIENT_NAMES: [&str; 5] = ["electron-shell", "web-ui", "desktop-ui", "cli", "bifurc-extension"];
+pub const CLIENT_NAMES: [&str; 3] = ["desktop-ui", "cli", "bifurc-extension"];
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 pub enum ClientName {
-    #[serde(rename = "electron-shell")]
-    ElectronShell,
-    #[serde(rename = "web-ui")]
-    WebUi,
     #[serde(rename = "desktop-ui")]
     DesktopUi,
     #[serde(rename = "cli")]
