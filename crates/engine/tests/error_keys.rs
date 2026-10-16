@@ -40,6 +40,18 @@ fn keys_in_source() -> BTreeSet<String> {
                 keys.insert(rest[..end].to_owned());
             }
         }
+        // `send_failure(code, "area.failed", message)` keys a raw transport message under its wrapper key.
+        for (at, _) in text.match_indices("send_failure(") {
+            let rest = &text[at + "send_failure(".len()..];
+            if let Some(start) = rest.find('"')
+                && let Some(end) = rest[start + 1..].find('"')
+            {
+                let literal = &rest[start + 1..start + 1 + end];
+                if literal.contains('.') && !literal.contains(' ') {
+                    keys.insert(literal.to_owned());
+                }
+            }
+        }
     }
     keys
 }

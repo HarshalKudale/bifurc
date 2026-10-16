@@ -10,9 +10,12 @@ use indexmap::IndexMap;
 use prost::Message;
 use prost_reflect::DescriptorPool;
 use prost_types::FileDescriptorProto;
+use serde_json::json;
 use tokio::sync::mpsc;
 use tonic::{Code, Request, Status, Streaming, client::Grpc, transport::Channel};
 use tonic_prost::ProstCodec;
+
+use crate::protocol::EngineError;
 
 #[derive(Clone, PartialEq, Message)]
 struct ServerReflectionRequest {
@@ -97,17 +100,21 @@ pub struct Reflected {
     pub services: Vec<String>,
 }
 
-pub async fn reflect(channel: Channel) -> Result<Reflected, String> {
+pub async fn reflect(channel: Channel) -> Result<Reflected, EngineError> {
     match ask_server(channel.clone(), V1).await {
         Err(status) if status.code() == Code::Unimplemented => ask_server(channel, V1_ALPHA).await.map_err(describe),
         other => other.map_err(describe),
     }
 }
 
-fn describe(status: Status) -> String {
+fn describe(status: Status) -> EngineError {
     match status.code() {
-        Code::Unimplemented => "The server does not support reflection. Choose a .proto file instead.".to_owned(),
-        code => format!("Reflection failed: {code:?}: {}", status.message()),
+        Code::Unimplemented => {
+            EngineError::unsupported("The server does not support reflection. Choose a .proto file instead.")
+                .keyed("grpc.reflection_unsupported", json!({}))
+        }
+        code => EngineError::upstream(format!("Reflection failed: {code:?}: {}", status.message()))
+            .keyed("grpc.reflection_failed", json!({ "code": format!("{code:?}"), "detail": status.message() })),
     }
 }
 

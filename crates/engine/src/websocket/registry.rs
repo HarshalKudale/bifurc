@@ -23,7 +23,11 @@ use tokio_tungstenite::{
 
 use crate::{
     env::{load_merged_environment, resolve_headers, resolve_vars},
-    kernel::streams::{Event, Stream, Streams, emit, key_of, trim_log},
+    kernel::streams::{
+        Event, Stream, Streams, emit, header_name_invalid, header_value_invalid, key_of, not_connected, put_error,
+        recorded, send_failed, trim_log,
+    },
+    protocol::EngineError,
     utils::id::now_ms,
 };
 
@@ -37,7 +41,7 @@ pub const MAX_WS_MESSAGES: usize = 500;
 const CLOSE_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// What a caller of [`send_socket_message`], [`disconnect_socket`] and [`clear_socket_messages`] gets back.
-pub type OkResult = Result<(), String>;
+pub type OkResult = Result<(), EngineError>;
 
 enum Command {
     Send(String),
@@ -50,7 +54,7 @@ struct Entry {
     /// The url as the caller sent it, unresolved and trimmed.
     url: String,
     status: &'static str,
-    error: Option<String>,
+    error: Option<EngineError>,
     close_code: Option<u16>,
     close_reason: Option<String>,
     opened_at: Option<i64>,
@@ -67,12 +71,12 @@ struct Entry {
 }
 
 impl Entry {
-    fn status_event(&self, error: Option<&str>, code: Option<u16>, reason: Option<&str>) -> Event {
+    fn status_event(&self, error: Option<&EngineError>, code: Option<u16>, reason: Option<&str>) -> Event {
         let mut payload = Map::new();
         payload.insert("workspaceId".into(), json!(self.workspace_id));
         payload.insert("socketId".into(), json!(self.socket_id));
         payload.insert("status".into(), json!(self.status));
-        payload.insert("error".into(), json!(error));
+        put_error(&mut payload, error);
         if let Some(code) = code {
             payload.insert("code".into(), json!(code));
         }
@@ -121,7 +125,7 @@ impl Stream for Entry {
         out.insert("socketId".into(), json!(self.socket_id));
         out.insert("url".into(), json!(self.url));
         out.insert("status".into(), json!(self.status));
-        out.insert("error".into(), json!(self.error));
+        put_error(&mut out, self.error.as_ref());
         if let Some(code) = self.close_code {
             out.insert("closeCode".into(), json!(code));
         }
@@ -140,8 +144,14 @@ impl Stream for Entry {
 
 static SOCKETS: LazyLock<Streams<Entry>> = LazyLock::new(Streams::new);
 
-fn no_socket(workspace_id: &str, socket_id: &str) -> String {
-    format!("No socket \"{socket_id}\" in workspace \"{workspace_id}\".")
+fn no_socket(workspace_id: &str, socket_id: &str) -> EngineError {
+    EngineError::not_found(format!("No socket \"{socket_id}\" in workspace \"{workspace_id}\"."))
+        .keyed("websocket.not_found", json!({ "id": socket_id, "workspace": workspace_id }))
+}
+
+/// A fault the WebSocket library reported, with its own text.
+fn failure(detail: &str) -> EngineError {
+    EngineError::upstream(detail).keyed("websocket.failed", json!({ "detail": detail }))
 }
 
 /// The snapshot for one socket, live or finished, or `None` if the engine never opened that id.
@@ -161,7 +171,7 @@ fn live_count(workspace_id: &str) -> usize {
 /// Open a socket, replacing any live one under the same key. The url and every header value are resolved
 /// against the workspace's merged environment. Returns once the connection attempt has started; the open (or
 /// the failure) arrives as `ws.status` events.
-pub fn connect_socket(workspace_id: &str, socket_id: &str, url: &str, headers: Option<&Value>) -> Result<(), String> {
+pub fn connect_socket(workspace_id: &str, socket_id: &str, url: &str, headers: Option<&Value>) -> OkResult {
     let key = key_of(workspace_id, socket_id);
     let env = load_merged_environment(workspace_id);
 
@@ -169,10 +179,11 @@ pub fn connect_socket(workspace_id: &str, socket_id: &str, url: &str, headers: O
     // hold must not be refused by the socket you are replacing.
     let existing_live = SOCKETS.lock().get(&key).is_some_and(Entry::is_live);
     if !existing_live && live_count(workspace_id) >= MAX_WS_CONNECTIONS {
-        return Err(format!(
+        return Err(EngineError::conflict(format!(
             "Max {MAX_WS_CONNECTIONS} active connections reached. \
              Disconnect another socket first (ws.disconnect), or list them with ws.list."
-        ));
+        ))
+        .keyed("websocket.max_connections", json!({ "max": MAX_WS_CONNECTIONS })));
     }
 
     let resolved_url = resolve_vars(url.trim(), env.as_ref());
@@ -220,11 +231,12 @@ pub fn connect_socket(workspace_id: &str, socket_id: &str, url: &str, headers: O
                 entry.tx = Some(tx);
                 Ok((request, entry.generation))
             }
-            Err(message) => {
+            Err(error) => {
+                let error = recorded(error);
                 entry.status = "error";
-                entry.error = Some(message.clone());
-                events.push(entry.status_event(Some(&message), None, None));
-                Err(message)
+                entry.error = Some(error.clone());
+                events.push(entry.status_event(Some(&error), None, None));
+                Err(error)
             }
         }
     };
@@ -269,7 +281,7 @@ pub fn send_socket_message(workspace_id: &str, socket_id: &str, data: &str) -> O
         sockets.get(&key).is_some_and(|e| e.tx.is_some() && e.status == "connected" && !e.close_requested)
     };
     if !open(&SOCKETS.lock()) {
-        return Err("Not connected".to_string());
+        return Err(not_connected());
     }
 
     // What is sent has the secrets in; what is logged has them as written (`push` also masks any value).
@@ -285,12 +297,12 @@ pub fn send_socket_message(workspace_id: &str, socket_id: &str, data: &str) -> O
     let event = {
         let mut sockets = SOCKETS.lock();
         if !open(&sockets) {
-            return Err("Not connected".to_string());
+            return Err(not_connected());
         }
         let entry = sockets.get_mut(&key).expect("the entry was just found");
         let tx = entry.tx.as_ref().expect("an open socket has a task");
         if tx.send(Command::Send(resolved.clone())).is_err() {
-            return Err("Send failed".to_string());
+            return Err(send_failed());
         }
         entry.push("sent", shown)
     };
@@ -306,7 +318,7 @@ pub fn clear_socket_messages(workspace_id: &str, socket_id: &str) -> OkResult {
 // ── the connection task ───────────────────────────────────────────────────────────────────────────
 
 /// Build the handshake request: `http(s)` urls are treated as `ws(s)`, and header names are taken verbatim.
-fn build_request(url: &str, headers: Option<&Value>) -> Result<Request, String> {
+fn build_request(url: &str, headers: Option<&Value>) -> Result<Request, EngineError> {
     let url = if let Some(rest) = url.strip_prefix("http://") {
         format!("ws://{rest}")
     } else if let Some(rest) = url.strip_prefix("https://") {
@@ -314,12 +326,11 @@ fn build_request(url: &str, headers: Option<&Value>) -> Result<Request, String> 
     } else {
         url.to_string()
     };
-    let mut request = url.as_str().into_client_request().map_err(|e| e.to_string())?;
+    let mut request = url.as_str().into_client_request().map_err(|e| failure(&e.to_string()))?;
     for (name, value) in headers.and_then(Value::as_object).into_iter().flatten() {
-        let name =
-            HeaderName::from_bytes(name.as_bytes()).map_err(|e| format!("Invalid header name \"{name}\": {e}"))?;
-        let value = HeaderValue::from_str(value.as_str().unwrap_or(""))
-            .map_err(|e| format!("Invalid value for header \"{name}\": {e}"))?;
+        let name = HeaderName::from_bytes(name.as_bytes()).map_err(|e| header_name_invalid(name, &e))?;
+        let value =
+            HeaderValue::from_str(value.as_str().unwrap_or("")).map_err(|e| header_value_invalid(name.as_str(), &e))?;
         request.headers_mut().insert(name, value);
     }
     Ok(request)
@@ -336,9 +347,10 @@ fn record_error(key: &str, generation: u64, message: &str) {
         if entry.close_requested {
             return Vec::new();
         }
+        let error = recorded(failure(message));
         entry.status = "error";
-        entry.error = Some(message.to_string());
-        vec![entry.status_event(Some(message), None, None)]
+        entry.error = Some(error.clone());
+        vec![entry.status_event(Some(&error), None, None)]
     });
 }
 
@@ -362,14 +374,17 @@ fn record_close(key: &str, generation: u64, code: u16, reason: &str) {
         entry.error = if clean {
             None
         } else if reason.is_empty() {
-            Some(format!("Connection closed (code {code})"))
+            Some(recorded(
+                EngineError::upstream(format!("Connection closed (code {code})"))
+                    .keyed("websocket.closed", json!({ "code": code })),
+            ))
         } else {
-            Some(reason.to_string())
+            Some(recorded(failure(reason)))
         };
         entry.close_code = Some(code);
         entry.close_reason = (!reason.is_empty()).then(|| reason.to_string());
         let error = entry.error.clone();
-        vec![entry.status_event(error.as_deref(), Some(code), (!reason.is_empty()).then_some(reason))]
+        vec![entry.status_event(error.as_ref(), Some(code), (!reason.is_empty()).then_some(reason))]
     });
 }
 

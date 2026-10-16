@@ -171,6 +171,16 @@ pub fn send_error(code: ErrorCode, message: String) -> EngineError {
     EngineError::new(code, message).keyed(&format!("request.send.{key}"), params)
 }
 
+/// [`send_error`], and when the text is not one it knows, keyed under `wrapper_key` with the raw text as
+/// `{detail}` (the message stays the raw text).
+pub fn send_failure(code: ErrorCode, wrapper_key: &str, message: String) -> EngineError {
+    let sent = send_error(code, message.clone());
+    if sent.key().is_some() {
+        return sent;
+    }
+    sent.keyed(wrapper_key, json!({ "detail": message }))
+}
+
 /// What a request does when nothing says otherwise: certificates are verified, redirects are handed back and
 /// there is no time limit.
 const DEFAULT_VERIFY_TLS: bool = true;

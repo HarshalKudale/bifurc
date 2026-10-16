@@ -53,11 +53,19 @@ fn kind_of(method: &MethodDescriptor) -> &'static str {
     }
 }
 
-fn ok_or_error(result: Result<(), String>) -> Value {
+fn ok_or_error(result: Result<(), EngineError>) -> Value {
     match result {
         Ok(()) => json!({ "ok": true }),
-        Err(error) => json!({ "ok": false, "error": error }),
+        Err(error) => crate::runtime::failed(&error),
     }
+}
+
+fn not_open() -> EngineError {
+    EngineError::not_found("That call is not open.").keyed("grpc.call_not_open", json!({}))
+}
+
+fn ended() -> EngineError {
+    EngineError::conflict("That call has ended.").keyed("grpc.call_ended", json!({}))
 }
 
 fn emit_status(ws_id: &str, stream_id: &str, status: &str, detail: Value) {
@@ -98,7 +106,7 @@ impl Log {
 
 /// Starts the call. Everything that can be refused is refused here; what happens to the call after that is
 /// reported by events.
-async fn open(ws_id: &str, stream_id: &str, request: &Value) -> Result<&'static str, String> {
+async fn open(ws_id: &str, stream_id: &str, request: &Value) -> Result<&'static str, EngineError> {
     let channel = call::connect(str_of(request, "serverAddress")).await?;
     let method = super::find_method(request, Some(&channel)).await?;
     let client_streaming = method.is_client_streaming();
@@ -115,7 +123,8 @@ async fn open(ws_id: &str, stream_id: &str, request: &Value) -> Result<&'static 
             let _ = previous.tx.send(Command::Cancel);
         }
         if live.len() >= MAX_LIVE {
-            return Err(format!("{MAX_LIVE} calls are already open. Cancel one first."));
+            return Err(EngineError::conflict(format!("{MAX_LIVE} calls are already open. Cancel one first."))
+                .keyed("grpc.max_calls", json!({ "max": MAX_LIVE })));
         }
         live.insert(key.clone(), Live { tx, input: method.input(), client_streaming });
     }
@@ -228,32 +237,32 @@ pub fn register(registry: &mut CommandRegistry) {
         let id = str_of(&params, "id");
         let stored = load_entity(ws_id, "grpcRequests", id).ok_or_else(|| {
             EngineError::not_found(format!("No saved grpcRequests entity \"{id}\" in workspace \"{ws_id}\"."))
+                .keyed("request.saved_not_found", json!({ "kind": "grpcRequests", "id": id, "workspace": ws_id }))
         })?;
         let request = super::resolve_saved(ws_id, &stored);
         Ok(match open(ws_id, stream_id, &request).await {
             Ok(kind) => json!({ "ok": true, "kind": kind }),
-            Err(error) => json!({ "ok": false, "error": error }),
+            Err(error) => crate::runtime::failed(&error),
         })
     });
 
     registry.register_sync("grpc.stream.send", |params, _| {
         let key = (str_of(&params, "workspaceId").to_owned(), str_of(&params, "streamId").to_owned());
         let live = LIVE.lock();
-        let Some(entry) = live.get(&key) else { return Ok(ok_or_error(Err("That call is not open.".into()))) };
+        let Some(entry) = live.get(&key) else { return Ok(ok_or_error(Err(not_open()))) };
         if !entry.client_streaming {
-            return Ok(ok_or_error(Err("This method takes one message, which is sent when the call starts.".into())));
+            return Ok(ok_or_error(Err(EngineError::bad_request(
+                "This method takes one message, which is sent when the call starts.",
+            )
+            .keyed("grpc.single_message", json!({})))));
         }
         let text = str_of(&params, "data").trim();
         let text = if text.is_empty() { "{}" } else { text };
-        let message = serde_json::from_str::<Value>(text)
-            .map_err(|e| format!("The message is not valid JSON: {e}"))
-            .and_then(|value| {
-                DynamicMessage::deserialize(entry.input.clone(), value)
-                    .map_err(|e| format!("The message does not match {}: {e}", entry.input.full_name()))
-            });
-        Ok(ok_or_error(
-            message.and_then(|m| entry.tx.send(Command::Send(m)).map_err(|_| "That call has ended.".into())),
-        ))
+        let message = serde_json::from_str::<Value>(text).map_err(|e| call::invalid_json(&e)).and_then(|value| {
+            DynamicMessage::deserialize(entry.input.clone(), value)
+                .map_err(|e| call::mismatch(entry.input.full_name(), &e.to_string()))
+        });
+        Ok(ok_or_error(message.and_then(|m| entry.tx.send(Command::Send(m)).map_err(|_| ended()))))
     });
 
     for (action, command) in [("grpc.stream.end", false), ("grpc.stream.cancel", true)] {
@@ -261,11 +270,8 @@ pub fn register(registry: &mut CommandRegistry) {
             let key = (str_of(&params, "workspaceId").to_owned(), str_of(&params, "streamId").to_owned());
             let live = LIVE.lock();
             let result = match live.get(&key) {
-                Some(entry) => entry
-                    .tx
-                    .send(if command { Command::Cancel } else { Command::End })
-                    .map_err(|_| "That call has ended.".to_owned()),
-                None => Err("That call is not open.".to_owned()),
+                Some(entry) => entry.tx.send(if command { Command::Cancel } else { Command::End }).map_err(|_| ended()),
+                None => Err(not_open()),
             };
             Ok(ok_or_error(result))
         });

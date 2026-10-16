@@ -8,22 +8,29 @@ use serde_json::{Value, json};
 use crate::{
     env::{load_merged_environment, resolve_headers, resolve_vars},
     kernel::CommandRegistry,
-    protocol::EngineError,
+    protocol::{EngineError, ErrorCode},
     rest::direct_http::{exchange_with, header_pairs},
     utils::{
-        http::RequestSettings,
+        http::{RequestSettings, send_failure},
         json::{opt_str, str_of},
     },
     workspace::{config::load_entity, response_history},
 };
+
+/// A failed exchange as an engine error; the message is the transport's raw text.
+fn failure(message: String) -> EngineError {
+    send_failure(ErrorCode::EngineError, "soap.failed", message)
+}
 
 pub fn register(registry: &mut CommandRegistry) {
     registry.register("soap.fetchWsdl", |params: Value, _| async move {
         let settings = RequestSettings::resolve(params.get("settings"));
         Ok(match exchange_with("GET", str_of(&params, "url"), &[], None, &settings).await {
             Ok(response) => json!({ "ok": true, "content": response.body }),
-            Err(error) if error.is_empty() => json!({ "ok": false, "error": "Failed to fetch WSDL" }),
-            Err(error) => json!({ "ok": false, "error": error }),
+            Err(error) if error.is_empty() => crate::runtime::failed(
+                &EngineError::upstream("Failed to fetch WSDL").keyed("soap.wsdl_failed", json!({})),
+            ),
+            Err(error) => crate::runtime::failed(&failure(error)),
         })
     });
 
@@ -39,7 +46,7 @@ pub fn register(registry: &mut CommandRegistry) {
         let response =
             exchange_with("POST", str_of(&params, "endpointUrl"), &headers, Some(str_of(&params, "body")), &settings)
                 .await
-                .map_err(EngineError::engine)?;
+                .map_err(failure)?;
         Ok(json!({
             "status": response.status,
             "headers": response.headers,
@@ -53,6 +60,7 @@ pub fn register(registry: &mut CommandRegistry) {
         let stored = match opt_str(&params, "id") {
             Some(id) => load_entity(ws_id, "soapRequests", id).ok_or_else(|| {
                 EngineError::not_found(format!("No saved soapRequests entity \"{id}\" in workspace \"{ws_id}\"."))
+                    .keyed("request.saved_not_found", json!({ "kind": "soapRequests", "id": id, "workspace": ws_id }))
             })?,
             None => params.get("request").cloned().unwrap_or(Value::Null),
         };
@@ -114,7 +122,10 @@ mod tests {
         let ok = call("soap.fetchWsdl", json!({ "url": format!("{base}/w") })).await.unwrap();
         assert_eq!(ok, json!({ "ok": true, "content": "<wsdl/>" }));
         let failed = call("soap.fetchWsdl", json!({ "url": "nope" })).await.unwrap();
-        assert_eq!(failed, json!({ "ok": false, "error": "Invalid URL" }));
+        assert_eq!(
+            failed,
+            json!({ "ok": false, "error": "Invalid URL", "errorKey": "request.send.invalid_url", "errorParams": {} })
+        );
     }
 
     #[tokio::test]
