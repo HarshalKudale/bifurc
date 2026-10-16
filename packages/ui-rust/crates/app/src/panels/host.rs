@@ -6,14 +6,33 @@
 
 use gpui_kit::component::{
     ActiveTheme as _,
-    dock::{BasePanel, Panel, PanelEvent},
+    dock::{BasePanel, DockArea, DockEvent, Panel, PanelEvent},
 };
 use gpui_kit::{
     AnyElement, AnyView, App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable, IntoElement,
     ParentElement as _, Render, SharedString, Styled as _, Subscription, Window, div,
 };
 
-use crate::components::page;
+use crate::{components::page, preferences::{Preferences, pane_size}};
+
+/// Keeps the size of one pane of a two-pane dock area in the preferences, so the next run opens with it.
+///
+/// A dock reports every layout edit, so this reads the sizes when it is told and the preferences write only
+/// when the size moved.
+pub fn remember_pane_size<T: 'static>(
+    dock: &Entity<DockArea>,
+    id: &'static str,
+    index: usize,
+    cx: &mut Context<T>,
+) -> Subscription {
+    cx.subscribe(dock, move |_, dock, event: &DockEvent, cx| {
+        if matches!(event, DockEvent::LayoutChanged) {
+            if let Some(size) = pane_size(&dock.read(cx).dump(cx), 2, index) {
+                Preferences::remember_dock_size(cx, id, size);
+            }
+        }
+    })
+}
 
 /// One part of an entity's view, as a view of its own.
 ///

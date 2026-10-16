@@ -44,7 +44,7 @@ use crate::{
     engine::{call, call_in, describe, patch_entity},
     i18n::{t, t_with},
     model::{NodeRef, RequestKind, config::REQUEST_FOLDER_KIND, tree::folder_path},
-    panels::host::HostPanel,
+    panels::host::{HostPanel, remember_pane_size},
     preferences::Preferences,
     session::{
         SaveMode, Session, SessionEvent, mcp::McpSession, protocol::ProtocolSession, rest::RestSession,
@@ -143,17 +143,19 @@ impl RequestsScreen {
             )
         });
         // Dock sizes are physical starting points the user resizes; they are not part of the rem scale.
+        let response_size = Preferences::global(cx).dock_size("requests-dock").unwrap_or(px(320.));
         dock.update(cx, |area, cx| {
             area.set_center(
                 DockLayout::v_split()
                     .child(DockLayout::tabs().panel_view(panel_handle(request_panel.clone()), cx), None)
-                    .child(DockLayout::tabs().panel_view(panel_handle(response_panel.clone()), cx), Some(px(320.))),
+                    .child(DockLayout::tabs().panel_view(panel_handle(response_panel.clone()), cx), Some(response_size)),
                 window,
                 cx,
             );
         });
 
         let subscriptions = vec![
+            remember_pane_size(&dock, "requests-dock", 1, cx),
             cx.subscribe_in(&model, window, Self::on_model_event),
             // The tab's footer shows the request's git state, which the model holds.
             cx.observe(&model, |_, _, cx| cx.notify()),
