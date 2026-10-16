@@ -12,13 +12,7 @@ use std::{
 
 use crate::error::{CliError, Result};
 
-/// The environment variable that names the engine binary outright.
-pub const ENGINE_ENV: &str = "BIFURC_ENGINE";
-
-/// The engine's file name on this platform.
-pub fn engine_file_name() -> String {
-    format!("bifurc-engine{}", env::consts::EXE_SUFFIX)
-}
+pub use bifurc_client::{ENGINE_ENV, engine_file_name};
 
 /// The engine binary, given the value of `BIFURC_ENGINE` and the path of the running executable.
 pub fn locate_engine_from(explicit: Option<OsString>, current_exe: Option<&Path>) -> Result<PathBuf> {
