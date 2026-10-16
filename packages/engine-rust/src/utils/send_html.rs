@@ -22,7 +22,7 @@ fn wrap_page(body: &str) -> String {
          background:#0f1117;color:#c9d1e9;min-height:100vh;display:flex;align-items:center;justify-content:center;\
          padding:2rem}}.wrap{{background:#171b27;border:1px solid #2d3550;border-radius:12px;padding:2.5rem 3rem;\
          max-width:560px;width:100%}}.logo{{display:flex;align-items:center;gap:10px;margin-bottom:1.5rem}}\
-         .logo-icon{{width:28px;height:28px;background:linear-gradient(135deg,#5b8dee,#3ecf8e);border-radius:7px}}\
+         .logo-icon{{width:28px;height:28px;flex-shrink:0}}\
          .logo-name{{font-size:13px;font-weight:700;color:#e8eaf6;letter-spacing:.02em}}.badge{{display:inline-flex;\
          padding:3px 10px;border-radius:20px;border:1px solid #2d3550;font-size:10px;font-weight:700;\
          letter-spacing:.1em;text-transform:uppercase;color:#6b7799;margin-bottom:1rem}}h1{{font-size:22px;\
