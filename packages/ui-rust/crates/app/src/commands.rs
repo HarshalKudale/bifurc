@@ -152,8 +152,8 @@ fn keys() -> Vec<KeyBinding> {
         KeyBinding::new("f5", ReloadWorkspace, None),
         // Zoom steps through the interface sizes Settings offers. Not Ctrl+Shift+0 for reset: Windows keeps that
         // for switching input languages.
-        KeyBinding::new("secondary-=", ZoomIn, None),
         KeyBinding::new("secondary-+", ZoomIn, None),
+        KeyBinding::new("secondary-=", ZoomIn, None),
         KeyBinding::new("secondary--", ZoomOut, None),
         KeyBinding::new("secondary-0", ResetZoom, None),
         KeyBinding::new("secondary-q", Quit, None),
@@ -343,6 +343,17 @@ mod tests {
         assert!(first_for("ctrl-enter", &dialog).unwrap().as_any().is::<InputEnter>());
         // Palette and finder stay reachable from anywhere.
         assert!(first_for("ctrl-k", &dialog).unwrap().as_any().is::<OpenCommandPalette>());
+    }
+
+    #[test]
+    fn palette_and_finder_switch_from_inside_each_other() {
+        // The real contexts of either search's field: the dialog, then the command list, then its input.
+        let search = ["Root", "Command", "Input"];
+        assert!(first_for("ctrl-p", &search).unwrap().as_any().is::<OpenFinder>());
+        assert!(first_for("ctrl-k", &search).unwrap().as_any().is::<OpenCommandPalette>());
+        assert!(first_for("ctrl-shift-p", &search).unwrap().as_any().is::<OpenCommandPalette>());
+        // Shell-only keys still stop at the overlay.
+        assert!(first_for("ctrl-pagedown", &search).is_none());
     }
 
     #[test]
