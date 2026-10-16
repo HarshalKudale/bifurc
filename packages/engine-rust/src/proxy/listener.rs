@@ -13,7 +13,7 @@ use std::{
 use parking_lot::Mutex;
 use tokio::{net::TcpListener, task::JoinHandle};
 
-use crate::kernel::telemetry::emit_server_error;
+use crate::kernel::traffic::emit_server_error;
 
 /// Serves one accepted connection.
 pub type ConnectionHandler =

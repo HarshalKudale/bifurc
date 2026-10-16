@@ -16,7 +16,7 @@ use tokio_rustls::TlsAcceptor;
 
 use super::pages::{build_home_page, build_not_mapped_page, build_unserved_page};
 use crate::{
-    kernel::telemetry::{RequestLogEntry, emit_log},
+    kernel::traffic::{RequestLogEntry, emit_log},
     mocks::{
         UpstreamResponse, is_fully_mocked, is_streaming_mock, match_mock, merge_mock_with_upstream,
         resolve_mock_only_response, serve_mock, serve_resolved_response,
@@ -149,7 +149,7 @@ async fn route<W: AsyncRead + AsyncWrite + Unpin>(
     method: &str,
     req_path: &str,
     host_header: &str,
-    headers: crate::kernel::telemetry::Headers,
+    headers: crate::kernel::traffic::Headers,
     body: &[u8],
 ) {
     let t0 = now_ms();
