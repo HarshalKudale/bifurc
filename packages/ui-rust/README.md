@@ -126,7 +126,8 @@ what it built.
     against the selected environment over the global one.
   - The left sidebar has the workspace switcher at the top (switch, create, rename, delete), the screens in
     groups, and Settings at the foot. Applications: Services, Health bar. Routing: Mappings, Proxy rules,
-    Capture. API: Requests, Mocks. Workspace: Environments. It collapses to icons (`Ctrl+B`).
+    Capture. API: Requests, Mocks, Flows. Workspace: Environments, Vaults, Config, Audit log. It collapses to icons
+    (`Ctrl+B`).
   - The top bar has the two sidebar triggers and the breadcrumb: workspace, screen, the folders the open
     request or mock is filed under, and what is open.
   - The right sidebar (`Ctrl+Shift+B`) is reference only: **History** (the commits that touched the open
@@ -135,8 +136,8 @@ what it built.
   - The footer shows the workspace's git state with a Publish/Sync button for the current screen's changes, the
     current screen's status, the forward proxy (select it to start or stop it) and the engine connection.
 - **Screens** are kept alive while another one is in front, so coming back to Requests finds its tabs as they were.
-  Switch with the sidebar or `Ctrl+1` to `Ctrl+8` (Services, Health bar, Mappings, Proxy rules, Capture,
-  Requests, Mocks, Environments); `Ctrl+,` opens Settings.
+  Switch with the sidebar or `Ctrl+1` to `Ctrl+9` (Services, Health bar, Mappings, Proxy rules, Capture,
+  Requests, Mocks, Flows, Environments); `Ctrl+,` opens Settings. Vaults, Config and Audit log have no key.
   - **Requests** and **Mocks** have a folder tree (`Ctrl+Shift+E` shows or hides it), the open items as tabs, and
     the active item's editor and response as docks you can drag to split or move. A tab's right-click menu
     closes it, the others, the ones to its right or all of them, and duplicates what it shows; the mouse wheel
@@ -147,7 +148,8 @@ what it built.
   - **Runner**: a folder of REST requests opens as a tab from its right-click menu (**Open as runner**). The tab
     lists the folder's requests in run order, which the arrows change; **Run folder** has the engine send them
     one after another and shows each one's status, time and test results as they arrive. The run belongs to
-    the engine, so it goes on if the tab is closed and is picked up again when the tab is reopened.
+    the engine, so it goes on if the tab is closed and is picked up again when the tab is reopened. **Export
+    report** saves a finished run as an HTML page.
   - **Mappings**, **Services** and **Health bar** are lists. **Proxy rules** and **Environments** are a list with
     a detail pane.
   - **Capture** works like a browser's network tab. The list shows each exchange's name, method, status, type,
@@ -155,8 +157,12 @@ what it built.
     its payload (query parameters and request body) and its response; an image is shown as an image, and other
     data can be saved to a file. **Save as request** and **Save as mock** create the entity and open it.
     **Pause** stops the engine recording for this workspace until **Resume**: what passes meanwhile is not kept.
-  - **Settings**: Appearance (theme, text size; kept by this client only), Proxy, HTTPS (interception and the
-    root certificate: generate, remove) and About (versions, whether a newer one exists and how this install gets it).
+  - **Settings**: Appearance (theme, language, text size; kept by this client only), Accounts, Servers,
+    Requests (the defaults every request starts from: certificate checks, redirects, timeout), HTTPS
+    (interception and the root certificate: generate, import, install, remove) and About (versions, whether a
+    newer one exists and how this install gets it).
+  - **Config** is the workspace's own settings: its name, publishing it to a git remote and how syncing goes,
+    export and import, cookies, and deleting it.
 - **Requests** are one tree. REST, GraphQL, gRPC, SOAP and **WebSocket** requests live in their own folders,
   are created from the command palette or the keys below, and are edited the same way as REST ones. A WebSocket
   is just another request type: its stream shows in the Response panel, and the connection belongs to the
@@ -181,39 +187,53 @@ what it built.
   - **Delete** removes the entity.
   - For a request or a mock the bar also shows its **folder**. Choosing another one moves it: a saved item
     with its next write, a draft when it is created.
+- **Response history**: a saved request keeps its last five responses on this computer, outside the workspace's
+  git folder. **History** in the response pane shows an earlier one and goes back to the latest.
 - **Command palette**: `Ctrl+K` / `Ctrl+Shift+P`. It opens any saved request or mock in a tab, switches the
-  environment, and lists every screen's actions: new request of each type, new folder, new mock, new mapping,
-  new proxy rule, new health check, new environment, pause or clear capture, start or stop the forward proxy,
-  and Save, Sync, Revert, Delete and Close for the open item. Commands show the keys they are bound to.
+  environment, and lists every command: new request of each type, new flow, folder, mock, mapping, proxy rule,
+  health check and environment, the cURL imports, capture and forward-proxy controls, Save, Sync, Revert,
+  Delete, Duplicate, Rename and Close for the open item, tab steps, zoom and Quit. Commands show the keys they
+  are bound to. **Finder** (`Ctrl+P`) searches requests, mocks, mappings and environments by name; `Ctrl+P` in
+  the palette switches to the finder and `Ctrl+K` in the finder switches back.
 
 `Ctrl` is `Cmd` on macOS.
 
-| Key                | Command                                   |
-| ------------------ | ----------------------------------------- |
-| `Ctrl+K`, `Ctrl+Shift+P` | Command palette                     |
-| `Ctrl+N`, `Ctrl+T` | New REST request                          |
-| `Ctrl+Shift+N`     | New WebSocket request                     |
-| `Ctrl+Shift+M`     | New mock                                  |
-| `Ctrl+S`           | Save (creates a draft; writes now if saved) |
-| `Ctrl+Enter`       | Send, or connect                          |
-| `Ctrl+W`           | Close the open tab                        |
-| `Ctrl+B`           | Show or hide the left sidebar             |
-| `Ctrl+Shift+B`     | Show or hide the right sidebar            |
-| `Ctrl+Shift+E`     | Show or hide the folder tree              |
-| `Ctrl+1` to `8`    | Go to a screen (see above)                |
-| `Ctrl+,`           | Settings                                  |
-| `F5`               | Reload the workspace                      |
-| `Ctrl+Q`           | Quit                                      |
+| Key                          | Command                                          |
+| ---------------------------- | ------------------------------------------------ |
+| `Ctrl+K`, `Ctrl+Shift+P`     | Command palette                                  |
+| `Ctrl+P`                     | Finder                                           |
+| `Ctrl+N`, `Ctrl+T`           | New REST request                                 |
+| `Alt+1` to `Alt+9`           | New REST, GraphQL, gRPC, SOAP, WebSocket, SSE, Socket.IO or MCP request; `Alt+9` imports cURL (`Cmd+Option+1`–`9` on macOS) |
+| `Ctrl+Shift+N`               | New WebSocket request                            |
+| `Ctrl+Shift+M`               | New mock                                         |
+| `Ctrl+Shift+G`               | New flow                                         |
+| `Ctrl+S`                     | Save (creates a draft; writes now if saved)      |
+| `Ctrl+Enter`                 | Send, or connect                                 |
+| `Esc`                        | Cancel the request being sent                    |
+| `Ctrl+W`                     | Close the open tab                               |
+| `Ctrl+Shift+T`               | Reopen the last closed tab                       |
+| `Ctrl+D`                     | Duplicate the open item (on the flow canvas: the selected node) |
+| `F2`                         | Rename the open item                             |
+| `Ctrl+L`                     | Go to the open request's address                 |
+| `Ctrl+PageDown`, `Ctrl+PageUp` | Next or previous tab                           |
+| `Ctrl+Tab`, `Ctrl+Shift+Tab` | Next or previous item (tabs, or the list on Proxy rules and Flows) |
+| `Ctrl+B`                     | Show or hide the left sidebar                    |
+| `Ctrl+Shift+B`               | Show or hide the right sidebar                   |
+| `Ctrl+Shift+E`               | Show or hide the folder tree                     |
+| `Ctrl+1` to `9`              | Go to a screen (see above)                       |
+| `Ctrl+=`, `Ctrl+-`, `Ctrl+0` | Larger text, smaller text, default size          |
+| `Ctrl+,`                     | Settings                                         |
+| `F5`                         | Reload the workspace                             |
+| `Ctrl+Q`                     | Quit                                             |
+
+The keys that act on the open item do nothing while a dialog or the palette is open.
 
 Everything else the palette lists has a command but no key.
 
 ## What is not here yet
 
-- Import and export.
-- Setting up a git remote (the UI only uses one that exists), and certificate export or import (Settings can
-  generate and remove the root certificate).
-- The audit log. The runner has no history of past runs, no report export, and runs REST folders only.
-- Schema explorers for GraphQL, gRPC and SOAP.
+- A schema explorer for gRPC (GraphQL has its schema, SOAP its WSDL).
+- The runner keeps no history of past runs and runs REST folders only.
 - Installing an update: the app says that a newer version exists and how this install gets it (Settings →
   About, and the footer), and leaves the installing to the Store, the package manager or the downloaded file.
 - The engine is not stopped if the UI is killed rather than closed; `bifurc engine stop` stops it.
