@@ -14,7 +14,8 @@ use serde_json::{Value, json};
 
 use crate::{
     kernel::{CommandContext, bus},
-    protocol::Result,
+    protocol::{EngineError, Result},
+    runtime::failed,
     utils::{
         id::now_ms,
         json::{array_of, str_of},
@@ -47,7 +48,10 @@ pub fn cancel_run(ws_id: &str, folder_id: &str) -> Value {
             run.lock()["cancelled"] = json!(true);
             json!({ "ok": true })
         }
-        None => json!({ "ok": false, "error": format!("No run of folder \"{folder_id}\" in workspace \"{ws_id}\".") }),
+        None => failed(
+            &EngineError::not_found(format!("No run of folder \"{folder_id}\" in workspace \"{ws_id}\"."))
+                .keyed("runner.no_run", json!({ "id": folder_id, "workspace": ws_id })),
+        ),
     }
 }
 
@@ -150,7 +154,8 @@ async fn run_one(ctx: &CommandContext, ws_id: &str, request: &Value) -> Value {
             }
             result
         }
-        Err(error) => json!({
+        Err(error) => {
+            let mut result = json!({
             "requestId": request["id"],
             "requestName": request["name"],
             "method": request["method"],
@@ -161,7 +166,14 @@ async fn run_one(ctx: &CommandContext, ws_id: &str, request: &Value) -> Value {
             "tests": [],
             "testLogs": [],
             "scripts": request["scripts"],
-        }),
+            });
+            // Beside the English `error`, so a client can show it in the user's language.
+            if let (Some(key), Some(params)) = (error.key(), error.params()) {
+                result["errorKey"] = json!(key);
+                result["errorParams"] = params.clone();
+            }
+            result
+        }
     }
 }
 
@@ -221,13 +233,13 @@ pub async fn start_run(ctx: &CommandContext, ws_id: &str, folder_id: &str) -> Re
     if let Some(existing) = get_run(ws_id, folder_id)
         && existing["running"] == json!(true)
     {
-        return Ok(json!({
-            "ok": false,
-            "error": format!(
+        return Ok(failed(
+            &EngineError::conflict(format!(
                 "A run of folder \"{folder_id}\" is already in flight in workspace \"{ws_id}\". \
                  Cancel it with runner.cancel, or wait for it to finish."
-            ),
-        }));
+            ))
+            .keyed("runner.already_running", json!({ "id": folder_id, "workspace": ws_id })),
+        ));
     }
 
     let requests = load_ordered_requests(ctx, ws_id, folder_id).await?;
@@ -273,7 +285,9 @@ pub async fn start_run(ctx: &CommandContext, ws_id: &str, folder_id: &str) -> Re
             Err(error) => {
                 let mut snapshot = run.lock();
                 snapshot["running"] = json!(false);
-                snapshot["error"] = json!(error.to_string());
+                let error = EngineError::engine(error.to_string())
+                    .keyed("runner.failed", json!({ "detail": error.to_string() }));
+                crate::runtime::set_failure(&mut snapshot, &error);
             }
         }
     });

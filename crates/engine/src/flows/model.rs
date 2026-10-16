@@ -4,12 +4,9 @@
 //! client adds for itself (a node's position on the canvas) is kept in the file and ignored here.
 
 use serde::Deserialize;
-use serde_json::Value;
+use serde_json::{Value, json};
 
-use crate::{
-    kernel::kinds::to_engine_kind,
-    protocol::{EngineError, Result},
-};
+use crate::{kernel::kinds::to_engine_kind, protocol::Result};
 
 /// The port a node without a choice leaves by.
 pub const PORT_OUT: &str = "out";
@@ -304,8 +301,13 @@ pub struct Flow {
 
 impl Flow {
     pub fn parse(value: &Value) -> Result<Flow> {
-        Flow::deserialize(value)
-            .map_err(|error| EngineError::bad_request(format!("This flow cannot be read: {error}.")))
+        Flow::deserialize(value).map_err(|error| {
+            super::said(
+                "flow.unreadable",
+                json!({ "detail": error.to_string() }),
+                format!("This flow cannot be read: {error}."),
+            )
+        })
     }
 
     pub fn node(&self, id: &str) -> Option<&Node> {

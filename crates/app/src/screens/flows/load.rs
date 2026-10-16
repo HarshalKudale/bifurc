@@ -123,7 +123,7 @@ pub fn render(load: &LoadView, cx: &mut Context<FlowsScreen>) -> AnyElement {
                 .filter_map(|ix| Some((ix, load.rows.get(ix)?)))
                 .map(|(ix, row)| {
                     let (tag, color) = outcome(row, cx);
-                    let said = text(row, "error").to_owned();
+                    let said = crate::engine::text_in(row, "error").unwrap_or_default();
                     // A row is as wide as its content unless told otherwise.
                     h_flex()
                         .w_full()

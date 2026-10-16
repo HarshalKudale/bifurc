@@ -21,19 +21,20 @@ use serde_json::{Value, json};
 use tokio_util::sync::CancellationToken;
 
 use super::{
-    condition,
+    condition, error_in,
     model::{
         Edge, Flow, Node, NodeKind, PORT_DONE, PORT_EACH, PORT_ELSE, PORT_ERROR, PORT_FALSE, PORT_OUT, PORT_PASS,
         PORT_TRUE,
     },
     nodes,
     reference::{Scope, lookup, pick},
-    streams, validate,
+    said, streams, validate,
 };
 use crate::{
     env::{VariableChanges, VariableScope, with_variable_scope},
     kernel::{CommandContext, bus},
     protocol::{EngineError, Result},
+    runtime::failed,
     utils::{
         id::{generate_id, now_ms},
         json::{array_of, is_truthy, opt_str, str_of},
@@ -78,7 +79,7 @@ struct NodeState {
     status: &'static str,
     runs: u64,
     port: Option<String>,
-    error: Option<String>,
+    error: Option<EngineError>,
     duration_ms: Option<u64>,
     input: Value,
     /// What was wired into the node's inputs, by input.
@@ -119,7 +120,7 @@ impl NodeState {
 
 struct State {
     status: &'static str,
-    error: Option<String>,
+    error: Option<EngineError>,
     cancel_requested: bool,
     finished_at: Option<i64>,
     /// The node that started last: where the run is, or where it ended.
@@ -173,6 +174,14 @@ fn preview(value: &Value) -> Value {
     json!({ "truncated": true, "bytes": text.len(), "preview": &text[..end] })
 }
 
+/// Writes the key and params of `error` beside the `error` text already in `value`.
+fn keys_of(value: &mut Value, error: &EngineError) {
+    if let (Some(key), Some(params)) = (error.key(), error.params()) {
+        value["errorKey"] = json!(key);
+        value["errorParams"] = params.clone();
+    }
+}
+
 impl Run {
     pub fn is_cancelled(&self) -> bool {
         self.cancel.is_cancelled()
@@ -195,11 +204,15 @@ impl Run {
     /// The run in a line, for a load test's list: how it stands, where it is or ended, and what went wrong.
     pub(super) fn brief(&self) -> Value {
         let state = self.state.lock();
-        json!({
-            "status": state.status, "at": state.at, "error": state.error,
+        let mut brief = json!({
+            "status": state.status, "at": state.at, "error": state.error.as_ref().map(|e| &e.message),
             "failedTests": state.total_tests - state.passed_tests,
             "durationMs": state.finished_at.map(|end| (end - self.started_at).max(0)),
-        })
+        });
+        if let Some(error) = &state.error {
+            keys_of(&mut brief, error);
+        }
+        brief
     }
 
     /// Each node that ran, with whether it failed and how long its last run took.
@@ -252,7 +265,7 @@ impl Run {
     /// What is wired into the inputs of `node`: for each wire the part it takes of what its source produced on
     /// the way here, or of what a data node holds. A wire whose source has nothing to give is an error that
     /// names it: falling back to the environment would hide the mistake.
-    fn wired(&self, node: &Node, token: &Token) -> std::result::Result<Wired, String> {
+    fn wired(&self, node: &Node, token: &Token) -> std::result::Result<Wired, EngineError> {
         let mut values = Wired::new();
         for wire in self.flow.wires_into(&node.id) {
             let source = self.flow.node(&wire.from);
@@ -263,11 +276,24 @@ impl Run {
             let value = held.and_then(|held| pick(held, &wire.path)).ok_or_else(|| {
                 let name = wire.input.split_once(':').map_or(wire.input.as_str(), |(_, name)| name);
                 let path: Vec<String> = wire.path.iter().map(super::reference::text_of).collect();
-                format!(
-                    "\"{name}\" is wired to {} of \"{}\", which has no value in this run.",
-                    if path.is_empty() { "the output".to_string() } else { path.join(".") },
-                    source.map_or(wire.from.as_str(), Node::label),
-                )
+                let source = source.map_or(wire.from.as_str(), Node::label);
+                let params = json!({ "name": name, "path": path.join("."), "source": source });
+                if path.is_empty() {
+                    said(
+                        "flow.wire_empty_output",
+                        params,
+                        format!("\"{name}\" is wired to the output of \"{source}\", which has no value in this run."),
+                    )
+                } else {
+                    said(
+                        "flow.wire_empty_path",
+                        params,
+                        format!(
+                            "\"{name}\" is wired to {} of \"{source}\", which has no value in this run.",
+                            path.join(".")
+                        ),
+                    )
+                }
             })?;
             values.push((wire.input.clone(), value));
         }
@@ -320,7 +346,7 @@ impl Run {
     }
 
     /// Something went wrong at a node that does not end it.
-    pub fn note(&self, node: &Node, error: String) {
+    pub fn note(&self, node: &Node, error: EngineError) {
         self.change(node, |state| state.error = Some(error));
     }
 
@@ -336,7 +362,11 @@ impl Run {
     fn settle(&self, node: &Node, port: &str, output: &Value, took: Duration) {
         let shown = preview(output);
         let failed = port == PORT_ERROR;
-        let error = failed.then(|| opt_str(output, "error").unwrap_or("Failed").to_string());
+        let error = failed.then(|| {
+            let error = error_in(output).unwrap_or_else(|| said("flow.failed", json!({}), "Failed"));
+            crate::runtime::log_failure(None, &error);
+            error
+        });
         self.change(node, |state| {
             state.status = if failed { "failed" } else { "succeeded" };
             state.port = Some(port.to_string());
@@ -347,16 +377,21 @@ impl Run {
     }
 
     /// End the run as failed. The first failure is the one the run reports.
-    pub fn fail(&self, message: String) {
-        self.state.lock().error.get_or_insert(message);
+    pub fn fail(&self, error: EngineError) {
+        crate::runtime::log_failure(None, &error);
+        self.state.lock().error.get_or_insert(error);
         self.cancel.cancel();
     }
 
     fn node_value(node: &Node, state: &NodeState, whole: bool) -> Value {
         let mut out = json!({
             "id": node.id, "name": node.label(), "status": state.status, "runs": state.runs,
-            "port": state.port, "error": state.error, "durationMs": state.duration_ms, "handedOn": state.handed_on,
+            "port": state.port, "error": state.error.as_ref().map(|e| &e.message), "durationMs": state.duration_ms,
+            "handedOn": state.handed_on,
         });
+        if let Some(error) = &state.error {
+            keys_of(&mut out, error);
+        }
         if whole {
             out["input"] = state.input.clone();
             out["inputs"] = state.inputs.clone();
@@ -383,13 +418,17 @@ impl Run {
             .iter()
             .map(|edge| json!({ "id": edge.id, "count": state.edges.get(&edge.id).copied().unwrap_or(0) }))
             .collect();
-        json!({
+        let mut snapshot = json!({
             "workspaceId": self.ws_id, "flowId": self.flow.id, "flowName": self.flow.name, "runId": self.run_id,
-            "status": state.status, "error": state.error, "startedAt": self.started_at, "finishedAt": state.finished_at,
-            "inputs": self.inputs, "nodeRuns": self.node_runs.load(Ordering::Relaxed),
+            "status": state.status, "error": state.error.as_ref().map(|e| &e.message), "startedAt": self.started_at,
+            "finishedAt": state.finished_at, "inputs": self.inputs, "nodeRuns": self.node_runs.load(Ordering::Relaxed),
             "totalTests": state.total_tests, "passedTests": state.passed_tests,
             "failedTests": state.total_tests - state.passed_tests, "nodes": nodes, "edges": edges,
-        })
+        });
+        if let Some(error) = &state.error {
+            keys_of(&mut snapshot, error);
+        }
+        snapshot
     }
 
     /// Report the nodes and edges that changed since the last report, if any did.
@@ -458,13 +497,16 @@ impl Run {
         }
         self.report_progress();
         let report = self.snapshot();
-        bus().emit(
-            "flow.finished",
-            json!({
-                "workspaceId": self.ws_id, "flowId": self.flow.id, "runId": self.run_id,
-                "status": report["status"], "error": report["error"], "report": report,
-            }),
-        );
+        let mut finished = json!({
+            "workspaceId": self.ws_id, "flowId": self.flow.id, "runId": self.run_id,
+            "status": report["status"], "error": report["error"], "report": report,
+        });
+        for field in ["errorKey", "errorParams"] {
+            if let Some(value) = report.get(field) {
+                finished[field] = value.clone();
+            }
+        }
+        bus().emit("flow.finished", finished);
     }
 }
 
@@ -474,7 +516,12 @@ pub async fn forward(run: &Arc<Run>, node: &Node, port: &str, output: Arc<Value>
     let edges: Vec<&Edge> = run.flow.edges_from(&node.id, port).collect();
     if edges.is_empty() {
         if port == PORT_ERROR {
-            run.fail(format!("{}: {}", node.label(), opt_str(&output, "error").unwrap_or("failed")));
+            let detail = opt_str(&output, "error").unwrap_or("failed");
+            run.fail(said(
+                "flow.node_failed",
+                json!({ "node": node.label(), "detail": detail }),
+                format!("{}: {detail}", node.label()),
+            ));
         }
         return;
     }
@@ -507,11 +554,15 @@ fn deliver(run: Arc<Run>, node_id: String, token: Token) -> BoxFuture<'static, (
             return;
         }
         if run.node_runs.fetch_add(1, Ordering::Relaxed) >= MAX_NODE_RUNS {
-            return run.fail(format!("The run was stopped after its nodes ran {MAX_NODE_RUNS} times."));
+            return run.fail(said(
+                "flow.too_many_node_runs",
+                json!({ "max": MAX_NODE_RUNS }),
+                format!("The run was stopped after its nodes ran {MAX_NODE_RUNS} times."),
+            ));
         }
         let started = Instant::now();
         run.begin(node, &token.input);
-        let failed = |error: String| (PORT_ERROR.to_string(), Arc::new(json!({ "ok": false, "error": error })));
+        let failed = |error: EngineError| (PORT_ERROR.to_string(), Arc::new(nodes::failure(&error)));
         let passed_on = |port: &str| (port.to_string(), token.input.clone());
         let (port, output) = match (run.wired(node, &token), node.kind) {
             (Err(error), _) => failed(error),
@@ -540,11 +591,14 @@ fn deliver(run: Arc<Run>, node_id: String, token: Token) -> BoxFuture<'static, (
                 match checks.iter().filter(|check| check["passed"] != true).count() {
                     0 => passed_on(PORT_PASS),
                     failing => {
-                        let error = format!("{failing} of {} checks failed", checks.len());
-                        (
-                            PORT_ERROR.to_string(),
-                            Arc::new(json!({ "ok": false, "error": error, "input": *token.input })),
-                        )
+                        let error = said(
+                            "flow.checks_failed",
+                            json!({ "failing": failing, "total": checks.len() }),
+                            format!("{failing} of {} checks failed", checks.len()),
+                        );
+                        let mut output = nodes::failure(&error);
+                        output["input"] = (*token.input).clone();
+                        (PORT_ERROR.to_string(), Arc::new(output))
                     }
                 }
             }
@@ -570,7 +624,11 @@ fn deliver(run: Arc<Run>, node_id: String, token: Token) -> BoxFuture<'static, (
                     }
                 };
                 match turns {
-                    None => failed(format!("{} is not a list in this run.", node.path)),
+                    None => failed(said(
+                        "flow.not_a_list",
+                        json!({ "path": node.path }),
+                        format!("{} is not a list in this run.", node.path),
+                    )),
                     Some(turns) => {
                         // One turn at a time: the next one starts when everything after this one is done.
                         for turn in turns {
@@ -624,7 +682,11 @@ pub(super) async fn drive(run: Arc<Run>, timeout: Option<Duration>) {
                 _ = run.cancel.cancelled() => break,
                 _ = &mut deadline => {
                     let seconds = timeout.unwrap_or_default().as_secs_f64();
-                    run.fail(format!("The run took longer than {seconds} s and was stopped."));
+                    run.fail(said(
+                        "flow.run_timeout",
+                        json!({ "seconds": seconds.to_string() }),
+                        format!("The run took longer than {seconds} s and was stopped."),
+                    ));
                     break;
                 }
                 _ = tick.tick() => run.report_progress(),
@@ -658,18 +720,28 @@ pub fn cancel(ws_id: &str, flow_id: &str) -> Value {
             run.stop();
             json!({ "ok": true })
         }
-        None => json!({ "ok": false, "error": format!("The flow \"{flow_id}\" has no run in workspace \"{ws_id}\".") }),
+        None => failed(&said(
+            "flow.no_run",
+            json!({ "id": flow_id, "workspace": ws_id }),
+            format!("The flow \"{flow_id}\" has no run in workspace \"{ws_id}\"."),
+        )),
     }
 }
 
 /// The run's inputs: the flow's defaults, under what the caller gave for the inputs the flow declares.
-fn inputs_of(flow: &Flow, given: Option<&Value>) -> std::result::Result<Value, String> {
+fn inputs_of(flow: &Flow, given: Option<&Value>) -> std::result::Result<Value, EngineError> {
     let mut inputs: serde_json::Map<String, Value> =
         flow.inputs.iter().map(|input| (input.name.clone(), json!(input.value))).collect();
     for (name, value) in given.and_then(Value::as_object).into_iter().flatten() {
         match inputs.get_mut(name) {
             Some(slot) => *slot = value.clone(),
-            None => return Err(format!("This flow has no input named \"{name}\".")),
+            None => {
+                return Err(said(
+                    "flow.input_unknown",
+                    json!({ "name": name }),
+                    format!("This flow has no input named \"{name}\"."),
+                ));
+            }
         }
     }
     Ok(Value::Object(inputs))
@@ -686,10 +758,14 @@ pub fn start(ctx: &CommandContext, params: &Value) -> Result<Value> {
         let mut runs = RUNS.lock();
         let key = key_of(&plan.ws_id, &plan.flow.id);
         if runs.get(&key).is_some_and(|run| run.state.lock().status == "running") {
-            return Ok(json!({ "ok": false, "error": format!(
-                "The flow \"{}\" is already running. Cancel it with flow.cancel, or wait for it to finish.",
-                plan.flow.name
-            ) }));
+            return Ok(failed(&said(
+                "flow.already_running",
+                json!({ "name": plan.flow.name }),
+                format!(
+                    "The flow \"{}\" is already running. Cancel it with flow.cancel, or wait for it to finish.",
+                    plan.flow.name
+                ),
+            )));
         }
         let run = plan.run(ctx, None);
         runs.insert(key, run.clone());
@@ -714,21 +790,24 @@ pub(super) fn plan(params: &Value) -> Result<std::result::Result<Plan, Value>> {
     let (ws_id, flow_id) = (str_of(params, "workspaceId"), str_of(params, "id"));
     let entity = load_entity(ws_id, "flows", flow_id).ok_or_else(|| match entity_lock(ws_id, "flows", flow_id) {
         Some(version) => crate::workspace::stamp::update_required(&version),
-        None => EngineError::not_found(format!("No saved flow \"{flow_id}\" in workspace \"{ws_id}\".")),
+        None => super::saved_flow_not_found(ws_id, flow_id),
     })?;
     let flow = Flow::parse(&entity)?;
 
     let described = validate::describe(ws_id, &flow);
     if described["ok"] != true {
         let count = array_of(&described, "problems").iter().filter(|problem| problem["severity"] == "error").count();
-        return Ok(Err(json!({
-            "ok": false, "problems": described["problems"],
-            "error": format!("This flow cannot run: it has {count} problem(s) to fix first."),
-        })));
+        let mut refusal = failed(&said(
+            "flow.cannot_run",
+            json!({ "count": count }),
+            format!("This flow cannot run: it has {count} problem(s) to fix first."),
+        ));
+        refusal["problems"] = described["problems"].clone();
+        return Ok(Err(refusal));
     }
     let inputs = match inputs_of(&flow, params.get("inputs")) {
         Ok(inputs) => inputs,
-        Err(error) => return Ok(Err(json!({ "ok": false, "error": error }))),
+        Err(error) => return Ok(Err(failed(&error))),
     };
     let timeout_ms =
         params.get("timeoutMs").and_then(Value::as_u64).or(flow.settings.timeout_ms).unwrap_or(DEFAULT_TIMEOUT_MS);
