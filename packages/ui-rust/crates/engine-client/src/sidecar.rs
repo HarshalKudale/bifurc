@@ -1,7 +1,7 @@
 //! Finding the engine, or starting it as a sidecar, so the UI and the `bifurc` CLI share one engine.
 //!
 //! The rendezvous is the engine's own: one engine per data directory, and it advertises itself in
-//! `<dataDir>/runtime.json` (`packages/engine/src/runtime/discovery.ts`). The UI therefore never picks a
+//! `<dataDir>/runtime.json` (`packages/engine-rust/src/runtime/discovery.rs`). The UI therefore never picks a
 //! socket address; it reads the file the engine wrote. If a live engine is already there — started by the
 //! CLI, or by another UI window — the UI attaches to it. Otherwise it starts `bifurc-engine --transport
 //! socket`, detached. Either way the engine's lifetime is its own: it shows a tray icon, keeps running when
