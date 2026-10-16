@@ -548,19 +548,12 @@ fn smoke_test(dir: &Path) -> Result<()> {
 // ---------------------------------------------------------------------------------------------------------
 
 fn find_makensis() -> Result<PathBuf> {
-    let builder_cache = env_path("LOCALAPPDATA").map(|d| d.join("electron-builder").join("Cache").join("nsis"));
-    let cached: Vec<Option<PathBuf>> = builder_cache
-        .and_then(|dir| fs::read_dir(dir).ok())
-        .into_iter()
-        .flatten()
-        .flatten()
-        .map(|entry| Some(entry.path().join("makensis.exe")))
-        .collect();
-    first_existing(
-        [env_path("MAKENSIS"), on_path("makensis"), env_path("ProgramFiles(x86)").map(|d| d.join("NSIS").join("makensis.exe")), env_path("ProgramFiles").map(|d| d.join("NSIS").join("makensis.exe"))]
-            .into_iter()
-            .chain(cached),
-    )
+    first_existing([
+        env_path("MAKENSIS"),
+        on_path("makensis"),
+        env_path("ProgramFiles(x86)").map(|d| d.join("NSIS").join("makensis.exe")),
+        env_path("ProgramFiles").map(|d| d.join("NSIS").join("makensis.exe")),
+    ])
     .ok_or_else(|| "makensis was not found. Install NSIS (https://nsis.sourceforge.io) or set MAKENSIS to makensis.exe.".to_owned())
 }
 
