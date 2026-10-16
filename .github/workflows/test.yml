@@ -6,36 +6,48 @@ on:
   pull_request:
     branches: [master, main, develop]
 
+# The toolchain is pinned by rust-toolchain.toml; setup-rust-toolchain installs what it names.
 jobs:
-  engine-and-cli:
-    runs-on: ubuntu-latest
-    steps:
-      - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          components: rustfmt
-      - uses: Swatinem/rust-cache@v2
-      - name: Check formatting
-        run: cargo fmt --all -- --check
-      - name: Test the protocol, engine and CLI
-        run: cargo test
-      - name: Check the third-party license notices are current
-        run: cargo xtask licenses --check
-
-  ui:
+  lint:
     runs-on: ubuntu-22.04
     steps:
       - uses: actions/checkout@v4
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
         with:
-          components: clippy
+          cache: false
       - uses: Swatinem/rust-cache@v2
       - name: Install GPUI's build dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential clang cmake pkg-config libasound2-dev libfontconfig-dev \
             libwayland-dev libx11-xcb-dev libxkbcommon-x11-dev libssl-dev libzstd-dev libvulkan1
+      - name: Check formatting
+        run: cargo fmt --all -- --check
       - name: Lint the whole workspace
         run: cargo clippy --workspace --all-targets --locked -- -D warnings
-      - name: Test the UI
-        run: cargo test -p bifurc-ui -p bifurc-engine-client -p bifurc-tray -p bifurc
+      - name: Check the third-party license notices are current
+        run: cargo xtask licenses --check
+
+  test:
+    name: test (${{ matrix.os }})
+    strategy:
+      fail-fast: false
+      matrix:
+        os: [ubuntu-22.04, windows-latest, macos-latest]
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          cache: false
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.os }}
+      - name: Install GPUI's build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential clang cmake pkg-config libasound2-dev libfontconfig-dev \
+            libwayland-dev libx11-xcb-dev libxkbcommon-x11-dev libssl-dev libzstd-dev libvulkan1
+      - name: Test the workspace
+        run: cargo test --workspace --locked
