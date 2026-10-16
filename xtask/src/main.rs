@@ -1,6 +1,7 @@
 //! Packages the desktop app — the Rust UI, the Rust engine, the Rust CLI and the MCP server — as one install.
 //!
 //! ```text
+//! cargo xtask dev-ui                        # debug build of the engine and tray helper, then run the UI (`cargo dev:ui`)
 //! cargo xtask package                       # everything this platform has: packages and store manifests
 //! cargo xtask package --target nsis,msix    # windows: installer exe, Store package
 //! cargo xtask package --target appimage,deb # linux
@@ -153,9 +154,10 @@ fn run() -> Result<()> {
     let mut args = env::args().skip(1);
     match args.next().as_deref() {
         Some("package") => {}
+        Some("dev-ui") => return dev_ui(),
         _ => {
             return Err(format!(
-                "usage: cargo xtask package [--target dir,{},{},{}] [--skip-build] [--release-tag <tag>]",
+                "usage: cargo xtask dev-ui | cargo xtask package [--target dir,{},{},{}] [--skip-build] [--release-tag <tag>]",
                 WINDOWS_TARGETS.join(","),
                 LINUX_TARGETS.join(","),
                 MACOS_TARGETS.join(",")
@@ -455,15 +457,29 @@ fn release_rustflags(ctx: &Ctx) -> String {
 }
 
 fn build(ctx: &Ctx) -> Result<()> {
-    // One workspace, one cargo: the engine, the `bifurc` command (CLI and MCP server) and the app (which builds
-    // the tray helper beside it, `crates/app/build.rs`).
+    // One workspace, one cargo: the engine, the `bifurc` command (CLI and MCP server), the tray helper and the app.
     let mut cargo = Command::new("cargo");
     cargo
         .args(["build", "--release", "--locked"])
-        .args(["-p", "bifurc-engine", "-p", "bifurc", "-p", "bifurc-ui"])
+        .args(["-p", "bifurc-engine", "-p", "bifurc", "-p", "bifurc-tray", "-p", "bifurc-ui"])
         .env("RUSTFLAGS", release_rustflags(ctx))
         .current_dir(&ctx.repo);
     exec(cargo, false)
+}
+
+/// `cargo dev:ui`: the UI starts the engine, and the engine runs the tray helper, both from `target/debug`
+/// beside the UI. `cargo run -p bifurc-ui` builds neither, so they are built first.
+fn dev_ui() -> Result<()> {
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let mut build = Command::new("cargo");
+    build.args(["build", "-p", "bifurc-engine", "-p", "bifurc-tray"]).current_dir(&repo);
+    // A running engine locks its own and the tray's executable on Windows; the ones there keep working.
+    if let Err(problem) = exec(build, false) {
+        println!("warning: the engine and tray helper were not rebuilt: {problem}");
+    }
+    let mut run = Command::new("cargo");
+    run.args(["run", "-p", "bifurc-ui"]).current_dir(&repo);
+    exec(run, false)
 }
 
 /// A release build of `name` from the repository's cargo target directory.

@@ -31,7 +31,7 @@ Prerequisites: Rust (stable, 2024 edition). The engine and the CLI are Rust too 
 `crates/cli`); all of them are members of the one cargo workspace at the repository root.
 
 ```sh
-cargo dev:ui           # from the repository root: runs the UI, which joins a running engine or starts one
+cargo dev:ui           # from the repository root: builds the engine and tray helper, runs the UI (joins a running engine or starts one)
 # the engine and the CLI it starts come from the repository workspace:
 cargo build -p bifurc-engine -p bifurc     # at the repository root
 ```
