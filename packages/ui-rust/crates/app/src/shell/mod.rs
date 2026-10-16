@@ -125,7 +125,7 @@ impl Shell {
         let palette = cx.new(|cx| CommandState::new(window, cx));
         let finder = cx.new(|cx| CommandState::new(window, cx));
 
-        let subscriptions = vec![
+        let mut subscriptions = vec![
             cx.subscribe_in(&model, window, Self::on_model_event),
             cx.observe(&model, |_, _, cx| cx.notify()),
             // The breadcrumb and the right sidebar follow what is open on the screen in front.
@@ -144,9 +144,12 @@ impl Shell {
         let handle = ShellHandle(cx.weak_entity());
         cx.set_global(handle);
 
-        // The keys that act on the open tab are scoped to the `Shell` context, which needs focus inside it.
+        // The keys that act on the open tab are scoped to the `Shell` context, which needs focus inside it. When
+        // the focused element goes away (a screen switch, a closed tab) nothing has focus, so the shell takes it.
         let focus_handle = cx.focus_handle();
         focus_handle.focus(window, cx);
+        let refocus = focus_handle.clone();
+        subscriptions.push(cx.on_focus_lost(window, move |_, window, cx| refocus.focus(window, cx)));
 
         Self {
             model,
