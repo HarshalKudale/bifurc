@@ -22,7 +22,7 @@ use super::{
 };
 use crate::{
     certificates::{apply_settings, clear_cert_cache, is_ca_loaded, listener_server_config},
-    kernel::telemetry::{Headers, RequestLogEntry, emit_log},
+    kernel::traffic::{Headers, RequestLogEntry, emit_log},
     runtime::instances::Listener,
     utils::{
         cache_policy::strip_cache_headers,

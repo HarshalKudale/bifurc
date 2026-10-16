@@ -10,7 +10,7 @@ use std::{
 
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
 
-use crate::{kernel::telemetry::Headers, utils::http::is_hop_by_hop};
+use crate::{kernel::traffic::Headers, utils::http::is_hop_by_hop};
 
 /// The largest request head accepted.
 const MAX_HEAD_BYTES: usize = 1024 * 1024;

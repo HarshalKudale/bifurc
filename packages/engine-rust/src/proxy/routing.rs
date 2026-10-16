@@ -9,7 +9,7 @@ use super::{
     response::{BufferedProxyResponse, Outcome, fetch_upstream_response, log_body, send_html},
 };
 use crate::{
-    kernel::telemetry::{Headers, RequestLogEntry, emit_log},
+    kernel::traffic::{Headers, RequestLogEntry, emit_log},
     mocks::{
         is_fully_mocked, is_streaming_mock, match_mock, merge_mock_with_upstream, resolve_mock_only_response,
         serve_mock, serve_resolved_response,

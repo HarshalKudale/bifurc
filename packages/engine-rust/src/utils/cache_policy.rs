@@ -3,7 +3,7 @@
 
 use std::sync::atomic::{AtomicBool, Ordering};
 
-use crate::kernel::telemetry::Headers;
+use crate::kernel::traffic::Headers;
 
 static DISABLED: AtomicBool = AtomicBool::new(true);
 

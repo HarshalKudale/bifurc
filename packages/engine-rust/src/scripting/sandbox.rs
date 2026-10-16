@@ -17,7 +17,7 @@ use serde_json::{Value as Json, json};
 use tokio::runtime::Handle;
 
 use crate::{
-    kernel::telemetry::Headers,
+    kernel::traffic::Headers,
     utils::http::{RequestSettings, root_message},
 };
 

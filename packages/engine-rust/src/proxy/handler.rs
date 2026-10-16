@@ -11,7 +11,7 @@ use tokio::{
 
 use super::response::{Outcome, collect_response_headers, forward_streaming, log_body, send_html};
 use crate::{
-    kernel::telemetry::Headers,
+    kernel::traffic::Headers,
     scripting::{execute_request_script, execute_response_script},
     utils::{
         decompress::{decompress_body, strip_content_encoding},

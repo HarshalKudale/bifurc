@@ -9,7 +9,7 @@ use base64::{Engine as _, engine::general_purpose::STANDARD};
 use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
 use serde_json::{Value, json};
 
-use crate::kernel::telemetry::Headers;
+use crate::kernel::traffic::Headers;
 
 /// Hop-by-hop and connection headers dropped when a cURL command or a captured request is turned into an
 /// editable request. They describe one connection, not the request's intent.

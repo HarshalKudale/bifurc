@@ -12,7 +12,7 @@ use serde_json::Value;
 use tokio::io::{AsyncWrite, AsyncWriteExt};
 
 use crate::{
-    kernel::telemetry::{Headers, MAX_LOGGED_BODY_BYTES, emit_log_chunk},
+    kernel::traffic::{Headers, MAX_LOGGED_BODY_BYTES, emit_log_chunk},
     mocks::UpstreamResponse,
     scripting::execute_response_script,
     utils::{
