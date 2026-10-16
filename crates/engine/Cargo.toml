@@ -99,5 +99,9 @@ tonic = { version = "0.14", default-features = false, features = ["transport", "
 tempfile = "3"
 tokio = { version = "1", features = ["full", "test-util"] }
 
+# The executable's icon (what Task Manager and Explorer show) is a resource compiled in by build.rs.
+[target.'cfg(windows)'.build-dependencies]
+winresource = "0.1"
+
 [lints]
 workspace = true

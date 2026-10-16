@@ -791,6 +791,7 @@ dependencies = [
  "uuid",
  "windows 0.62.2",
  "windows-sys 0.59.0",
+ "winresource",
  "x509-parser",
  "zeroize",
  "zip",
@@ -839,6 +840,7 @@ dependencies = [
  "png 0.17.16",
  "tray-icon",
  "windows-sys 0.59.0",
+ "winresource",
 ]
 
 [[package]]

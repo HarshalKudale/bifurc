@@ -107,7 +107,13 @@ impl VarEditor {
     /// (8 px above and below) and border (1 px each side). Controls that share a row with such a field take
     /// this height so the row has one top and one bottom edge.
     pub fn row_height(cx: &App) -> Pixels {
-        cx.theme().mono_font_size * 1.5 + px(18.)
+        Self::row_height_at(1.0, cx)
+    }
+
+    /// [`Self::row_height`] with the line and the paddings `scale` times their size, as in a zoomed flow node.
+    /// The border stays 1 px.
+    pub fn row_height_at(scale: f32, cx: &App) -> Pixels {
+        (cx.theme().mono_font_size * 1.5 + px(16.)) * scale + px(2.)
     }
 
     /// A plain text input as tall as a one-row field, for the inputs that share a row with one. The kit's
