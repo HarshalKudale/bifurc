@@ -27,7 +27,11 @@ use super::{
 };
 use crate::{
     env::{load_merged_environment, resolve_headers, resolve_vars},
-    kernel::streams::{Event, Stream, Streams, emit, key_of, trim_log},
+    kernel::streams::{
+        Event, Stream, Streams, emit, header_name_invalid, header_value_invalid, key_of, not_connected, put_error,
+        recorded, send_failed, trim_log,
+    },
+    protocol::{EngineError, ErrorCode},
     rest::direct_http::header_pairs,
     utils::id::now_ms,
 };
@@ -50,7 +54,7 @@ const LAST_WORDS: Duration = Duration::from_millis(150);
 const CLOSE_TIMEOUT: Duration = Duration::from_secs(10);
 
 /// What a caller of [`disconnect_connection`] and [`clear_connection_messages`] gets back.
-pub type OkResult = Result<(), String>;
+pub type OkResult = Result<(), EngineError>;
 
 /// What a connect is asked to open, as the caller wrote it (variables unresolved).
 pub struct Target<'a> {
@@ -80,7 +84,7 @@ struct Entry {
     /// The command or address as the caller sent it, unresolved and trimmed.
     url: String,
     status: &'static str,
-    error: Option<String>,
+    error: Option<EngineError>,
     /// What the server said of itself in the handshake.
     server_info: Value,
     protocol_version: Option<String>,
@@ -151,7 +155,7 @@ impl Entry {
         out.insert("transport".into(), json!(self.transport));
         out.insert("url".into(), json!(self.url));
         out.insert("status".into(), json!(self.status));
-        out.insert("error".into(), json!(self.error));
+        put_error(&mut out, self.error.as_ref());
         out.insert("serverInfo".into(), self.server_info.clone());
         out.insert("protocolVersion".into(), json!(self.protocol_version));
         out.insert("capabilities".into(), self.capabilities.clone());
@@ -248,8 +252,9 @@ impl Stream for Entry {
 
 static CONNECTIONS: LazyLock<Streams<Entry>> = LazyLock::new(Streams::new);
 
-fn no_connection(workspace_id: &str, connection_id: &str) -> String {
-    format!("No connection \"{connection_id}\" in workspace \"{workspace_id}\".")
+fn no_connection(workspace_id: &str, connection_id: &str) -> EngineError {
+    EngineError::not_found(format!("No connection \"{connection_id}\" in workspace \"{workspace_id}\"."))
+        .keyed("mcp.not_found", json!({ "id": connection_id, "workspace": workspace_id }))
 }
 
 /// The snapshot for one connection, live or finished, or `None` if the engine never opened that id.
@@ -267,53 +272,64 @@ fn live_count(workspace_id: &str) -> usize {
 }
 
 /// The transport a target names, or the one its address implies.
-fn transport_of(target: &Target, address: &str) -> Result<&'static str, String> {
+fn transport_of(target: &Target, address: &str) -> Result<&'static str, EngineError> {
     match target.transport.trim().to_ascii_lowercase().as_str() {
         "stdio" => Ok("stdio"),
         "http" => Ok("http"),
         "" if address.starts_with("http://") || address.starts_with("https://") => Ok("http"),
         "" => Ok("stdio"),
-        other => Err(format!("Unknown transport \"{other}\": an MCP request is `stdio` or `http`.")),
+        other => Err(EngineError::bad_request(format!(
+            "Unknown transport \"{other}\": an MCP request is `stdio` or `http`."
+        ))
+        .keyed("mcp.unknown_transport", json!({ "transport": other }))),
     }
 }
 
 /// The command to run or the endpoint to call, with the request's headers, everything resolved against the
 /// environment. A program gets the headers as environment variables: that is where a local server reads its
 /// credentials from.
-fn prepare(target: &Target, env: Option<&Value>) -> Result<Prepared, String> {
+fn prepare(target: &Target, env: Option<&Value>) -> Result<Prepared, EngineError> {
     let address = resolve_vars(target.url.trim(), env);
     let address = address.trim();
     let headers = target.headers.map(|headers| resolve_headers(headers, env)).unwrap_or_else(|| json!({}));
     if transport_of(target, address)? == "stdio" {
         if address.is_empty() {
-            return Err("A command is required: what starts the MCP server, such as \
-                        `npx -y @modelcontextprotocol/server-everything`."
-                .to_string());
+            return Err(EngineError::bad_request(
+                "A command is required: what starts the MCP server, such as \
+                 `npx -y @modelcontextprotocol/server-everything`.",
+            )
+            .keyed("mcp.command_required", json!({})));
         }
         let mut env = Vec::new();
         for (name, value) in header_pairs(&headers) {
             let name = name.trim().to_string();
             if name.is_empty() || name.contains(['=', '\0']) || value.contains('\0') {
-                return Err(format!("Invalid environment variable name \"{name}\"."));
+                return Err(EngineError::bad_request(format!("Invalid environment variable name \"{name}\"."))
+                    .keyed("mcp.env_name_invalid", json!({ "name": name })));
             }
             env.push((name, value));
         }
         return Ok(Prepared::Stdio { command: address.to_string(), env });
     }
 
-    const NEEDS: &str = "Invalid URL: an MCP request over HTTP needs an http:// or https:// address.";
-    let url = url::Url::parse(address).map_err(|_| NEEDS.to_string())?;
+    let needs = || {
+        EngineError::bad_request("Invalid URL: an MCP request over HTTP needs an http:// or https:// address.")
+            .keyed("mcp.invalid_url", json!({}))
+    };
+    let url = url::Url::parse(address).map_err(|_| needs())?;
     if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none_or(str::is_empty) {
-        return Err(NEEDS.to_string());
+        return Err(needs());
     }
     let mut map = HashMap::new();
     for (name, value) in header_pairs(&headers) {
-        let header =
-            HeaderName::from_bytes(name.as_bytes()).map_err(|e| format!("Invalid header name \"{name}\": {e}"))?;
+        let header = HeaderName::from_bytes(name.as_bytes()).map_err(|e| header_name_invalid(&name, &e))?;
         if TRANSPORT_HEADERS.contains(&header.as_str()) {
-            return Err(format!("The header \"{name}\" is set by the MCP transport and cannot be given."));
+            return Err(EngineError::bad_request(format!(
+                "The header \"{name}\" is set by the MCP transport and cannot be given."
+            ))
+            .keyed("mcp.transport_header", json!({ "name": name })));
         }
-        let value = HeaderValue::from_str(&value).map_err(|e| format!("Invalid value for header \"{name}\": {e}"))?;
+        let value = HeaderValue::from_str(&value).map_err(|e| header_value_invalid(&name, &e))?;
         map.insert(header, value);
     }
     Ok(Prepared::Http { url, headers: map })
@@ -321,7 +337,7 @@ fn prepare(target: &Target, env: Option<&Value>) -> Result<Prepared, String> {
 
 /// Open a connection, replacing any live one under the same key. Returns once the connection attempt has
 /// started; the open (or the failure) arrives as `mcp.status` events.
-pub fn connect_connection(workspace_id: &str, connection_id: &str, target: &Target) -> Result<(), String> {
+pub fn connect_connection(workspace_id: &str, connection_id: &str, target: &Target) -> OkResult {
     let key = key_of(workspace_id, connection_id);
     let env = load_merged_environment(workspace_id);
 
@@ -329,10 +345,11 @@ pub fn connect_connection(workspace_id: &str, connection_id: &str, target: &Targ
     // hold must not be refused by the connection you are replacing.
     let existing_live = CONNECTIONS.lock().get(&key).is_some_and(Entry::is_live);
     if !existing_live && live_count(workspace_id) >= MAX_MCP_CONNECTIONS {
-        return Err(format!(
+        return Err(EngineError::conflict(format!(
             "Max {MAX_MCP_CONNECTIONS} active connections reached. \
              Disconnect another one first (mcp.disconnect), or list them with mcp.list."
-        ));
+        ))
+        .keyed("mcp.max_connections", json!({ "max": MAX_MCP_CONNECTIONS })));
     }
 
     let prepared = prepare(target, env.as_ref());
@@ -389,11 +406,11 @@ pub fn connect_connection(workspace_id: &str, connection_id: &str, target: &Targ
                 entry.tx = Some(tx);
                 Ok((prepared, entry.generation))
             }
-            Err(message) => {
+            Err(error) => {
                 entry.status = "error";
-                entry.error = Some(message.clone());
+                entry.error = Some(recorded(error.clone()));
                 events.push(entry.status_event());
-                Err(message)
+                Err(error)
             }
         }
     };
@@ -437,7 +454,7 @@ pub fn call_server(
     kind: CallKind,
     name: &str,
     typed: Option<&Map<String, Value>>,
-) -> Result<String, String> {
+) -> Result<String, EngineError> {
     let key = key_of(workspace_id, connection_id);
     // What is sent has the secrets in; what is logged has them as written (`push` also masks any value).
     let env = load_merged_environment(workspace_id);
@@ -452,18 +469,23 @@ pub fn call_server(
     let shown_name = resolve_vars(name.trim(), display.as_ref()).trim().to_string();
     if sent_name.is_empty() {
         return Err(match kind {
-            CallKind::Tool => "A tool name is required.",
-            CallKind::Prompt => "A prompt name is required.",
-            CallKind::Resource => "A resource URI is required.",
-        }
-        .to_string());
+            CallKind::Tool => {
+                EngineError::bad_request("A tool name is required.").keyed("mcp.tool_name_required", json!({}))
+            }
+            CallKind::Prompt => {
+                EngineError::bad_request("A prompt name is required.").keyed("mcp.prompt_name_required", json!({}))
+            }
+            CallKind::Resource => {
+                EngineError::bad_request("A resource URI is required.").keyed("mcp.resource_uri_required", json!({}))
+            }
+        });
     }
 
     // What the server declared about the tool or the prompt says how its arguments are read.
     let declared = {
         let connections = CONNECTIONS.lock();
         let Some(entry) = connections.get(&key).filter(|entry| entry.is_open()) else {
-            return Err("Not connected".to_string());
+            return Err(not_connected());
         };
         let catalog = match kind {
             CallKind::Tool => Some(Catalog::Tools),
@@ -474,7 +496,7 @@ pub fn call_server(
             entry.catalogs[catalog.index()].iter().find(|item| item["name"] == sent_name.as_str()).cloned()
         })
     };
-    let arguments = |env: Option<&Value>| -> Result<Map<String, Value>, String> {
+    let arguments = |env: Option<&Value>| -> Result<Map<String, Value>, EngineError> {
         let resolve = |text: &str| resolve_vars(text, env);
         match kind {
             CallKind::Tool => {
@@ -494,7 +516,7 @@ pub fn call_server(
     let (message_id, event) = {
         let mut connections = CONNECTIONS.lock();
         let Some(entry) = connections.get_mut(&key).filter(|entry| entry.is_open()) else {
-            return Err("Not connected".to_string());
+            return Err(not_connected());
         };
         let (message_id, event) = entry.push(Logged {
             kind: kind.name(),
@@ -507,7 +529,7 @@ pub fn call_server(
         let call = Command::Call { message_id: message_id.clone(), kind, name: sent_name, arguments: sent };
         if tx.send(call).is_err() {
             entry.messages.pop();
-            return Err("Send failed".to_string());
+            return Err(send_failed());
         }
         (message_id, event)
     };
@@ -545,14 +567,14 @@ fn record(key: &str, generation: u64, change: impl FnOnce(&mut Entry) -> Vec<Eve
 
 /// The connection is over. `error` is why it failed; with none it ended cleanly. A close the caller asked for
 /// is never an error.
-fn record_end(key: &str, generation: u64, error: Option<String>) {
+fn record_end(key: &str, generation: u64, error: Option<EngineError>) {
     record(key, generation, |entry| {
         entry.tx = None;
         let mut events = unanswered(entry, "The connection ended before the server answered.");
         match error.filter(|_| !entry.close_requested) {
-            Some(message) => {
+            Some(error) => {
                 entry.status = "error";
-                entry.error = Some(message);
+                entry.error = Some(recorded(error));
             }
             None => {
                 entry.status = "disconnected";
@@ -600,17 +622,22 @@ impl Running {
     }
 
     /// The connection failed for `reason`; the program's last words are added to it.
-    async fn fail(mut self, reason: &str) {
+    async fn fail(mut self, reason: EngineError) {
         // What the program wrote as it ended may still be on its way.
         tokio::time::sleep(LAST_WORDS).await;
         while let Ok(late) = self.heard.try_recv() {
             hear(&self.key, self.generation, late, &mut self.last_words);
         }
-        let message = match self.last_words.is_empty() {
-            false => format!("{}: {}", reason.trim_end_matches('.'), self.last_words.join(" ")),
-            true => reason.to_string(),
+        let error = match self.last_words.is_empty() {
+            // shortcut: the reason keeps its English here (a translated key would need one key per reason), upgrade if asked.
+            false => {
+                let (reason, output) = (reason.message.trim_end_matches('.'), self.last_words.join(" "));
+                EngineError::upstream(format!("{reason}: {output}"))
+                    .keyed("mcp.failed_with_output", json!({ "reason": reason, "output": output }))
+            }
+            true => reason,
         };
-        record_end(&self.key, self.generation, Some(message));
+        record_end(&self.key, self.generation, Some(error));
     }
 }
 
@@ -632,7 +659,7 @@ async fn run(key: String, generation: u64, prepared: Prepared, mut rx: Unbounded
                 lists.push((catalog, client::list(client.peer(), catalog).await));
             }
         }
-        Ok::<_, String>((client, lists))
+        Ok::<_, EngineError>((client, lists))
     };
     tokio::pin!(opening);
     let timer = tokio::time::sleep(handshake);
@@ -641,7 +668,7 @@ async fn run(key: String, generation: u64, prepared: Prepared, mut rx: Unbounded
         tokio::select! {
             opened = &mut opening => match opened {
                 Ok(opened) => break opened,
-                Err(reason) => return running.fail(&reason).await,
+                Err(reason) => return running.fail(reason).await,
             },
             Some(item) = running.heard.recv() => {
                 if hear(&running.key, generation, item, &mut running.last_words).is_none() {
@@ -653,7 +680,12 @@ async fn run(key: String, generation: u64, prepared: Prepared, mut rx: Unbounded
                 Some(Command::Call { .. }) => {}
             },
             _ = &mut timer => {
-                return running.fail("Timed out waiting for the MCP handshake. Is this an MCP server?").await;
+                let error = EngineError::new(
+                    ErrorCode::Timeout,
+                    "Timed out waiting for the MCP handshake. Is this an MCP server?",
+                )
+                .keyed("mcp.handshake_timeout", json!({}));
+                return running.fail(error).await;
             }
         }
     };
@@ -682,7 +714,11 @@ async fn run(key: String, generation: u64, prepared: Prepared, mut rx: Unbounded
     tokio::pin!(ended);
     loop {
         tokio::select! {
-            _ = &mut ended => return running.fail("The server closed the connection.").await,
+            _ = &mut ended => {
+                let error = EngineError::upstream("The server closed the connection.")
+                    .keyed("mcp.server_closed", json!({}));
+                return running.fail(error).await;
+            }
             Some(item) = running.heard.recv() => {
                 let Some(changed) = hear(&running.key, generation, item, &mut running.last_words) else {
                     return cancel.cancel();
@@ -745,7 +781,8 @@ mod tests {
             assert_eq!(prepared.transport(), expected, "{transport} {url}");
         }
         let error = prepare(&target("sse", "http://h", None), None).err().unwrap();
-        assert!(error.starts_with("Unknown transport \"sse\""), "{error}");
+        assert!(error.message.starts_with("Unknown transport \"sse\""), "{error:?}");
+        assert_eq!(error.key(), Some("mcp.unknown_transport"));
     }
 
     #[test]
@@ -782,17 +819,20 @@ mod tests {
     #[test]
     fn what_cannot_be_connected_is_refused_with_a_reason() {
         let error = prepare(&target("stdio", "  ", None), None).err().unwrap();
-        assert!(error.starts_with("A command is required"), "{error}");
+        assert!(error.message.starts_with("A command is required"), "{error:?}");
         let error = prepare(&target("", "", None), None).err().unwrap();
-        assert!(error.starts_with("A command is required"), "{error}");
+        assert!(error.message.starts_with("A command is required"), "{error:?}");
         for url in ["", "not a url", "ws://h/mcp", "localhost:3000"] {
             let error = prepare(&target("http", url, None), None).err().expect(url);
-            assert!(error.starts_with("Invalid URL"), "{url}: {error}");
+            assert!(error.message.starts_with("Invalid URL"), "{url}: {error:?}");
         }
         let headers = json!({ "bad name": "v" });
-        assert!(prepare(&target("http", "http://h", Some(&headers)), None).err().unwrap().contains("header name"));
+        assert!(
+            prepare(&target("http", "http://h", Some(&headers)), None).err().unwrap().message.contains("header name")
+        );
         let headers = json!({ "A=B": "v" });
         let error = prepare(&target("stdio", "server", Some(&headers)), None).err().unwrap();
-        assert_eq!(error, "Invalid environment variable name \"A=B\".");
+        assert_eq!(error.message, "Invalid environment variable name \"A=B\".");
+        assert_eq!(error.key(), Some("mcp.env_name_invalid"));
     }
 }

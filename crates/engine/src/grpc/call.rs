@@ -9,7 +9,7 @@ use std::{collections::BTreeMap, time::Duration};
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use prost::Message;
 use prost_reflect::{DynamicMessage, MessageDescriptor, MethodDescriptor, SerializeOptions};
-use serde_json::Value;
+use serde_json::{Value, json};
 use tonic::{
     Code, Request, Status,
     client::Grpc,
@@ -20,15 +20,17 @@ use tonic::{
     transport::{Channel, ClientTlsConfig, Endpoint},
 };
 
+use crate::protocol::EngineError;
+
 const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 const CALL_TIMEOUT: Duration = Duration::from_secs(120);
 
 /// Opens a channel to `address`. TLS is used for `https://` / `grpcs://`, for a bare host and for port 443;
 /// anything else is plaintext HTTP/2, which is how local development servers are run.
-pub async fn connect(address: &str) -> Result<Channel, String> {
+pub async fn connect(address: &str) -> Result<Channel, EngineError> {
     let address = address.trim();
     if address.is_empty() {
-        return Err("Enter the server address.".to_owned());
+        return Err(EngineError::bad_request("Enter the server address.").keyed("grpc.address_required", json!({})));
     }
     let (scheme, rest) = match address.split_once("://") {
         Some((scheme, rest)) => (scheme.to_ascii_lowercase(), rest),
@@ -48,15 +50,19 @@ pub async fn connect(address: &str) -> Result<Channel, String> {
         None if port.is_none_or(|port| port == "443") => (true, Some(false)),
         None => (false, None),
     };
+    let unreachable = |detail: String| {
+        EngineError::upstream(format!("Could not connect to {address}: {detail}"))
+            .keyed("grpc.connect_failed", json!({ "address": address, "detail": detail }))
+    };
     match open(rest, first).await {
         Ok(channel) => Ok(channel),
         Err(error) => match second {
             Some(tls) => {
                 // The port a bare host was tried on as TLS is the one it is tried on in plaintext.
                 let hostport = if port.is_some() { rest.to_owned() } else { format!("{rest}:443") };
-                open(&hostport, tls).await.map_err(|_| format!("Could not connect to {address}: {error}"))
+                open(&hostport, tls).await.map_err(|_| unreachable(error))
             }
-            None => Err(format!("Could not connect to {address}: {error}")),
+            None => Err(unreachable(error)),
         },
     }
 }
@@ -139,10 +145,10 @@ pub struct CallOutcome {
 
 /// Parses the request body into the messages to send. A method that streams from the client takes a JSON
 /// array, one message per element (a single object is one message); any other takes one object.
-pub fn parse_messages(body: &str, method: &MethodDescriptor) -> Result<Vec<DynamicMessage>, String> {
+pub fn parse_messages(body: &str, method: &MethodDescriptor) -> Result<Vec<DynamicMessage>, EngineError> {
     let body = body.trim();
     let body = if body.is_empty() { "{}" } else { body };
-    let value: Value = serde_json::from_str(body).map_err(|e| format!("The message is not valid JSON: {e}"))?;
+    let value: Value = serde_json::from_str(body).map_err(|e| invalid_json(&e))?;
     let items = match value {
         Value::Array(items) if method.is_client_streaming() => items,
         other => vec![other],
@@ -152,14 +158,26 @@ pub fn parse_messages(body: &str, method: &MethodDescriptor) -> Result<Vec<Dynam
         .enumerate()
         .map(|(ix, item)| {
             DynamicMessage::deserialize(method.input(), item).map_err(|e| {
+                let (name, detail) = (method.input().full_name().to_owned(), e.to_string());
                 if method.is_client_streaming() {
-                    format!("Message {} does not match {}: {e}", ix + 1, method.input().full_name())
+                    EngineError::bad_request(format!("Message {} does not match {name}: {detail}", ix + 1))
+                        .keyed("grpc.message_n_mismatch", json!({ "number": ix + 1, "type": name, "detail": detail }))
                 } else {
-                    format!("The message does not match {}: {e}", method.input().full_name())
+                    mismatch(&name, &detail)
                 }
             })
         })
         .collect()
+}
+
+pub fn invalid_json(error: &dyn std::fmt::Display) -> EngineError {
+    EngineError::bad_request(format!("The message is not valid JSON: {error}"))
+        .keyed("grpc.message_invalid_json", json!({ "detail": error.to_string() }))
+}
+
+pub fn mismatch(type_name: &str, detail: &str) -> EngineError {
+    EngineError::bad_request(format!("The message does not match {type_name}: {detail}"))
+        .keyed("grpc.message_mismatch", json!({ "type": type_name, "detail": detail }))
 }
 
 pub fn to_json(message: &DynamicMessage) -> String {
@@ -174,7 +192,11 @@ pub fn to_json(message: &DynamicMessage) -> String {
 }
 
 /// Request metadata as the wire wants it: lower-case names, and `-bin` names carrying base64 values.
-pub fn to_metadata(pairs: &[(String, String)]) -> Result<MetadataMap, String> {
+pub fn to_metadata(pairs: &[(String, String)]) -> Result<MetadataMap, EngineError> {
+    let bad_name = |name: &str| {
+        EngineError::bad_request(format!("\"{name}\" is not a valid metadata name."))
+            .keyed("grpc.metadata_name_invalid", json!({ "name": name }))
+    };
     let mut map = MetadataMap::new();
     for (name, value) in pairs {
         let name = name.trim().to_ascii_lowercase();
@@ -182,17 +204,22 @@ pub fn to_metadata(pairs: &[(String, String)]) -> Result<MetadataMap, String> {
             continue;
         }
         if name.ends_with("-bin") {
-            let key = BinaryMetadataKey::from_bytes(name.as_bytes())
-                .map_err(|_| format!("\"{name}\" is not a valid metadata name."))?;
-            let bytes = STANDARD
-                .decode(value.trim())
-                .map_err(|_| format!("The value of \"{name}\" must be base64: names ending in -bin carry bytes."))?;
+            let key = BinaryMetadataKey::from_bytes(name.as_bytes()).map_err(|_| bad_name(&name))?;
+            let bytes = STANDARD.decode(value.trim()).map_err(|_| {
+                EngineError::bad_request(format!(
+                    "The value of \"{name}\" must be base64: names ending in -bin carry bytes."
+                ))
+                .keyed("grpc.metadata_base64", json!({ "name": name }))
+            })?;
             map.insert_bin(key, BinaryMetadataValue::from_bytes(&bytes));
         } else {
-            let key = AsciiMetadataKey::from_bytes(name.as_bytes())
-                .map_err(|_| format!("\"{name}\" is not a valid metadata name."))?;
-            let value = AsciiMetadataValue::try_from(value.trim())
-                .map_err(|_| format!("The value of \"{name}\" is not valid metadata (printable ASCII only)."))?;
+            let key = AsciiMetadataKey::from_bytes(name.as_bytes()).map_err(|_| bad_name(&name))?;
+            let value = AsciiMetadataValue::try_from(value.trim()).map_err(|_| {
+                EngineError::bad_request(format!(
+                    "The value of \"{name}\" is not valid metadata (printable ASCII only)."
+                ))
+                .keyed("grpc.metadata_value_invalid", json!({ "name": name }))
+            })?;
             map.insert(key, value);
         }
     }

@@ -31,12 +31,16 @@ use tokio_tungstenite::{
 };
 
 use super::packet::{
-    DEFAULT_HEARTBEAT, Incoming, PONG, connect_frame, disconnect_frame, event_frame, normalize_namespace, parse_args,
-    read_frame,
+    DEFAULT_HEARTBEAT, Incoming, PONG, REFUSED_BY_DEFAULT, connect_frame, disconnect_frame, event_frame,
+    normalize_namespace, parse_args, read_frame,
 };
 use crate::{
     env::{load_merged_environment, resolve_headers, resolve_vars},
-    kernel::streams::{Event, Stream, Streams, emit, key_of, trim_log},
+    kernel::streams::{
+        Event, Stream, Streams, emit, header_name_invalid, header_value_invalid, key_of, not_connected, put_error,
+        recorded, send_failed, trim_log,
+    },
+    protocol::{EngineError, ErrorCode},
     utils::id::now_ms,
 };
 
@@ -56,7 +60,7 @@ const HANDSHAKE_TIMEOUT: Duration = Duration::from_millis(if cfg!(test) { 600 } 
 const CLOSE_TIMEOUT: Duration = Duration::from_secs(3);
 
 /// What a caller of [`emit_event`], [`disconnect_connection`] and [`clear_connection_messages`] gets back.
-pub type OkResult = Result<(), String>;
+pub type OkResult = Result<(), EngineError>;
 
 /// What a connect is asked to open, as the caller wrote it (variables unresolved).
 pub struct Target<'a> {
@@ -93,7 +97,7 @@ struct Entry {
     /// The namespace joined, resolved.
     namespace: String,
     status: &'static str,
-    error: Option<String>,
+    error: Option<EngineError>,
     /// The id the server gave this client in the namespace.
     sid: Option<String>,
     /// Why the connection ended, in Socket.IO's words (`io server disconnect`, `transport close`, ...).
@@ -128,18 +132,18 @@ struct Logged<'a> {
 
 impl Entry {
     fn status_event(&self) -> Event {
-        Event {
-            name: "socketio.status",
-            payload: json!({
-                "workspaceId": self.workspace_id,
-                "connectionId": self.connection_id,
-                "namespace": self.namespace,
-                "status": self.status,
-                "error": self.error,
-                "sid": self.sid,
-                "reason": self.close_reason,
-            }),
+        let mut payload = json!({
+            "workspaceId": self.workspace_id,
+            "connectionId": self.connection_id,
+            "namespace": self.namespace,
+            "status": self.status,
+            "sid": self.sid,
+            "reason": self.close_reason,
+        });
+        if let Some(map) = payload.as_object_mut() {
+            put_error(map, self.error.as_ref());
         }
+        Event { name: "socketio.status", payload }
     }
 
     /// Append a message to the log, trim it to the ceiling and return the `socketio.message` event.
@@ -187,7 +191,7 @@ impl Stream for Entry {
         out.insert("url".into(), json!(self.url));
         out.insert("namespace".into(), json!(self.namespace));
         out.insert("status".into(), json!(self.status));
-        out.insert("error".into(), json!(self.error));
+        put_error(&mut out, self.error.as_ref());
         out.insert("sid".into(), json!(self.sid));
         out.insert("closeReason".into(), json!(self.close_reason));
         out.insert("listeners".into(), json!(self.listeners));
@@ -203,8 +207,23 @@ impl Stream for Entry {
 
 static CONNECTIONS: LazyLock<Streams<Entry>> = LazyLock::new(Streams::new);
 
-fn no_connection(workspace_id: &str, connection_id: &str) -> String {
-    format!("No connection \"{connection_id}\" in workspace \"{workspace_id}\".")
+fn no_connection(workspace_id: &str, connection_id: &str) -> EngineError {
+    EngineError::not_found(format!("No connection \"{connection_id}\" in workspace \"{workspace_id}\"."))
+        .keyed("socketio.not_found", json!({ "id": connection_id, "workspace": workspace_id }))
+}
+
+/// A fault the transport reported, with its own text.
+fn failure(detail: &str) -> EngineError {
+    EngineError::upstream(detail).keyed("socketio.failed", json!({ "detail": detail }))
+}
+
+/// The server's own words for refusing the namespace, or ours when it gave none.
+fn refused(message: &str) -> EngineError {
+    if message == REFUSED_BY_DEFAULT {
+        EngineError::upstream(message).keyed("socketio.refused_default", json!({}))
+    } else {
+        failure(message)
+    }
 }
 
 /// The snapshot for one connection, live or finished, or `None` if the engine never opened that id.
@@ -224,16 +243,21 @@ fn live_count(workspace_id: &str) -> usize {
 /// The WebSocket request a connect makes, the namespace it joins and what it authenticates with, everything
 /// resolved against the environment. `http(s)` addresses are treated as `ws(s)`; the address's query is kept
 /// and given the `EIO` and `transport` parameters a Socket.IO server expects.
-fn prepare(target: &Target, env: Option<&Value>) -> Result<Prepared, String> {
-    const NEEDS: &str = "Invalid URL: a Socket.IO request needs an http://, https://, ws:// or wss:// address.";
-    let mut url = url::Url::parse(&resolve_vars(target.url.trim(), env)).map_err(|_| NEEDS.to_string())?;
+fn prepare(target: &Target, env: Option<&Value>) -> Result<Prepared, EngineError> {
+    let needs = || {
+        EngineError::bad_request(
+            "Invalid URL: a Socket.IO request needs an http://, https://, ws:// or wss:// address.",
+        )
+        .keyed("socketio.invalid_url", json!({}))
+    };
+    let mut url = url::Url::parse(&resolve_vars(target.url.trim(), env)).map_err(|_| needs())?;
     let scheme = match url.scheme() {
         "http" | "ws" => "ws",
         "https" | "wss" => "wss",
-        _ => return Err(NEEDS.to_string()),
+        _ => return Err(needs()),
     };
     if url.host_str().is_none_or(str::is_empty) {
-        return Err(NEEDS.to_string());
+        return Err(needs());
     }
 
     // `https://host/admin` names the namespace `/admin`, as it does for a Socket.IO client.
@@ -247,7 +271,7 @@ fn prepare(target: &Target, env: Option<&Value>) -> Result<Prepared, String> {
 
     let has = |name: &str| url.query_pairs().any(|(key, _)| key == name);
     let (has_version, has_transport) = (has("EIO"), has("transport"));
-    url.set_scheme(scheme).map_err(|_| NEEDS.to_string())?;
+    url.set_scheme(scheme).map_err(|_| needs())?;
     url.set_path(&path);
     url.set_fragment(None);
     {
@@ -265,17 +289,21 @@ fn prepare(target: &Target, env: Option<&Value>) -> Result<Prepared, String> {
         "" => None,
         text => match serde_json::from_str::<Value>(text) {
             Ok(value @ Value::Object(_)) => Some(value),
-            _ => return Err("Invalid auth: it must be a JSON object, such as {\"token\": \"...\"}.".to_string()),
+            _ => {
+                return Err(EngineError::bad_request(
+                    "Invalid auth: it must be a JSON object, such as {\"token\": \"...\"}.",
+                )
+                .keyed("socketio.invalid_auth", json!({})));
+            }
         },
     };
 
-    let mut request = url.as_str().into_client_request().map_err(|e| e.to_string())?;
+    let mut request = url.as_str().into_client_request().map_err(|e| failure(&e.to_string()))?;
     if let Some(headers) = target.headers {
         for (name, value) in resolve_headers(headers, env).as_object().into_iter().flatten() {
-            let name =
-                HeaderName::from_bytes(name.as_bytes()).map_err(|e| format!("Invalid header name \"{name}\": {e}"))?;
+            let name = HeaderName::from_bytes(name.as_bytes()).map_err(|e| header_name_invalid(name, &e))?;
             let value = HeaderValue::from_str(value.as_str().unwrap_or(""))
-                .map_err(|e| format!("Invalid value for header \"{name}\": {e}"))?;
+                .map_err(|e| header_value_invalid(name.as_str(), &e))?;
             request.headers_mut().insert(name, value);
         }
     }
@@ -284,7 +312,7 @@ fn prepare(target: &Target, env: Option<&Value>) -> Result<Prepared, String> {
 
 /// Open a connection, replacing any live one under the same key. Returns once the connection attempt has
 /// started; the open (or the failure) arrives as `socketio.status` events.
-pub fn connect_connection(workspace_id: &str, connection_id: &str, target: &Target) -> Result<(), String> {
+pub fn connect_connection(workspace_id: &str, connection_id: &str, target: &Target) -> OkResult {
     let key = key_of(workspace_id, connection_id);
     let env = load_merged_environment(workspace_id);
 
@@ -292,10 +320,11 @@ pub fn connect_connection(workspace_id: &str, connection_id: &str, target: &Targ
     // hold must not be refused by the connection you are replacing.
     let existing_live = CONNECTIONS.lock().get(&key).is_some_and(Entry::is_live);
     if !existing_live && live_count(workspace_id) >= MAX_SOCKETIO_CONNECTIONS {
-        return Err(format!(
+        return Err(EngineError::conflict(format!(
             "Max {MAX_SOCKETIO_CONNECTIONS} active connections reached. \
              Disconnect another one first (socketio.disconnect), or list them with socketio.list."
-        ));
+        ))
+        .keyed("socketio.max_connections", json!({ "max": MAX_SOCKETIO_CONNECTIONS })));
     }
 
     let prepared = prepare(target, env.as_ref());
@@ -349,11 +378,11 @@ pub fn connect_connection(workspace_id: &str, connection_id: &str, target: &Targ
                 entry.tx = Some(tx);
                 Ok((prepared, entry.generation))
             }
-            Err(message) => {
+            Err(error) => {
                 entry.status = "error";
-                entry.error = Some(message.clone());
+                entry.error = Some(recorded(error.clone()));
                 events.push(entry.status_event());
-                Err(message)
+                Err(error)
             }
         }
     };
@@ -397,7 +426,7 @@ pub fn emit_event(workspace_id: &str, connection_id: &str, event: &str, args: &s
         connections.get(&key).is_some_and(|e| e.tx.is_some() && e.status == "connected" && !e.close_requested)
     };
     if !open(&CONNECTIONS.lock()) {
-        return Err("Not connected".to_string());
+        return Err(not_connected());
     }
 
     // What is sent has the secrets in; what is logged has them as written (`push` also masks any value).
@@ -411,7 +440,9 @@ pub fn emit_event(workspace_id: &str, connection_id: &str, event: &str, args: &s
     };
     let name = resolve_vars(event.trim(), env.as_ref());
     if name.trim().is_empty() {
-        return Err("An event name is required.".to_string());
+        return Err(
+            EngineError::bad_request("An event name is required.").keyed("socketio.event_name_required", json!({}))
+        );
     }
     let sent_args = parse_args(&resolve_vars(args, env.as_ref()));
     let shown_name = resolve_vars(event.trim(), display.as_ref());
@@ -420,14 +451,14 @@ pub fn emit_event(workspace_id: &str, connection_id: &str, event: &str, args: &s
     let logged = {
         let mut connections = CONNECTIONS.lock();
         if !open(&connections) {
-            return Err("Not connected".to_string());
+            return Err(not_connected());
         }
         let entry = connections.get_mut(&key).expect("the entry was just found");
         let ack_id = ack.then_some(entry.next_ack);
         let frame = event_frame(&entry.namespace, name.trim(), &sent_args, ack_id);
         let tx = entry.tx.as_ref().expect("an open connection has a task");
         if tx.send(Command::Frame(frame)).is_err() {
-            return Err("Send failed".to_string());
+            return Err(send_failed());
         }
         if let Some(id) = ack_id {
             entry.next_ack += 1;
@@ -503,14 +534,14 @@ fn record_open(key: &str, generation: u64, sid: Option<String>) -> bool {
 
 /// The connection is over, for `reason`. `error` is why it failed; with none it ended cleanly. A close the
 /// caller asked for is never an error.
-fn record_end(key: &str, generation: u64, error: Option<String>, reason: &'static str) {
+fn record_end(key: &str, generation: u64, error: Option<EngineError>, reason: &'static str) {
     CONNECTIONS.record(key, generation, |entry| {
         entry.tx = None;
         entry.pending_acks.clear();
         match error.filter(|_| !entry.close_requested) {
-            Some(message) => {
+            Some(error) => {
                 entry.status = "error";
-                entry.error = Some(message);
+                entry.error = Some(recorded(error));
                 entry.close_reason = Some(reason);
             }
             None => {
@@ -544,8 +575,11 @@ async fn run(key: String, generation: u64, prepared: Prepared, mut rx: Unbounded
                     break stream;
                 }
                 Err(error) => {
-                    let message = format!("No Socket.IO server answered at this address and path ({error}).");
-                    return record_end(&key, generation, Some(message), "transport error");
+                    let error = EngineError::upstream(format!(
+                        "No Socket.IO server answered at this address and path ({error})."
+                    ))
+                    .keyed("socketio.no_server", json!({ "detail": error.to_string() }));
+                    return record_end(&key, generation, Some(error), "transport error");
                 }
             },
             command = rx.recv() => match command {
@@ -565,12 +599,23 @@ async fn run(key: String, generation: u64, prepared: Prepared, mut rx: Unbounded
         tokio::select! {
             _ = &mut timer => {
                 close(&mut stream).await;
-                let (message, reason) = if connected {
-                    ("Ping timeout: the server stopped sending its heartbeat.", "ping timeout")
+                let (error, reason) = if connected {
+                    (
+                        EngineError::new(ErrorCode::Timeout, "Ping timeout: the server stopped sending its heartbeat.")
+                            .keyed("socketio.ping_timeout", json!({})),
+                        "ping timeout",
+                    )
                 } else {
-                    ("Timed out waiting for the Socket.IO handshake. Is this a Socket.IO server (v3 or v4)?", "timeout")
+                    (
+                        EngineError::new(
+                            ErrorCode::Timeout,
+                            "Timed out waiting for the Socket.IO handshake. Is this a Socket.IO server (v3 or v4)?",
+                        )
+                        .keyed("socketio.handshake_timeout", json!({})),
+                        "timeout",
+                    )
                 };
-                return record_end(&key, generation, Some(message.to_string()), reason);
+                return record_end(&key, generation, Some(error), reason);
             }
             incoming = stream.next() => {
                 let frame = match incoming {
@@ -608,7 +653,7 @@ async fn run(key: String, generation: u64, prepared: Prepared, mut rx: Unbounded
                     }
                     Incoming::Refused(message) => {
                         close(&mut stream).await;
-                        return record_end(&key, generation, Some(message), "connect error");
+                        return record_end(&key, generation, Some(refused(&message)), "connect error");
                     }
                     Incoming::Disconnected => {
                         close(&mut stream).await;
@@ -647,15 +692,22 @@ async fn run(key: String, generation: u64, prepared: Prepared, mut rx: Unbounded
 }
 
 /// What is said when the server goes away without disconnecting, with the transport's own words if it had any.
-fn lost(connected: bool, detail: Option<String>) -> String {
+fn lost(connected: bool, detail: Option<String>) -> EngineError {
     let what = if connected {
         "The server closed the connection"
     } else {
         "The connection closed before the Socket.IO handshake finished"
     };
-    match detail {
-        Some(detail) => format!("{what} ({detail})."),
-        None => format!("{what}."),
+    let error = match &detail {
+        Some(detail) => EngineError::upstream(format!("{what} ({detail}).")),
+        None => EngineError::upstream(format!("{what}.")),
+    };
+    let params = json!({ "detail": detail });
+    match (connected, detail.is_some()) {
+        (true, false) => error.keyed("socketio.closed_connected", json!({})),
+        (true, true) => error.keyed("socketio.closed_connected_detail", params),
+        (false, false) => error.keyed("socketio.closed_handshake", json!({})),
+        (false, true) => error.keyed("socketio.closed_handshake_detail", params),
     }
 }
 
@@ -732,17 +784,19 @@ mod tests {
     fn what_cannot_be_connected_is_refused_with_a_reason() {
         for url in ["", "not a url", "ftp://h/x", "localhost:3000"] {
             let error = prepare(&target(url, "", "", ""), None).err().expect(url);
-            assert!(error.starts_with("Invalid URL"), "{url}: {error}");
+            assert!(error.message.starts_with("Invalid URL"), "{url}: {error:?}");
+            assert_eq!(error.key(), Some("socketio.invalid_url"));
         }
         for auth in ["token", "[1]", "\"text\"", "{\"open\": "] {
             let error = prepare(&target("http://h", "", "", auth), None).err().expect(auth);
-            assert!(error.starts_with("Invalid auth"), "{auth}: {error}");
+            assert!(error.message.starts_with("Invalid auth"), "{auth}: {error:?}");
+            assert_eq!(error.key(), Some("socketio.invalid_auth"));
         }
         let headers = json!({ "bad name": "v" });
         let refused = prepare(
             &Target { url: "http://h", headers: Some(&headers), path: "", namespace: "", auth: "", listeners: None },
             None,
         );
-        assert!(refused.err().unwrap().contains("header name"));
+        assert!(refused.err().unwrap().message.contains("header name"));
     }
 }

@@ -18,9 +18,10 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 use super::parser::{Parser, SseEvent};
 use crate::{
     env::{load_merged_environment, resolve_headers, resolve_vars},
-    kernel::streams::{Event, Stream, Streams, emit, key_of, trim_log},
+    kernel::streams::{Event, Stream, Streams, emit, key_of, put_error, recorded, trim_log},
+    protocol::{EngineError, ErrorCode},
     rest::direct_http::{client, describe_error},
-    utils::id::now_ms,
+    utils::{http::send_failure, id::now_ms},
 };
 
 /// Max concurrent live streams per workspace.
@@ -30,7 +31,7 @@ pub const MAX_SSE_STREAMS: usize = 5;
 pub const MAX_SSE_MESSAGES: usize = 500;
 
 /// What a caller of [`disconnect_stream`] and [`clear_stream_messages`] gets back.
-pub type OkResult = Result<(), String>;
+pub type OkResult = Result<(), EngineError>;
 
 /// Everything a connect needs, already resolved.
 struct Prepared {
@@ -47,7 +48,7 @@ struct Entry {
     url: String,
     method: String,
     status: &'static str,
-    error: Option<String>,
+    error: Option<EngineError>,
     /// The HTTP status of the response, once there is one.
     http_status: Option<u16>,
     opened_at: Option<i64>,
@@ -65,16 +66,16 @@ struct Entry {
 
 impl Entry {
     fn status_event(&self) -> Event {
-        Event {
-            name: "sse.status",
-            payload: json!({
-                "workspaceId": self.workspace_id,
-                "streamId": self.stream_id,
-                "status": self.status,
-                "error": self.error,
-                "httpStatus": self.http_status,
-            }),
+        let mut payload = json!({
+            "workspaceId": self.workspace_id,
+            "streamId": self.stream_id,
+            "status": self.status,
+            "httpStatus": self.http_status,
+        });
+        if let Some(map) = payload.as_object_mut() {
+            put_error(map, self.error.as_ref());
         }
+        Event { name: "sse.status", payload }
     }
 
     /// Append an event to the log, trim it to the ceiling and return the `sse.message` event.
@@ -119,7 +120,7 @@ impl Stream for Entry {
         out.insert("url".into(), json!(self.url));
         out.insert("method".into(), json!(self.method));
         out.insert("status".into(), json!(self.status));
-        out.insert("error".into(), json!(self.error));
+        put_error(&mut out, self.error.as_ref());
         out.insert("httpStatus".into(), json!(self.http_status));
         out.insert("openedAt".into(), json!(self.opened_at));
         out.insert("messages".into(), Value::Array(self.messages.clone()));
@@ -133,8 +134,9 @@ impl Stream for Entry {
 
 static STREAMS: LazyLock<Streams<Entry>> = LazyLock::new(Streams::new);
 
-fn no_stream(workspace_id: &str, stream_id: &str) -> String {
-    format!("No stream \"{stream_id}\" in workspace \"{workspace_id}\".")
+fn no_stream(workspace_id: &str, stream_id: &str) -> EngineError {
+    EngineError::not_found(format!("No stream \"{stream_id}\" in workspace \"{workspace_id}\"."))
+        .keyed("sse.not_found", json!({ "id": stream_id, "workspace": workspace_id }))
 }
 
 /// The snapshot for one stream, live or finished, or `None` if the engine never opened that id.
@@ -159,22 +161,30 @@ fn prepare(
     headers: Option<&Value>,
     body: Option<&str>,
     env: Option<&Value>,
-) -> Result<Prepared, String> {
-    let url = url::Url::parse(&resolve_vars(url.trim(), env)).map_err(|_| "Invalid URL".to_string())?;
+) -> Result<Prepared, EngineError> {
+    let url = url::Url::parse(&resolve_vars(url.trim(), env))
+        .map_err(|_| EngineError::bad_request("Invalid URL").keyed("request.send.invalid_url", json!({})))?;
     if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none_or(str::is_empty) {
-        return Err("Invalid URL: an SSE request needs an http:// or https:// address.".to_string());
+        return Err(EngineError::bad_request("Invalid URL: an SSE request needs an http:// or https:// address.")
+            .keyed("sse.invalid_url", json!({})));
     }
-    let method = Method::from_bytes(method.trim().to_ascii_uppercase().as_bytes())
-        .map_err(|_| format!("Invalid method \"{method}\""))?;
+    let method = Method::from_bytes(method.trim().to_ascii_uppercase().as_bytes()).map_err(|_| {
+        EngineError::bad_request(format!("Invalid method \"{method}\""))
+            .keyed("sse.invalid_method", json!({ "method": method }))
+    })?;
     let mut map = HeaderMap::new();
     map.insert(ACCEPT, HeaderValue::from_static("text/event-stream"));
     map.insert(CACHE_CONTROL, HeaderValue::from_static("no-cache"));
     if let Some(headers) = headers {
         for (name, value) in resolve_headers(headers, env).as_object().into_iter().flatten() {
-            let name = HeaderName::from_bytes(name.as_bytes())
-                .map_err(|_| format!("Invalid character in header name \"{name}\""))?;
-            let value = HeaderValue::from_str(value.as_str().unwrap_or(""))
-                .map_err(|_| format!("Invalid character in header content [\"{name}\"]"))?;
+            let name = HeaderName::from_bytes(name.as_bytes()).map_err(|_| {
+                EngineError::bad_request(format!("Invalid character in header name \"{name}\""))
+                    .keyed("sse.header_name_invalid", json!({ "name": name }))
+            })?;
+            let value = HeaderValue::from_str(value.as_str().unwrap_or("")).map_err(|_| {
+                EngineError::bad_request(format!("Invalid character in header content [\"{name}\"]"))
+                    .keyed("sse.header_value_invalid", json!({ "name": name.as_str() }))
+            })?;
             map.insert(name, value);
         }
     }
@@ -190,7 +200,7 @@ pub fn connect_stream(
     method: &str,
     headers: Option<&Value>,
     body: Option<&str>,
-) -> Result<(), String> {
+) -> OkResult {
     let key = key_of(workspace_id, stream_id);
     let env = load_merged_environment(workspace_id);
 
@@ -198,10 +208,11 @@ pub fn connect_stream(
     // hold must not be refused by the stream you are replacing.
     let existing_live = STREAMS.lock().get(&key).is_some_and(Entry::is_live);
     if !existing_live && live_count(workspace_id) >= MAX_SSE_STREAMS {
-        return Err(format!(
+        return Err(EngineError::conflict(format!(
             "Max {MAX_SSE_STREAMS} active streams reached. \
              Disconnect another stream first (sse.disconnect), or list them with sse.list."
-        ));
+        ))
+        .keyed("sse.max_streams", json!({ "max": MAX_SSE_STREAMS })));
     }
 
     let prepared = prepare(url, method, headers, body, env.as_ref());
@@ -246,11 +257,11 @@ pub fn connect_stream(
                 entry.tx = Some(tx);
                 Ok((prepared, entry.generation))
             }
-            Err(message) => {
+            Err(error) => {
                 entry.status = "error";
-                entry.error = Some(message.clone());
+                entry.error = Some(recorded(error.clone()));
                 events.push(entry.status_event());
-                Err(message)
+                Err(error)
             }
         }
     };
@@ -311,16 +322,16 @@ fn record_open(key: &str, generation: u64, http_status: u16) -> bool {
 
 /// The stream is over. `error` is why it failed; with none it ended cleanly, whether the server ended it or
 /// the caller closed it. A close the caller asked for is never an error.
-fn record_end(key: &str, generation: u64, http_status: Option<u16>, error: Option<String>) {
+fn record_end(key: &str, generation: u64, http_status: Option<u16>, error: Option<EngineError>) {
     STREAMS.record(key, generation, |entry| {
         entry.tx = None;
         if http_status.is_some() {
             entry.http_status = http_status;
         }
         match error.filter(|_| !entry.close_requested) {
-            Some(message) => {
+            Some(error) => {
                 entry.status = "error";
-                entry.error = Some(message);
+                entry.error = Some(recorded(error));
             }
             None => {
                 entry.status = "disconnected";
@@ -337,7 +348,14 @@ async fn run(key: String, generation: u64, prepared: Prepared, mut stop: Unbound
     let port = prepared.url.port_or_known_default().unwrap_or(80);
     let http = match client() {
         Ok(http) => http,
-        Err(message) => return record_end(&key, generation, None, Some(message)),
+        Err(message) => {
+            return record_end(
+                &key,
+                generation,
+                None,
+                Some(send_failure(ErrorCode::UpstreamFailed, "sse.failed", message)),
+            );
+        }
     };
     let (url, mut headers) = (prepared.url, prepared.headers);
     crate::cookies::attach(url.as_str(), &mut headers);
@@ -349,7 +367,7 @@ async fn run(key: String, generation: u64, prepared: Prepared, mut stop: Unbound
     let mut response = tokio::select! {
         result = request.send() => match result {
             Ok(response) => response,
-            Err(error) => return record_end(&key, generation, None, Some(describe_error(&error, &host, port))),
+            Err(error) => return record_end(&key, generation, None, Some(send_failure(ErrorCode::UpstreamFailed, "sse.failed", describe_error(&error, &host, port)))),
         },
         _ = stop.recv() => return record_end(&key, generation, None, None),
     };
@@ -361,7 +379,10 @@ async fn run(key: String, generation: u64, prepared: Prepared, mut stop: Unbound
             &key,
             generation,
             Some(status.as_u16()),
-            Some(format!("HTTP {} {reason}", status.as_u16()).trim().to_owned()),
+            Some({
+                let detail = format!("{} {reason}", status.as_u16()).trim().to_owned();
+                EngineError::upstream(format!("HTTP {detail}")).keyed("sse.http_status", json!({ "detail": detail }))
+            }),
         );
     }
     if !record_open(&key, generation, status.as_u16()) {
@@ -380,7 +401,7 @@ async fn run(key: String, generation: u64, prepared: Prepared, mut stop: Unbound
                     }
                 }
                 Ok(None) => return record_end(&key, generation, None, None),
-                Err(error) => return record_end(&key, generation, None, Some(describe_error(&error, &host, port))),
+                Err(error) => return record_end(&key, generation, None, Some(send_failure(ErrorCode::UpstreamFailed, "sse.failed", describe_error(&error, &host, port)))),
             },
             _ = stop.recv() => return record_end(&key, generation, None, None),
         }
