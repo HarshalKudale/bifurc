@@ -5,7 +5,9 @@
 //! - The **finder** (Ctrl+P) lists the things the workspace holds, to open one: requests, mocks, mappings and
 //!   environments. They are not commands; confirming one runs the shell method directly.
 
+use gpui_kit::Focusable as _;
 use gpui_kit::component::IndexPath;
+use gpui_kit::component::command::CommandState;
 use gpui_kit::component::{
     IconName, WindowExt as _,
     command::{Command, CommandGroup, CommandItem},
@@ -15,14 +17,15 @@ use gpui_kit::{Action, Context, ParentElement as _, Styled as _, Window};
 use super::{Screen, Shell};
 use crate::{
     commands::{
-        CheckAllHealth, ClearCapture, CloseRequestTab, DeleteEntity, DuplicateEntity, FocusUrl, ImportCurlMock, ImportCurlRequest, NewEnvironment,
-        NewFlow, NewFolder, NewGraphQlRequest, NewGrpcRequest, NewHealthCheck, NewMapping, NewMcpRequest, NewMock, NewMockFolder,
-        NewProxyRule, NewRestRequest, NewSoapRequest, NewSocketIoRequest, NewSseRequest, NewWebSocketRequest,
-        NewWorkspace, PublishChanges, RefreshServices, ReloadWorkspace, ReopenClosedTab, RenameEntity, RenameWorkspace, RestartForwardProxy,
-        RevertRequest, RunRequest, SaveRequest, ShowAuditLog, ShowCapture, ShowEnvironments, ShowFlows, ShowHealthBar,
-        ShowMappings, ShowMocks, ShowProxyRules, ShowRequests, ShowServices, ShowSettings, ShowVaults, ShowWorkspaceConfig,
-        SyncEntity, SyncWorkspace, ToggleCapturePaused, ToggleFolderTree, ToggleForwardProxy, ToggleInspector,
-        ToggleSidebar,
+        CheckAllHealth, ClearCapture, CloseRequestTab, DeleteEntity, DuplicateEntity, FocusUrl, ImportCurlMock,
+        ImportCurlRequest, NewEnvironment, NewFlow, NewFolder, NewGraphQlRequest, NewGrpcRequest, NewHealthCheck,
+        NewMapping, NewMcpRequest, NewMock, NewMockFolder, NewProxyRule, NewRestRequest, NewSoapRequest,
+        NewSocketIoRequest, NewSseRequest, NewWebSocketRequest, NewWorkspace, NextItem, NextTab, OpenFinder,
+        PreviousItem, PreviousTab, PublishChanges, Quit, RefreshServices, ReloadWorkspace, RenameEntity,
+        RenameWorkspace, ReopenClosedTab, ResetZoom, RestartForwardProxy, RevertRequest, RunRequest, SaveRequest,
+        ShowAuditLog, ShowCapture, ShowEnvironments, ShowFlows, ShowHealthBar, ShowMappings, ShowMocks, ShowProxyRules,
+        ShowRequests, ShowServices, ShowSettings, ShowVaults, ShowWorkspaceConfig, SyncEntity, SyncWorkspace,
+        ToggleCapturePaused, ToggleFolderTree, ToggleForwardProxy, ToggleInspector, ToggleSidebar, ZoomIn, ZoomOut,
     },
     i18n::{t, t_with},
     model::NodeRef,
@@ -117,11 +120,13 @@ fn command_groups() -> Vec<(&'static str, Vec<CommandRow>)> {
                 (t("shell.palette.publish_screen"), IconName::Github, Box::new(PublishChanges)),
                 (t("shell.palette.sync_workspace"), IconName::Github, Box::new(SyncWorkspace)),
                 (t("shell.palette.reload_workspace"), IconName::RefreshCw, Box::new(ReloadWorkspace)),
+                (t("shell.palette.quit"), IconName::Close, Box::new(Quit)),
             ],
         ),
         (
             t("shell.palette.group_go_to"),
             vec![
+                (t("shell.palette.open_finder"), IconName::Search, Box::new(OpenFinder)),
                 (t("shell.palette.go_services"), Screen::Services.icon(), Box::new(ShowServices)),
                 (t("shell.palette.go_health_bar"), Screen::HealthBar.icon(), Box::new(ShowHealthBar)),
                 (t("shell.palette.go_mappings"), Screen::Mappings.icon(), Box::new(ShowMappings)),
@@ -143,6 +148,13 @@ fn command_groups() -> Vec<(&'static str, Vec<CommandRow>)> {
                 (t("shell.palette.toggle_sidebar"), IconName::PanelLeft, Box::new(ToggleSidebar)),
                 (t("shell.palette.toggle_inspector"), IconName::PanelRight, Box::new(ToggleInspector)),
                 (t("shell.palette.toggle_folder_tree"), IconName::FolderOpen, Box::new(ToggleFolderTree)),
+                (t("shell.palette.next_tab"), IconName::ChevronRight, Box::new(NextTab)),
+                (t("shell.palette.previous_tab"), IconName::ChevronLeft, Box::new(PreviousTab)),
+                (t("shell.palette.next_item"), IconName::ArrowRight, Box::new(NextItem)),
+                (t("shell.palette.previous_item"), IconName::ArrowLeft, Box::new(PreviousItem)),
+                (t("shell.palette.zoom_in"), IconName::Plus, Box::new(ZoomIn)),
+                (t("shell.palette.zoom_out"), IconName::Minus, Box::new(ZoomOut)),
+                (t("shell.palette.reset_zoom"), IconName::RefreshCw, Box::new(ResetZoom)),
             ],
         ),
     ]
@@ -194,10 +206,23 @@ fn open_search(
     window.defer(cx, move |window, cx| for_focus.update(cx, |state, cx| state.focus(window, cx)));
 }
 
+/// Whether a search may open now. With a dialog up it may only replace the *other* search (so Ctrl+P in the
+/// palette and Ctrl+K in the finder switch); its own key, or any other dialog, leaves things as they are.
+fn can_open(other: &gpui_kit::Entity<CommandState>, window: &mut Window, cx: &mut Context<Shell>) -> bool {
+    if !window.has_active_dialog(cx) {
+        return true;
+    }
+    if other.read(cx).focus_handle(cx).contains_focused(window, cx) {
+        window.close_dialog(cx);
+        return true;
+    }
+    false
+}
+
 impl Shell {
     /// Ctrl+K: only actions, and the environment to use.
     pub fn open_command_palette(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if window.has_active_dialog(cx) {
+        if !can_open(&self.finder, window, cx) {
             return;
         }
         let config = self.model.read(cx).config().clone();
@@ -230,7 +255,7 @@ impl Shell {
 
     /// Ctrl+P: the things in the workspace, to open one.
     pub fn open_finder(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        if window.has_active_dialog(cx) {
+        if !can_open(&self.palette, window, cx) {
             return;
         }
         let config = self.model.read(cx).config().clone();
