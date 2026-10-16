@@ -6,8 +6,9 @@
 use std::collections::HashMap;
 
 use gpui_kit::component::{
-    ActiveTheme as _, Icon, IconName, Sizable as _,
+    ActiveTheme as _, Disableable as _, Icon, IconName, Sizable as _,
     button::{Button, ButtonVariants as _},
+    empty::{Empty, EmptyDescription, EmptyHeader, EmptyTitle},
     h_flex,
     input::{Input, InputEvent, InputState},
     tag::Tag,
@@ -15,8 +16,8 @@ use gpui_kit::component::{
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    AnyElement, App, AppContext as _, ClickEvent, Context, ElementId, Entity, InteractiveElement as _, IntoElement,
-    ParentElement as _, StatefulInteractiveElement as _, Styled as _, Subscription, Window, div,
+    AnyElement, App, AppContext as _, ClickEvent, Context, Div, ElementId, Entity, InteractiveElement as _,
+    IntoElement, ParentElement as _, ScrollHandle, StatefulInteractiveElement as _, Styled as _, Subscription, Window, div,
 };
 use serde_json::Value;
 
@@ -184,6 +185,150 @@ pub fn found(needle: Option<&str>, texts: &[&str]) -> bool {
 /// What a log shows when no row has the text searched for.
 pub fn nothing_found() -> AnyElement {
     page::empty(t("components.stream_log.no_matches"), t("components.stream_log.no_matches_description"))
+}
+
+/// What every live log view keeps besides its messages: the scroll, the open rows and the search.
+pub struct LogState {
+    scroll: ScrollHandle,
+    follow_tail: bool,
+    open: OpenRows,
+    search: LogSearch,
+}
+
+impl LogState {
+    /// `on_change` runs in the owner when the search text changes; it should call [`LogState::search_changed`].
+    pub fn new<T: 'static>(window: &mut Window, cx: &mut Context<T>, on_change: fn(&mut T, &mut Context<T>)) -> Self {
+        Self {
+            scroll: ScrollHandle::new(),
+            follow_tail: true,
+            open: OpenRows::default(),
+            search: LogSearch::new(window, cx, on_change),
+        }
+    }
+
+    /// Marks the new search text in every open row.
+    pub fn search_changed(&self, cx: &mut App) {
+        self.open.highlight(&self.search.query(cx), cx);
+    }
+
+    pub fn toggle_search(&mut self, window: &mut Window, cx: &mut App) {
+        self.search.toggle(window, cx);
+    }
+
+    /// The next render scrolls to the newest row.
+    pub fn follow(&mut self) {
+        self.follow_tail = true;
+    }
+
+    /// The pane of an open row.
+    pub fn open_row(&self, id: &str) -> Option<&Entity<BodyPane>> {
+        self.open.get(id)
+    }
+
+    /// Opens or closes a row, marking what is searched for.
+    pub fn toggle_open<T: 'static>(&mut self, id: &str, data: &str, window: &mut Window, cx: &mut Context<T>) {
+        let query = self.search.query(cx);
+        self.open.toggle(id, data, &query, window, cx);
+    }
+
+    /// The log is bounded, so an open row can leave it: forgets the rows `keep` does not name.
+    pub fn forget_dropped(&mut self, keep: impl Fn(&str) -> bool) {
+        if !self.open.is_empty() {
+            self.open.retain(keep);
+        }
+    }
+
+    pub fn close_all(&mut self) {
+        self.open.clear();
+    }
+
+    pub fn needle(&self, cx: &App) -> Option<String> {
+        self.search.needle(cx)
+    }
+}
+
+/// The parts of a live log view that differ between protocols; [`log_frame`] lays out the rest.
+pub struct LogFrame<'a> {
+    /// Element ids of the list, the search button and the clear button.
+    pub ids: [&'static str; 3],
+    /// The header's left side: the state tag, then whatever the protocol shows beside it.
+    pub lead: Vec<AnyElement>,
+    /// The header's right side: the counts.
+    pub summary: String,
+    /// Keeps the counts from shrinking when the lead is long.
+    pub summary_fixed: bool,
+    /// The messages in the log, shown or not.
+    pub total: usize,
+    /// The title and description shown while the log has no messages.
+    pub empty: (&'a str, &'a str),
+    /// The rows that match the search.
+    pub rows: Vec<AnyElement>,
+}
+
+/// A live log: header (`lead`, counts, search, clear), the search field, and the scrolling rows. Scrolls to the
+/// newest row when [`LogState::follow`] was called.
+pub fn log_frame(
+    frame: LogFrame,
+    state: &mut LogState,
+    on_search: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    on_clear: impl Fn(&ClickEvent, &mut Window, &mut App) + 'static,
+    cx: &App,
+) -> Div {
+    let theme = cx.theme().clone();
+    if state.follow_tail {
+        state.follow_tail = false;
+        state.scroll.scroll_to_bottom();
+    }
+    let LogFrame { ids: [list_id, search_id, clear_id], lead, summary, summary_fixed, total, empty, rows } = frame;
+    let search_bar = state.search.bar(rows.len(), total, cx);
+    let none_found = rows.is_empty() && total > 0;
+    v_flex()
+        .size_full()
+        .bg(theme.background)
+        .child(
+            h_flex()
+                .px_3()
+                .py_2()
+                .gap_2()
+                .children(lead)
+                .child(div().flex_1())
+                .child(
+                    div()
+                        .when(summary_fixed, |this| this.flex_none())
+                        .text_sm()
+                        .text_color(theme.muted_foreground)
+                        .child(summary),
+                )
+                .child(search_button(search_id).on_click(on_search))
+                .child(
+                    Button::new(clear_id)
+                        .ghost()
+                        .small()
+                        .label(t("session.connection.clear"))
+                        .disabled(total == 0)
+                        .on_click(on_clear),
+                ),
+        )
+        .children(search_bar)
+        .child(
+            div()
+                .id(list_id)
+                .flex_1()
+                .min_h_0()
+                .overflow_y_scroll()
+                .track_scroll(&state.scroll)
+                .border_t_1()
+                .border_color(theme.border)
+                .when(total == 0, |this| {
+                    this.child(Empty::new().header(
+                        EmptyHeader::new()
+                            .title(EmptyTitle::new().child(empty.0.to_owned()))
+                            .description(EmptyDescription::new().child(empty.1.to_owned())),
+                    ))
+                })
+                .when(none_found, |this| this.child(nothing_found()))
+                .children(rows),
+        )
 }
 
 /// The row, opened to the whole message when it has a `body`. `on_toggle` runs when it is clicked.
