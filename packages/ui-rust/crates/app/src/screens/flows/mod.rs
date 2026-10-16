@@ -28,7 +28,7 @@ use serde_json::{Map, Value, json};
 use self::{
     canvas::{CanvasEvent, FlowCanvas},
     editor::{EditorEvent, NodeEditor},
-    tree::{FlowTree, FlowTreeEvent, deleted_target, is_deleted, locked_to},
+    tree::{FlowExtra, FlowTree, FlowTreeEvent, deleted_target, is_deleted, locked_to},
 };
 use crate::{
     app_model::{AppModel, ModelEvent},
@@ -179,7 +179,7 @@ impl FlowsScreen {
     fn open(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
         self.close(cx);
         self.selected = Some(id.clone());
-        self.tree.update(cx, |tree, cx| tree.reveal(Some(&id), cx));
+        self.tree.update(cx, |tree, cx| tree.reveal(Some(&TreeKey::Item(id.clone())), cx));
         let model = self.model.read(cx);
         let (client, workspace_id) = (model.client().clone(), model.workspace_id().to_owned());
         let load = json!({ "workspaceId": workspace_id, "kind": "flows", "id": id });
@@ -770,12 +770,20 @@ impl FlowsScreen {
 
     fn on_tree_event(&mut self, _: &Entity<FlowTree>, event: &FlowTreeEvent, window: &mut Window, cx: &mut Context<Self>) {
         match event.clone() {
-            FlowTreeEvent::Open(id) => self.select(id, window, cx),
-            FlowTreeEvent::NewFlow { folder } => self.prompt_new(folder, window, cx),
+            FlowTreeEvent::Open(TreeKey::Item(id)) => self.select(id, window, cx),
+            FlowTreeEvent::Open(TreeKey::Folder(_)) => {}
+            FlowTreeEvent::Extra(FlowExtra::NewFlow { folder }) => self.prompt_new(folder, window, cx),
             FlowTreeEvent::NewFolder { parent } => self.prompt_new_folder(parent, window, cx),
             FlowTreeEvent::Rename(key) => self.prompt_rename(key, window, cx),
-            FlowTreeEvent::Duplicate(id) => self.duplicate(id, window, cx),
+            FlowTreeEvent::Duplicate(TreeKey::Item(id)) => self.duplicate(id, window, cx),
+            FlowTreeEvent::Duplicate(TreeKey::Folder(_)) => {}
             FlowTreeEvent::Delete(key) => self.confirm_delete(key, window, cx),
+            FlowTreeEvent::RevertDelete(key) => {
+                self.model.update(cx, |model, cx| model.revert_delete(deleted_target(&key), cx));
+            }
+            FlowTreeEvent::ConfirmDelete(key) => {
+                self.model.update(cx, |model, cx| model.confirm_delete(deleted_target(&key), cx));
+            }
             FlowTreeEvent::Move { key, folder } => self.move_node(key, folder, cx),
         }
     }
