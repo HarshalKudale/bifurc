@@ -41,8 +41,8 @@ fn ui_binary() -> String {
     format!("bifurc-ui{EXE}")
 }
 
-/// Clients that are an interface a person looks at, as they name themselves in `hello`.
-const INTERFACE_CLIENTS: [&str; 3] = ["desktop-ui", "electron-shell", "web-ui"];
+/// The client that is an interface a person looks at, as it names itself in `hello`.
+const INTERFACE_CLIENT: &str = "desktop-ui";
 
 /// How long a launched interface has to connect before another Open launches a second one.
 const LAUNCH_GRACE: Duration = Duration::from_secs(10);
@@ -283,7 +283,7 @@ impl Desktop {
 
     pub fn on_session_start(&self, identity: &SessionIdentity) {
         let Some(name) = identity.client_name.as_deref() else { return };
-        if !INTERFACE_CLIENTS.contains(&name) {
+        if name != INTERFACE_CLIENT {
             return;
         }
         let mut state = self.state.lock();
@@ -389,12 +389,12 @@ mod tests {
     fn the_last_interface_closing_with_no_tray_stops_the_engine() {
         let (desktop, calls) = desktop();
         desktop.on_session_start(&identity("a", "desktop-ui"));
-        desktop.on_session_start(&identity("b", "web-ui"));
+        desktop.on_session_start(&identity("b", "desktop-ui"));
         desktop.on_session_start(&identity("c", "cli"));
         desktop.on_session_end(&identity("c", "cli"));
         desktop.on_session_end(&identity("a", "desktop-ui"));
         assert_eq!(calls.load(Ordering::SeqCst), 0);
-        desktop.on_session_end(&identity("b", "web-ui"));
+        desktop.on_session_end(&identity("b", "desktop-ui"));
         assert_eq!(calls.load(Ordering::SeqCst), 1);
     }
 
@@ -402,8 +402,8 @@ mod tests {
     fn a_ready_tray_keeps_the_engine_and_stopping_silences_it() {
         let (desktop, calls) = desktop();
         desktop.state.lock().tray_ready = true;
-        desktop.on_session_start(&identity("a", "electron-shell"));
-        desktop.on_session_end(&identity("a", "electron-shell"));
+        desktop.on_session_start(&identity("a", "desktop-ui"));
+        desktop.on_session_end(&identity("a", "desktop-ui"));
         assert_eq!(calls.load(Ordering::SeqCst), 0);
 
         desktop.state.lock().tray_ready = false;
