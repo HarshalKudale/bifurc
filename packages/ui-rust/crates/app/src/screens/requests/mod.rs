@@ -17,6 +17,7 @@ use gpui_kit::component::{
     button::{Button, ButtonVariants as _},
     dock::{DockArea, DockLayout, DockSkin, panel_handle},
     h_flex,
+    kbd::Kbd,
     menu::DropdownMenu as _,
     resizable::{h_resizable, resizable_panel},
     tag::Tag,
@@ -965,9 +966,13 @@ impl RequestsScreen {
     }
 
     /// With nothing open: everything that can be started here, one row per request type.
-    fn render_welcome(&self, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
+    fn render_welcome(&self, window: &Window, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
         let theme = cx.theme().clone();
+        // Each row shows the key the keymap really has for it, so it follows the OS and any rebinding.
+        let actions = crate::commands::request_actions();
+        let shortcut = |ix: usize| Kbd::binding_for_action(actions[ix].as_ref(), Some("Shell"), window);
         let rows = RequestKind::ALL.into_iter().enumerate().map(|(ix, kind)| {
+            let shortcut = shortcut(ix);
             Button::new(("welcome-new", ix))
                 .ghost()
                 .w_full()
@@ -988,10 +993,12 @@ impl RequestsScreen {
                                 .text_sm()
                                 .text_color(theme.muted_foreground)
                                 .child(kind_summary(kind)),
-                        ),
+                        )
+                        .children(shortcut),
                 )
                 .on_click(cx.listener(move |this, _, window, cx| this.new_request(kind, None, window, cx)))
         });
+        let import_shortcut = shortcut(actions.len() - 1);
         let import = Button::new("welcome-import-curl")
             .ghost()
             .w_full()
@@ -1012,7 +1019,8 @@ impl RequestsScreen {
                             .text_sm()
                             .text_color(theme.muted_foreground)
                             .child(t("requests.welcome.curl_summary")),
-                    ),
+                    )
+                    .children(import_shortcut),
             )
             .on_click(cx.listener(|this, _, window, cx| this.import_curl(window, cx)));
         // Wider than the kit's empty state, which is sized for a sentence and one button.
@@ -1049,7 +1057,7 @@ impl Render for RequestsScreen {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let tree_open = Preferences::global(cx).folder_tree_open;
         let body = match self.active_tab().map(|tab| &tab.content) {
-            None => self.render_welcome(cx),
+            None => self.render_welcome(window, cx),
             Some(TabContent::Request(_)) => {
                 if self.pending_response_size.is_some() {
                     // The dock's bounds are known only after its first layout, so settle on the next frame.
