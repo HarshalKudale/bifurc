@@ -46,7 +46,7 @@ use crate::{
         git::FileState,
         tree::{FolderRow, ItemRow, Moved, TreeKey, TreeNode, build_tree, can_move, folder_path},
     },
-    panels::host::{HostPanel, PartView},
+    panels::host::{HostPanel, PartView, remember_pane_size},
     preferences::Preferences,
     session::SaveMode,
     shell::ActiveTarget,
@@ -123,10 +123,11 @@ impl MocksScreen {
             )
         });
         // Dock sizes are physical starting points the user resizes; they are not part of the rem scale.
+        let rule_size = Preferences::global(cx).dock_size("mocks-dock").unwrap_or(px(230.));
         dock.update(cx, |area, cx| {
             area.set_center(
                 DockLayout::v_split()
-                    .child(DockLayout::tabs().panel_view(panel_handle(rule_panel.clone()), cx), Some(px(230.)))
+                    .child(DockLayout::tabs().panel_view(panel_handle(rule_panel.clone()), cx), Some(rule_size))
                     .child(DockLayout::tabs().panel_view(panel_handle(response_panel.clone()), cx), None),
                 window,
                 cx,
@@ -134,6 +135,7 @@ impl MocksScreen {
         });
 
         let subscriptions = vec![
+            remember_pane_size(&dock, "mocks-dock", 0, cx),
             cx.subscribe(&model, |this, _, event: &ModelEvent, cx| match event {
                 ModelEvent::ConfigChanged => this.close_vanished_tabs(cx),
                 ModelEvent::WorkspaceSwitched => {
