@@ -23,6 +23,7 @@ use crate::{
     workspace::{
         config::{GLOBAL_ENV_ID, load_config, save_config},
         fs::{entity_lock, read_all_entities, write_flat_entity},
+        models::Environment,
         settings::load_settings,
     },
 };
@@ -179,11 +180,20 @@ pub fn env_value<'a>(env: &'a Value, key: &str) -> Option<&'a str> {
 /// Replace `{{name}}` with the environment's value and `{{vault.secret}}` with the vault's (unknown names, and
 /// vaults that are sealed, are left as written), then expand the `{{random.*}}` generators.
 pub fn resolve_vars(text: &str, env: Option<&Value>) -> String {
+    let ws_id = env.map(|env| str_of(env, "workspaceId")).unwrap_or("");
+    substitute(text, env.map(|env| (ws_id, |key: &str| env_value(env, key))))
+}
+
+/// [`resolve_vars`] against a typed environment.
+pub fn resolve_vars_in(text: &str, env: Option<&Environment>) -> String {
+    substitute(text, env.map(|env| (env.workspace_id.as_str(), |key: &str| env.get(key))))
+}
+
+fn substitute<'a>(text: &str, env: Option<(&str, impl Fn(&str) -> Option<&'a str>)>) -> String {
     if text.is_empty() {
         return String::new();
     }
-    let Some(env) = env else { return resolve_randomizers(text) };
-    let ws_id = str_of(env, "workspaceId");
+    let Some((ws_id, lookup)) = env else { return resolve_randomizers(text) };
     static PATTERN: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r"\{\{(\w+)(?:\.(\w+))?\}\}").expect("a valid pattern"));
     let pattern = &*PATTERN;
@@ -198,7 +208,7 @@ pub fn resolve_vars(text: &str, env: Option<&Value>) -> String {
                 Some(value) => out.push_str(&value),
                 None => out.push_str(&text[found.range()]),
             },
-            None => match env_value(env, key) {
+            None => match lookup(key) {
                 Some(value) => out.push_str(value),
                 None => out.push_str(&text[found.range()]),
             },
@@ -288,5 +298,19 @@ mod tests {
         let e = env("d", &[("host", "api.test"), ("empty", "")]);
         assert_eq!(resolve_vars("http://{{host}}/{{missing}}/{{empty}}x", Some(&e)), "http://api.test/{{missing}}/x");
         assert_eq!(resolve_vars("", Some(&e)), "");
+    }
+
+    #[test]
+    fn the_typed_environment_resolves_exactly_as_the_stored_one() {
+        // Older files: a non-text value, a repeated key, a variable with no key, unknown fields.
+        let stored = json!({ "id": "d", "workspaceId": "", "future": [1], "variables": [
+            { "key": "n", "value": 5 }, { "key": "n", "value": "late" }, { "value": "orphan" },
+            { "key": "host", "value": "api.test", "extra": true },
+        ] });
+        let typed = Environment::from_value(&stored);
+        for text in ["{{n}}|{{host}}|{{nope}}|{{vault.s}}|plain", "", "{{}}"] {
+            assert_eq!(resolve_vars_in(text, Some(&typed)), resolve_vars(text, Some(&stored)));
+        }
+        assert_eq!(resolve_vars_in("{{n}}", None), resolve_vars("{{n}}", None));
     }
 }

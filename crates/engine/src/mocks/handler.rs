@@ -1,20 +1,15 @@
 //! Mock matching and responding: which mock answers a request, the response it describes (whole, or merged
 //! with the real server's answer), and writing that response to a socket.
 
-use std::{collections::HashSet, time::Duration};
+use std::time::Duration;
 
-use serde_json::Value;
 use tokio::io::{AsyncWrite, AsyncWriteExt};
 
 use crate::{
-    env::resolve_vars,
+    env::resolve_vars_in,
     kernel::traffic::Headers,
-    utils::{
-        content_type::is_text_content_type,
-        http::HOP_BY_HOP,
-        json::{is_truthy, opt_str, str_of, string_map},
-        replay::decode_base64_lenient,
-    },
+    utils::{content_type::is_text_content_type, http::HOP_BY_HOP, replay::decode_base64_lenient},
+    workspace::models::{Environment, Mock},
 };
 
 /// A response a mock produced, ready to write.
@@ -35,47 +30,18 @@ pub struct UpstreamResponse {
     pub duration_ms: i64,
 }
 
-/// Whether `value[key]` is on: absent or null means `default`, anything else is JavaScript truthiness.
-fn flag(mock: &Value, key: &str, default: bool) -> bool {
-    match mock.get(key) {
-        None | Some(Value::Null) => default,
-        Some(value) => is_truthy(value),
-    }
-}
-
-fn response_status(mock: &Value) -> u16 {
-    mock.get("responseStatus")
-        .and_then(|v| v.as_u64().or_else(|| v.as_f64().map(|f| f as u64)))
-        .and_then(|n| u16::try_from(n).ok())
-        .unwrap_or(200)
-}
-
-/// The mock's configured delay in milliseconds; zero when absent or not positive.
-fn configured_delay(mock: &Value) -> u64 {
-    match mock.get("responseDelay").and_then(Value::as_f64) {
-        Some(ms) if ms > 0.0 => ms as u64,
-        _ => 0,
-    }
-}
-
-fn is_base64(mock: &Value) -> bool {
-    opt_str(mock, "responseBodyEncoding") == Some("base64")
-}
-
 /// The first enabled mock that answers `method url`. A `*` method matches any method; the URL pattern is
 /// resolved against `env`, then compared exactly, or tested as a JavaScript regular expression.
-pub fn match_mock<'a>(mocks: &'a [Value], method: &str, url: &str, env: Option<&Value>) -> Option<&'a Value> {
+pub fn match_mock<'a>(mocks: &'a [Mock], method: &str, url: &str, env: Option<&Environment>) -> Option<&'a Mock> {
     for mock in mocks {
-        if !flag(mock, "enabled", false) {
+        if !mock.enabled {
             continue;
         }
-        let mock_method = str_of(mock, "method");
-        if mock_method != "*" && !mock_method.eq_ignore_ascii_case(method) {
+        if mock.method != "*" && !mock.method.eq_ignore_ascii_case(method) {
             continue;
         }
-        let pattern = resolve_vars(str_of(mock, "urlPattern"), env);
-        let hit =
-            if flag(mock, "useRegex", false) { crate::utils::regex::is_match(&pattern, url) } else { url == pattern };
+        let pattern = resolve_vars_in(&mock.url_pattern, env);
+        let hit = if mock.use_regex { crate::utils::regex::is_match(&pattern, url) } else { url == pattern };
         if hit {
             return Some(mock);
         }
@@ -88,17 +54,17 @@ fn skipped_response_header(name: &str) -> bool {
     HOP_BY_HOP.contains(&lower.as_str()) || lower == "content-length" || lower == "content-encoding"
 }
 
-fn resolve_mock_body(mock: &Value, env: Option<&Value>) -> Vec<u8> {
-    let body = str_of(mock, "responseBody");
-    if is_base64(mock) { decode_base64_lenient(body) } else { resolve_vars(body, env).into_bytes() }
+fn resolve_mock_body(mock: &Mock, env: Option<&Environment>) -> Vec<u8> {
+    let body = &mock.response_body;
+    if mock.base64 { decode_base64_lenient(body) } else { resolve_vars_in(body, env).into_bytes() }
 }
 
-fn resolve_mock_headers(mock: &Value, env: Option<&Value>) -> Headers {
+fn resolve_mock_headers(mock: &Mock, env: Option<&Environment>) -> Headers {
     let mut headers = Headers::new();
-    for (name, value) in string_map(mock, "responseHeaders") {
-        if !skipped_response_header(&name) {
-            let value = if is_base64(mock) { value } else { resolve_vars(&value, env) };
-            headers.insert(name, value);
+    for (name, value) in &mock.response_headers {
+        if !skipped_response_header(name) {
+            let value = if mock.base64 { value.clone() } else { resolve_vars_in(value, env) };
+            headers.insert(name.clone(), value);
         }
     }
     headers
@@ -115,90 +81,79 @@ fn ensure_response_headers(headers: &Headers, body: &[u8], default_content_type:
     next
 }
 
-fn default_content_type(mock: &Value) -> &'static str {
-    if is_base64(mock) { "application/octet-stream" } else { "application/json" }
+fn default_content_type(mock: &Mock) -> &'static str {
+    if mock.base64 { "application/octet-stream" } else { "application/json" }
 }
 
 fn header_value(headers: &Headers, name: &str) -> String {
     headers.iter().find(|(key, _)| key.eq_ignore_ascii_case(name)).map(|(_, v)| v.clone()).unwrap_or_default()
 }
 
-fn mock_header_value(mock: &Value, name: &str) -> String {
-    string_map(mock, "responseHeaders")
-        .into_iter()
+fn mock_header_value(mock: &Mock, name: &str) -> String {
+    mock.response_headers
+        .iter()
         .find(|(key, _)| key.eq_ignore_ascii_case(name))
-        .map(|(_, v)| v)
+        .map(|(_, v)| v.clone())
         .unwrap_or_default()
 }
 
 /// A mock only replaces text. A body stored as bytes under a data type (an image, a PDF) is not text, so the
 /// mock is not answered on its own: the real response goes through as it is.
-fn mock_body_is_text(mock: &Value) -> bool {
+fn mock_body_is_text(mock: &Mock) -> bool {
     let content_type = mock_header_value(mock, "content-type");
-    if content_type.is_empty() { !is_base64(mock) } else { is_text_content_type(&content_type) }
+    if content_type.is_empty() { !mock.base64 } else { is_text_content_type(&content_type) }
 }
 
 /// Whether the mock answers in pieces over time.
-pub fn is_streaming_mock(mock: &Value) -> bool {
-    opt_str(mock, "streamingMode").is_some_and(|mode| !mode.is_empty() && mode != "none")
+pub fn is_streaming_mock(mock: &Mock) -> bool {
+    mock.streaming_mode.as_deref().is_some_and(|mode| !mode.is_empty() && mode != "none")
 }
 
 /// Whether the mock is the whole response (nothing is fetched from the real server).
-pub fn is_fully_mocked(mock: &Value) -> bool {
+pub fn is_fully_mocked(mock: &Mock) -> bool {
     if is_streaming_mock(mock) {
         return true;
     }
     // Nothing real to merge with (the endpoint does not exist yet): the mock is the whole response.
-    if flag(mock, "standalone", false) {
+    if mock.standalone {
         return true;
     }
     if !mock_body_is_text(mock) {
         return false;
     }
-    let mocked_keys: HashSet<String> = mock
-        .get("mockedResponseHeaders")
-        .and_then(Value::as_array)
-        .map(|keys| keys.iter().filter_map(Value::as_str).map(str::to_lowercase).collect())
-        .unwrap_or_default();
+    let mocked_keys = &mock.mocked_response_headers;
     // The response's Content-Type is always the real server's, so it is never a header the mock has to set.
     let all_headers_mocked = resolve_mock_headers(mock, None)
         .keys()
         .filter(|key| !key.trim().is_empty() && !key.eq_ignore_ascii_case("content-type"))
         .all(|key| mocked_keys.contains(&key.to_lowercase()));
-    flag(mock, "responseStatusMocked", true)
-        && flag(mock, "responseBodyMocked", true)
-        && flag(mock, "responseDelayMocked", true)
-        && all_headers_mocked
+    mock.response_status_mocked && mock.response_body_mocked && mock.response_delay_mocked && all_headers_mocked
 }
 
 /// The response of a fully mocked request.
-pub fn resolve_mock_only_response(mock: &Value, env: Option<&Value>) -> ResolvedMockResponse {
+pub fn resolve_mock_only_response(mock: &Mock, env: Option<&Environment>) -> ResolvedMockResponse {
     let body = resolve_mock_body(mock, env);
     let headers = ensure_response_headers(&resolve_mock_headers(mock, env), &body, default_content_type(mock));
-    ResolvedMockResponse { status: response_status(mock), headers, body, delay_ms: configured_delay(mock) }
+    ResolvedMockResponse { status: mock.response_status, headers, body, delay_ms: mock.response_delay_ms }
 }
 
 /// A partial mock laid over what the real server answered: the parts the mock marks as mocked replace the
 /// server's, everything else is the server's.
 pub fn merge_mock_with_upstream(
-    mock: &Value,
+    mock: &Mock,
     upstream: &UpstreamResponse,
-    env: Option<&Value>,
+    env: Option<&Environment>,
 ) -> ResolvedMockResponse {
     let mock_headers = resolve_mock_headers(mock, env);
     // Data (an image, a PDF) cannot be mocked: the body the server sent is the body the caller gets. Status,
     // the other headers and the delay can still be.
     let upstream_is_text = is_text_content_type(&header_value(&upstream.headers, "content-type"));
-    let body = if flag(mock, "responseBodyMocked", true) && mock_body_is_text(mock) && upstream_is_text {
+    let body = if mock.response_body_mocked && mock_body_is_text(mock) && upstream_is_text {
         resolve_mock_body(mock, env)
     } else {
         upstream.body.clone()
     };
-    let mocked_keys: HashSet<String> = mock
-        .get("mockedResponseHeaders")
-        .and_then(Value::as_array)
-        .map(|keys| keys.iter().filter_map(Value::as_str).map(str::to_lowercase).collect())
-        .unwrap_or_default();
+    let mocked_keys = &mock.mocked_response_headers;
     let mut headers = upstream.headers.clone();
     for (key, value) in mock_headers {
         // Content-Type is locked: whatever type the server answered with is the one the caller gets.
@@ -210,10 +165,10 @@ pub fn merge_mock_with_upstream(
         }
     }
     ResolvedMockResponse {
-        status: if flag(mock, "responseStatusMocked", true) { response_status(mock) } else { upstream.status },
+        status: if mock.response_status_mocked { mock.response_status } else { upstream.status },
         headers: ensure_response_headers(&headers, &body, default_content_type(mock)),
         body,
-        delay_ms: if flag(mock, "responseDelayMocked", true) { configured_delay(mock) } else { 0 },
+        delay_ms: if mock.response_delay_mocked { mock.response_delay_ms } else { 0 },
     }
 }
 
@@ -266,8 +221,12 @@ pub async fn write_response<W: AsyncWrite + Unpin>(
 }
 
 /// Answer with a fully mocked response, after its delay (streaming mocks stream).
-pub async fn serve_mock<W: AsyncWrite + Unpin>(out: &mut W, mock: &Value, env: Option<&Value>) -> std::io::Result<()> {
-    let delay = configured_delay(mock);
+pub async fn serve_mock<W: AsyncWrite + Unpin>(
+    out: &mut W,
+    mock: &Mock,
+    env: Option<&Environment>,
+) -> std::io::Result<()> {
+    let delay = mock.response_delay_ms;
     if delay > 0 {
         tokio::time::sleep(Duration::from_millis(delay)).await;
     }
@@ -305,26 +264,22 @@ async fn write_chunk<W: AsyncWrite + Unpin>(out: &mut W, data: &[u8]) -> std::io
 /// (split on blank lines) or chunks split on `streamingChunkSeparator`.
 pub async fn serve_streaming_mock<W: AsyncWrite + Unpin>(
     out: &mut W,
-    mock: &Value,
-    env: Option<&Value>,
+    mock: &Mock,
+    env: Option<&Environment>,
 ) -> std::io::Result<()> {
-    let chunk_delay = Duration::from_millis(match mock.get("streamingChunkDelay").and_then(Value::as_f64) {
-        Some(ms) if ms > 0.0 => ms as u64,
-        Some(_) => 0,
-        None => 100,
-    });
-    let body = str_of(mock, "responseBody");
-    let body = if is_base64(mock) { body.to_string() } else { resolve_vars(body, env) };
+    let chunk_delay = Duration::from_millis(mock.streaming_chunk_delay_ms);
+    let body = &mock.response_body;
+    let body = if mock.base64 { body.clone() } else { resolve_vars_in(body, env) };
 
     let mut headers = Headers::new();
-    for (name, value) in string_map(mock, "responseHeaders") {
-        if !skipped_response_header(&name) {
-            headers.insert(name, resolve_vars(&value, env));
+    for (name, value) in &mock.response_headers {
+        if !skipped_response_header(name) {
+            headers.insert(name.clone(), resolve_vars_in(value, env));
         }
     }
 
-    let sse = opt_str(mock, "streamingMode") == Some("sse");
-    let separator = opt_str(mock, "streamingChunkSeparator").unwrap_or("\n\n").to_string();
+    let sse = mock.streaming_mode.as_deref() == Some("sse");
+    let separator = mock.streaming_chunk_separator.clone().unwrap_or_else(|| "\n\n".to_string());
     if sse {
         set_default(&mut headers, "content-type", "text/event-stream");
         headers.insert("cache-control".to_string(), "no-cache".to_string());
@@ -336,7 +291,7 @@ pub async fn serve_streaming_mock<W: AsyncWrite + Unpin>(
         set_default(&mut headers, "content-type", "application/json");
     }
 
-    let status = response_status(mock);
+    let status = mock.response_status;
     let mut head = format!("HTTP/1.1 {status} {}\r\n", status_text(status));
     for (name, value) in &headers {
         head.push_str(&format!("{name}: {value}\r\n"));
@@ -364,12 +319,16 @@ pub async fn serve_streaming_mock<W: AsyncWrite + Unpin>(
 
 #[cfg(test)]
 mod tests {
-    use serde_json::json;
+    use serde_json::{Value, json};
     use tokio::io::AsyncReadExt;
 
     use super::*;
 
-    fn mock(extra: Value) -> Value {
+    fn mock(extra: Value) -> Mock {
+        Mock::from_value(&mock_json(extra))
+    }
+
+    fn mock_json(extra: Value) -> Value {
         let mut base = json!({
             "id": "m1", "method": "GET", "urlPattern": "http://a.test/x", "useRegex": false, "enabled": true,
             "responseStatus": 201, "responseHeaders": { "x-one": "1" }, "responseBody": "{\"a\":1}",
@@ -381,8 +340,10 @@ mod tests {
         base
     }
 
-    fn env() -> Value {
-        json!({ "variables": [{ "key": "host", "value": "a.test" }, { "key": "who", "value": "me" }] })
+    fn env() -> Environment {
+        Environment::from_value(
+            &json!({ "variables": [{ "key": "host", "value": "a.test" }, { "key": "who", "value": "me" }] }),
+        )
     }
 
     #[test]
@@ -394,7 +355,7 @@ mod tests {
             mock(json!({ "id": "re", "useRegex": true, "urlPattern": "^http://a\\.test/y/\\d+$", "method": "*" })),
             mock(json!({ "id": "var", "urlPattern": "http://{{host}}/x" })),
         ];
-        let id = |m: Option<&Value>| m.map(|m| str_of(m, "id").to_string());
+        let id = |m: Option<&Mock>| m.map(|m| m.id.clone());
         let e = env();
         assert_eq!(id(match_mock(&mocks, "get", "http://a.test/x", Some(&e))), Some("var".into()));
         assert_eq!(id(match_mock(&mocks, "GET", "http://a.test/x", None)), None);
