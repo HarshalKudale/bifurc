@@ -81,18 +81,6 @@ Environment
 const VALUE_FLAGS: [&str; 8] =
     ["--data-dir", "--rpc-socket", "--ws-port", "--workspace", "--edge-port", "--transport", "--tray", "--ui"];
 
-const REMOVED_FLAGS: [(&str, &str); 9] = [
-    ("--ws-host", "every listener binds loopback, so the bind host is not a choice"),
-    ("--ws-allow-non-loopback", "the engine is not deployable remotely, so there is nothing to publish"),
-    ("--ws-tls-cert", "TLS was only required to satisfy the non-loopback bind, which no longer exists"),
-    ("--ws-tls-key", "TLS was only required to satisfy the non-loopback bind, which no longer exists"),
-    ("--token-file", "the engine token is gone — the RPC surface binds loopback, so there is no boundary to guard"),
-    ("--proxy-bind-host", "the forward proxy binds loopback, always"),
-    ("--proxy-allow-non-loopback", "the engine is not deployable remotely, so there is nothing to publish"),
-    ("--edge-bind-host", "the edge binds loopback, always"),
-    ("--edge-allow-non-loopback", "the engine is not deployable remotely, so there is nothing to publish"),
-];
-
 fn error(message: impl AsRef<str>) -> HostArgsResult {
     HostArgsResult::Error(format!("{}\n\n{HOST_USAGE}", message.as_ref()))
 }
@@ -122,9 +110,6 @@ pub fn parse_host_args(argv: &[String]) -> HostArgsResult {
         };
         if !flag.starts_with("--") {
             return error(format!("unexpected argument {raw:?}."));
-        }
-        if let Some((_, reason)) = REMOVED_FLAGS.iter().find(|(name, _)| *name == flag) {
-            return error(format!("{flag} was removed on 2026-09-25: {reason}."));
         }
         if !VALUE_FLAGS.contains(&flag) {
             return error(format!("unrecognised flag {flag:?}."));
@@ -234,7 +219,6 @@ mod tests {
         assert!(matches!(parse(&["--nope"]), HostArgsResult::Error(_)));
         assert!(matches!(parse(&["--data-dir"]), HostArgsResult::Error(_)));
         assert!(matches!(parse(&["--ws-port", "70000"]), HostArgsResult::Error(_)));
-        assert!(matches!(parse(&["--token-file", "x"]), HostArgsResult::Error(_)));
         assert!(matches!(parse(&["--transport", "stdio", "--ws-port", "1"]), HostArgsResult::Error(_)));
         assert!(matches!(parse(&["--no-tray", "--tray", "x"]), HostArgsResult::Error(_)));
         assert_eq!(parse(&["--help"]), HostArgsResult::Help);
