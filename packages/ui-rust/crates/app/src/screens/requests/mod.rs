@@ -23,7 +23,7 @@ use gpui_kit::component::{
     v_flex,
 };
 use gpui_kit::{
-    App, AppContext as _, Context, Entity, IntoElement, ParentElement as _, Render, ScrollStrategy, Styled as _,
+    App, AppContext as _, Context, Entity, IntoElement, Pixels, ParentElement as _, Render, ScrollStrategy, Styled as _,
     Subscription, Window, div, px, rems,
 };
 use serde_json::{Value, json};
@@ -44,7 +44,7 @@ use crate::{
     engine::{call, call_in, describe, patch_entity},
     i18n::{t, t_with},
     model::{NodeRef, RequestKind, config::REQUEST_FOLDER_KIND, tree::folder_path},
-    panels::host::{HostPanel, remember_pane_size},
+    panels::host::{HostPanel, remember_pane_size, settle_last_pane},
     preferences::Preferences,
     session::{
         SaveMode, Session, SessionEvent, mcp::McpSession, protocol::ProtocolSession, rest::RestSession,
@@ -111,6 +111,8 @@ pub struct RequestsScreen {
     active: Option<usize>,
     tab_scroll: VirtualListScrollHandle,
     dock: Entity<DockArea>,
+    /// The saved response-pane size, applied by `settle_last_pane` once the dock has been laid out.
+    pending_response_size: Option<Pixels>,
     /// Kept so the dock's appearance can be changed later; the area holds the same skin.
     _skin: Rc<DockSkin>,
     request_panel: Entity<HostPanel>,
@@ -168,6 +170,7 @@ impl RequestsScreen {
             active: None,
             tab_scroll: VirtualListScrollHandle::new(),
             dock,
+            pending_response_size: Some(response_size),
             _skin: skin,
             request_panel,
             response_panel,
@@ -990,7 +993,24 @@ impl Render for RequestsScreen {
         let tree_open = Preferences::global(cx).folder_tree_open;
         let body = match self.active_tab().map(|tab| &tab.content) {
             None => self.render_welcome(cx),
-            Some(TabContent::Request(_)) => self.dock.clone().into_any_element(),
+            Some(TabContent::Request(_)) => {
+                if self.pending_response_size.is_some() {
+                    // The dock's bounds are known only after its first layout, so settle on the next frame.
+                    let screen = cx.entity();
+                    window.on_next_frame(move |window, cx| {
+                        screen.update(cx, |this, cx| {
+                            if let Some(size) = this.pending_response_size {
+                                if settle_last_pane(&this.dock, size, window, cx) {
+                                    this.pending_response_size = None;
+                                } else {
+                                    cx.notify();
+                                }
+                            }
+                        });
+                    });
+                }
+                self.dock.clone().into_any_element()
+            }
             Some(TabContent::Runner(runner)) => runner.clone().into_any_element(),
             Some(TabContent::Curl(import)) => import.clone().into_any_element(),
         };

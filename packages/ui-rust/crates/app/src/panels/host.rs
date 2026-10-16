@@ -6,11 +6,11 @@
 
 use gpui_kit::component::{
     ActiveTheme as _,
-    dock::{BasePanel, DockArea, DockEvent, Panel, PanelEvent},
+    dock::{BasePanel, DockArea, DockEvent, DockPlacement, Panel, PanelEvent},
 };
 use gpui_kit::{
     AnyElement, AnyView, App, AppContext as _, Context, Entity, EventEmitter, FocusHandle, Focusable, IntoElement,
-    ParentElement as _, Render, SharedString, Styled as _, Subscription, Window, div,
+    ParentElement as _, Pixels, Render, SharedString, Styled as _, Subscription, Window, div, px,
 };
 
 use crate::{components::page, preferences::{Preferences, pane_size}};
@@ -32,6 +32,27 @@ pub fn remember_pane_size<T: 'static>(
             }
         }
     })
+}
+
+/// Sets the last pane of a two-pane vertical center split to `size` once the area has been laid out, and says
+/// whether it did (`false`: no layout yet, try again next frame).
+///
+/// The kit lets the last slot absorb the leftover (`DockArea::render_node`), so a size handed to
+/// `DockLayout::child` for it is only a flex basis that shrinks with the first pane's content (320 renders as
+/// ~281). Sizing both slots after layout pins them: the first slot gets the rest of the area. Each pane keeps
+/// at least `MIN_PANE`, so an oversized saved size cannot squeeze the other pane out.
+pub fn settle_last_pane(dock: &Entity<DockArea>, size: Pixels, window: &mut Window, cx: &mut App) -> bool {
+    const MIN_PANE: Pixels = px(100.);
+    let total = dock.read(cx).bounds().size.height;
+    let Some(root) = dock.read(cx).layout(DockPlacement::Center).map(|tree| tree.root().id()) else {
+        return true;
+    };
+    if total <= px(0.) {
+        return false;
+    }
+    let last = size.min(total - MIN_PANE).max(MIN_PANE);
+    dock.update(cx, |area, cx| area.set_split_sizes(root, vec![total - last, last], window, cx));
+    true
 }
 
 /// One part of an entity's view, as a view of its own.
