@@ -13,7 +13,10 @@ use gpui_kit::{
     ParentElement as _, Pixels, Render, SharedString, Styled as _, Subscription, Window, div, px,
 };
 
-use crate::{components::page, preferences::{Preferences, pane_size}};
+use crate::{
+    components::page,
+    preferences::{Preferences, pane_size},
+};
 
 /// Keeps the size of one pane of a two-pane dock area in the preferences, so the next run opens with it.
 ///

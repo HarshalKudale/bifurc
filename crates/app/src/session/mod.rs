@@ -8,7 +8,6 @@
 pub mod connection;
 pub mod exchange;
 pub mod graphql;
-pub mod wsdl;
 pub mod mcp;
 pub mod mcp_connection;
 pub mod protocol;
@@ -18,6 +17,7 @@ pub mod socketio_connection;
 pub mod sse;
 pub mod sse_stream;
 pub mod websocket;
+pub mod wsdl;
 
 use gpui_kit::component::input::InputState;
 use gpui_kit::{AnyView, App, Context, Entity, SharedString, Window};
@@ -29,7 +29,8 @@ use crate::{
 };
 
 use self::{
-    mcp::McpSession, protocol::ProtocolSession, rest::RestSession, socketio::SocketIoSession, sse::SseSession, websocket::WsSession,
+    mcp::McpSession, protocol::ProtocolSession, rest::RestSession, socketio::SocketIoSession, sse::SseSession,
+    websocket::WsSession,
 };
 
 #[derive(Debug, Clone, PartialEq)]

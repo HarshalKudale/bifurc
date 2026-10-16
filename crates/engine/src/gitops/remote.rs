@@ -174,7 +174,10 @@ pub async fn git_net(ws_id: &str, args: &[&str]) -> Result<String, GitError> {
     // A push or pull the remote refused for its credentials: ask GitHub whether the token is still good.
     if let (Err(e), Some(auth), Some(account)) = (&result, &auth, workspace_account(ws_id)) {
         let text = e.0.to_lowercase();
-        if text.contains("authentication failed") || text.contains("invalid username or password") || text.contains("401") {
+        if text.contains("authentication failed")
+            || text.contains("invalid username or password")
+            || text.contains("401")
+        {
             if let Err(error) = github::fetch_user(&auth.token).await {
                 flag_if_rejected(&account.id, error);
             }
@@ -286,9 +289,10 @@ pub fn workspace_owner(ws_id: &str) -> Value {
     if let Some((login, _)) = config.as_ref().and_then(|config| str_of(config, "repo").split_once('/')) {
         return json!({ "host": github::host(), "userId": null, "login": login });
     }
-    workspace_account(ws_id).map_or(Value::Null, |account| {
-        json!({ "host": account.host, "userId": account.user_id, "login": account.login })
-    })
+    workspace_account(ws_id).map_or(
+        Value::Null,
+        |account| json!({ "host": account.host, "userId": account.user_id, "login": account.login }),
+    )
 }
 
 /// The local workspace that is connected to `repo` (`owner/name`), if any.
@@ -447,7 +451,7 @@ async fn import(account_id: &str, repo_name: &str) -> Result<Value, Refusal> {
     if workspace_for_repo(&repo.full_name).is_some() {
         return Err(format!("{} is already a workspace on this device.", repo.full_name).into());
     }
-//     };
+    //     };
     // Asked before anything is cloned: a repository that is not a workspace never reaches this device.
     let not_a_workspace = || format!("{} is not a Bifurc workspace: it has no workspace.json of one.", repo.full_name);
     let listed = github::read_json_file(&token, &repo.full_name, WORKSPACE_FILE).await?;

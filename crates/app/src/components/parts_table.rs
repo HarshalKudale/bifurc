@@ -250,7 +250,8 @@ impl PartsTable {
                     }
                 }
                 Err(message) => {
-                    this.last_error = Some(t_with("components.parts_table.read_failed", &[("message", &message)]).into())
+                    this.last_error =
+                        Some(t_with("components.parts_table.read_failed", &[("message", &message)]).into())
                 }
             }
             cx.notify();

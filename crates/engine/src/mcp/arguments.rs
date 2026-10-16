@@ -66,7 +66,6 @@ impl CallKind {
             CallKind::Resource => "resource",
         }
     }
-
 }
 
 /// The schemas a property is one of (`anyOf` / `oneOf`), or the property itself when it is not a choice of
@@ -162,10 +161,7 @@ pub fn tool_arguments(
                 Some(value) => out.insert(name.clone(), (*value).clone()),
                 None => {
                     let listed: Vec<String> = allowed.iter().map(|value| as_typed(value)).collect();
-                    return Err(format!(
-                        "Argument \"{name}\" must be one of {}, not \"{wanted}\".",
-                        listed.join(", ")
-                    ));
+                    return Err(format!("Argument \"{name}\" must be one of {}, not \"{wanted}\".", listed.join(", ")));
                 }
             };
             continue;

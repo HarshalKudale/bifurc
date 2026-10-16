@@ -125,7 +125,9 @@ impl EntityBar {
                 "components.entity_bar.status.saved_read_only"
             }
             Some(FileState::New) => "components.entity_bar.status.saved_not_synced",
-            Some(FileState::Modified) | Some(FileState::Deleted) => "components.entity_bar.status.saved_changes_not_synced",
+            Some(FileState::Modified) | Some(FileState::Deleted) => {
+                "components.entity_bar.status.saved_changes_not_synced"
+            }
             Some(FileState::Clean) => "components.entity_bar.status.saved_and_synced",
             None => "components.entity_bar.status.saved",
         });
@@ -241,11 +243,13 @@ pub fn entity_bar<V: 'static>(
                 .on_click(listener(&on, EntityAction::Sync, cx)),
         )
         .when(bar.closable, |this| {
-            this.child(Button::new("entity-close").ghost().small().label(t("components.entity_bar.close")).on_click(listener(
-                &on,
-                EntityAction::Close,
-                cx,
-            )))
+            this.child(
+                Button::new("entity-close").ghost().small().label(t("components.entity_bar.close")).on_click(listener(
+                    &on,
+                    EntityAction::Close,
+                    cx,
+                )),
+            )
         })
         .child(
             Button::new("entity-save")

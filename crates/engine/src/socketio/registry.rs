@@ -12,11 +12,7 @@
 //! What the server sends is logged for the events the connection listens to, as a Socket.IO client only hears
 //! the events it has a listener for. Without a list of listeners every event is logged.
 
-use std::{
-    collections::HashMap,
-    sync::LazyLock,
-    time::Duration,
-};
+use std::{collections::HashMap, sync::LazyLock, time::Duration};
 
 use futures::{SinkExt, StreamExt};
 use serde_json::{Map, Value, json};

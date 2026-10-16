@@ -142,7 +142,10 @@ mod tests {
         let mut answers = engine();
         answers.extend([
             // The engine holds the stream and has an old event; the exchange is left open.
-            ("sse.status", stream("connected", Value::Null, json!([{"id": "e1-1", "event": "message", "data": "old"}]))),
+            (
+                "sse.status",
+                stream("connected", Value::Null, json!([{"id": "e1-1", "event": "message", "data": "old"}])),
+            ),
         ]);
         let argv = ["requests", "send", "e1", "--wait", "0"];
         let (out, calls) = run(&argv, answers, |c| requests(c, sub(&argv)));
@@ -181,13 +184,28 @@ mod tests {
     fn an_unsaved_stream_opens_the_request_given() {
         let answers = vec![
             ("config.get", Ok(config())),
-            ("sse.status", stream("disconnected", Value::Null, json!([{"id": "x-1", "event": "message", "data": "bye"}]))),
+            (
+                "sse.status",
+                stream("disconnected", Value::Null, json!([{"id": "x-1", "event": "message", "data": "bye"}])),
+            ),
             ("sse.connect", Ok(json!({"ok": true}))),
             ("sse.disconnect", Ok(json!({"ok": true}))),
         ];
         let argv = [
-            "requests", "send", "-t", "sse", "--url", "http://x/events", "-X", "post", "-H", "a: 1", "-d", "{\"q\":1}",
-            "--wait", "30",
+            "requests",
+            "send",
+            "-t",
+            "sse",
+            "--url",
+            "http://x/events",
+            "-X",
+            "post",
+            "-H",
+            "a: 1",
+            "-d",
+            "{\"q\":1}",
+            "--wait",
+            "30",
         ];
         // The stream is over when it is first asked about, so there is nothing to wait 30 seconds for.
         let started = Instant::now();
@@ -220,12 +238,19 @@ mod tests {
     #[test]
     fn options_that_do_not_belong_to_a_stream_send_are_refused_before_asking_the_engine() {
         for (argv, message) in [
-            (vec!["requests", "send", "e1", "-d", "x"],
-             "a saved request is sent as it is saved, without --body; change it with: bifurc requests update"),
+            (
+                vec!["requests", "send", "e1", "-d", "x"],
+                "a saved request is sent as it is saved, without --body; change it with: bifurc requests update",
+            ),
             (vec!["requests", "send", "e1", "--wait", "soon"], "--wait must be a number of seconds, not \"soon\""),
-            (vec!["requests", "send", "-t", "sse", "--url", "http://x", "--query", "{a}"],
-             "--query is not an option of a sse request (see: bifurc requests --help)"),
-            (vec!["requests", "send", "-t", "sse"], "missing request id or name, or --url for a request that is not saved"),
+            (
+                vec!["requests", "send", "-t", "sse", "--url", "http://x", "--query", "{a}"],
+                "--query is not an option of a sse request (see: bifurc requests --help)",
+            ),
+            (
+                vec!["requests", "send", "-t", "sse"],
+                "missing request id or name, or --url for a request that is not saved",
+            ),
         ] {
             let (out, calls) = run(&argv, engine(), |c| requests(c, sub(&argv)));
             assert_eq!(out.unwrap_err(), CliError::msg(message), "{argv:?}");
@@ -236,7 +261,10 @@ mod tests {
     #[test]
     fn create_and_update_build_an_sse_request() {
         let mut answers = engine();
-        answers.extend([("entity.create", Ok(json!({"id": "n1", "entity": {"id": "n1"}}))), ("entity.update", Ok(json!({"ok": true})))]);
+        answers.extend([
+            ("entity.create", Ok(json!({"id": "n1", "entity": {"id": "n1"}}))),
+            ("entity.update", Ok(json!({"ok": true}))),
+        ]);
         let argv = ["requests", "create", "--type", "sse", "http://x/events", "-X", "post", "-H", "a: 1", "-d", "{}"];
         let (out, calls) = run(&argv, answers.clone(), |c| requests(c, sub(&argv)));
         assert_eq!(out.unwrap(), "Saved sse request n1");
@@ -252,7 +280,10 @@ mod tests {
         assert_eq!(out.unwrap(), "Updated sse request e1");
         let sent = &payloads(&calls, "entity.update")[0];
         assert_eq!(sent["kind"], "sseRequests");
-        assert_eq!((sent["entity"]["url"].clone(), sent["entity"]["method"].clone()), (json!("http://y/events"), json!("PUT")));
+        assert_eq!(
+            (sent["entity"]["url"].clone(), sent["entity"]["method"].clone()),
+            (json!("http://y/events"), json!("PUT"))
+        );
     }
 
     #[test]

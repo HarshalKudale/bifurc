@@ -118,7 +118,13 @@ pub fn open(file: &Path) -> std::io::Result<Connection> {
 }
 
 fn folder_of(row: &Row) -> rusqlite::Result<Folder> {
-    Ok(Folder { id: row.get(0)?, parent_id: row.get(1)?, name: row.get(2)?, path: row.get(3)?, created_at: row.get(4)? })
+    Ok(Folder {
+        id: row.get(0)?,
+        parent_id: row.get(1)?,
+        name: row.get(2)?,
+        path: row.get(3)?,
+        created_at: row.get(4)?,
+    })
 }
 
 const FOLDER_COLUMNS: &str = "id, parent_id, name, path, created_at";

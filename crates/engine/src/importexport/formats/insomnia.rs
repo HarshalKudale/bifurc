@@ -6,7 +6,10 @@ use serde_json::{Value, json};
 use super::postman::to_bifurc_script;
 use crate::{
     importexport::{
-        convert::{Collection, Draft, Http, auth_parts, form_encoded, grpc_draft, header_record, with_path_variables, with_query},
+        convert::{
+            Collection, Draft, Http, auth_parts, form_encoded, grpc_draft, header_record, with_path_variables,
+            with_query,
+        },
         support::{FolderSpec, js_str, parse_any, present, text_or},
     },
     utils::{
@@ -63,7 +66,10 @@ fn apply_body(call: &mut Http, body: Option<&Value>) {
         "multipart/form-data" => {
             call.parts = array_of(body, "params")
                 .iter()
-                .filter(|p| !is_truthy(p.get("disabled").unwrap_or(&Value::Null)) && is_truthy(p.get("name").unwrap_or(&Value::Null)))
+                .filter(|p| {
+                    !is_truthy(p.get("disabled").unwrap_or(&Value::Null))
+                        && is_truthy(p.get("name").unwrap_or(&Value::Null))
+                })
                 .map(|p| {
                     let file = opt_str(p, "type") == Some("file");
                     let path = text_or(p, "fileName", "");
@@ -162,7 +168,9 @@ fn request_draft(item: &Value, id: &str, folder: Option<String>) -> Draft {
         Kind::Http => {
             apply_body(&mut call, item.get("body"));
             let scripts = item.get("scripts").unwrap_or(&Value::Null);
-            let script = |v5: &str, v4: &str| to_bifurc_script(&present(scripts, v5).or_else(|| present(item, v4)).map(js_str).unwrap_or_default());
+            let script = |v5: &str, v4: &str| {
+                to_bifurc_script(&present(scripts, v5).or_else(|| present(item, v4)).map(js_str).unwrap_or_default())
+            };
             call.pre_script = script("preRequest", "preRequestScript");
             call.test_script = script("afterResponse", "afterResponseScript");
             call.draft(folder)
@@ -237,9 +245,11 @@ fn mcp_draft(file: &Value) -> Option<Draft> {
     let request = file.get("mcpRequest").filter(|r| r.is_object())?;
     let url = text_or(request, "url", "").trim().to_string();
     let http = url.starts_with("http://") || url.starts_with("https://");
-    let name = Some(text_or(request, "name", "")).filter(|n| !n.is_empty()).unwrap_or_else(|| text_or(file, "name", ""));
+    let name =
+        Some(text_or(request, "name", "")).filter(|n| !n.is_empty()).unwrap_or_else(|| text_or(file, "name", ""));
     let record = header_record(&pairs(request.get(if http { "headers" } else { "env" })));
-    let entity = json!({ "name": name, "transport": if http { "http" } else { "stdio" }, "url": url, "headers": record });
+    let entity =
+        json!({ "name": name, "transport": if http { "http" } else { "stdio" }, "url": url, "headers": record });
     Some(Draft { kind: "mcpRequests", entity, folder: None })
 }
 
@@ -287,17 +297,29 @@ mod tests {
         .to_string();
         let out = parse_insomnia(&export).unwrap();
         assert_eq!(out.name, "W");
-        assert_eq!(out.variables, [("base_url".to_string(), "http://h".to_string()), ("n".to_string(), "2".to_string())]);
+        assert_eq!(
+            out.variables,
+            [("base_url".to_string(), "http://h".to_string()), ("n".to_string(), "2".to_string())]
+        );
         assert_eq!(out.folders[0].key, "fld_1");
         let one = &out.drafts[0];
         assert_eq!((one.kind, one.folder.as_deref()), ("requests", Some("fld_1")));
         assert_eq!(one.entity["method"], "PUT");
         assert_eq!(one.entity["url"], "{{ _.base_url }}/1/5?q=1");
-        assert_eq!(one.entity["headers"], json!({ "A": "b", "Authorization": "Bearer t", "Content-Type": "application/json" }));
+        assert_eq!(
+            one.entity["headers"],
+            json!({ "A": "b", "Authorization": "Bearer t", "Content-Type": "application/json" })
+        );
         assert_eq!(one.entity["createdAt"], 5);
-        assert_eq!((out.drafts[1].kind, &out.drafts[1].entity["variables"]), ("graphqlRequests", &json!("{\n  \"x\": 1\n}")));
+        assert_eq!(
+            (out.drafts[1].kind, &out.drafts[1].entity["variables"]),
+            ("graphqlRequests", &json!("{\n  \"x\": 1\n}"))
+        );
         let rpc = &out.drafts[2];
-        assert_eq!((rpc.kind, &rpc.entity["serviceName"], &rpc.entity["methodName"]), ("grpcRequests", &json!("pkg.Svc"), &json!("Do")));
+        assert_eq!(
+            (rpc.kind, &rpc.entity["serviceName"], &rpc.entity["methodName"]),
+            ("grpcRequests", &json!("pkg.Svc"), &json!("Do"))
+        );
         assert_eq!(rpc.entity["metadata"], json!({ "m": "v" }));
         assert_eq!(out.drafts[3].kind, "sockets");
         assert_eq!(parse_insomnia("{}").err().unwrap(), NOT_INSOMNIA);
@@ -327,6 +349,9 @@ mod tests {
         let yaml = "type: mcpClient.insomnia/5.0\nname: Airlines\nmcpRequest:\n  name: ''\n  url: '  https://h/mcp'\n  transportType: streamable-http\n  headers:\n    - name: X\n      value: y\n";
         let out = parse_insomnia(yaml).unwrap();
         assert_eq!(out.drafts[0].kind, "mcpRequests");
-        assert_eq!(out.drafts[0].entity, json!({ "name": "Airlines", "transport": "http", "url": "https://h/mcp", "headers": { "X": "y" } }));
+        assert_eq!(
+            out.drafts[0].entity,
+            json!({ "name": "Airlines", "transport": "http", "url": "https://h/mcp", "headers": { "X": "y" } })
+        );
     }
 }

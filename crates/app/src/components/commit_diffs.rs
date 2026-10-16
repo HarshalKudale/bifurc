@@ -96,7 +96,8 @@ impl CommitDiffs {
             let load = match failure(&outcome) {
                 Some(message) => Load::Failed(message),
                 None => {
-                    let patch = outcome.ok().and_then(|result| result.get("patch").and_then(Value::as_str).map(str::to_owned));
+                    let patch =
+                        outcome.ok().and_then(|result| result.get("patch").and_then(Value::as_str).map(str::to_owned));
                     match DiffFile::parse(&patch.unwrap_or_default()) {
                         Ok(files) if files.is_empty() => Load::Empty,
                         Ok(files) => {

@@ -196,7 +196,14 @@ mod tests {
         assert_eq!(ids("workspace"), ["workspace-json", "workspace-zip"]);
         assert_eq!(
             ids("requests"),
-            ["requests-json", "requests-postman", "requests-insomnia", "requests-openapi", "requests-curl", "requests-har"]
+            [
+                "requests-json",
+                "requests-postman",
+                "requests-insomnia",
+                "requests-openapi",
+                "requests-curl",
+                "requests-har"
+            ]
         );
         assert_eq!(ids("mocks"), ["mocks-json", "mocks-postman", "mocks-wiremock"]);
         assert_eq!(ids("environments"), ["environments-json", "environments-postman", "environments-dotenv"]);

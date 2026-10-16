@@ -68,7 +68,9 @@ impl SocketIoMessage {
             (MessageKind::Ack, Some(id)) if self.event.is_empty() => {
                 Some(t_with("model.socketio.ack_answer_unknown", &[("id", &id)]))
             }
-            (MessageKind::Ack, Some(id)) => Some(t_with("model.socketio.ack_answer", &[("event", &self.event), ("id", &id)])),
+            (MessageKind::Ack, Some(id)) => {
+                Some(t_with("model.socketio.ack_answer", &[("event", &self.event), ("id", &id)]))
+            }
             _ => None,
         }
     }
@@ -182,7 +184,10 @@ mod tests {
         }));
         assert_eq!(view.state, SocketState::Connected);
         assert!(view.state.is_live());
-        assert_eq!((view.namespace.as_str(), view.sid.as_deref(), view.close_reason.as_deref()), ("/chat", Some("s1"), None));
+        assert_eq!(
+            (view.namespace.as_str(), view.sid.as_deref(), view.close_reason.as_deref()),
+            ("/chat", Some("s1"), None)
+        );
         assert_eq!(view.messages.len(), 2);
         assert_eq!(view.messages[0].direction, Direction::Sent);
         assert_eq!(view.messages[1].direction, Direction::Received);
@@ -199,9 +204,16 @@ mod tests {
     #[test]
     fn a_status_event_keeps_the_reason_and_the_namespace() {
         let mut view = SocketIoView::default();
-        view.apply_status_event(&json!({"status": "connected", "error": null, "namespace": "/chat", "sid": "s1", "reason": null}));
-        assert_eq!((view.state, view.namespace.as_str(), view.sid.as_deref()), (SocketState::Connected, "/chat", Some("s1")));
-        view.apply_status_event(&json!({"status": "error", "error": "Not authorized", "sid": null, "reason": "connect error"}));
+        view.apply_status_event(
+            &json!({"status": "connected", "error": null, "namespace": "/chat", "sid": "s1", "reason": null}),
+        );
+        assert_eq!(
+            (view.state, view.namespace.as_str(), view.sid.as_deref()),
+            (SocketState::Connected, "/chat", Some("s1"))
+        );
+        view.apply_status_event(
+            &json!({"status": "error", "error": "Not authorized", "sid": null, "reason": "connect error"}),
+        );
         assert_eq!(view.state, SocketState::Error);
         assert_eq!(view.error.as_deref(), Some("Not authorized"));
         assert_eq!(view.close_reason.as_deref(), Some("connect error"));
@@ -215,12 +227,17 @@ mod tests {
         let event = parsed(message("c-1", "sent"));
         assert_eq!((event.kind, event.label().as_str(), event.note()), (MessageKind::Event, "chat", None));
 
-        let asking = parsed(json!({"id": "c-2", "direction": "sent", "type": "event", "event": "save", "data": "[]", "ackId": 3}));
+        let asking = parsed(
+            json!({"id": "c-2", "direction": "sent", "type": "event", "event": "save", "data": "[]", "ackId": 3}),
+        );
         assert_eq!((asking.label().as_str(), asking.note().as_deref()), ("save", Some("ack #3")));
 
-        let ack = parsed(json!({"id": "c-3", "direction": "received", "type": "ack", "event": "save", "data": "[\"ok\"]", "ackId": 3}));
+        let ack = parsed(
+            json!({"id": "c-3", "direction": "received", "type": "ack", "event": "save", "data": "[\"ok\"]", "ackId": 3}),
+        );
         assert_eq!((ack.kind, ack.label().as_str(), ack.note().as_deref()), (MessageKind::Ack, "ack", Some("save #3")));
-        let unknown = parsed(json!({"id": "c-4", "direction": "received", "type": "ack", "event": "", "data": "[]", "ackId": 9}));
+        let unknown =
+            parsed(json!({"id": "c-4", "direction": "received", "type": "ack", "event": "", "data": "[]", "ackId": 9}));
         assert_eq!(unknown.note().as_deref(), Some("#9"));
 
         assert!(SocketIoMessage::from_value(&json!({"direction": "sent"})).is_none());
@@ -244,8 +261,7 @@ mod tests {
 
     #[test]
     fn a_message_seen_in_the_snapshot_and_again_as_an_event_is_kept_once() {
-        let mut view =
-            SocketIoView::from_status(&json!({"status": "connected", "messages": [message("c-1", "sent")]}));
+        let mut view = SocketIoView::from_status(&json!({"status": "connected", "messages": [message("c-1", "sent")]}));
         view.apply_message_event(&json!({"message": message("c-1", "sent")}));
         view.apply_message_event(&json!({"message": message("c-2", "received")}));
         assert_eq!(view.messages.len(), 2);

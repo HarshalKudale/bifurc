@@ -602,10 +602,15 @@ mod tests {
             json!({"event": name, "seq": 1, "payload": body})
         };
         let progress = |load_id: &str, running: u64, failed: u64| {
-            told("event.flow.loadtest.progress", load_id, json!({"instances": 20, "running": running, "failed": failed}))
+            told(
+                "event.flow.loadtest.progress",
+                load_id,
+                json!({"instances": 20, "running": running, "failed": failed}),
+            )
         };
         let finished = |failed: u64| {
-            let row = |status: &str, error: Value| json!({"status": status, "at": "Login", "error": error, "failedTests": 0});
+            let row =
+                |status: &str, error: Value| json!({"status": status, "at": "Login", "error": error, "failedTests": 0});
             let mut rows = vec![row("succeeded", Value::Null); (20 - failed) as usize];
             rows.extend(vec![row("failed", json!("Login: HTTP 503")); failed as usize]);
             let report = json!({"flowName": "Checkout", "loadId": "l1", "status": "finished", "instances": 20,
@@ -617,7 +622,13 @@ mod tests {
         let mut answers = engine();
         answers.push(("flow.loadtest.start", Ok(json!({"ok": true, "loadId": "l1", "instances": 20}))));
 
-        let events = vec![progress("other", 0, 20), progress("l1", 19, 0), progress("l1", 10, 0), progress("l1", 9, 1), finished(0)];
+        let events = vec![
+            progress("other", 0, 20),
+            progress("l1", 19, 0),
+            progress("l1", 10, 0),
+            progress("l1", 9, 1),
+            finished(0),
+        ];
         let argv = ["flows", "loadtest", "Checkout", "--instances", "20", "--input", "user=bob", "--timeout", "2"];
         let (out, lines, calls) = go(&argv, answers.clone(), events);
         assert_eq!(lines, ["  10 of 20 done, 0 failed"]);

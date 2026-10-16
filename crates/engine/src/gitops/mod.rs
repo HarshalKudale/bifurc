@@ -27,8 +27,8 @@ mod tests;
 
 pub use auto_sync::{start_auto_sync, stop_all_auto_sync};
 pub use delete_commands::reconcile_deletions;
-pub use history_watch::{start_history_watch, stop_history_watch};
 pub use git_state::get_workspace_git_state;
+pub use history_watch::{start_history_watch, stop_history_watch};
 pub use remote::NOT_OWNER;
 pub use status_tracker::get_workspace_sync_status;
 pub use sync_state::get_sync_config;

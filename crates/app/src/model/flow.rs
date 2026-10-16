@@ -422,7 +422,8 @@ impl FlowDoc {
     /// holds a value changes nothing.
     pub fn connect(&mut self, from: &str, port: &str, to: &str) -> bool {
         let runs = |id: &str| self.node(id).is_some_and(|node| node.kind != NodeKind::Data);
-        let exists = self.edges.iter().any(|edge| !edge.is_wire() && edge.from == from && edge.port == port && edge.to == to);
+        let exists =
+            self.edges.iter().any(|edge| !edge.is_wire() && edge.from == from && edge.port == port && edge.to == to);
         if exists || !self.joins(from, to) || !runs(from) || !runs(to) {
             return false;
         }
@@ -451,7 +452,9 @@ impl FlowDoc {
 
     /// What a run starts with when it is given nothing: the flow's inputs by name.
     pub fn default_inputs(&self) -> Value {
-        Value::Object(self.inputs.iter().map(|input| (input.name.clone(), Value::String(input.value.clone()))).collect())
+        Value::Object(
+            self.inputs.iter().map(|input| (input.name.clone(), Value::String(input.value.clone()))).collect(),
+        )
     }
 }
 
@@ -830,7 +833,10 @@ mod tests {
         load.apply(&json!({ "loadId": "l1", "status": "finished", "instances": 3, "running": 0,
             "rows": [{ "index": 0, "status": "succeeded" }], "nodes": [{ "id": "n" }] }));
         assert!(!load.is_running() && load.summary.get("rows").is_none());
-        assert_eq!((load.rows[0]["status"].as_str(), load.rows[2]["status"].as_str()), (Some("succeeded"), Some("failed")));
+        assert_eq!(
+            (load.rows[0]["status"].as_str(), load.rows[2]["status"].as_str()),
+            (Some("succeeded"), Some("failed"))
+        );
         assert_eq!(load.nodes.len(), 1);
     }
 

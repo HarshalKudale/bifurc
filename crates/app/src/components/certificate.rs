@@ -20,9 +20,14 @@ use crate::{
 fn certificate_bytes(artifact: &Value) -> Result<Vec<u8>, String> {
     use base64::{Engine as _, engine::general_purpose::STANDARD};
     if artifact.get("ok").and_then(Value::as_bool) == Some(false) {
-        return Err(artifact.get("error").and_then(Value::as_str).unwrap_or(t("components.certificate.no_certificate")).to_owned());
+        return Err(artifact
+            .get("error")
+            .and_then(Value::as_str)
+            .unwrap_or(t("components.certificate.no_certificate"))
+            .to_owned());
     }
-    let inline = artifact.get("inline").and_then(Value::as_str).ok_or(t("components.certificate.no_engine_certificate"))?;
+    let inline =
+        artifact.get("inline").and_then(Value::as_str).ok_or(t("components.certificate.no_engine_certificate"))?;
     STANDARD.decode(inline).map_err(|error| t_with("components.certificate.unreadable", &[("error", &error)]))
 }
 
@@ -120,7 +125,9 @@ impl Certificate {
         pick_file(t("components.certificate.pick_certificate"), cx, |this, certificate, cx| {
             let certificate = match certificate {
                 Ok(certificate) => certificate,
-                Err(error) => return this.report(t_with("components.certificate.read_failed", &[("error", &error)]), cx),
+                Err(error) => {
+                    return this.report(t_with("components.certificate.read_failed", &[("error", &error)]), cx);
+                }
             };
             pick_file(t("components.certificate.pick_key"), cx, move |this, key, cx| match key {
                 Ok(key) => this.upload(certificate, key, cx),
@@ -145,7 +152,10 @@ impl Certificate {
             Default::default(),
             move |this, outcome, cx| {
                 if let Err(message) = outcome {
-                    return this.finish_import(Some(t_with("components.certificate.import_failed", &[("message", &message)])), cx);
+                    return this.finish_import(
+                        Some(t_with("components.certificate.import_failed", &[("message", &message)])),
+                        cx,
+                    );
                 }
                 upload_and_call(
                     &key_client,
@@ -156,7 +166,9 @@ impl Certificate {
                     "tls.importKey",
                     Default::default(),
                     |this, outcome, cx| {
-                        let failed = outcome.err().map(|message| t_with("components.certificate.import_key_failed", &[("message", &message)]));
+                        let failed = outcome.err().map(|message| {
+                            t_with("components.certificate.import_key_failed", &[("message", &message)])
+                        });
                         this.finish_import(failed, cx)
                     },
                 );

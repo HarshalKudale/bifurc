@@ -509,7 +509,10 @@ mod tests {
         let payload = json!({ "workspaceId": WS, "connectionId": "tools", "type": "tool", "name": "echo",
                               "arguments": { "text": "a", "count": "many" } });
         let refused = call("mcp.call", payload).await;
-        assert_eq!(refused, json!({ "ok": false, "error": "Argument \"count\" must be a whole number, not \"many\"." }));
+        assert_eq!(
+            refused,
+            json!({ "ok": false, "error": "Argument \"count\" must be a whole number, not \"many\"." })
+        );
         assert_eq!(server.asked("tools/call").len(), 1);
 
         // A tool that fails and a call the server rejects both end as errors, with what the server said.
@@ -668,8 +671,13 @@ mod tests {
             ("bad-scheme", "http", "ws://127.0.0.1/x", "Invalid URL"),
             ("empty", "", "", "A command is required"),
         ] {
-            let payload = json!({ "workspaceId": WS, "connectionId": connection_id, "url": url, "transport": transport });
-            let payload = if transport.is_empty() { json!({ "workspaceId": WS, "connectionId": connection_id, "url": url }) } else { payload };
+            let payload =
+                json!({ "workspaceId": WS, "connectionId": connection_id, "url": url, "transport": transport });
+            let payload = if transport.is_empty() {
+                json!({ "workspaceId": WS, "connectionId": connection_id, "url": url })
+            } else {
+                payload
+            };
             let result = call("mcp.connect", payload).await;
             assert_eq!(result["ok"], false, "{url}");
             assert!(result["error"].as_str().unwrap().starts_with(expected), "{result}");
@@ -704,7 +712,10 @@ mod tests {
         // A command that is not one fails the same way, in the shell's words.
         connect("no-program", "bifurc-no-such-mcp-server --stdio").await;
         let failed = wait_status("no-program", "error").await;
-        assert!(failed["error"].as_str().unwrap().starts_with("The program ended before the MCP handshake"), "{failed}");
+        assert!(
+            failed["error"].as_str().unwrap().starts_with("The program ended before the MCP handshake"),
+            "{failed}"
+        );
         assert!(failed["error"].as_str().unwrap().contains("bifurc-no-such-mcp-server"), "{failed}");
     }
 

@@ -14,11 +14,11 @@ use gpui_kit::component::{
     tag::Tag,
     v_flex,
 };
+use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     App, AppContext as _, Context, Entity, IntoElement, ParentElement as _, Render, SharedString, Styled as _,
     Subscription, Window, div,
 };
-use gpui_kit::prelude::FluentBuilder as _;
 use serde_json::{Map, Value, json};
 
 use super::{
@@ -394,7 +394,9 @@ impl WorkspaceScreen {
                             this.report(message, cx);
                             this.model.update(cx, |model, cx| model.refresh(cx));
                         }
-                        Err(message) => this.report(t_with("workspace.transfer.import_failed", &[("message", &message)]), cx),
+                        Err(message) => {
+                            this.report(t_with("workspace.transfer.import_failed", &[("message", &message)]), cx)
+                        }
                     }
                     cx.notify();
                 },
@@ -428,14 +430,16 @@ impl WorkspaceScreen {
                     v_flex()
                         .w_full()
                         .gap_1p5()
-                        .child(h_flex().w_full().gap_2().child(div().flex_1().child(Input::new(&name))).child(
-                            Button::new("rename-workspace")
-                                .with_size(options.size())
-                                .label(t("workspace.general.rename"))
-                                .on_click(move |_, _, cx| {
-                                    rename.update(cx, |this, cx| this.rename(cx)).ok();
-                                }),
-                        ))
+                        .child(
+                            h_flex().w_full().gap_2().child(div().flex_1().child(Input::new(&name))).child(
+                                Button::new("rename-workspace")
+                                    .with_size(options.size())
+                                    .label(t("workspace.general.rename"))
+                                    .on_click(move |_, _, cx| {
+                                        rename.update(cx, |this, cx| this.rename(cx)).ok();
+                                    }),
+                            ),
+                        )
                         .child(
                             div()
                                 .text_xs()
@@ -636,61 +640,64 @@ impl WorkspaceScreen {
         let working = sync.is_working();
         let read_only = config.read_only;
         let (pull, push) = (this.clone(), this.clone());
-        let status_group = SettingGroup::new().title(t("workspace.status.title")).item(SettingItem::render(move |options, _, cx| {
-            let theme = cx.theme().clone();
-            let (pull, push) = (pull.clone(), push.clone());
-            let now = now_ms();
-            let when = |ts: Option<i64>| ts.map_or_else(|| t("workspace.status.never").to_owned(), |ts| relative_time(now, ts));
-            let state = match sync.status.as_str() {
-                "error" => Tag::danger().child(status_label),
-                _ if working => Tag::warning().child(sync.progress.clone().unwrap_or_else(|| status_label.to_owned())),
-                _ => Tag::secondary().child(status_label),
-            };
-            let counts = if not_synced == 0 { Tag::success() } else { Tag::warning() }.child(t_with(
-                "workspace.status.counts",
-                &[("synced", &synced), ("not_synced", &not_synced)],
-            ));
-            v_flex()
-                .w_full()
-                .gap_2()
-                .child(
-                    h_flex()
-                        .w_full()
-                        .gap_2()
-                        .child(div().flex_1().child(h_flex().gap_2().child(state).child(counts)))
-                        .child(
-                            Button::new("pull-remote")
-                                .with_size(options.size())
-                                .icon(IconName::ArrowDown)
-                                .label(t("workspace.status.pull"))
-                                .disabled(working)
-                                .on_click(move |_, _, cx| {
-                                    pull.update(cx, |this, cx| {
-                                        this.run_sync("sync.pull", "workspace.sync.pull_failed", cx)
-                                    })
-                                    .ok();
-                                }),
-                        )
-                        .child(
-                            Button::new("push-remote")
-                                .with_size(options.size())
-                                .icon(IconName::ArrowUp)
-                                .label(t("workspace.status.push"))
-                                .disabled(working || read_only)
-                                .on_click(move |_, _, cx| {
-                                    push.update(cx, |this, cx| {
-                                        this.run_sync("sync.push", "workspace.sync.push_failed", cx)
-                                    })
-                                    .ok();
-                                }),
-                        ),
-                )
-                .child(div().text_xs().text_color(theme.muted_foreground).child(t_with(
-                    "workspace.status.last_synced",
-                    &[("pushed", &when(sync.last_pushed)), ("pulled", &when(sync.last_pulled))],
-                )))
-                .children(sync.error.clone().map(|error| div().text_xs().text_color(theme.danger).child(error)))
-        }));
+        let status_group =
+            SettingGroup::new().title(t("workspace.status.title")).item(SettingItem::render(move |options, _, cx| {
+                let theme = cx.theme().clone();
+                let (pull, push) = (pull.clone(), push.clone());
+                let now = now_ms();
+                let when = |ts: Option<i64>| {
+                    ts.map_or_else(|| t("workspace.status.never").to_owned(), |ts| relative_time(now, ts))
+                };
+                let state = match sync.status.as_str() {
+                    "error" => Tag::danger().child(status_label),
+                    _ if working => {
+                        Tag::warning().child(sync.progress.clone().unwrap_or_else(|| status_label.to_owned()))
+                    }
+                    _ => Tag::secondary().child(status_label),
+                };
+                let counts = if not_synced == 0 { Tag::success() } else { Tag::warning() }
+                    .child(t_with("workspace.status.counts", &[("synced", &synced), ("not_synced", &not_synced)]));
+                v_flex()
+                    .w_full()
+                    .gap_2()
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .gap_2()
+                            .child(div().flex_1().child(h_flex().gap_2().child(state).child(counts)))
+                            .child(
+                                Button::new("pull-remote")
+                                    .with_size(options.size())
+                                    .icon(IconName::ArrowDown)
+                                    .label(t("workspace.status.pull"))
+                                    .disabled(working)
+                                    .on_click(move |_, _, cx| {
+                                        pull.update(cx, |this, cx| {
+                                            this.run_sync("sync.pull", "workspace.sync.pull_failed", cx)
+                                        })
+                                        .ok();
+                                    }),
+                            )
+                            .child(
+                                Button::new("push-remote")
+                                    .with_size(options.size())
+                                    .icon(IconName::ArrowUp)
+                                    .label(t("workspace.status.push"))
+                                    .disabled(working || read_only)
+                                    .on_click(move |_, _, cx| {
+                                        push.update(cx, |this, cx| {
+                                            this.run_sync("sync.push", "workspace.sync.push_failed", cx)
+                                        })
+                                        .ok();
+                                    }),
+                            ),
+                    )
+                    .child(div().text_xs().text_color(theme.muted_foreground).child(t_with(
+                        "workspace.status.last_synced",
+                        &[("pushed", &when(sync.last_pushed)), ("pulled", &when(sync.last_pulled))],
+                    )))
+                    .children(sync.error.clone().map(|error| div().text_xs().text_color(theme.danger).child(error)))
+            }));
         page.groups(vec![account_group, changes_group, remote_group, status_group])
     }
 
@@ -828,10 +835,8 @@ impl WorkspaceScreen {
         let (export, import) = (cx.weak_entity(), cx.weak_entity());
         let collision_write = cx.weak_entity();
         let collision_now = self.collision;
-        let collisions: Vec<(SharedString, SharedString)> = COLLISIONS
-            .iter()
-            .map(|(id, label)| (SharedString::from(*id), SharedString::from(t(*label))))
-            .collect();
+        let collisions: Vec<(SharedString, SharedString)> =
+            COLLISIONS.iter().map(|(id, label)| (SharedString::from(*id), SharedString::from(t(*label)))).collect();
 
         let export_group = SettingGroup::new()
             .title(t("workspace.transfer.export_title"))
@@ -926,22 +931,26 @@ impl WorkspaceScreen {
         );
 
         let clear_all = this.clone();
-        let mut stored = SettingGroup::new().title(t("workspace.cookies.stored_group")).item(SettingItem::render(move |options, _, cx| {
-            let clear_all = clear_all.clone();
-            h_flex()
-                .w_full()
-                .gap_2()
-                .child(div().flex_1().text_sm().text_color(cx.theme().muted_foreground).child(summary.clone()))
-                .child(
-                    Button::new("clear-all-cookies")
-                        .with_size(options.size())
-                        .label(t("workspace.cookies.clear_all"))
-                        .disabled(total == 0)
-                        .on_click(move |_, _, cx| {
-                            clear_all.update(cx, |this, cx| this.cookie_command("cookies.clear", json!({}), cx)).ok();
-                        }),
-                )
-        }));
+        let mut stored = SettingGroup::new().title(t("workspace.cookies.stored_group")).item(SettingItem::render(
+            move |options, _, cx| {
+                let clear_all = clear_all.clone();
+                h_flex()
+                    .w_full()
+                    .gap_2()
+                    .child(div().flex_1().text_sm().text_color(cx.theme().muted_foreground).child(summary.clone()))
+                    .child(
+                        Button::new("clear-all-cookies")
+                            .with_size(options.size())
+                            .label(t("workspace.cookies.clear_all"))
+                            .disabled(total == 0)
+                            .on_click(move |_, _, cx| {
+                                clear_all
+                                    .update(cx, |this, cx| this.cookie_command("cookies.clear", json!({}), cx))
+                                    .ok();
+                            }),
+                    )
+            },
+        ));
         for (index, entry) in domains.into_iter().enumerate() {
             let this = this.clone();
             let text = |value: &Value, key: &str| value.get(key).and_then(Value::as_str).unwrap_or_default().to_owned();
@@ -961,15 +970,18 @@ impl WorkspaceScreen {
                         h_flex()
                             .w_full()
                             .gap_2()
+                            .child(div().flex_1().font_family(theme.mono_font_family.clone()).child(domain.clone()))
                             .child(
-                                div().flex_1().font_family(theme.mono_font_family.clone()).child(domain.clone()),
-                            )
-                            .child(Button::new(("clear-cookies", index)).with_size(options.size()).label(t("workspace.cookies.clear")).on_click(
-                                move |_, _, cx| {
-                                    let payload = json!({ "domain": cleared });
-                                    clear.update(cx, |this, cx| this.cookie_command("cookies.clear", payload, cx)).ok();
-                                },
-                            )),
+                                Button::new(("clear-cookies", index))
+                                    .with_size(options.size())
+                                    .label(t("workspace.cookies.clear"))
+                                    .on_click(move |_, _, cx| {
+                                        let payload = json!({ "domain": cleared });
+                                        clear
+                                            .update(cx, |this, cx| this.cookie_command("cookies.clear", payload, cx))
+                                            .ok();
+                                    }),
+                            ),
                     )
                     .children(cookies.iter().map(|(name, value, path)| {
                         h_flex()
@@ -1006,10 +1018,7 @@ impl WorkspaceScreen {
                         .w_full()
                         .gap_2()
                         .child(
-                            div()
-                                .flex_1()
-                                .text_color(theme.muted_foreground)
-                                .child(t("workspace.danger.description")),
+                            div().flex_1().text_color(theme.muted_foreground).child(t("workspace.danger.description")),
                         )
                         .child(
                             Button::new("delete-workspace")

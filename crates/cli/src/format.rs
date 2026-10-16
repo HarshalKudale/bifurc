@@ -111,7 +111,8 @@ pub fn describe_text_response(result: &Value) -> String {
 
 /// A WebSocket connection as printed by `requests send`: its state, then what was sent (`>`) and received (`<`).
 pub fn describe_socket(snapshot: &Value) -> String {
-    let mut lines = vec![format!("WebSocket {}  {}", js_template(snapshot.get("status")), js_template(snapshot.get("url")))];
+    let mut lines =
+        vec![format!("WebSocket {}  {}", js_template(snapshot.get("status")), js_template(snapshot.get("url")))];
     if let Some(error) = snapshot.get("error").and_then(Value::as_str).filter(|e| !e.is_empty()) {
         lines.push(format!("error: {error}"));
     }
@@ -126,7 +127,8 @@ pub fn describe_socket(snapshot: &Value) -> String {
 /// and received (`<`) with its arguments. `#n` is the id an acknowledgement was asked with, or answers.
 pub fn describe_socketio(snapshot: &Value) -> String {
     let mut head = format!("Socket.IO {}  {}", js_template(snapshot.get("status")), js_template(snapshot.get("url")));
-    if let Some(namespace) = snapshot.get("namespace").and_then(Value::as_str).filter(|ns| !ns.is_empty() && *ns != "/") {
+    if let Some(namespace) = snapshot.get("namespace").and_then(Value::as_str).filter(|ns| !ns.is_empty() && *ns != "/")
+    {
         head.push_str(&format!("  {namespace}"));
     }
     let mut lines = vec![head];
@@ -439,7 +441,8 @@ mod tests {
             describe_socketio(&snapshot),
             "Socket.IO connected  http://h  /chat\n> [say #0] [\"hi\"]\n< [ack #0] [\"ok\"]\n< [said] [\"hi\",1]"
         );
-        let failed = json!({"status": "error", "url": "http://h", "namespace": "/", "error": "Not authorized", "messages": []});
+        let failed =
+            json!({"status": "error", "url": "http://h", "namespace": "/", "error": "Not authorized", "messages": []});
         assert_eq!(describe_socketio(&failed), "Socket.IO error  http://h\nerror: Not authorized");
     }
 
@@ -473,24 +476,45 @@ mod tests {
             json!({"type": kind, "name": name, "arguments": arguments, "status": status, "durationMs": 5,
                    "data": "{\"as\":\"it came\"}", "text": text})
         };
-        let tool = line("tool", "echo", "{\"a\":1}", "ok", "one
-two");
-        assert_eq!(describe_mcp_call(&snapshot, &tool), format!("{head}
+        let tool = line(
+            "tool",
+            "echo",
+            "{\"a\":1}",
+            "ok",
+            "one
+two",
+        );
+        assert_eq!(
+            describe_mcp_call(&snapshot, &tool),
+            format!(
+                "{head}
 > tool echo {{\"a\":1}}
 < ok  (5 ms)
 one
-two"));
+two"
+            )
+        );
         let resource = line("resource", "mem://a", "", "error", "boom");
-        assert_eq!(describe_mcp_call(&snapshot, &resource), format!("{head}
+        assert_eq!(
+            describe_mcp_call(&snapshot, &resource),
+            format!(
+                "{head}
 > resource mem://a
 < error  (5 ms)
-boom"));
+boom"
+            )
+        );
         // A call that is not answered yet has no time and no text.
         let pending = json!({"type": "tool", "name": "slow", "arguments": "{}", "status": "pending", "durationMs": null,
                              "data": "", "text": ""});
-        assert_eq!(describe_mcp_call(&snapshot, &pending), format!("{head}
+        assert_eq!(
+            describe_mcp_call(&snapshot, &pending),
+            format!(
+                "{head}
 > tool slow {{}}
-< pending"));
+< pending"
+            )
+        );
     }
 
     #[test]

@@ -7,14 +7,12 @@
 //! it ([`McpView`]), which is also where the request panel reads what the server declares.
 
 use gpui_kit::component::{ActiveTheme as _, tag::Tag};
-use gpui_kit::{
-    Context, EventEmitter, IntoElement, ParentElement as _, Render, Styled as _, Window, div,
-};
+use gpui_kit::{Context, EventEmitter, IntoElement, ParentElement as _, Render, Styled as _, Window, div};
 use serde_json::Value;
 
 use crate::{
-    i18n::{t, t_with},
     components::stream_log::{LogFrame, LogRow, LogState, Way, found, log_frame, log_row},
+    i18n::{t, t_with},
     model::{
         mcp::{CallStatus, McpLine, McpView},
         socket::SocketState,

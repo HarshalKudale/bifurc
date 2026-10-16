@@ -28,10 +28,10 @@ use super::{
     sse_stream::{SseStream, StreamEvent},
 };
 use crate::{
-    i18n::{t, t_with},
     app_model::{AppModel, ModelEvent},
     components::{Autosave, KeyValueEvent, KeyValueTable, Syntax, VarEditor, page, request_bar},
     engine::{call, call_in, describe},
+    i18n::{t, t_with},
     model::{
         RequestKind,
         http::{HTTP_METHODS, header_map, header_pairs},
@@ -106,7 +106,8 @@ impl SseSession {
         let name = cx.new(|cx| InputState::new(window, cx).placeholder(t("session.rest.name_placeholder")));
         let method = cx.new(|cx| SelectState::new(HTTP_METHODS.to_vec(), Some(IndexPath::default()), window, cx));
         let url = VarEditor::line("https://example.test/events", window, cx);
-        let headers = cx.new(|cx| KeyValueTable::new(t("session.rest.column_header"), t("session.rest.column_value"), window, cx));
+        let headers = cx
+            .new(|cx| KeyValueTable::new(t("session.rest.column_header"), t("session.rest.column_value"), window, cx));
         let body = VarEditor::code(Syntax::Json, t("session.sse.body_placeholder"), window, cx);
         let stream = cx.new(|cx| SseStream::new(window, cx));
 
@@ -116,8 +117,7 @@ impl SseSession {
             InputEvent::PressEnter { .. } | InputEvent::Blur => this.commit_name(window, cx),
             InputEvent::Focus => {}
         }));
-        subscriptions
-            .push(cx.subscribe(&method, |this, _, _: &SelectEvent<Vec<&'static str>>, cx| this.changed(cx)));
+        subscriptions.push(cx.subscribe(&method, |this, _, _: &SelectEvent<Vec<&'static str>>, cx| this.changed(cx)));
         subscriptions.push(cx.subscribe_in(
             url.state(),
             window,
@@ -209,10 +209,7 @@ impl SseSession {
             // The stream's status is asked for once, when the tab opens; a re-read does not change it.
             let opening = this.load == LoadState::Loading;
             match outcome.map_err(|e| describe(&e)).and_then(|v| {
-                v.get("entity")
-                    .and_then(Value::as_object)
-                    .cloned()
-                    .ok_or_else(|| t("session.rest.gone").to_owned())
+                v.get("entity").and_then(Value::as_object).cloned().ok_or_else(|| t("session.rest.gone").to_owned())
             }) {
                 Ok(entity) => {
                     this.adopt_entity(entity, window, cx);
@@ -475,8 +472,7 @@ impl SseSession {
                             cx.emit(SessionEvent::Saved { id });
                         }
                     }
-                    None => window
-                        .push_notification(Notification::error(t("session.rest.engine_no_saved")), cx),
+                    None => window.push_notification(Notification::error(t("session.rest.engine_no_saved")), cx),
                 },
                 Ok(_) => {
                     this.entity = this.edited_entity(&fields);
@@ -505,7 +501,8 @@ impl SseSession {
         let fields = self.fields(cx);
         if fields.url.is_empty() {
             window.push_notification(
-                Notification::warning(t("session.connection.connect_no_url")).title(t("session.connection.connect_no_url_title")),
+                Notification::warning(t("session.connection.connect_no_url"))
+                    .title(t("session.connection.connect_no_url_title")),
                 cx,
             );
             return;
@@ -525,18 +522,15 @@ impl SseSession {
         let client = self.model.read(cx).client().clone();
         call_in(&client, window, cx, "sse.connect", payload, move |_this, outcome, window, cx| {
             let failure = match outcome {
-                Ok(result) if result.get("ok").and_then(Value::as_bool) == Some(false) => Some(
-                    result
-                        .get("error")
-                        .and_then(Value::as_str)
-                        .unwrap_or(t("session.sse.open_failed"))
-                        .to_owned(),
-                ),
+                Ok(result) if result.get("ok").and_then(Value::as_bool) == Some(false) => {
+                    Some(result.get("error").and_then(Value::as_str).unwrap_or(t("session.sse.open_failed")).to_owned())
+                }
                 Ok(_) => None,
                 Err(error) => Some(describe(&error)),
             };
             if let Some(message) = failure {
-                window.push_notification(Notification::error(message).title(t("session.connection.connect_failed")), cx);
+                window
+                    .push_notification(Notification::error(message).title(t("session.connection.connect_failed")), cx);
             }
         });
     }
@@ -546,7 +540,10 @@ impl SseSession {
         let payload = json!({ "workspaceId": self.workspace_id, "streamId": self.stream_id });
         call(&client, cx, "sse.disconnect", payload, |_, outcome, cx| {
             if let Err(error) = outcome {
-                cx.emit(SessionEvent::Notice(t_with("session.connection.disconnect_failed", &[("error", &describe(&error))])));
+                cx.emit(SessionEvent::Notice(t_with(
+                    "session.connection.disconnect_failed",
+                    &[("error", &describe(&error))],
+                )));
             }
         });
     }

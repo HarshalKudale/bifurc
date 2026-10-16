@@ -146,7 +146,8 @@ impl LoadTest {
             if state.changed.is_empty() {
                 return;
             }
-            let rows: Vec<&Value> = std::mem::take(&mut state.changed).iter().map(|index| &state.rows[*index]).collect();
+            let rows: Vec<&Value> =
+                std::mem::take(&mut state.changed).iter().map(|index| &state.rows[*index]).collect();
             let mut payload = self.summary(state);
             payload["rows"] = json!(rows);
             payload
@@ -200,7 +201,8 @@ impl LoadTest {
 
 async fn drive(load: Arc<LoadTest>, timeout: Option<Duration>) {
     let mut tasks = JoinSet::new();
-    let live: Vec<(usize, Arc<Run>)> = load.state.lock().live.iter().map(|(index, run)| (*index, run.clone())).collect();
+    let live: Vec<(usize, Arc<Run>)> =
+        load.state.lock().live.iter().map(|(index, run)| (*index, run.clone())).collect();
     for (index, run) in live {
         let load = load.clone();
         tasks.spawn(async move {
@@ -248,7 +250,9 @@ pub fn cancel(ws_id: &str, flow_id: &str) -> Value {
 pub fn start(ctx: &CommandContext, params: &Value) -> Result<Value> {
     let instances = params.get("instances").and_then(Value::as_u64).filter(|n| (1..=MAX_INSTANCES).contains(n));
     let instances = instances.ok_or_else(|| {
-        EngineError::bad_request(format!("flow.loadtest.start takes `instances`: a whole number from 1 to {MAX_INSTANCES}."))
+        EngineError::bad_request(format!(
+            "flow.loadtest.start takes `instances`: a whole number from 1 to {MAX_INSTANCES}."
+        ))
     })? as usize;
     let mut plan: Plan = match run::plan(params)? {
         Ok(plan) => plan,

@@ -161,7 +161,8 @@ impl WorkspaceSetup {
             _ => (t("workspace_setup.placeholder.workspace_name"), String::new()),
         };
         let name = cx.new(|cx| InputState::new(window, cx).placeholder(placeholder).default_value(initial));
-        let filter = cx.new(|cx| InputState::new(window, cx).placeholder(t("workspace_setup.placeholder.filter_repos")));
+        let filter =
+            cx.new(|cx| InputState::new(window, cx).placeholder(t("workspace_setup.placeholder.filter_repos")));
         // A workspace that already commits as an account is published as that account and no other.
         let bound = match &purpose {
             Purpose::Publish { workspace_id, .. } => model
@@ -284,7 +285,8 @@ impl WorkspaceSetup {
                     });
                 }
                 Ok(started) => {
-                    this.error = Some(t_with("workspace_setup.error.start_sign_in", &[("reason", &text(&started, "error"))]))
+                    this.error =
+                        Some(t_with("workspace_setup.error.start_sign_in", &[("reason", &text(&started, "error"))]))
                 }
                 Err(error) => {
                     this.error = Some(t_with("workspace_setup.error.start_sign_in", &[("reason", &describe(&error))]))
@@ -526,10 +528,7 @@ impl WorkspaceSetup {
                 .gap_2()
                 .child(heading)
                 .child(
-                    div()
-                        .text_sm()
-                        .text_color(theme.muted_foreground)
-                        .child(t("workspace_setup.account.not_set_up")),
+                    div().text_sm().text_color(theme.muted_foreground).child(t("workspace_setup.account.not_set_up")),
                 )
                 .into_any_element();
         }
@@ -564,12 +563,8 @@ impl WorkspaceSetup {
             let this = cx.weak_entity();
             let accounts = setup.accounts.clone();
             let current = self.account.clone();
-            let menu = Button::new("account-menu")
-                .outline()
-                .w_full()
-                .label(label)
-                .dropdown_caret(true)
-                .dropdown_menu(move |menu, _, _| {
+            let menu = Button::new("account-menu").outline().w_full().label(label).dropdown_caret(true).dropdown_menu(
+                move |menu, _, _| {
                     let menu = accounts.iter().fold(menu, |menu, account| {
                         let (this, id) = (this.clone(), account.id.clone());
                         let name = if account.signed_in {
@@ -586,12 +581,15 @@ impl WorkspaceSetup {
                         )
                     });
                     let this = this.clone();
-                    menu.separator().item(PopupMenuItem::new(t("workspace_setup.account.none")).checked(current.is_none()).on_click(
-                        move |_, _, cx| {
-                            this.update(cx, |this, cx| this.select_account(None, cx)).ok();
-                        },
-                    ))
-                });
+                    menu.separator().item(
+                        PopupMenuItem::new(t("workspace_setup.account.none")).checked(current.is_none()).on_click(
+                            move |_, _, cx| {
+                                this.update(cx, |this, cx| this.select_account(None, cx)).ok();
+                            },
+                        ),
+                    )
+                },
+            );
             v_flex().flex_1().min_w_0().child(menu).into_any_element()
         };
 
@@ -760,9 +758,7 @@ impl WorkspaceSetup {
                     .gap_1()
                     .children(rows),
             )
-            .when(selected_read_only, |this| {
-                this.child(muted(t("workspace_setup.repos.read_only_note")))
-            })
+            .when(selected_read_only, |this| this.child(muted(t("workspace_setup.repos.read_only_note"))))
             .into_any_element()
     }
 
@@ -862,12 +858,12 @@ pub fn open_setup_dialog(model: Entity<AppModel>, purpose: Purpose, window: &mut
             let height = rems(view.read(cx).estimated_height()).to_pixels(rem);
             let top = ((window.viewport_size().height - height) / 2.).max(rems(2.).to_pixels(rem));
             // The view draws its own actions; Enter goes to its main one, which closes the dialog when it worked.
-            dialog.title(title).w(rems(DIALOG_WIDTH).to_pixels(rem)).margin_top(top).child(view.clone()).button_props(DialogButtonProps::default().on_ok(
-                move |_, window, cx| {
+            dialog.title(title).w(rems(DIALOG_WIDTH).to_pixels(rem)).margin_top(top).child(view.clone()).button_props(
+                DialogButtonProps::default().on_ok(move |_, window, cx| {
                     submit.update(cx, |view, cx| view.submit(window, cx));
                     false
-                },
-            ))
+                }),
+            )
         });
         window.defer(cx, move |window, cx| focus.update(cx, |view, cx| view.focus(window, cx)));
     });

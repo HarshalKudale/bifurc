@@ -24,8 +24,8 @@ use gpui_kit::component::{
     v_flex,
 };
 use gpui_kit::{
-    App, AppContext as _, Context, Entity, IntoElement, Pixels, ParentElement as _, Render, ScrollStrategy, Styled as _,
-    Subscription, Window, div, px, rems,
+    App, AppContext as _, Context, Entity, IntoElement, ParentElement as _, Pixels, Render, ScrollStrategy,
+    Styled as _, Subscription, Window, div, px, rems,
 };
 use serde_json::{Value, json};
 
@@ -34,13 +34,15 @@ use self::tree::{RequestExtra, RequestSource, RequestTree, RequestTreeEvent, is_
 use crate::{
     app_model::{AppModel, Deleted, Load, ModelEvent},
     components::{
-        CURL_TAB_BADGE, CURL_TAB_TITLE, ClosedTabs, CurlImport, CurlImportEvent, CurlTarget, EntityAction, StripTab, TabAction,
-        TabStrip,
+        CURL_TAB_BADGE, CURL_TAB_TITLE, ClosedTabs, CurlImport, CurlImportEvent, CurlTarget, EntityAction, StripTab,
+        TabAction, TabStrip,
         dialogs::{
             FOLDER_DELETE_CONSEQUENCE, PromptField, confirm_danger, delete_consequence, needs_update, prompt,
             resolve_deleted,
         },
-        entity_bar, folder_tree::new_menu, tab_strip,
+        entity_bar,
+        folder_tree::new_menu,
+        tab_strip,
     },
     engine::{call, call_in, describe, patch_entity},
     i18n::{t, t_with},
@@ -49,8 +51,7 @@ use crate::{
     preferences::Preferences,
     session::{
         SaveMode, Session, SessionEvent, mcp::McpSession, protocol::ProtocolSession, rest::RestSession,
-        socketio::SocketIoSession,
-        sse::SseSession, websocket::WsSession,
+        socketio::SocketIoSession, sse::SseSession, websocket::WsSession,
     },
     shell::ActiveTarget,
 };
@@ -58,7 +59,10 @@ use crate::{
 /// How a tab is identified before and after it has an id from the engine.
 #[derive(Debug, Clone, PartialEq, Eq)]
 enum TabKey {
-    Saved { kind: RequestKind, id: String },
+    Saved {
+        kind: RequestKind,
+        id: String,
+    },
     Draft(u64),
     /// The runner of the REST folder with this id.
     Runner(String),
@@ -153,7 +157,10 @@ impl RequestsScreen {
             area.set_center(
                 DockLayout::v_split()
                     .child(DockLayout::tabs().panel_view(panel_handle(request_panel.clone()), cx), None)
-                    .child(DockLayout::tabs().panel_view(panel_handle(response_panel.clone()), cx), Some(response_size)),
+                    .child(
+                        DockLayout::tabs().panel_view(panel_handle(response_panel.clone()), cx),
+                        Some(response_size),
+                    ),
                 window,
                 cx,
             );
@@ -356,9 +363,7 @@ impl RequestsScreen {
             RequestKind::Rest => Session::Rest(cx.new(|cx| RestSession::open_saved(model, id, window, cx))),
             RequestKind::WebSocket => Session::WebSocket(cx.new(|cx| WsSession::open_saved(model, id, window, cx))),
             RequestKind::Sse => Session::Sse(cx.new(|cx| SseSession::open_saved(model, id, window, cx))),
-            RequestKind::SocketIo => {
-                Session::SocketIo(cx.new(|cx| SocketIoSession::open_saved(model, id, window, cx)))
-            }
+            RequestKind::SocketIo => Session::SocketIo(cx.new(|cx| SocketIoSession::open_saved(model, id, window, cx))),
             RequestKind::Mcp => Session::Mcp(cx.new(|cx| McpSession::open_saved(model, id, window, cx))),
             RequestKind::GraphQl | RequestKind::Grpc | RequestKind::Soap => {
                 Session::Protocol(cx.new(|cx| ProtocolSession::open_saved(model, kind, id, window, cx)))
@@ -655,7 +660,8 @@ impl RequestsScreen {
             let copy = match &outcome {
                 Ok(result) => result.get("entity").and_then(|entity| entity.get("id")).and_then(Value::as_str),
                 Err(error) => {
-                    return this.notify_failure(t_with("requests.errors.duplicate", &[("error", &describe(error))]), cx);
+                    return this
+                        .notify_failure(t_with("requests.errors.duplicate", &[("error", &describe(error))]), cx);
                 }
             };
             let Some(copy) = copy else { return };
@@ -821,7 +827,10 @@ impl RequestsScreen {
                 });
                 call(&client, cx, "folder.add", payload, |this, outcome, cx| {
                     if let Err(error) = outcome {
-                        this.notify_failure(t_with("requests.errors.create_folder", &[("error", &describe(&error))]), cx);
+                        this.notify_failure(
+                            t_with("requests.errors.create_folder", &[("error", &describe(&error))]),
+                            cx,
+                        );
                     }
                 });
             },
@@ -864,7 +873,10 @@ impl RequestsScreen {
                         let payload = json!({ "kind": REQUEST_FOLDER_KIND, "id": id, "name": values[0] });
                         call(&client, cx, "folder.rename", payload, |this, outcome, cx| {
                             if let Err(error) = outcome {
-                                this.notify_failure(t_with("requests.errors.rename_folder", &[("error", &describe(&error))]), cx);
+                                this.notify_failure(
+                                    t_with("requests.errors.rename_folder", &[("error", &describe(&error))]),
+                                    cx,
+                                );
                             }
                         });
                     }

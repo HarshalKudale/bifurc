@@ -12,8 +12,8 @@ use serde_json::{Value, json};
 
 use super::{
     fs::{
-        FLAT_ENTITY_KINDS, add_pending_deletion, clear_pending_deletions, delete_entity_file, delete_flat_entity_file, entity_dir,
-        find_entity_rel_path, flat_entity_rel_path, get_pending_deletions, pending_folders_key, read_index,
+        FLAT_ENTITY_KINDS, add_pending_deletion, clear_pending_deletions, delete_entity_file, delete_flat_entity_file,
+        entity_dir, find_entity_rel_path, flat_entity_rel_path, get_pending_deletions, pending_folders_key, read_index,
         remove_name_entry, remove_pending_deletion, sanitize_dir_name, sync_enabled_set, write_index,
     },
     git_store::git,
@@ -44,8 +44,11 @@ pub fn pending_folders(ws_id: &str, kind: &str) -> Vec<Value> {
 pub async fn remove_entity(ws_id: &str, kind: &CrudKind, entity: &Value) -> std::io::Result<bool> {
     let id = str_of(entity, "id");
     // Where the file is has to be asked before it is removed.
-    let rel_path =
-        if kind.is_flat { Some(flat_entity_rel_path(kind.kind, id)) } else { find_entity_rel_path(ws_id, kind.kind, id) };
+    let rel_path = if kind.is_flat {
+        Some(flat_entity_rel_path(kind.kind, id))
+    } else {
+        find_entity_rel_path(ws_id, kind.kind, id)
+    };
     let tracked = match &rel_path {
         Some(path) => is_git_tracked(ws_id, path).await,
         None => false,
@@ -157,8 +160,11 @@ pub fn restore_folder_chain(ws_id: &str, kind: &str, folder_id: &str) -> std::io
         }
         let mut index = read_index(ws_id, kind);
         let dir_name = sanitize_dir_name(str_of(&folder, "name"));
-        let same_directory =
-            index.folders.iter().find(|f| sanitize_dir_name(str_of(f, "name")) == dir_name).map(|f| str_of(f, "id").to_string());
+        let same_directory = index
+            .folders
+            .iter()
+            .find(|f| sanitize_dir_name(str_of(f, "name")) == dir_name)
+            .map(|f| str_of(f, "id").to_string());
         match same_directory {
             // A folder of that name was made since: it has the directory, so it takes what comes back.
             Some(live) => retarget(ws_id, kind, &id, &live)?,

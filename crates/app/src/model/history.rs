@@ -55,7 +55,9 @@ impl HistoryEntry {
     pub fn as_http_result(&self, encoding: BodyEncoding) -> Value {
         let body = match (encoding, self.base64) {
             (BodyEncoding::Base64, false) => STANDARD.encode(&self.body),
-            (BodyEncoding::Text, true) => String::from_utf8_lossy(&STANDARD.decode(&self.body).unwrap_or_default()).into_owned(),
+            (BodyEncoding::Text, true) => {
+                String::from_utf8_lossy(&STANDARD.decode(&self.body).unwrap_or_default()).into_owned()
+            }
             _ => self.body.clone(),
         };
         json!({ "status": self.status, "headers": self.headers, "body": body, "durationMs": self.duration_ms })
@@ -63,7 +65,8 @@ impl HistoryEntry {
 
     /// The entry as the result of a gRPC call: its body holds the messages as a JSON array of strings.
     pub fn as_grpc_result(&self) -> Value {
-        let responses = serde_json::from_str::<Value>(&self.body).ok().filter(Value::is_array).unwrap_or_else(|| json!([]));
+        let responses =
+            serde_json::from_str::<Value>(&self.body).ok().filter(Value::is_array).unwrap_or_else(|| json!([]));
         json!({
             "status": self.status,
             "statusMessage": self.status_text,

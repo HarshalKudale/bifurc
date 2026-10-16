@@ -198,8 +198,9 @@ pub fn auth_parts(kind: &str, field: &dyn Fn(&str) -> String) -> AuthParts {
         "oauth2" => {
             let token = field("accessToken");
             if !token.is_empty() {
-                let prefix =
-                    Some(field("headerPrefix")).filter(|p| !p.trim().is_empty()).unwrap_or_else(|| "Bearer".to_string());
+                let prefix = Some(field("headerPrefix"))
+                    .filter(|p| !p.trim().is_empty())
+                    .unwrap_or_else(|| "Bearer".to_string());
                 out.headers.push(("Authorization".into(), format!("{} {token}", prefix.trim())));
             }
         }
@@ -257,7 +258,9 @@ pub fn with_query(url: &str, pairs: &[(String, String)]) -> String {
         .unwrap_or_default();
     let missing: Vec<(String, String)> = pairs
         .iter()
-        .filter(|(key, _)| !key.is_empty() && !named.contains(key.as_str()) && !named.contains(encode_component(key).as_str()))
+        .filter(|(key, _)| {
+            !key.is_empty() && !named.contains(key.as_str()) && !named.contains(encode_component(key).as_str())
+        })
         .cloned()
         .collect();
     if missing.is_empty() {
@@ -419,7 +422,8 @@ pub fn store(ws_id: &str, collection: Collection) -> ImportOutcome {
     let mut imported = 0;
     for draft in &collection.drafts {
         let id = generate_id();
-        let folder_id = draft.folder.as_ref().and_then(|key| folder_ids.get(key)).cloned().unwrap_or_else(|| top.clone());
+        let folder_id =
+            draft.folder.as_ref().and_then(|key| folder_ids.get(key)).cloned().unwrap_or_else(|| top.clone());
         let mut entity = draft.entity.clone();
         rewrite_variables(&mut entity);
         let fields = object_mut(&mut entity);
@@ -445,8 +449,14 @@ mod tests {
     #[test]
     fn variable_references_are_rewritten_for_bifurc() {
         assert_eq!(bifurc_variables("{{ _.base_url }}/a/{{ id }}"), "{{base_url}}/a/{{id}}");
-        assert_eq!(bifurc_variables("{{base-url}}/{{$guid}}/{{random.uuid}}"), "{{base_url}}/{{random.uuid}}/{{random.uuid}}");
-        assert_eq!(bifurc_variables("{{vault.key}} {{#if x}} {% tag %} {{ a | upper }}"), "{{vault.key}} {{#if x}} {% tag %} {{ a | upper }}");
+        assert_eq!(
+            bifurc_variables("{{base-url}}/{{$guid}}/{{random.uuid}}"),
+            "{{base_url}}/{{random.uuid}}/{{random.uuid}}"
+        );
+        assert_eq!(
+            bifurc_variables("{{vault.key}} {{#if x}} {% tag %} {{ a | upper }}"),
+            "{{vault.key}} {{#if x}} {% tag %} {{ a | upper }}"
+        );
         assert_eq!(bifurc_variables("{{open"), "{{open");
     }
 
@@ -489,7 +499,10 @@ mod tests {
         assert_eq!(call("http://h/a", &[("Accept", "text/event-stream")], "").draft(None).kind, "sseRequests");
         assert_eq!(call("http://h/a", &[("SOAPAction", "x")], "<a/>").draft(None).kind, "soapRequests");
         let graphql = call("http://h/g", &[("Content-Type", "application/json")], "{\"query\":\"{ a }\"}").draft(None);
-        assert_eq!((graphql.kind, &graphql.entity["name"], &graphql.entity["query"]), ("graphqlRequests", &json!("N"), &json!("{ a }")));
+        assert_eq!(
+            (graphql.kind, &graphql.entity["name"], &graphql.entity["query"]),
+            ("graphqlRequests", &json!("N"), &json!("{ a }"))
+        );
         let rest = call("http://h/a", &[], "x").draft(None);
         assert_eq!((&rest.entity["method"], &rest.entity["name"]), (&json!("POST"), &json!("N")));
     }

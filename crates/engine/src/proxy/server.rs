@@ -31,9 +31,9 @@ use crate::{
     },
     workspace::{
         config::{load_config, load_workspace_dispatch_slice},
-        settings::load_settings,
         dispatch::{active_env, load_enabled_sets, workspace_cfg},
         fs::read_all_entities,
+        settings::load_settings,
     },
 };
 

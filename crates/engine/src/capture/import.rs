@@ -17,10 +17,10 @@ use super::{
 use crate::{
     cookies,
     env::{apply_variable_changes, load_merged_environment},
-    vault::MIN_SECRET_LEN,
     kernel::{CommandContext, CommandRegistry},
     protocol::{EngineError, Result},
     utils::json::{array_of, bool_of, opt_str, str_of},
+    vault::MIN_SECRET_LEN,
 };
 
 /// How far apart the nodes of a built flow are, left to right.
@@ -188,8 +188,12 @@ fn replace_strings(value: &mut Value, key: &str, visit: &mut dyn FnMut(&str, &st
             }
             None => false,
         },
-        Value::Object(map) => map.iter_mut().fold(false, |changed, (key, value)| replace_strings(value, key, visit) | changed),
-        Value::Array(items) => items.iter_mut().fold(false, |changed, item| replace_strings(item, key, visit) | changed),
+        Value::Object(map) => {
+            map.iter_mut().fold(false, |changed, (key, value)| replace_strings(value, key, visit) | changed)
+        }
+        Value::Array(items) => {
+            items.iter_mut().fold(false, |changed, item| replace_strings(item, key, visit) | changed)
+        }
         _ => false,
     }
 }
@@ -209,7 +213,8 @@ fn edit_body(request: &mut Value, visit: &mut dyn FnMut(&str, &str) -> Option<St
     }
     let Ok(mut parsed) = serde_json::from_str::<Value>(&body) else { return };
     if replace_strings(&mut parsed, "", visit) {
-        let text = if body.contains('\n') { serde_json::to_string_pretty(&parsed) } else { serde_json::to_string(&parsed) };
+        let text =
+            if body.contains('\n') { serde_json::to_string_pretty(&parsed) } else { serde_json::to_string(&parsed) };
         request["body"] = json!(text.unwrap_or(body));
     }
 }
@@ -282,7 +287,9 @@ fn find_leaf(value: &Value, wanted: &str) -> Option<Vec<Value>> {
         Value::String(text) if text == wanted => Some(Vec::new()),
         Value::Number(number) if number.to_string() == wanted => Some(Vec::new()),
         Value::Object(map) => map.iter().find_map(|(key, value)| under(json!(key), find_leaf(value, wanted))),
-        Value::Array(items) => items.iter().enumerate().find_map(|(at, item)| under(json!(at), find_leaf(item, wanted))),
+        Value::Array(items) => {
+            items.iter().enumerate().find_map(|(at, item)| under(json!(at), find_leaf(item, wanted)))
+        }
         _ => None,
     }
 }
@@ -327,7 +334,14 @@ fn linked(
 
 /// The values of request `to` that an earlier answer gave (in its path, query and body, and the secrets it
 /// uses) turned into variables, and the wires that bring them.
-fn link(request: &mut Value, to: usize, place: &str, answers: &[Value], variables: &mut Variables, wires: &mut Vec<Wire>) {
+fn link(
+    request: &mut Value,
+    to: usize,
+    place: &str,
+    answers: &[Value],
+    variables: &mut Variables,
+    wires: &mut Vec<Wire>,
+) {
     let earlier = &answers[..to];
     let mut found = Vec::new();
 
@@ -340,9 +354,11 @@ fn link(request: &mut Value, to: usize, place: &str, answers: &[Value], variable
     let (origin, path) = address.split_at(address[host_at..].find('/').map_or(address.len(), |at| host_at + at));
     let path = path
         .split('/')
-        .map(|segment| match linked(&decoded(segment), "id", &format!("{place} · path"), earlier, variables, &mut found) {
-            Some(name) => reference(&name),
-            None => segment.to_string(),
+        .map(|segment| {
+            match linked(&decoded(segment), "id", &format!("{place} · path"), earlier, variables, &mut found) {
+                Some(name) => reference(&name),
+                None => segment.to_string(),
+            }
         })
         .collect::<Vec<_>>()
         .join("/");
@@ -641,7 +657,9 @@ mod tests {
 
     #[test]
     fn names_that_hold_credentials() {
-        for name in ["Authorization", "X-Api-Key", "access_token", "password", "client_secret", "X-Auth", "key", "sessionId"] {
+        for name in
+            ["Authorization", "X-Api-Key", "access_token", "password", "client_secret", "X-Auth", "key", "sessionId"]
+        {
             assert!(is_sensitive(name), "{name}");
         }
         for name in ["author", "Accept", "Content-Type", "page", "username", "monkey"] {
@@ -683,11 +701,19 @@ mod tests {
     fn a_flow_wires_what_a_request_took_from_an_earlier_answer() {
         let entries = login_then_orders();
         let prepared = prepare(&entries, none(), true, true, true);
-        assert_eq!(prepared.requests[1]["url"], "https://shop.test/api/users/{{user_id}}/orders?api_key={{api_key}}&page=2");
+        assert_eq!(
+            prepared.requests[1]["url"],
+            "https://shop.test/api/users/{{user_id}}/orders?api_key={{api_key}}&page=2"
+        );
         assert_eq!(
             prepared.wires,
             [
-                Wire { from: 0, to: 1, variable: "user_id".into(), path: vec![json!("body"), json!("user"), json!("id")] },
+                Wire {
+                    from: 0,
+                    to: 1,
+                    variable: "user_id".into(),
+                    path: vec![json!("body"), json!("user"), json!("id")]
+                },
                 Wire { from: 0, to: 1, variable: "authorization".into(), path: vec![json!("body"), json!("token")] },
             ]
         );
@@ -707,7 +733,10 @@ mod tests {
 
     #[test]
     fn secrets_go_into_a_vault_unless_the_flow_hands_them_on_or_they_are_too_short() {
-        let vault = BTreeMap::from([("password".to_string(), "hunter22".to_string()), ("Authorization".to_string(), "x".repeat(9))]);
+        let vault = BTreeMap::from([
+            ("password".to_string(), "hunter22".to_string()),
+            ("Authorization".to_string(), "x".repeat(9)),
+        ]);
         let variables = Variables { existing: BTreeMap::new(), vault: Some(vault), named: Vec::new() };
         let mut prepared = prepare(&login_then_orders(), variables, true, true, false);
         let (sealed, kept) = into_vault(&mut prepared, "shop");

@@ -64,7 +64,12 @@ pub struct Target<'a> {
 
 enum Command {
     /// Something to ask of the server, answered into the log line `message_id`.
-    Call { message_id: String, kind: CallKind, name: String, arguments: Map<String, Value> },
+    Call {
+        message_id: String,
+        kind: CallKind,
+        name: String,
+        arguments: Map<String, Value>,
+    },
     Close,
 }
 
@@ -308,8 +313,7 @@ fn prepare(target: &Target, env: Option<&Value>) -> Result<Prepared, String> {
         if TRANSPORT_HEADERS.contains(&header.as_str()) {
             return Err(format!("The header \"{name}\" is set by the MCP transport and cannot be given."));
         }
-        let value =
-            HeaderValue::from_str(&value).map_err(|e| format!("Invalid value for header \"{name}\": {e}"))?;
+        let value = HeaderValue::from_str(&value).map_err(|e| format!("Invalid value for header \"{name}\": {e}"))?;
         map.insert(header, value);
     }
     Ok(Prepared::Http { url, headers: map })
@@ -757,7 +761,10 @@ mod tests {
                 assert_eq!(command, "npx my-server --flag");
                 assert_eq!(
                     env,
-                    [("API_KEY".to_string(), "secret".to_string()), ("Authorization".to_string(), "Bearer secret".to_string())]
+                    [
+                        ("API_KEY".to_string(), "secret".to_string()),
+                        ("Authorization".to_string(), "Bearer secret".to_string())
+                    ]
                 );
             }
             Prepared::Http { .. } => panic!("a command is not an endpoint"),

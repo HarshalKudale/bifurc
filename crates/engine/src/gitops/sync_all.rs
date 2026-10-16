@@ -129,7 +129,12 @@ async fn sync_locked(ws_id: &str, message: Option<String>) -> Result<Value, GitE
     }
 
     let failure = failed.first().map(|first: &Value| {
-        format!("{} of {total} could not be synced. {}: {}", failed.len(), str_of(first, "path"), str_of(first, "error"))
+        format!(
+            "{} of {total} could not be synced. {}: {}",
+            failed.len(),
+            str_of(first, "path"),
+            str_of(first, "error")
+        )
     });
     let mut result = json!({
         "ok": failure.is_none(), "initialized": initialized, "total": total, "synced": synced, "pushed": false,

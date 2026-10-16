@@ -63,7 +63,9 @@ pub struct UpdateStatus {
 
 impl UpdateStatus {
     pub fn from_value(value: &Value) -> Self {
-        let text = |value: &Value, key: &str| value.get(key).and_then(Value::as_str).filter(|t| !t.is_empty()).map(str::to_owned);
+        let text = |value: &Value, key: &str| {
+            value.get(key).and_then(Value::as_str).filter(|t| !t.is_empty()).map(str::to_owned)
+        };
         let flag = |value: &Value, key: &str| value.get(key).and_then(Value::as_bool).unwrap_or(false);
         let available = value.get("available").filter(|available| available.is_object()).and_then(|available| {
             Some(AvailableUpdate {
@@ -143,7 +145,9 @@ mod tests {
 
     #[test]
     fn an_engine_that_has_not_looked_reports_nothing() {
-        let status = UpdateStatus::from_value(&json!({ "channel": "store", "checkedAt": null, "available": null, "action": null }));
+        let status = UpdateStatus::from_value(
+            &json!({ "channel": "store", "checkedAt": null, "available": null, "action": null }),
+        );
         assert!(!status.checked);
         assert_eq!((status.available.clone(), status.action.clone()), (None, None));
         assert!(status.channel_note().contains("Microsoft Store"));

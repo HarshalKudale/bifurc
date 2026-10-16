@@ -46,9 +46,10 @@ fn main() {
         // Window geometry is a physical, platform-level choice, not part of the rem-scaled layout.
         // Where it was left is used only while it still shows on a connected display; monitors come and go.
         let displays: Vec<_> = cx.displays().iter().map(|d| d.bounds()).collect();
-        let window_bounds = Preferences::global(cx).window.and_then(|saved| saved.restore(&displays, MIN_SIZE)).unwrap_or_else(
-            || WindowBounds::Windowed(Bounds::centered(None, size(px(1440.), px(900.)), cx)),
-        );
+        let window_bounds = Preferences::global(cx)
+            .window
+            .and_then(|saved| saved.restore(&displays, MIN_SIZE))
+            .unwrap_or_else(|| WindowBounds::Windowed(Bounds::centered(None, size(px(1440.), px(900.)), cx)));
         let options = WindowOptions {
             window_bounds: Some(window_bounds),
             window_min_size: Some(size(px(MIN_SIZE.0), px(MIN_SIZE.1))),

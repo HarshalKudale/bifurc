@@ -79,7 +79,9 @@ pub fn op_takes_value(op: &str) -> bool {
 /// A rule in a line: `input.status equals 200`.
 pub fn rule_summary(rule: &Rule) -> String {
     let value = if op_takes_value(&rule.op) { rule.value.as_str() } else { "" };
-    t_with("flows.rule.summary", &[("path", &rule.path), ("op", &op_label(&rule.op)), ("value", &value)]).trim_end().to_owned()
+    t_with("flows.rule.summary", &[("path", &rule.path), ("op", &op_label(&rule.op)), ("value", &value)])
+        .trim_end()
+        .to_owned()
 }
 
 /// The request types a node of this kind can run.
@@ -169,7 +171,11 @@ fn request_groups(config: &ConfigSnapshot, kind: NodeKind) -> Vec<(String, Vec<R
         |request: &&RequestStub| allowed.contains(&request.kind) && !request.deleted && request.locked.is_none();
     for request in config.requests.iter().filter(usable) {
         // A request whose folder is gone is still one a node can run.
-        let path = request.folder_id.as_deref().and_then(|id| paths.get(id)).map_or(t("flows.picker.no_folder"), String::as_str);
+        let path = request
+            .folder_id
+            .as_deref()
+            .and_then(|id| paths.get(id))
+            .map_or(t("flows.picker.no_folder"), String::as_str);
         let item = RequestItem {
             key: (request.kind, request.id.clone()),
             name: request.name.clone().into(),
@@ -200,8 +206,12 @@ pub fn rule_path(path: &[Value]) -> String {
 }
 
 /// The types a data node's value can be given as.
-const DATA_TYPES: [(&str, &str); 4] =
-    [("text", "flows.type.text"), ("number", "flows.type.number"), ("boolean", "flows.type.boolean"), ("json", "flows.type.json")];
+const DATA_TYPES: [(&str, &str); 4] = [
+    ("text", "flows.type.text"),
+    ("number", "flows.type.number"),
+    ("boolean", "flows.type.boolean"),
+    ("json", "flows.type.json"),
+];
 
 fn data_type_of(value: &Value) -> &'static str {
     match value {
@@ -225,7 +235,9 @@ fn data_text(value: &Value) -> String {
 fn data_value(data_type: &str, text: &str, held: &Value) -> Value {
     match data_type {
         "text" => Value::String(text.to_owned()),
-        "number" => serde_json::from_str::<Value>(text.trim()).ok().filter(Value::is_number).unwrap_or_else(|| held.clone()),
+        "number" => {
+            serde_json::from_str::<Value>(text.trim()).ok().filter(Value::is_number).unwrap_or_else(|| held.clone())
+        }
         "json" => serde_json::from_str(text).unwrap_or_else(|_| held.clone()),
         _ => held.clone(),
     }
@@ -327,7 +339,8 @@ fn arguments_for(item: &McpItem, held: &[Pair]) -> Vec<Pair> {
 /// What the server takes for an argument, as its empty field says it: its type, whether it must be given,
 /// and what is used when it is not.
 fn argument_hint(argument: &McpArgument) -> String {
-    let default = argument.default.as_ref().map(|default| t_with("flows.mcp.default", &[("value", default)])).unwrap_or_default();
+    let default =
+        argument.default.as_ref().map(|default| t_with("flows.mcp.default", &[("value", default)])).unwrap_or_default();
     [argument.kind.as_str(), if argument.required { t("flows.mcp.required") } else { "" }, default.as_str()]
         .into_iter()
         .filter(|part| !part.is_empty())
@@ -400,8 +413,10 @@ impl NodeEditor {
         let requests =
             cx.new(|cx| ComboboxState::new(RequestList::new(Vec::new()), vec![], window, cx).searchable(true));
         let tools = cx.new(|cx| ComboboxState::new(ToolList::new(Vec::new()), vec![], window, cx).searchable(true));
-        let variables = cx.new(|cx| KeyValueTable::new(t("flows.editor.variable"), t("flows.common.value"), window, cx));
-        let inputs = cx.new(|cx| KeyValueTable::new(t("flows.common.input"), t("flows.editor.default_value"), window, cx));
+        let variables =
+            cx.new(|cx| KeyValueTable::new(t("flows.editor.variable"), t("flows.common.value"), window, cx));
+        let inputs =
+            cx.new(|cx| KeyValueTable::new(t("flows.common.input"), t("flows.editor.default_value"), window, cx));
 
         let on_input = |this: &mut Self, _: Entity<InputState>, event: &InputEvent, cx: &mut Context<Self>| {
             if matches!(event, InputEvent::Change) {
@@ -668,14 +683,17 @@ impl NodeEditor {
                 if !pair.value.is_empty() {
                     state.update(cx, |state, cx| state.set_selected_value(&pair.value, window, cx));
                 }
-                subscriptions.push(cx.subscribe(&state, |this: &mut Self, _, _: &SelectEvent<Vec<String>>, cx| {
-                    this.changed(cx)
-                }));
+                subscriptions.push(
+                    cx.subscribe(&state, |this: &mut Self, _, _: &SelectEvent<Vec<String>>, cx| this.changed(cx)),
+                );
                 let required = argument.is_some_and(|argument| argument.required);
                 fields.push((pair.name, ArgumentField::Choice { state, required }));
                 continue;
             }
-            let hint = argument.map(argument_hint).filter(|hint| !hint.is_empty()).unwrap_or_else(|| t("flows.editor.value_hint").to_owned());
+            let hint = argument
+                .map(argument_hint)
+                .filter(|hint| !hint.is_empty())
+                .unwrap_or_else(|| t("flows.editor.value_hint").to_owned());
             let field = cx.new(|cx| InputState::new(window, cx).placeholder(hint).default_value(pair.value));
             subscriptions.push(cx.subscribe(&field, |this: &mut Self, _, event: &InputEvent, cx| {
                 if matches!(event, InputEvent::Change) {
@@ -743,13 +761,16 @@ impl NodeEditor {
             }));
             input
         };
-        self.branch_names = branches.iter().map(|branch| field(&branch.name, t("flows.branch.name_placeholder"), cx)).collect();
+        self.branch_names =
+            branches.iter().map(|branch| field(&branch.name, t("flows.branch.name_placeholder"), cx)).collect();
         let lists: Vec<&Vec<Rule>> = match self.node.as_ref().map(|node| node.kind) {
             Some(NodeKind::Validate) => vec![&rules],
             _ => branches.iter().map(|branch| &branch.rules).collect(),
         };
-        self.rule_values =
-            lists.into_iter().map(|rules| rules.iter().map(|rule| field(&rule.value, t("flows.common.value"), cx)).collect()).collect();
+        self.rule_values = lists
+            .into_iter()
+            .map(|rules| rules.iter().map(|rule| field(&rule.value, t("flows.common.value"), cx)).collect())
+            .collect();
         self._rule_subscriptions = subscriptions;
     }
 
@@ -859,10 +880,13 @@ impl NodeEditor {
                 (_, Some(error)) => t_with("flows.mcp.not_reached", &[("error", error)]),
                 _ => t("flows.mcp.not_connected").to_owned(),
             };
-            return vec![v_flex().gap_1().child(Input::new(&self.target).small()).child(note(state)).into_any_element()];
+            return vec![
+                v_flex().gap_1().child(Input::new(&self.target).small()).child(note(state)).into_any_element(),
+            ];
         }
         // The list is of names alone; what the one chosen does is said under it.
-        let description = items.iter().find(|item| item.name == node.target).map(|item| item.description.trim().to_owned());
+        let description =
+            items.iter().find(|item| item.name == node.target).map(|item| item.description.trim().to_owned());
         let picker = Combobox::new(&self.tools)
             .small()
             .placeholder(t_with("flows.mcp.choose_what", &[("what", &what)]))
@@ -943,9 +967,11 @@ impl NodeEditor {
             .border_color(theme.border)
             .child(
                 h_flex().px_2().pt_1().justify_between().child(Self::label(t("flows.chooser.click"), cx)).child(
-                    Button::new("flow-choose-all").xsmall().ghost().label(t("flows.common.all_of_it")).on_click(
-                        cx.listener(|this, _, window, cx| this.chose("input".to_owned(), window, cx)),
-                    ),
+                    Button::new("flow-choose-all")
+                        .xsmall()
+                        .ghost()
+                        .label(t("flows.common.all_of_it"))
+                        .on_click(cx.listener(|this, _, window, cx| this.chose("input".to_owned(), window, cx))),
                 ),
             )
             .child(body)
@@ -1107,8 +1133,12 @@ impl NodeEditor {
             .child(Self::label(t("flows.branch.order"), cx))
             .children(branches)
             .child(
-                Button::new("flow-branch-add").xsmall().outline().icon(IconName::Plus).label(t("flows.branch.add")).on_click(
-                    cx.listener(|this, _, window, cx| {
+                Button::new("flow-branch-add")
+                    .xsmall()
+                    .outline()
+                    .icon(IconName::Plus)
+                    .label(t("flows.branch.add"))
+                    .on_click(cx.listener(|this, _, window, cx| {
                         this.restructure(window, cx, |node| {
                             let id = (1..)
                                 .map(|n| format!("branch_{n}"))
@@ -1121,26 +1151,26 @@ impl NodeEditor {
                                 rules: Vec::new(),
                             });
                         })
-                    }),
-                ),
+                    })),
             )
             .into_any_element()
     }
 
     fn render_data(&self, node: &FlowNode, cx: &mut Context<Self>) -> Vec<AnyElement> {
-        let types = self.render_choice("flow-data-type", &DATA_TYPES, self.data_type, cx, |this, chosen, window, cx| {
-            // The value is kept when it is one of the new type, and starts over when it is not.
-            let text = this.data.read(cx).value().to_string();
-            let value = match chosen {
-                "text" => Value::String(text),
-                "number" => data_value("number", &text, &Value::from(0)),
-                "boolean" => Value::Bool(text.trim() == "true"),
-                _ => data_value("json", &text, &serde_json::json!({})),
-            };
-            this.data_type = chosen;
-            this.data.update(cx, |state, cx| state.set_value(data_text(&value), window, cx));
-            this.edit(cx, |node| node.value = value);
-        });
+        let types =
+            self.render_choice("flow-data-type", &DATA_TYPES, self.data_type, cx, |this, chosen, window, cx| {
+                // The value is kept when it is one of the new type, and starts over when it is not.
+                let text = this.data.read(cx).value().to_string();
+                let value = match chosen {
+                    "text" => Value::String(text),
+                    "number" => data_value("number", &text, &Value::from(0)),
+                    "boolean" => Value::Bool(text.trim() == "true"),
+                    _ => data_value("json", &text, &serde_json::json!({})),
+                };
+                this.data_type = chosen;
+                this.data.update(cx, |state, cx| state.set_value(data_text(&value), window, cx));
+                this.edit(cx, |node| node.value = value);
+            });
         let value = match self.data_type {
             "boolean" => Switch::new("flow-data-boolean")
                 .small()
@@ -1157,7 +1187,8 @@ impl NodeEditor {
         let unread = matches!(self.data_type, "number" | "json") && data_text(&node.value) != typed.trim();
         let mut out = vec![types, value];
         if unread {
-            let text = if self.data_type == "number" { t("flows.data.unread_number") } else { t("flows.data.unread_json") };
+            let text =
+                if self.data_type == "number" { t("flows.data.unread_number") } else { t("flows.data.unread_json") };
             out.push(div().text_color(cx.theme().warning).child(text).into_any_element());
         }
         out
@@ -1168,9 +1199,7 @@ impl NodeEditor {
         let pasted = cx.read_from_clipboard().and_then(|item| item.text());
         match pasted.as_deref().map(serde_json::from_str::<Value>) {
             Some(Ok(value)) => self.edit(cx, |node| node.value = value),
-            _ => self.model.update(cx, |model, cx| {
-                model.notice(t("flows.sample.not_json").to_owned(), cx)
-            }),
+            _ => self.model.update(cx, |model, cx| model.notice(t("flows.sample.not_json").to_owned(), cx)),
         }
     }
 }
@@ -1208,18 +1237,18 @@ impl Render for NodeEditor {
                     sections.push(Self::labelled(t("flows.stream.event"), Input::new(&self.event).small(), cx));
                 }
                 if node.request_kind != RequestKind::Sse.entity_kind() {
-                    sections.push(Self::labelled(
-                        t("flows.stream.message"),
-                        Input::new(&self.message).small(),
-                        cx,
-                    ));
+                    sections.push(Self::labelled(t("flows.stream.message"), Input::new(&self.message).small(), cx));
                 }
                 sections.push(self.render_numbers(&[Number::MaxMessages, Number::IdleTimeout], cx));
                 sections.push(self.render_numbers(&[Number::Listen], cx));
             }
             NodeKind::Mcp => {
                 sections.push(self.render_request_picker(&node));
-                let calls = [("tool", "flows.mcp.call.tool"), ("prompt", "flows.mcp.call.prompt"), ("resource", "flows.mcp.call.resource")];
+                let calls = [
+                    ("tool", "flows.mcp.call.tool"),
+                    ("prompt", "flows.mcp.call.prompt"),
+                    ("resource", "flows.mcp.call.resource"),
+                ];
                 sections.push(self.render_choice("flow-mcp-call", &calls, &node.call, cx, |this, call, window, cx| {
                     // Another kind of call is of another thing: what was named, and its arguments, go.
                     if this.node.as_ref().is_some_and(|node| node.call != call) {
@@ -1263,11 +1292,16 @@ impl Render for NodeEditor {
                 }
             }
             NodeKind::Display => {
-                let formats = [("json", "flows.type.json"), ("text", "flows.type.text"), ("table", "flows.display.table")];
+                let formats =
+                    [("json", "flows.type.json"), ("text", "flows.type.text"), ("table", "flows.display.table")];
                 let chosen = if node.format.is_empty() { "json" } else { node.format.as_str() };
-                sections.push(self.render_choice("flow-display-format", &formats, chosen, cx, |this, format, _, cx| {
-                    this.edit(cx, |node| node.format = format.to_owned())
-                }));
+                sections.push(self.render_choice(
+                    "flow-display-format",
+                    &formats,
+                    chosen,
+                    cx,
+                    |this, format, _, cx| this.edit(cx, |node| node.format = format.to_owned()),
+                ));
             }
             NodeKind::Data => sections.extend(self.render_data(&node, cx)),
             NodeKind::Sample => sections.push(
@@ -1361,7 +1395,10 @@ mod tests {
             "properties": { "message": { "type": "string" }, "count": { "type": "integer", "default": 1 } } } }] }));
         let pair = |name: &str, value: &str| Pair { name: name.to_owned(), value: value.to_owned() };
         let echo = &view.tools[0];
-        assert_eq!(arguments_for(echo, &[pair("count", "3"), pair("gone", "x")]), [pair("message", ""), pair("count", "3")]);
+        assert_eq!(
+            arguments_for(echo, &[pair("count", "3"), pair("gone", "x")]),
+            [pair("message", ""), pair("count", "3")]
+        );
         let hints: Vec<String> = echo.arguments.iter().map(argument_hint).collect();
         assert_eq!(hints, ["string, required", "integer, default 1"]);
     }
@@ -1375,7 +1412,8 @@ mod tests {
                 "all": { "type": "boolean" },
                 "name": { "type": "string" } } } }] }));
         let tool = &view.tools[0];
-        let of = |name: &str, held: &str| argument_choices(tool.arguments.iter().find(|a| a.name == name).unwrap(), held);
+        let of =
+            |name: &str, held: &str| argument_choices(tool.arguments.iter().find(|a| a.name == name).unwrap(), held);
         let choices = |values: &[&str]| Some(values.iter().map(|value| value.to_string()).collect::<Vec<_>>());
         assert_eq!((of("type", ""), of("type", "grpc")), (choices(&["rest", "grpc"]), choices(&["rest", "grpc"])));
         assert_eq!(of("type", "{{input.kind}}"), None, "a reference stays typed");
@@ -1401,6 +1439,9 @@ mod tests {
         assert_eq!(data_value("number", "\"12\"", &held), held);
         assert_eq!(data_value("json", r#"{"a":[1]}"#, &held), json!({ "a": [1] }));
         assert_eq!(data_value("json", "{", &held), held);
-        assert_eq!((data_type_of(&json!("a")), data_type_of(&json!([1])), data_type_of(&json!(true))), ("text", "json", "boolean"));
+        assert_eq!(
+            (data_type_of(&json!("a")), data_type_of(&json!([1])), data_type_of(&json!(true))),
+            ("text", "json", "boolean")
+        );
     }
 }

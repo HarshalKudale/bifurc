@@ -31,8 +31,8 @@ use self::{
 use crate::{
     app_model::{AppModel, Load, ModelEvent},
     components::{
-        CURL_TAB_BADGE, CURL_TAB_TITLE, ClosedTabs, CurlImport, CurlImportEvent, CurlTarget, EntityAction,
-        EntityBar, FolderPicker, StripTab, TabAction, TabStrip,
+        CURL_TAB_BADGE, CURL_TAB_TITLE, ClosedTabs, CurlImport, CurlImportEvent, CurlTarget, EntityAction, EntityBar,
+        FolderPicker, StripTab, TabAction, TabStrip,
         dialogs::{
             FOLDER_DELETE_CONSEQUENCE, PromptField, confirm_danger, delete_consequence, needs_update, prompt,
             resolve_deleted,
@@ -94,16 +94,15 @@ impl MocksScreen {
     pub fn new(model: Entity<AppModel>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let tree = cx.new(|cx| MockTree::new(model.clone(), window, cx));
         let (dock, skin) = DockSkin::dock_area("mocks-dock", Some(1), window, cx);
-        let rule_panel =
-            cx.new(|cx| {
-                HostPanel::new(
-                    "MockRulePanel",
-                    t("mocks.panel.rule_title"),
-                    t("mocks.no_mock_open"),
-                    t("mocks.panel.rule_empty"),
-                    cx,
-                )
-            });
+        let rule_panel = cx.new(|cx| {
+            HostPanel::new(
+                "MockRulePanel",
+                t("mocks.panel.rule_title"),
+                t("mocks.no_mock_open"),
+                t("mocks.panel.rule_empty"),
+                cx,
+            )
+        });
         let response_panel = cx.new(|cx| {
             HostPanel::new(
                 "MockResponsePanel",
@@ -438,9 +437,7 @@ impl MocksScreen {
                 this.report(t("mocks.error.duplicate"), message, cx);
                 return;
             }
-            let copy = outcome
-                .ok()
-                .and_then(|result| result.get("entity")?.get("id")?.as_str().map(str::to_owned));
+            let copy = outcome.ok().and_then(|result| result.get("entity")?.get("id")?.as_str().map(str::to_owned));
             let Some(copy) = copy else { return };
             // The copy is in the engine but not yet in this window's snapshot, which the tree is built from.
             this.model.update(cx, |model, cx| model.refresh(cx));
@@ -665,7 +662,13 @@ impl MocksScreen {
         }
     }
 
-    fn on_tree_event(&mut self, _: &Entity<MockTree>, event: &MockTreeEvent, window: &mut Window, cx: &mut Context<Self>) {
+    fn on_tree_event(
+        &mut self,
+        _: &Entity<MockTree>,
+        event: &MockTreeEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         match event.clone() {
             MockTreeEvent::Open(TreeKey::Item(id)) => self.open_mock(&id, window, cx),
             MockTreeEvent::Open(TreeKey::Folder(_)) => {}
@@ -689,7 +692,9 @@ impl MocksScreen {
     fn confirm_delete(&mut self, key: TreeKey, window: &mut Window, cx: &mut Context<Self>) {
         let name = self.name_of(&key, cx);
         let (title, consequence) = match &key {
-            TreeKey::Folder(_) => (t_with("mocks.delete.title_folder", &[("name", &name)]), t(FOLDER_DELETE_CONSEQUENCE)),
+            TreeKey::Folder(_) => {
+                (t_with("mocks.delete.title_folder", &[("name", &name)]), t(FOLDER_DELETE_CONSEQUENCE))
+            }
             TreeKey::Item(id) => (
                 t_with("mocks.delete.title_mock", &[("name", &name)]),
                 delete_consequence(self.model.read(cx).git().entity_state(id)),
@@ -767,10 +772,10 @@ fn new_tab_menu(menu: PopupMenu, view: &WeakEntity<MocksScreen>) -> PopupMenu {
         PopupMenuItem::new(t("mocks.menu.mock"))
             .on_click(act(view, |this, window, cx| this.new_mock(None, window, cx))),
     )
-        .item(
-            PopupMenuItem::new(t(CURL_TAB_TITLE))
-                .on_click(act(view, |this, window, cx| this.import_curl(None, window, cx))),
-        )
+    .item(
+        PopupMenuItem::new(t(CURL_TAB_TITLE))
+            .on_click(act(view, |this, window, cx| this.import_curl(None, window, cx))),
+    )
 }
 
 impl Render for MocksScreen {

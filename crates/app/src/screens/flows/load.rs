@@ -5,7 +5,9 @@
 
 use std::ops::Range;
 
-use gpui_kit::component::{ActiveTheme as _, Sizable as _, StyledExt as _, h_flex, progress::Progress, tag::Tag, v_flex};
+use gpui_kit::component::{
+    ActiveTheme as _, Sizable as _, StyledExt as _, h_flex, progress::Progress, tag::Tag, v_flex,
+};
 use gpui_kit::{
     AnyElement, Context, Hsla, InteractiveElement as _, IntoElement, ParentElement as _,
     StatefulInteractiveElement as _, Styled as _, div, uniform_list,
@@ -13,10 +15,7 @@ use gpui_kit::{
 use serde_json::Value;
 
 use super::FlowsScreen;
-use crate::{
-    i18n::t,
-    model::flow::LoadView,
-};
+use crate::{i18n::t, model::flow::LoadView};
 
 /// A number the engine sent, or a dash while it has none.
 fn figure(from: &Value, key: &str) -> String {
@@ -135,16 +134,25 @@ pub fn render(load: &LoadView, cx: &mut Context<FlowsScreen>) -> AnyElement {
                         .border_b_1()
                         .border_color(theme.border)
                         .child(div().w_1().h_4().flex_none().rounded_sm().bg(color))
-                        .child(div().w_12().flex_none().text_color(theme.muted_foreground).child(format!("#{}", ix + 1)))
+                        .child(
+                            div().w_12().flex_none().text_color(theme.muted_foreground).child(format!("#{}", ix + 1)),
+                        )
                         .child(h_flex().w_24().flex_none().child(tag.small()))
-                        .child(div().w_48().flex_none().overflow_hidden().text_ellipsis().child(text(row, "at").to_owned()))
                         .child(
                             div()
-                                .w_20()
+                                .w_48()
                                 .flex_none()
-                                .text_right()
-                                .text_color(theme.muted_foreground)
-                                .child(row.get("durationMs").and_then(Value::as_u64).map(|ms| format!("{ms} ms")).unwrap_or_default()),
+                                .overflow_hidden()
+                                .text_ellipsis()
+                                .child(text(row, "at").to_owned()),
+                        )
+                        .child(
+                            div().w_20().flex_none().text_right().text_color(theme.muted_foreground).child(
+                                row.get("durationMs")
+                                    .and_then(Value::as_u64)
+                                    .map(|ms| format!("{ms} ms"))
+                                    .unwrap_or_default(),
+                            ),
                         )
                         .child(
                             div()
