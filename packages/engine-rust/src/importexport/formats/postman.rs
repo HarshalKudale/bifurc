@@ -367,7 +367,7 @@ struct Scope {
 fn v3_body(call: &mut Http, body: Option<&Value>) {
     let Some(body) = body.filter(|b| b.is_object()) else { return };
     let content = body.get("content");
-    let text = || content.map(|c| if c.is_string() { js_str(c) } else { serde_json::to_string_pretty(c).unwrap_or_default() });
+    let text = || content.map(|c| c.as_str().map_or_else(|| serde_json::to_string_pretty(c).unwrap_or_default(), str::to_string));
     match text_or(body, "type", "").as_str() {
         "formdata" => call.parts = form_parts(content),
         "urlencoded" => {

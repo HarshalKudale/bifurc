@@ -34,6 +34,7 @@ use tokio::{
 
 use super::arguments::{CallKind, Catalog};
 use crate::rest::direct_http::client as http_client;
+use crate::utils::http::{NAME_NOT_FOUND_NO_HOST, REFUSED_NO_ADDRESS};
 
 /// What reaches a connection's task besides the answers to what it asked.
 pub enum Heard {
@@ -184,17 +185,17 @@ pub async fn connect(prepared: Prepared, heard: UnboundedSender<Heard>) -> Resul
     }
 }
 
-/// The innermost message of an error's chain, in Node's wording for a refused connection.
+/// The innermost message of an error's chain, in plain words for a refused connection or unknown host.
 fn root_cause(error: &(dyn std::error::Error + 'static)) -> String {
     let mut message = String::new();
     let mut current = Some(error);
     while let Some(inner) = current {
         if inner.downcast_ref::<std::io::Error>().is_some_and(|io| io.kind() == std::io::ErrorKind::ConnectionRefused) {
-            return "connect ECONNREFUSED: nothing is listening at this address".to_string();
+            return REFUSED_NO_ADDRESS.to_string();
         }
         message = inner.to_string();
         if message.contains("dns error") {
-            return "getaddrinfo ENOTFOUND: the host name is not known".to_string();
+            return NAME_NOT_FOUND_NO_HOST.to_string();
         }
         // The HTTP transport holds the HTTP client's error without naming it as its source.
         current = match inner.downcast_ref::<StreamableHttpError<reqwest::Error>>() {
@@ -223,7 +224,7 @@ fn describe_start(error: &ClientInitializeError, program: bool) -> String {
             // The first line, without the page a web server answered with.
             let cause = cause.lines().next().unwrap_or_default();
             let cause = cause.split(": <").next().unwrap_or_default().trim().trim_end_matches('.');
-            if cause.starts_with("connect ECONNREFUSED") || cause.starts_with("getaddrinfo ENOTFOUND") {
+            if cause == REFUSED_NO_ADDRESS.trim_end_matches('.') || cause == NAME_NOT_FOUND_NO_HOST.trim_end_matches('.') {
                 return format!("{cause}.");
             }
             format!("{cause}. Is this an MCP server?")
