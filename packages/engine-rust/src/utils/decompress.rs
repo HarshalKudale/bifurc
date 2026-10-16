@@ -4,7 +4,7 @@ use std::io::Read;
 
 use flate2::read::{DeflateDecoder, GzDecoder, ZlibDecoder};
 
-use crate::kernel::telemetry::Headers;
+use crate::kernel::traffic::Headers;
 
 fn read_all(mut reader: impl Read) -> Option<Vec<u8>> {
     let mut out = Vec::new();
