@@ -259,7 +259,7 @@ impl Shell {
         let mappings: Vec<Entry> = config
             .mappings
             .iter()
-            .filter(|m| !m.deleted)
+            .filter(|m| !m.deleted && m.locked.is_none())
             .map(|m| Entry {
                 label: format!("{}  →  {}", m.domain, m.target),
                 keywords: vec![m.label.clone().unwrap_or_default(), t("shell.palette.keyword_mapping").to_owned()],

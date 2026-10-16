@@ -83,6 +83,7 @@
   "menu.new_folder_here": "New folder here…",
   "menu.rename": "Rename…",
   "menu.delete": "Delete…",
+  "menu.update_required": "Update required…",
   "menu.revert_delete": "Revert delete",
   "menu.confirm_delete": "Confirm delete",
 

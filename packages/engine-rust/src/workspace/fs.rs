@@ -252,13 +252,34 @@ pub fn delete_entity_file(ws_id: &str, kind: &str, id: &str) -> std::io::Result<
     }
 }
 
+/// Write a flat entity (stamped, like the others). A locked one is not written over.
 pub fn write_flat_entity(ws_id: &str, kind: &str, id: &str, data: &Value) -> std::io::Result<()> {
-    write_json_pretty(&entity_dir(ws_id, kind).join(format!("{id}.json")), &without_enabled(data))
+    if let Some(version) = entity_lock(ws_id, kind, id) {
+        return Err(stamp::update_required_io(&version));
+    }
+    let file = entity_dir(ws_id, kind).join(format!("{id}.json"));
+    write_json_pretty(&file, &stamp::settled(read_json(&file), stamped(kind, data)))
 }
 
+/// Remove a flat entity's file. A locked one stays.
 pub fn delete_flat_entity_file(ws_id: &str, kind: &str, id: &str) -> std::io::Result<()> {
+    if let Some(version) = entity_lock(ws_id, kind, id) {
+        return Err(stamp::update_required_io(&version));
+    }
     let file = entity_dir(ws_id, kind).join(format!("{id}.json"));
     if file.exists() { std::fs::remove_file(file) } else { Ok(()) }
+}
+
+/// `(id, file as stored, version)` of the entities of a kind that are locked: a listing names them, nothing reads them.
+pub fn read_locked(ws_id: &str, kind: &str) -> Vec<(String, Value, String)> {
+    entity_files(ws_id, kind)
+        .into_iter()
+        .filter_map(|(id, path, _)| {
+            let stored = read_json(&path)?;
+            let version = stamp::lock_of(&stored)?;
+            Some((id, stored, version))
+        })
+        .collect()
 }
 
 fn is_entity_file_name(name: &str) -> bool {

@@ -34,7 +34,9 @@ use crate::{
     app_model::{AppModel, ModelEvent},
     components::{
         Autosave, EntityAction, EntityBar,
-        dialogs::{FOLDER_DELETE_CONSEQUENCE, PromptField, confirm_danger, delete_consequence, prompt, resolve_deleted},
+        dialogs::{
+            FOLDER_DELETE_CONSEQUENCE, PromptField, confirm_danger, delete_consequence, needs_update, prompt, resolve_deleted,
+        },
         entity_bar, page,
     },
     engine::{call, call_in, failure, patch_entity},
@@ -151,10 +153,11 @@ impl FlowsScreen {
     /// Keeps a flow open that exists: the one that is, or else the first there is.
     fn follow_model(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let flows = &self.model.read(cx).config().flows;
-        let still_there =
-            self.selected.as_deref().is_some_and(|id| flows.iter().any(|flow| flow.id == id && !flow.deleted));
+        // Nor is one a newer Bifurc saved kept open: the engine does not read it.
+        let usable = |flow: &&crate::model::config::FlowInfo| !flow.deleted && flow.locked.is_none();
+        let still_there = self.selected.as_deref().is_some_and(|id| flows.iter().filter(usable).any(|flow| flow.id == id));
         if !still_there {
-            match flows.iter().find(|flow| !flow.deleted).map(|flow| flow.id.clone()) {
+            match flows.iter().find(usable).map(|flow| flow.id.clone()) {
                 Some(id) => self.open(id, window, cx),
                 None => self.close(cx),
             }
@@ -249,6 +252,11 @@ impl FlowsScreen {
         if flow.deleted {
             let deleted = deleted_target(&TreeKey::Item(flow.id.clone()));
             resolve_deleted(self.model.clone(), deleted, flow.name.clone(), window, cx);
+            return;
+        }
+        // Neither is one a newer Bifurc saved: the engine does not read it until this one is updated.
+        if let Some(version) = flow.locked.clone() {
+            needs_update(flow.name.clone(), version, window, cx);
             return;
         }
         // An edit that is still waiting is written before the flow leaves the screen.

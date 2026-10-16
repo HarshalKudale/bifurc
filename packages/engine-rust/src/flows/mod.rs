@@ -23,7 +23,7 @@ use crate::{
     kernel::CommandRegistry,
     protocol::{EngineError, Result},
     utils::json::{opt_str, str_of},
-    workspace::config::load_entity,
+    workspace::{config::load_entity, fs::entity_lock},
 };
 
 /// Whether `flow` can be saved: it has a name and is written the way a flow is. What is wrong inside it (a
@@ -43,8 +43,10 @@ fn flow_of(params: &Value) -> Result<Flow> {
     let (ws_id, id) = (str_of(params, "workspaceId"), opt_str(params, "id"));
     let id =
         id.ok_or_else(|| EngineError::bad_request("flow.validate takes the `id` of a saved flow, or a `flow`."))?;
-    let entity = load_entity(ws_id, "flows", id)
-        .ok_or_else(|| EngineError::not_found(format!("No saved flow \"{id}\" in workspace \"{ws_id}\".")))?;
+    let entity = load_entity(ws_id, "flows", id).ok_or_else(|| match entity_lock(ws_id, "flows", id) {
+        Some(version) => crate::workspace::stamp::update_required(&version),
+        None => EngineError::not_found(format!("No saved flow \"{id}\" in workspace \"{ws_id}\".")),
+    })?;
     Flow::parse(&entity)
 }
 
