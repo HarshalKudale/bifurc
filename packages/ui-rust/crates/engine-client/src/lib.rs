@@ -7,7 +7,6 @@
 
 mod connection;
 mod error;
-mod frame;
 mod sidecar;
 
 pub use bifurc_protocol::crash;

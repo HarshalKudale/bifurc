@@ -5,7 +5,7 @@ use serde_json::Value;
 
 use crate::protocol::EngineError;
 
-pub const MAX_FRAME_BYTES: usize = 8 * 1024 * 1024;
+pub use bifurc_client::frame::MAX_FRAME_BYTES;
 pub const FRAME_HEADER_BYTES: usize = 4;
 
 #[derive(Debug, Clone, PartialEq, Eq)]

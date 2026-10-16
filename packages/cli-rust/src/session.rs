@@ -10,6 +10,7 @@ use std::{
     path::Path,
 };
 
+use bifurc_client::frame::{self, FrameError};
 use serde_json::{Value, json};
 
 use crate::{
@@ -19,7 +20,7 @@ use crate::{
 };
 
 /// The largest frame either side may send.
-pub const MAX_FRAME_BYTES: usize = 8 * 1024 * 1024;
+pub use bifurc_client::frame::MAX_FRAME_BYTES;
 
 /// What the commands need of an engine session; tests substitute their own.
 pub trait Engine {
@@ -32,38 +33,21 @@ pub trait Engine {
     fn next_event(&mut self) -> Result<Option<Value>>;
 }
 
+fn frame_error(err: FrameError) -> CliError {
+    match err {
+        FrameError::Io(e) => io_error(e),
+        FrameError::Protocol(message) => CliError::msg(format!("protocol error: {message}")),
+    }
+}
+
 /// Encode one frame: the length, then the JSON.
 pub fn encode_frame(message: &Value) -> Result<Vec<u8>> {
-    let body = serde_json::to_vec(message).map_err(|e| CliError::msg(format!("cannot encode a request: {e}")))?;
-    if body.len() > MAX_FRAME_BYTES {
-        return Err(CliError::msg(format!("request of {} bytes exceeds the {MAX_FRAME_BYTES}-byte limit", body.len())));
-    }
-    let mut frame = Vec::with_capacity(4 + body.len());
-    frame.extend_from_slice(&(body.len() as u32).to_be_bytes());
-    frame.extend_from_slice(&body);
-    Ok(frame)
+    frame::encode_frame(message).map_err(frame_error)
 }
 
 /// Read one frame. `Ok(None)` is a clean end of stream between frames.
 pub fn read_frame(reader: &mut impl Read) -> Result<Option<Value>> {
-    let mut header = [0u8; 4];
-    match reader.read_exact(&mut header) {
-        Ok(()) => {}
-        Err(e) if e.kind() == std::io::ErrorKind::UnexpectedEof => return Ok(None),
-        Err(e) => return Err(io_error(e)),
-    }
-    let length = u32::from_be_bytes(header) as usize;
-    if length > MAX_FRAME_BYTES {
-        return Err(CliError::msg(format!("the engine sent a frame of {length} bytes, above the limit")));
-    }
-    let mut body = vec![0u8; length];
-    reader.read_exact(&mut body).map_err(io_error)?;
-    let value: Value = serde_json::from_slice(&body)
-        .map_err(|e| CliError::msg(format!("the engine sent a frame that is not valid JSON: {e}")))?;
-    if !value.is_object() {
-        return Err(CliError::msg("the engine sent a frame that is not a JSON object"));
-    }
-    Ok(Some(value))
+    frame::read_frame(reader).map_err(frame_error)
 }
 
 fn io_error(err: std::io::Error) -> CliError {

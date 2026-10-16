@@ -22,7 +22,7 @@ pub struct EngineRuntimeInfo {
     pub started_at: i64,
 }
 
-pub const RUNTIME_FILE: &str = "runtime.json";
+pub use bifurc_client::RUNTIME_FILE;
 
 /// An absolute path with `.` and `..` resolved, without touching the filesystem.
 pub fn resolve_path(path: &Path) -> PathBuf {
@@ -85,51 +85,7 @@ pub fn remove_runtime_info(data_dir: &Path) {
     }
 }
 
-#[cfg(unix)]
-pub fn is_process_alive(pid: u32) -> bool {
-    // SAFETY: signal 0 delivers nothing; it only reports whether the process exists.
-    let result = unsafe { libc::kill(pid as libc::pid_t, 0) };
-    result == 0 || std::io::Error::last_os_error().raw_os_error() == Some(libc::EPERM)
-}
-
-#[cfg(windows)]
-pub fn is_process_alive(pid: u32) -> bool {
-    use windows_sys::Win32::{
-        Foundation::{CloseHandle, ERROR_ACCESS_DENIED, GetLastError},
-        System::Threading::{GetExitCodeProcess, OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION},
-    };
-    const STILL_ACTIVE: u32 = 259;
-    // SAFETY: the handle is checked before use and closed before returning.
-    unsafe {
-        let handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, 0, pid);
-        if handle.is_null() {
-            return GetLastError() == ERROR_ACCESS_DENIED;
-        }
-        let mut code = 0u32;
-        let ok = GetExitCodeProcess(handle, &mut code);
-        CloseHandle(handle);
-        ok != 0 && code == STILL_ACTIVE
-    }
-}
-
-/// Whether something listens at a `socket` address. A pid alone does not prove an engine: a `runtime.json`
-/// that outlived its engine (a crash, a reboot) names a pid the system may have given to another process.
-#[cfg(unix)]
-pub fn is_socket_listening(address: &str) -> bool {
-    std::os::unix::net::UnixStream::connect(address).is_ok()
-}
-
-#[cfg(windows)]
-pub fn is_socket_listening(address: &str) -> bool {
-    use windows_sys::Win32::{
-        Foundation::{ERROR_FILE_NOT_FOUND, GetLastError},
-        System::Pipes::WaitNamedPipeW,
-    };
-    let name: Vec<u16> = address.encode_utf16().chain(std::iter::once(0)).collect();
-    // SAFETY: `name` is a NUL-terminated wide string that outlives the call.
-    // A pipe whose instances are all busy times out; only a pipe no one serves is not found.
-    unsafe { WaitNamedPipeW(name.as_ptr(), 1) != 0 || GetLastError() != ERROR_FILE_NOT_FOUND }
-}
+pub use bifurc_client::{is_process_alive, is_socket_listening};
 
 /// The engine serving `data_dir`, if its process is still alive and, over a socket, still listening.
 pub fn find_running_engine(data_dir: &Path) -> Option<EngineRuntimeInfo> {
