@@ -849,6 +849,7 @@ impl FolderRunner {
     }
 
     /// One figure of the run, large, with an optional bar under it.
+    #[allow(clippy::too_many_arguments)] // one call site per argument; a parameter struct would only move them
     fn stat_card(
         &self,
         id: &'static str,

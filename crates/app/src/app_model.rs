@@ -488,10 +488,10 @@ impl AppModel {
                     self.refresh_git(cx);
                     cx.emit(ModelEvent::SyncStatus);
                 }
-                "event.history.changed" => {
-                    if event.payload.get("workspaceId").and_then(Value::as_str) == Some(self.workspace_id()) {
-                        cx.emit(ModelEvent::HistoryChanged);
-                    }
+                "event.history.changed"
+                    if event.payload.get("workspaceId").and_then(Value::as_str) == Some(self.workspace_id()) =>
+                {
+                    cx.emit(ModelEvent::HistoryChanged);
                 }
                 "event.account.changed" => {
                     self.refresh_setup(cx);

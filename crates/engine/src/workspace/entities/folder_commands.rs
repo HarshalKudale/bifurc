@@ -248,25 +248,25 @@ pub fn register(registry: &mut CommandRegistry) {
         });
         save_config(&cfg)?;
 
-        if let Some((old_name, folder)) = renamed {
-            if !old_name.is_empty() {
-                let ws_id = folder_workspace(&folder, &cfg);
-                let base = ws_dir(&ws_id).join(conf.fs_kind);
-                let old_dir = base.join(sanitize_dir_name(&old_name));
-                let new_dir = base.join(sanitize_dir_name(name));
-                if old_dir.exists() && old_dir != new_dir {
-                    move_dir(&old_dir, &new_dir);
-                }
-                let mut index = read_index(&ws_id, conf.fs_kind);
-                if let Some(entry) = index.folders.iter_mut().find(|f| str_of(f, "id") == id) {
-                    entry["name"] = json!(name);
-                }
-                write_index(&ws_id, conf.fs_kind, &index)?;
-                // The entities' files moved with the directory.
-                notify_config_changed();
-                invalidate_cache(&ws_id);
-                emit_entity_status(&ws_id);
+        if let Some((old_name, folder)) = renamed
+            && !old_name.is_empty()
+        {
+            let ws_id = folder_workspace(&folder, &cfg);
+            let base = ws_dir(&ws_id).join(conf.fs_kind);
+            let old_dir = base.join(sanitize_dir_name(&old_name));
+            let new_dir = base.join(sanitize_dir_name(name));
+            if old_dir.exists() && old_dir != new_dir {
+                move_dir(&old_dir, &new_dir);
             }
+            let mut index = read_index(&ws_id, conf.fs_kind);
+            if let Some(entry) = index.folders.iter_mut().find(|f| str_of(f, "id") == id) {
+                entry["name"] = json!(name);
+            }
+            write_index(&ws_id, conf.fs_kind, &index)?;
+            // The entities' files moved with the directory.
+            notify_config_changed();
+            invalidate_cache(&ws_id);
+            emit_entity_status(&ws_id);
         }
         Ok(json!({ "ok": true }))
     });

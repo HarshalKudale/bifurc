@@ -54,3 +54,15 @@ codegen-units = 1
 # Argon2 is the one slow thing a vault does; unoptimised it takes seconds per key in debug builds and tests.
 [profile.dev.package.argon2]
 opt-level = 3
+
+# Shared by every member crate through `[lints] workspace = true`. `clippy::all` is warn; CI runs clippy with `-D warnings`.
+[workspace.lints.rust]
+rust_2018_idioms = { level = "warn", priority = -1 }
+unused_must_use = "warn"
+# ~970 hits, almost all `Formatter`/GPUI context types written without `<'_>`; a deliberate style, not worth the churn.
+elided_lifetimes_in_paths = "allow"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+dbg_macro = "warn"
+todo = "warn"

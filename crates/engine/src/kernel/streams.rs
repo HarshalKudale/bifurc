@@ -60,6 +60,12 @@ pub struct Streams<E> {
     finished: Mutex<HashMap<String, u64>>,
 }
 
+impl<E: Stream> Default for Streams<E> {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl<E: Stream> Streams<E> {
     pub fn new() -> Self {
         Self { entries: Mutex::new(HashMap::new()), finished: Mutex::new(HashMap::new()) }

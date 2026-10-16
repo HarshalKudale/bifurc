@@ -236,7 +236,7 @@ impl WorkspaceHost {
             let settings = load_settings();
             let active = settings.active_workspace_id();
             let served = match &edge_wanted {
-                Some(wanted) => wanted.iter().any(|id| *id == active),
+                Some(wanted) => wanted.contains(&active),
                 None => settings.workspace(&active).is_some(),
             };
             if !served {

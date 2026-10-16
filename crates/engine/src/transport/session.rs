@@ -37,6 +37,10 @@ pub enum Outbound {
     Close,
 }
 
+/// Picks the scopes a client gets from its validated `hello`.
+pub type ScopesFor = Arc<dyn Fn(&Value) -> HashSet<Scope> + Send + Sync>;
+/// Called with the refusal and the client's name, if it gave one.
+pub type AuthFailureHook = Arc<dyn Fn(&EngineError, Option<&str>) + Send + Sync>;
 pub type SessionHook = Arc<dyn Fn(&SessionIdentity) + Send + Sync>;
 
 #[derive(Clone)]
@@ -48,9 +52,9 @@ pub struct SessionOptions {
     /// Advertised in the handshake; `events.replay` is added.
     pub capabilities: Vec<&'static str>,
     /// The scopes a client gets, from its validated `hello`. Defaults to every scope.
-    pub scopes_for: Option<Arc<dyn Fn(&Value) -> HashSet<Scope> + Send + Sync>>,
+    pub scopes_for: Option<ScopesFor>,
     /// Called when a handshake is refused: the error code, its message, and the client's name if it gave one.
-    pub on_auth_failure: Option<Arc<dyn Fn(&EngineError, Option<&str>) + Send + Sync>>,
+    pub on_auth_failure: Option<AuthFailureHook>,
     pub on_session_start: Option<SessionHook>,
     pub on_session_end: Option<SessionHook>,
     /// Asked before a command of an identified session runs: the error to refuse it with, if it is refused.
@@ -374,10 +378,10 @@ impl Session {
         for wire in &events {
             let Some((count, _)) = state.subscriptions.get_mut(wire) else { continue };
             *count -= 1;
-            if *count == 0 {
-                if let Some((_, subscription)) = state.subscriptions.remove(wire) {
-                    self.inner.opts.log.unsubscribe(&subscription);
-                }
+            if *count == 0
+                && let Some((_, subscription)) = state.subscriptions.remove(wire)
+            {
+                self.inner.opts.log.unsubscribe(&subscription);
             }
         }
         Ok(events)

@@ -137,19 +137,19 @@ fn create_entity_core(
 
     array_mut(&mut cfg, kind.config_key);
 
-    if let Some(on_conflict) = kind.on_add_conflict {
-        if may_resolve_conflicts {
-            let before: HashMap<String, Option<Value>> = array_of(&cfg, kind.config_key)
-                .iter()
-                .map(|e| (str_of(e, "id").to_string(), e.get("enabled").cloned()))
-                .collect();
-            on_conflict(&mut cfg, &new_entity);
-            if kind.has_enabled_state {
-                for e in array_of(&cfg, kind.config_key) {
-                    let other = str_of(e, "id");
-                    if before.get(other).is_some_and(|was| *was != e.get("enabled").cloned()) {
-                        sync_enabled_set(&ws_id, kind.kind, other, e.get("enabled").is_some_and(is_truthy))?;
-                    }
+    if let Some(on_conflict) = kind.on_add_conflict
+        && may_resolve_conflicts
+    {
+        let before: HashMap<String, Option<Value>> = array_of(&cfg, kind.config_key)
+            .iter()
+            .map(|e| (str_of(e, "id").to_string(), e.get("enabled").cloned()))
+            .collect();
+        on_conflict(&mut cfg, &new_entity);
+        if kind.has_enabled_state {
+            for e in array_of(&cfg, kind.config_key) {
+                let other = str_of(e, "id");
+                if before.get(other).is_some_and(|was| *was != e.get("enabled").cloned()) {
+                    sync_enabled_set(&ws_id, kind.kind, other, e.get("enabled").is_some_and(is_truthy))?;
                 }
             }
         }
@@ -169,10 +169,10 @@ fn create_entity_core(
         sync_enabled_set(&ws_id, kind.kind, &id, new_entity.get("enabled").is_some_and(is_truthy))?;
     }
 
-    if let Some(name_entry) = kind.name_entry {
-        if !kind.is_flat {
-            upsert_name_entry(&ws_id, kind.kind, &id, name_entry(&new_entity))?;
-        }
+    if let Some(name_entry) = kind.name_entry
+        && !kind.is_flat
+    {
+        upsert_name_entry(&ws_id, kind.kind, &id, name_entry(&new_entity))?;
     }
 
     notify_config_changed();
@@ -209,10 +209,10 @@ fn update_entity_core(kind: &CrudKind, entity: &Value) -> Result<Value> {
     save_config(&cfg)?;
     write_entity_file(&cfg, kind, &ws_id, &id, &entity)?;
 
-    if let Some(name_entry) = kind.name_entry {
-        if !kind.is_flat {
-            upsert_name_entry(&ws_id, kind.kind, &id, name_entry(&entity))?;
-        }
+    if let Some(name_entry) = kind.name_entry
+        && !kind.is_flat
+    {
+        upsert_name_entry(&ws_id, kind.kind, &id, name_entry(&entity))?;
     }
 
     notify_config_changed();
@@ -829,9 +829,11 @@ mod tests {
         assert_eq!(enabled("mocks"), vec![second_id.clone(), third_id], "a caller without admin leaves others alone");
 
         bus().off(listener);
-        let events = events.lock().unwrap();
-        assert_eq!(events.len(), 3);
-        assert_eq!(events[0], json!({ "wsId": WS, "kind": "mocks", "id": first_id, "action": "created" }));
+        {
+            let events = events.lock().unwrap();
+            assert_eq!(events.len(), 3);
+            assert_eq!(events[0], json!({ "wsId": WS, "kind": "mocks", "id": first_id, "action": "created" }));
+        }
 
         let invalid =
             call(&ctx, "entity.create", json!({ "kind": "mocks", "entity": { "method": "GET" } })).await.unwrap_err();
@@ -1101,7 +1103,7 @@ mod tests {
             assert_eq!(listed["requiredVersion"], "999.0.0", "{kind}");
             assert_eq!(listed["name"], entity["name"], "{kind}");
             assert_eq!(listed["folderId"], folder_id.as_str(), "{kind}");
-            assert_eq!(listed["enabled"].as_bool().unwrap_or(false), false, "{kind}: it is not in use");
+            assert!(!listed["enabled"].as_bool().unwrap_or(false), "{kind}: it is not in use");
             assert!(listed.get("somethingNewer").is_none(), "{kind}");
             if kind == "requests" {
                 assert_eq!(listed["url"], "", "the address is not read out of it");

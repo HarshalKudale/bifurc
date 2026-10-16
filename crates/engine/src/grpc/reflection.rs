@@ -48,6 +48,7 @@ mod response {
     use super::{ErrorResponse, FileDescriptorResponse, ListServiceResponse};
 
     #[derive(Clone, PartialEq, prost::Oneof)]
+    #[allow(clippy::enum_variant_names)] // the names are the reflection protocol's own message types
     pub enum MessageResponse {
         #[prost(message, tag = "4")]
         FileDescriptorResponse(FileDescriptorResponse),

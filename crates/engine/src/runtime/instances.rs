@@ -67,28 +67,28 @@ pub fn rebind_runtime_ports(incoming: &AppSettings, prev: &AppSettings) {
     if !incoming.servers_confirmed() {
         return rebind_changed_listeners(incoming, prev);
     }
-    if let Some(edge) = edge() {
-        if !edge.is_running() || edge_changed(incoming, prev) {
-            edge.start(incoming.port());
-        }
+    if let Some(edge) = edge()
+        && (!edge.is_running() || edge_changed(incoming, prev))
+    {
+        edge.start(incoming.port());
     }
-    if let Some(proxy) = forward_proxy() {
-        if !proxy.is_running()
+    if let Some(proxy) = forward_proxy()
+        && (!proxy.is_running()
             || incoming.forward_proxy_port() != prev.forward_proxy_port()
-            || tls_changed(incoming, prev)
-        {
-            proxy.start(incoming.forward_proxy_port());
-        }
+            || tls_changed(incoming, prev))
+    {
+        proxy.start(incoming.forward_proxy_port());
     }
 }
 
 /// After a settings patch: restart only a listener whose own settings changed, and only if it was running
 /// or had failed to bind (a listener the user stopped stays stopped).
 pub fn rebind_changed_listeners(next: &AppSettings, prev: &AppSettings) {
-    if let Some(edge) = edge() {
-        if edge_changed(next, prev) && (edge.is_running() || edge.error().is_some()) {
-            edge.start(next.port());
-        }
+    if let Some(edge) = edge()
+        && edge_changed(next, prev)
+        && (edge.is_running() || edge.error().is_some())
+    {
+        edge.start(next.port());
     }
     if let Some(proxy) = forward_proxy() {
         let changed = next.forward_proxy_port() != prev.forward_proxy_port() || tls_changed(next, prev);

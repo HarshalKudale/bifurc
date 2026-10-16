@@ -311,7 +311,7 @@ impl Shell {
             (t("shell.screen.mappings"), mappings),
             (t("shell.screen.environments"), environments),
         ];
-        let groups = sections.iter().map(|(label, entries)| choice_group(*label, entries)).collect();
+        let groups = sections.iter().map(|(label, entries)| choice_group(label, entries)).collect();
         let choices = sections.iter().map(|(_, entries)| entries.iter().map(|e| e.choice.clone()).collect()).collect();
 
         let (state, shell) = (self.finder.clone(), cx.weak_entity());

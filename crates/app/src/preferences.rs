@@ -226,8 +226,7 @@ mod tests {
     #[test]
     fn an_older_build_ignores_the_new_fields() {
         // Mirrors what an old build's struct does: no `deny_unknown_fields` anywhere in this type.
-        let mut p = Preferences::default();
-        p.window = Some(saved(1., 2., 3., 4.));
+        let p = Preferences { window: Some(saved(1., 2., 3., 4.)), ..Default::default() };
         let text = serde_json::to_string(&p).unwrap();
         let mut value: serde_json::Value = serde_json::from_str(&text).unwrap();
         value["from_a_future_build"] = true.into();
@@ -236,8 +235,10 @@ mod tests {
 
     #[test]
     fn the_new_fields_round_trip() {
-        let mut p = Preferences::default();
-        p.window = Some(WindowState { maximized: true, ..saved(10., 20., 1200., 800.) });
+        let mut p = Preferences {
+            window: Some(WindowState { maximized: true, ..saved(10., 20., 1200., 800.) }),
+            ..Default::default()
+        };
         p.dock_sizes.insert("requests-dock".into(), 333.);
         let back: Preferences = serde_json::from_str(&serde_json::to_string_pretty(&p).unwrap()).unwrap();
         assert_eq!(back, p);

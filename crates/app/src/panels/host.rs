@@ -29,10 +29,10 @@ pub fn remember_pane_size<T: 'static>(
     cx: &mut Context<T>,
 ) -> Subscription {
     cx.subscribe(dock, move |_, dock, event: &DockEvent, cx| {
-        if matches!(event, DockEvent::LayoutChanged) {
-            if let Some(size) = pane_size(&dock.read(cx).dump(cx), 2, index) {
-                Preferences::remember_dock_size(cx, id, size);
-            }
+        if matches!(event, DockEvent::LayoutChanged)
+            && let Some(size) = pane_size(&dock.read(cx).dump(cx), 2, index)
+        {
+            Preferences::remember_dock_size(cx, id, size);
         }
     })
 }

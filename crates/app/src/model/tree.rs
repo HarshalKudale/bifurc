@@ -29,12 +29,6 @@ pub struct TreeNode {
     pub children: Vec<TreeNode>,
 }
 
-impl TreeNode {
-    pub fn is_folder(&self) -> bool {
-        self.key.starts_with("folder:")
-    }
-}
-
 /// What a tree key refers to.
 #[derive(Debug, Clone, PartialEq, Eq)]
 pub enum TreeKey {
@@ -263,7 +257,6 @@ mod tests {
         let tree = build_tree(&folders(), &items(), "");
         assert_eq!(labels(&tree), ["Users", "Ping", "Stranded"]);
         assert_eq!(labels(&tree[0].children), ["admin", "list"]);
-        assert!(tree[0].is_folder() && !tree[1].is_folder());
     }
 
     #[test]
