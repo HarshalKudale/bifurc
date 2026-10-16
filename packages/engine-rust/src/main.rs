@@ -61,7 +61,14 @@ fn main() {
     // Outbound TLS and the interception proxy share one crypto provider.
     let _ = rustls::crypto::ring::default_provider().install_default();
 
-    let runtime = tokio::runtime::Builder::new_current_thread().enable_all().build().expect("the async runtime starts");
+    // Handlers do blocking file and git work; a few workers keep the proxy responsive. Capped for a desktop app.
+    let workers = std::thread::available_parallelism().map_or(2, |n| n.get()).clamp(2, 4);
+    let runtime = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(workers)
+        .thread_name("bifurc-worker")
+        .enable_all()
+        .build()
+        .expect("the async runtime starts");
     let code = runtime.block_on(async {
         match run_workspace_host(opts).await {
             Ok(code) => code,
