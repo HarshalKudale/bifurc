@@ -26,21 +26,4 @@ pub fn is_data_root_set() -> bool {
     DATA_ROOT.read().is_some()
 }
 
-fn home_dir() -> PathBuf {
-    std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")).map(PathBuf::from).unwrap_or_default()
-}
-
-fn env_dir(name: &str) -> Option<PathBuf> {
-    std::env::var_os(name).filter(|v| !v.is_empty()).map(PathBuf::from)
-}
-
-/// The data directory the desktop app, the CLI and the engine all default to.
-pub fn platform_default_data_dir() -> PathBuf {
-    if cfg!(windows) {
-        env_dir("LOCALAPPDATA").unwrap_or_else(|| home_dir().join("AppData").join("Local")).join("Bifurc")
-    } else if cfg!(target_os = "macos") {
-        home_dir().join("Library").join("Application Support").join("Bifurc")
-    } else {
-        env_dir("XDG_CONFIG_HOME").unwrap_or_else(|| home_dir().join(".config")).join("bifurc")
-    }
-}
+pub use bifurc_client::platform_default_data_dir;

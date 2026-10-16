@@ -17,15 +17,13 @@ use std::{
     time::Duration,
 };
 
+use bifurc_client::frame::{read_frame, write_frame};
 use futures::channel::{mpsc, oneshot};
 use interprocess::local_socket::{GenericFilePath, Stream, prelude::*};
 use serde::de::DeserializeOwned;
 use serde_json::{Value, json};
 
-use crate::{
-    error::{ClientError, EngineError, Result},
-    frame::{read_frame, write_frame},
-};
+use crate::error::{ClientError, EngineError, Result};
 
 /// The protocol version this client speaks. The engine accepts any 1.x.
 pub use bifurc_protocol::PROTOCOL_VERSION;
@@ -207,7 +205,7 @@ impl EngineClient {
 
         let frame = json!({ "id": id, "action": action, "payload": payload });
         let mut writer = self.shared.writer.lock().unwrap();
-        let written = write_frame(&mut *writer, &frame);
+        let written = write_frame(&mut *writer, &frame).map_err(ClientError::from);
         drop(writer);
         if let Err(err) = written {
             self.shared.pending.lock().unwrap().remove(&id);
@@ -240,7 +238,7 @@ fn connect_with_retry(address: &str, attempts: u32) -> Result<Stream> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::frame::{encode_frame, read_frame};
+    use bifurc_client::frame::{encode_frame, read_frame};
     use std::io::{self, Cursor};
 
     /// A reader the test feeds from another thread, standing in for the engine's side of the pipe.

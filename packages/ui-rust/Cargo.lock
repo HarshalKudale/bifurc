@@ -583,9 +583,19 @@ dependencies = [
 ]
 
 [[package]]
+name = "bifurc-client"
+version = "0.5.0"
+dependencies = [
+ "libc",
+ "serde_json",
+ "windows-sys 0.59.0",
+]
+
+[[package]]
 name = "bifurc-engine-client"
 version = "0.5.0"
 dependencies = [
+ "bifurc-client",
  "bifurc-protocol",
  "futures",
  "interprocess",

@@ -1,21 +1,44 @@
-//! The socket transport's framing: a 4-byte big-endian length, then that many bytes of UTF-8 JSON.
-//!
-//! Mirrors `packages/engine/src/transport/framing.ts`, including its 8 MiB ceiling. A frame over the ceiling
-//! is a protocol error on the way in (the stream is no longer trustworthy) and a refusal on the way out.
+//! The socket framing: a 4-byte big-endian length, then that many bytes of UTF-8 JSON holding one object.
+//! The engine's `transport/framing.rs` speaks the same format (and reassembles frames from chunks).
 
-use std::io::{self, Read, Write};
+use std::{
+    fmt,
+    io::{self, Read, Write},
+};
 
 use serde_json::Value;
-
-use crate::error::{ClientError, Result};
 
 pub const MAX_FRAME_BYTES: usize = 8 * 1024 * 1024;
 const HEADER_BYTES: usize = 4;
 
-pub fn encode_frame(message: &Value) -> Result<Vec<u8>> {
-    let body = serde_json::to_vec(message)?;
+#[derive(Debug)]
+pub enum FrameError {
+    Io(io::Error),
+    /// Not the wire format: too large, not JSON, or not an object.
+    Protocol(String),
+}
+
+impl fmt::Display for FrameError {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        match self {
+            FrameError::Io(e) => write!(f, "i/o error: {e}"),
+            FrameError::Protocol(message) => f.write_str(message),
+        }
+    }
+}
+
+impl std::error::Error for FrameError {}
+
+impl From<io::Error> for FrameError {
+    fn from(e: io::Error) -> Self {
+        FrameError::Io(e)
+    }
+}
+
+pub fn encode_frame(message: &Value) -> Result<Vec<u8>, FrameError> {
+    let body = serde_json::to_vec(message).map_err(|e| FrameError::Protocol(format!("cannot encode a frame: {e}")))?;
     if body.len() > MAX_FRAME_BYTES {
-        return Err(ClientError::Protocol(format!(
+        return Err(FrameError::Protocol(format!(
             "frame of {} bytes exceeds the {MAX_FRAME_BYTES}-byte limit",
             body.len()
         )));
@@ -26,15 +49,14 @@ pub fn encode_frame(message: &Value) -> Result<Vec<u8>> {
     Ok(frame)
 }
 
-pub fn write_frame(writer: &mut (impl Write + ?Sized), message: &Value) -> Result<()> {
-    let frame = encode_frame(message)?;
-    writer.write_all(&frame)?;
+pub fn write_frame(writer: &mut (impl Write + ?Sized), message: &Value) -> Result<(), FrameError> {
+    writer.write_all(&encode_frame(message)?)?;
     writer.flush()?;
     Ok(())
 }
 
 /// Reads one frame. `Ok(None)` is a clean end of stream between frames; EOF inside one is an error.
-pub fn read_frame(reader: &mut impl Read) -> Result<Option<Value>> {
+pub fn read_frame(reader: &mut impl Read) -> Result<Option<Value>, FrameError> {
     let mut header = [0u8; HEADER_BYTES];
     match reader.read_exact(&mut header) {
         Ok(()) => {}
@@ -43,16 +65,16 @@ pub fn read_frame(reader: &mut impl Read) -> Result<Option<Value>> {
     }
     let length = u32::from_be_bytes(header) as usize;
     if length > MAX_FRAME_BYTES {
-        return Err(ClientError::Protocol(format!(
+        return Err(FrameError::Protocol(format!(
             "frame declares {length} bytes, above the {MAX_FRAME_BYTES}-byte limit"
         )));
     }
     let mut body = vec![0u8; length];
     reader.read_exact(&mut body)?;
     let value: Value = serde_json::from_slice(&body)
-        .map_err(|e| ClientError::Protocol(format!("frame body is not valid JSON: {e}")))?;
+        .map_err(|e| FrameError::Protocol(format!("frame body is not valid JSON: {e}")))?;
     if !value.is_object() {
-        return Err(ClientError::Protocol("frame body is not a JSON object".to_owned()));
+        return Err(FrameError::Protocol("frame body is not a JSON object".to_owned()));
     }
     Ok(Some(value))
 }
@@ -90,15 +112,14 @@ mod tests {
     #[test]
     fn an_oversized_header_is_a_protocol_error_before_any_allocation() {
         let header = ((MAX_FRAME_BYTES + 1) as u32).to_be_bytes();
-        let err = read_frame(&mut header.as_slice()).unwrap_err();
-        assert!(matches!(err, ClientError::Protocol(_)));
+        assert!(matches!(read_frame(&mut header.as_slice()), Err(FrameError::Protocol(_))));
     }
 
     #[test]
     fn a_body_cut_short_is_an_error_not_a_clean_end() {
         let mut bytes = encode_frame(&json!({"a": 1})).unwrap();
         bytes.pop();
-        assert!(matches!(read_frame(&mut bytes.as_slice()), Err(ClientError::Io(_))));
+        assert!(matches!(read_frame(&mut bytes.as_slice()), Err(FrameError::Io(_))));
     }
 
     #[test]
@@ -106,6 +127,6 @@ mod tests {
         let body = b"[1,2]";
         let mut bytes = (body.len() as u32).to_be_bytes().to_vec();
         bytes.extend_from_slice(body);
-        assert!(matches!(read_frame(&mut bytes.as_slice()), Err(ClientError::Protocol(_))));
+        assert!(matches!(read_frame(&mut bytes.as_slice()), Err(FrameError::Protocol(_))));
     }
 }
