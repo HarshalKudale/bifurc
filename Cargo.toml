@@ -1,26 +1,26 @@
-# The whole repository: the engine, CLI and MCP server, and the desktop UI (`packages/ui-rust`).
+# The whole repository: the engine, CLI and MCP server, and the desktop UI (`crates/app`).
 [workspace]
 resolver = "2"
 members = [
-    "packages/protocol-rust",
-    "packages/client-rust",
-    "packages/engine-rust",
-    "packages/cli-rust",
-    "packages/mcp-rust",
-    "packages/ui-rust/crates/engine-client",
-    "packages/ui-rust/crates/app",
-    "packages/ui-rust/crates/tray",
-    "packages/ui-rust/crates/cli",
+    "crates/protocol",
+    "crates/client",
+    "crates/engine",
+    "crates/cli",
+    "crates/mcp",
+    "crates/engine-client",
+    "crates/app",
+    "crates/tray",
+    "crates/launcher",
     "xtask",
 ]
 # What a plain `cargo build` / `cargo test` at the root covers: everything but the GPUI app, whose build needs a
 # graphics toolchain (and, via build.rs, a nested tray build). Use `--workspace` or `-p bifurc-ui` for it.
 default-members = [
-    "packages/protocol-rust",
-    "packages/client-rust",
-    "packages/engine-rust",
-    "packages/cli-rust",
-    "packages/mcp-rust",
+    "crates/protocol",
+    "crates/client",
+    "crates/engine",
+    "crates/cli",
+    "crates/mcp",
     "xtask",
 ]
 

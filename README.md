@@ -21,9 +21,9 @@ It brings together `*.localhost` mappings, proxy rules, capture tooling, REST/Gr
 
 ## Engine, CLI, MCP server and desktop UI
 
-The engine (`packages/engine-rust`), the `bifurc` CLI (`packages/cli-rust`), the `bifurc-mcp` MCP server
-(`packages/mcp-rust`), the shared wire types
-(`packages/protocol-rust`) and the desktop UI (`packages/ui-rust`) are all Rust. There is no Node runtime.
+The engine (`crates/engine`), the `bifurc` CLI (`crates/cli`), the `bifurc-mcp` MCP server
+(`crates/mcp`), the shared wire types and client
+(`crates/protocol`, `crates/client`) and the desktop UI (`crates/app`, `crates/tray`, `crates/launcher`) are all Rust. There is no Node runtime.
 
 ```bash
 cargo dev:engine     # the engine, in this terminal (logs here; Ctrl+C or `cargo dev:cli engine stop` ends it)
@@ -56,12 +56,16 @@ delete anything, read a secret, sign in or stop the engine.
 
 ```text
 Bifurc/
-├── packages/
-│   ├── protocol-rust/  # Wire types and command schemas shared by the engine and its clients
-│   ├── engine-rust/    # The engine: proxies, mocks, requests, workspaces, git
-│   ├── cli-rust/       # The `bifurc` CLI
-│   └── mcp-rust/       # The `bifurc-mcp` MCP server: the CLI's commands as tools
-├── packages/ui-rust/   # Desktop UI (GPUI), tray helper and the installed `bifurc` launcher
+├── crates/
+│   ├── protocol/       # Wire types and command schemas shared by the engine and its clients
+│   ├── client/         # Synchronous engine client shared by the CLI and MCP server
+│   ├── engine/         # The engine: proxies, mocks, requests, workspaces, git
+│   ├── cli/            # The `bifurc` CLI
+│   ├── mcp/            # The `bifurc-mcp` MCP server: the CLI's commands as tools
+│   ├── engine-client/  # The desktop UI's async connection to the engine
+│   ├── app/            # Desktop UI (GPUI)
+│   ├── tray/           # Tray helper the engine runs
+│   └── launcher/       # The installed `bifurc` launcher
 ├── xtask/              # `cargo xtask package`
 ├── packaging/          # Installer, Store package and AppImage templates
 └── build/              # Icons
