@@ -20,7 +20,9 @@ use gpui_kit::component::TitleBar;
 use gpui_kit::{Bounds, WindowBounds, WindowOptions, px, size};
 
 use bootstrap::Bootstrap;
-use preferences::Preferences;
+use preferences::{Preferences, WindowState};
+
+const MIN_SIZE: (f32, f32) = (1080., 640.);
 
 fn main() {
     bifurc_engine_client::crash::install("desktop", env!("CARGO_PKG_VERSION"), SidecarConfig::default().data_dir);
@@ -42,15 +44,25 @@ fn main() {
         commands::register_actions(cx);
 
         // Window geometry is a physical, platform-level choice, not part of the rem-scaled layout.
-        let bounds = Bounds::centered(None, size(px(1440.), px(900.)), cx);
+        // Where it was left is used only while it still shows on a connected display; monitors come and go.
+        let displays: Vec<_> = cx.displays().iter().map(|d| d.bounds()).collect();
+        let window_bounds = Preferences::global(cx).window.and_then(|saved| saved.restore(&displays, MIN_SIZE)).unwrap_or_else(
+            || WindowBounds::Windowed(Bounds::centered(None, size(px(1440.), px(900.)), cx)),
+        );
         let options = WindowOptions {
-            window_bounds: Some(WindowBounds::Windowed(bounds)),
-            window_min_size: Some(size(px(1080.), px(640.))),
+            window_bounds: Some(window_bounds),
+            window_min_size: Some(size(px(MIN_SIZE.0), px(MIN_SIZE.1))),
             // What a Linux desktop matches against `bifurc.desktop` to find the window's icon and name.
             app_id: Some("bifurc".to_owned()),
             ..TitleBar::window_options()
         };
         gpui_kit::open_window(options, cx, |window, cx| {
+            // Written once, as the window closes, so dragging or resizing it never touches the file.
+            window.on_window_should_close(cx, |window, cx| {
+                let state = WindowState::of(window.window_bounds());
+                Preferences::update(cx, |p| p.window = Some(state));
+                true
+            });
             gpui_kit::AppContext::new(cx, |cx| Bootstrap::new(window, cx))
         })
         .expect("failed to open the main window");

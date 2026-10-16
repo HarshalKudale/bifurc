@@ -216,7 +216,6 @@ Everything else the palette lists has a command but no key.
 - Schema explorers for GraphQL, gRPC and SOAP.
 - Installing an update: the app says that a newer version exists and how this install gets it (Settings →
   About, and the footer), and leaves the installing to the Store, the package manager or the downloaded file.
-- Saving the dock layout between runs (the sidebar state and the theme are kept).
 - The engine is not stopped if the UI is killed rather than closed; `bifurc engine stop` stops it.
 
 ## Tests
