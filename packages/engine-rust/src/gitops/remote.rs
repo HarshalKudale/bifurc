@@ -13,13 +13,9 @@
 //! presents is asked who it belongs to. A repository is a workspace when the `workspace.json` at its root
 //! says so.
 //!
-//! Nothing but GitHub is asked: the app is free and has no organizations. Whatever the account can reach
+//! Nothing but GitHub is asked: the app is free. Whatever the account can reach
 //! on GitHub can be imported and synced, with the access GitHub gives it (write where it may push, else
 //! read-only).
-//!
-//! Console shelved (free app): the second yes that used to come from the Bifurc Console is no longer asked
-//! for. It said that someone else's workspace needed the organization it belongs to to have given it to the
-//! account, and could give less than GitHub did. See `console.rs` and `organization.rs`, left on disk.
 
 use std::{
     collections::HashMap,
@@ -31,12 +27,8 @@ use parking_lot::Mutex;
 use serde_json::{Value, json};
 
 use super::{
-    // Console shelved (free app): no console to ask.
-    // console::{self, Denial, Grant},
     git_lock::workspace_lock,
     github::{self, Repo},
-    // Console shelved (free app): no organization to ask about.
-    // organization,
     sync_state::{get_sync_config, save_sync_config, save_sync_meta, sync_meta_value},
 };
 use crate::{
@@ -67,10 +59,6 @@ fn refused(message: impl Into<String>) -> Value {
 /// The `reason` of an import refused because the repository is another account's, which only happens with
 /// team sync off.
 pub const NOT_OWNER: &str = "notOwner";
-
-// Console shelved (free app): the console is never asked, so an import is never refused for it.
-// /// The `reason` of an import refused because the console could not be asked.
-// pub const CONSOLE_UNREACHABLE: &str = "consoleUnreachable";
 
 /// Why an import was refused: what the user is told, and a word for the refusals a client can tell apart.
 struct Refusal {
@@ -237,23 +225,6 @@ fn record_access(ws_id: &str, access: Access) {
     crate::kernel::bus().emit("settings.changed", json!({}));
 }
 
-// Console shelved (free app): access is what GitHub gives; the console no longer narrows it.
-// /// Write access as GitHub gives it, narrowed to what the console gives, for a workspace that is already on
-// /// this device. Only a yes for less, or a no, narrows it: a repository no organization has (one shared
-// /// before there was a console) keeps what GitHub gives, and so does a workspace when the console cannot be
-// /// asked, unless reading was all it had (`recorded`) when it last could.
-// async fn narrowed(github: Access, repo: &Repo, account: &Account, recorded: Option<String>) -> Access {
-//     if github != Access::Write {
-//         return github;
-//     }
-//     match console::check(account.user_id, repo.id).await {
-//         Ok(Grant::Allowed { write: true }) | Ok(Grant::Denied { denial: Denial::Unmanaged, .. }) => Access::Write,
-//         Ok(Grant::Allowed { write: false }) | Ok(Grant::Denied { .. }) => Access::Read,
-//         Err(_) if recorded.as_deref() == Some(Access::Read.as_str()) => Access::Read,
-//         Err(_) => Access::Write,
-//     }
-// }
-
 /// Ask GitHub what the workspace's account may do with its
 /// repository now. `None` for a workspace with no account or no repository.
 pub async fn refresh_access(ws_id: &str) -> Result<Option<Access>, GitError> {
@@ -263,17 +234,12 @@ pub async fn refresh_access(ws_id: &str) -> Result<Option<Access>, GitError> {
         .clone()
         .ok_or_else(|| GitError(format!("Sign in to GitHub as {} to sync this workspace.", account.login)))?;
     let repo = github::get_repo(&token, &repo_name).await.map_err(|e| GitError(flag_if_rejected(&account.id, e)))?;
-    // Console shelved (free app): GitHub's answer is the access; the console no longer narrows it.
-    // let access = narrowed(Access::of(&repo, account.user_id), &repo, &account, workspace_access(ws_id)).await;
     let access = Access::of(&repo, account.user_id);
     KNOWN_ACCESS
         .lock()
         .get_or_insert_with(HashMap::new)
         .insert(access_key(ws_id, &account, &repo_name), (access, Instant::now()));
     record_access(ws_id, access);
-    // Console shelved (free app): whose the workspace is, and what they decided about its analytics, was asked
-    // along with it.
-    // organization::refresh_for(ws_id, &account, repo.id).await;
     Ok(Some(access))
 }
 
@@ -445,8 +411,7 @@ async fn commit_default_global_environment(ws_id: &str) -> Result<(), String> {
 /// Bring a workspace that lives in a repository the account owns, or with team sync one it was given access
 /// to, to this device as a new workspace. Returns `{ ok: true, workspace }` or `{ ok: false, error }`, with
 /// a `reason` for the refusal that is about whose workspace it is: `notOwner` when the repository is
-/// another account's and team sync is off. Console shelved (free app): `unmanaged`, `notGranted`,
-/// `seatInactive` and `consoleUnreachable` are no longer given, the console is never asked.
+/// another account's and team sync is off.
 pub async fn import_workspace(account_id: &str, repo_name: &str) -> Value {
     match import(account_id, repo_name).await {
         Ok(workspace) => json!({ "ok": true, "workspace": workspace }),
@@ -482,27 +447,6 @@ async fn import(account_id: &str, repo_name: &str) -> Result<Value, Refusal> {
     if workspace_for_repo(&repo.full_name).is_some() {
         return Err(format!("{} is already a workspace on this device.", repo.full_name).into());
     }
-// Console shelved (free app): GitHub letting the account in is the whole of it; the console's second yes is gone.
-//     // Someone else's workspace: GitHub letting the account in is half of it. The organization it belongs to
-//     // has to have given it to the account, and no answer is not a yes.
-//     let access = match access {
-//         Access::Owner => access,
-//         _ => match console::check(account.user_id, repo.id).await {
-//             Ok(Grant::Allowed { write: true }) => access,
-//             Ok(Grant::Allowed { write: false }) => Access::Read,
-//             Ok(Grant::Denied { denial, message }) => {
-//                 return Err(Refusal { message, reason: Some(denial.as_str()) });
-//             }
-//             Err(error) => {
-//                 return Err(Refusal {
-//                     message: format!(
-//                         "{error}. A workspace that belongs to {} can only be imported once the console has confirmed                          you were given it. Check your connection and try again.",
-//                         named(&repo.owner_login)
-//                     ),
-//                     reason: Some(CONSOLE_UNREACHABLE),
-//                 });
-//             }
-//         },
 //     };
     // Asked before anything is cloned: a repository that is not a workspace never reaches this device.
     let not_a_workspace = || format!("{} is not a Bifurc workspace: it has no workspace.json of one.", repo.full_name);
@@ -550,19 +494,10 @@ async fn import(account_id: &str, repo_name: &str) -> Result<Value, Refusal> {
         "syncConfig": sync_config_for(&repo, access),
         "syncMeta": sync_meta_value(None, Some(now_ms()), None),
     });
-// Console shelved (free app): no organization is recorded on an imported workspace.
-//     // Whose it is comes with the workspace, so it is known even when the console cannot be asked.
-//     if let Some(organization) = info.as_ref().and_then(|info| organization::declared(info, &account)) {
-//         workspace["organization"] = organization;
-//     }
     settings.workspaces_mut().push(workspace.clone());
     settings.set("activeWorkspaceId", json!(id));
     save_settings(&settings).map_err(|e| e.to_string())?;
-    // Console shelved (free app): analytics are no longer routed by organization, nothing to refresh.
-    // crate::analytics::policies_changed();
     apply_commit_identity(&id).await.map_err(|e| e.to_string())?;
-    // Console shelved (free app): an organization's analytics were its own from the start.
-    // organization::refresh_for(&id, &account, repo.id).await;
     Ok(workspace)
 }
 

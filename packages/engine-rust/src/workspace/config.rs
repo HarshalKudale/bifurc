@@ -21,8 +21,6 @@ use crate::{
     env::effective_environment_id,
     utils::{
         id::generate_id,
-        // Console shelved (free app): `bool_of` read the organization.
-        // json::{array_of, bool_of, opt_str, str_of, truthy},
         json::{array_of, opt_str, str_of, truthy},
     },
 };
@@ -398,8 +396,7 @@ pub fn load_config() -> Value {
 }
 
 /// The part of the snapshot that comes from `app.json`: the settings and the workspace list, with the
-/// account each workspace syncs as and, for an organization's workspace, the organization and whether it has
-/// usage analytics on (`organization`: its `name` and `analytics`; they are not this device's to change). With no workspace in front the entity lists are simply absent.
+/// account each workspace syncs as. With no workspace in front the entity lists are simply absent.
 fn settings_snapshot(settings: &super::settings::AppSettings, active_ws_id: &str) -> Value {
     let accounts = public_accounts();
     let workspaces: Vec<Value> = settings
@@ -407,10 +404,6 @@ fn settings_snapshot(settings: &super::settings::AppSettings, active_ws_id: &str
         .iter()
         .map(|w| {
             let account = accounts.iter().find(|a| str_of(a, "id") == str_of(w, "accountId")).cloned();
-// Console shelved (free app): an `organization` left in app.json by an older version is ignored.
-            // let organization = w.get("organization").filter(|organization| organization.is_object()).map(|known| {
-            //     json!({ "name": str_of(known, "name"), "analytics": bool_of(known, "analytics", false) })
-            // });
             json!({
                 "id": w.get("id").cloned().unwrap_or(Value::Null),
                 "name": w.get("name").cloned().unwrap_or(Value::Null),
@@ -419,8 +412,6 @@ fn settings_snapshot(settings: &super::settings::AppSettings, active_ws_id: &str
                 "account": account,
                 "syncConfig": w.get("syncConfig").cloned().unwrap_or(Value::Null),
                 "syncMeta": w.get("syncMeta").cloned().unwrap_or(Value::Null),
-// Console shelved (free app): the snapshot no longer carries an organization.
-                // "organization": organization,
             })
         })
         .collect();
