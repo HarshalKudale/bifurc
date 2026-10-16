@@ -3,7 +3,10 @@
 //! An environment is `{id, name, variables: [{id, key, value}], createdAt, workspaceId}`. `__global__` always
 //! exists and is merged under the selected environment.
 
-use std::{future::Future, sync::Arc};
+use std::{
+    future::Future,
+    sync::{Arc, LazyLock},
+};
 
 use parking_lot::Mutex;
 use regress::Regex;
@@ -181,7 +184,9 @@ pub fn resolve_vars(text: &str, env: Option<&Value>) -> String {
     }
     let Some(env) = env else { return resolve_randomizers(text) };
     let ws_id = str_of(env, "workspaceId");
-    let pattern = Regex::new(r"\{\{(\w+)(?:\.(\w+))?\}\}").expect("a valid pattern");
+    static PATTERN: LazyLock<Regex> =
+        LazyLock::new(|| Regex::new(r"\{\{(\w+)(?:\.(\w+))?\}\}").expect("a valid pattern"));
+    let pattern = &*PATTERN;
     let mut out = String::with_capacity(text.len());
     let mut last = 0;
     for found in pattern.find_iter(text) {

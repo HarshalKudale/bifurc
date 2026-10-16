@@ -1,6 +1,5 @@
 //! What a condition node decides: the first of its branches whose rules hold.
 
-use regress::Regex;
 use serde_json::Value;
 
 use super::{
@@ -59,7 +58,7 @@ pub fn holds(rule: &Rule, scope: &Scope) -> bool {
         Op::NotContains => !actual.contains(&wanted),
         Op::StartsWith => actual.starts_with(&wanted),
         Op::EndsWith => actual.ends_with(&wanted),
-        Op::Matches => Regex::new(&wanted).is_ok_and(|pattern| pattern.find(&actual).is_some()),
+        Op::Matches => crate::utils::regex::is_match(&wanted, &actual),
         Op::GreaterThan => ordered(|order| order.is_gt()),
         Op::GreaterOrEqual => ordered(|order| order.is_ge()),
         Op::LessThan => ordered(|order| order.is_lt()),

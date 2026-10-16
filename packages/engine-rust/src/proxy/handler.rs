@@ -3,7 +3,6 @@
 
 use std::time::Instant;
 
-use regress::Regex;
 use serde_json::Value;
 use tokio::{
     io::{AsyncRead, AsyncWrite, AsyncWriteExt, copy_bidirectional},
@@ -233,7 +232,7 @@ pub fn match_proxy_rule<'a>(rules: &'a [Value], target_url: &str, mappings: &[Va
     for rule in rules {
         let pattern = str_of(rule, "pattern");
         let matches = if rule.get("useRegex").is_some_and(is_truthy) {
-            Regex::new(pattern).is_ok_and(|re| re.find(target_url).is_some())
+            crate::utils::regex::is_match(pattern, target_url)
         } else {
             target_url == pattern
         };
