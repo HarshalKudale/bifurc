@@ -8,6 +8,7 @@ use serde_json::{Map, Value, json};
 
 use crate::{
     kernel::bus,
+    protocol::EngineError,
     workspace::settings::{load_settings, save_settings},
 };
 
@@ -17,6 +18,9 @@ use crate::{
 pub struct SyncState {
     pub status: String,
     pub error: Option<String>,
+    /// The key and params of `error`, for a client that translates it.
+    pub error_key: Option<String>,
+    pub error_params: Option<Value>,
     pub last_pushed_at: Option<i64>,
     pub last_pulled_at: Option<i64>,
     pub progress_message: Option<String>,
@@ -28,6 +32,8 @@ impl Default for SyncState {
         SyncState {
             status: "idle".to_string(),
             error: None,
+            error_key: None,
+            error_params: None,
             last_pushed_at: None,
             last_pulled_at: None,
             progress_message: None,
@@ -37,10 +43,35 @@ impl Default for SyncState {
 }
 
 impl SyncState {
+    pub fn clear_error(&mut self) {
+        self.error = None;
+        self.error_key = None;
+        self.error_params = None;
+    }
+
+    /// Fail with `error`'s message, key and params.
+    pub fn fail(&mut self, error: &EngineError) {
+        self.status = "error".into();
+        self.error = Some(error.message.clone());
+        self.error_key = error.key().map(str::to_owned);
+        self.error_params = error.params().cloned();
+    }
+
+    /// Take the error a failed result (`failed`, `set_failure`) carries, or clear it when there is none.
+    pub fn error_from(&mut self, result: &Value) {
+        self.error = result.get("error").and_then(Value::as_str).map(str::to_string);
+        self.error_key = result.get("errorKey").and_then(Value::as_str).map(str::to_string);
+        self.error_params = result.get("errorParams").cloned();
+    }
+
     pub fn to_value(&self) -> Value {
         let mut out = Map::new();
         out.insert("status".into(), json!(self.status));
         out.insert("error".into(), json!(self.error));
+        if let (Some(key), Some(params)) = (&self.error_key, &self.error_params) {
+            out.insert("errorKey".into(), json!(key));
+            out.insert("errorParams".into(), params.clone());
+        }
         out.insert("lastPushedAt".into(), json!(self.last_pushed_at));
         out.insert("lastPulledAt".into(), json!(self.last_pulled_at));
         out.insert("progressMessage".into(), json!(self.progress_message));
@@ -49,6 +80,11 @@ impl SyncState {
         }
         Value::Object(out)
     }
+}
+
+/// What a sync command says when the workspace has no remote.
+pub fn no_remote() -> EngineError {
+    EngineError::conflict("No remote configured").keyed("sync.no_remote", json!({}))
 }
 
 static STATES: Mutex<Option<HashMap<String, SyncState>>> = Mutex::new(None);

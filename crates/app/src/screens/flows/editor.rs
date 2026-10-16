@@ -35,7 +35,7 @@ use super::json_view::{Pick, Toggle, flip, json_tree};
 use crate::{
     app_model::{AppModel, ModelEvent},
     components::{KeyValueEvent, KeyValueTable},
-    engine::{call_in, describe},
+    engine::{call_in, describe, error_text},
     i18n::{t, t_with},
     model::{
         ConfigSnapshot, RequestKind,
@@ -620,7 +620,7 @@ impl NodeEditor {
             call_in(&connect_client, window, cx, "mcp.connect", connect, move |this, outcome, _, cx| {
                 let refused = match outcome {
                     Ok(answer) if answer.get("ok").and_then(Value::as_bool) == Some(false) => {
-                        Some(answer.get("error").and_then(Value::as_str).unwrap_or(t("flows.mcp.refused")).to_owned())
+                        Some(error_text(&answer).unwrap_or_else(|| t("flows.mcp.refused").to_owned()))
                     }
                     Ok(_) => None,
                     Err(error) => Some(describe(&error)),

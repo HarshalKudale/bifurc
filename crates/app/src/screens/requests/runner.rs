@@ -27,7 +27,7 @@ use serde_json::{Map, Value, json};
 use crate::{
     app_model::{AppModel, ModelEvent},
     components::{binary::save_to_file, page},
-    engine::{call, describe, failure, fetch_artifact},
+    engine::{call, describe, error_text, failure, fetch_artifact},
     i18n::{t, t_with},
     model::{NodeRef, RequestKind, config::RequestStub},
 };
@@ -392,11 +392,7 @@ impl FolderRunner {
             }
             other => {
                 let message = match &other {
-                    Ok(result) => result
-                        .get("error")
-                        .and_then(Value::as_str)
-                        .unwrap_or(t("requests.runner.engine_refused"))
-                        .to_owned(),
+                    Ok(result) => error_text(result).unwrap_or_else(|| t("requests.runner.engine_refused").to_owned()),
                     Err(error) => describe(error),
                 };
                 this.set_running(false, cx);

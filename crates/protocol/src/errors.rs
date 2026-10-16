@@ -133,6 +133,16 @@ impl EngineError {
         self
     }
 
+    /// The stable key set by [`keyed`](Self::keyed), if any.
+    pub fn key(&self) -> Option<&str> {
+        self.details.as_ref()?.get("key")?.as_str()
+    }
+
+    /// The params set by [`keyed`](Self::keyed), if any.
+    pub fn params(&self) -> Option<&Value> {
+        self.details.as_ref()?.get("params")
+    }
+
     /// The `error` member of a failed response frame.
     pub fn to_rpc(&self) -> Value {
         serde_json::to_value(RpcError::new(self.code, self.message.clone(), self.details.clone()))

@@ -44,7 +44,9 @@ struct Connection {
     attached: Mutex<HashMap<String, ListenerId>>,
 }
 
-fn failure(id: &str, error: &EngineError) -> Value {
+/// The failed response frame for `id`, logged by `command` (when it is one), code and key — never the message.
+fn failure(id: &str, command: Option<&str>, error: &EngineError) -> Value {
+    crate::runtime::log_failure(command, error);
     json!({ "id": id, "ok": false, "error": error.to_rpc() })
 }
 
@@ -81,14 +83,14 @@ impl Connection {
         match action {
             "subscribe" => self.reply(match self.subscribe(&payload) {
                 Ok(events) => success(id, json!({ "events": events })),
-                Err(error) => failure(id, &error),
+                Err(error) => failure(id, Some(action), &error),
             }),
             "unsubscribe" => self.reply(match event_names(&payload, "unsubscribe") {
                 Ok(events) => {
                     self.unsubscribe(&events);
                     success(id, json!({ "events": events }))
                 }
-                Err(error) => failure(id, &error),
+                Err(error) => failure(id, Some(action), &error),
             }),
             HELLO_ACTION => self.reply(success(
                 id,
@@ -105,10 +107,12 @@ impl Connection {
                 tokio::spawn(async move {
                     let registry = connection.opts.registry.clone();
                     let ctx = CommandContext::internal(registry.clone());
-                    connection.reply(match registry.invoke(&action, payload, ctx).await {
-                        Ok(data) => success(&id, data),
-                        Err(error) => failure(&id, &error),
-                    });
+                    connection.reply(
+                        match crate::runtime::with_command(&action, registry.invoke(&action, payload, ctx)).await {
+                            Ok(data) => success(&id, data),
+                            Err(error) => failure(&id, Some(&action), &error),
+                        },
+                    );
                 });
             }
         }
