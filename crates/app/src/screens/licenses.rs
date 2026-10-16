@@ -3,7 +3,7 @@
 //!
 //! Most of those licenses (MIT, BSD, Apache) require the notice to travel with the program, so the page is
 //! where a user can read every one. The notices are data, not code: `licenses/third-party.json` is produced
-//! by `packaging/licenses/generate.py` from the dependency graph and embedded here. Regenerate it whenever
+//! by `cargo xtask licenses` from the dependency graph and embedded here. Regenerate it whenever
 //! dependencies change.
 
 use std::{collections::HashSet, sync::OnceLock};
