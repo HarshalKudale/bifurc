@@ -15,10 +15,10 @@ use gpui_kit::{Action, Context, ParentElement as _, Styled as _, Window};
 use super::{Screen, Shell};
 use crate::{
     commands::{
-        CheckAllHealth, ClearCapture, CloseRequestTab, DeleteEntity, ImportCurlMock, ImportCurlRequest, NewEnvironment,
+        CheckAllHealth, ClearCapture, CloseRequestTab, DeleteEntity, DuplicateEntity, FocusUrl, ImportCurlMock, ImportCurlRequest, NewEnvironment,
         NewFolder, NewGraphQlRequest, NewGrpcRequest, NewHealthCheck, NewMapping, NewMcpRequest, NewMock, NewMockFolder,
         NewProxyRule, NewRestRequest, NewSoapRequest, NewSocketIoRequest, NewSseRequest, NewWebSocketRequest,
-        NewWorkspace, PublishChanges, RefreshServices, ReloadWorkspace, ReopenClosedTab, RenameWorkspace, RestartForwardProxy,
+        NewWorkspace, PublishChanges, RefreshServices, ReloadWorkspace, ReopenClosedTab, RenameEntity, RenameWorkspace, RestartForwardProxy,
         RevertRequest, RunRequest, SaveRequest, ShowAuditLog, ShowCapture, ShowEnvironments, ShowFlows, ShowHealthBar,
         ShowMappings, ShowMocks, ShowProxyRules, ShowRequests, ShowServices, ShowSettings, ShowVaults, ShowWorkspaceConfig,
         SyncEntity, SyncWorkspace, ToggleCapturePaused, ToggleFolderTree, ToggleForwardProxy, ToggleInspector,
@@ -99,6 +99,9 @@ fn command_groups() -> Vec<(&'static str, Vec<CommandRow>)> {
                 (t("shell.palette.save"), IconName::File, Box::new(SaveRequest)),
                 (t("shell.palette.sync_item"), IconName::Github, Box::new(SyncEntity)),
                 (t("shell.palette.revert_item"), IconName::Undo, Box::new(RevertRequest)),
+                (t("shell.palette.duplicate_item"), IconName::Copy, Box::new(DuplicateEntity)),
+                (t("shell.palette.rename_item"), IconName::File, Box::new(RenameEntity)),
+                (t("shell.palette.focus_url"), IconName::Search, Box::new(FocusUrl)),
                 (t("shell.palette.delete_item"), IconName::Delete, Box::new(DeleteEntity)),
                 (t("shell.palette.close_tab"), IconName::Close, Box::new(CloseRequestTab)),
                 (t("shell.palette.reopen_tab"), IconName::Undo, Box::new(ReopenClosedTab)),

@@ -136,7 +136,7 @@ impl VaultsScreen {
         self.run("vault.seal", payload, t("vaults.error_seal"), cx);
     }
 
-    fn prompt_rename(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+    pub fn prompt_rename(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Some(vault) = self.vault(cx) else { return };
         prompt(
             cx.weak_entity(),

@@ -359,6 +359,11 @@ impl McpSession {
         &self.name
     }
 
+    /// The address field, for the key that jumps to it.
+    pub fn url_editor(&self) -> &VarEditor {
+        &self.url
+    }
+
     pub fn is_saving(&self) -> bool {
         self.saving
     }
