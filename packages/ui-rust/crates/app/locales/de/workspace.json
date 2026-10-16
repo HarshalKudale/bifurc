@@ -24,7 +24,7 @@
   "account.paused": "Die Synchronisierung ist pausiert, bis sich @{login} wieder anmeldet.",
   "account.sign_in": "Anmelden…",
   "owner.title": "Eigentümer",
-  "owner.team_description": "Das Konto, dem das Repository des Arbeitsbereichs gehört. Wem es den Arbeitsbereich in der Bifurc Console übergibt, kann ihn importieren und synchronisieren, sofern Schreibzugriff gewährt wurde.",
+  "owner.team_description": "Das Konto, dem das Repository des Arbeitsbereichs gehört. Wer auf GitHub Zugriff auf dieses Repository erhalten hat, kann ihn importieren und synchronisieren, sofern Schreibzugriff gewährt wurde.",
   "owner.description": "Das Konto, dem das Repository des Arbeitsbereichs gehört. Nur der Eigentümer kann ihn importieren oder synchronisieren.",
   "access.title": "Zugriff",
   "access.read_only": "Schreibgeschützt",

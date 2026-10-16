@@ -188,6 +188,17 @@ pub fn workspace_of<'a>(action: &str, params: &'a Value) -> Option<&'a str> {
     }
 }
 
+/// The id of the workspace a command made, which only its result knows: `workspace.add` answers the workspace
+/// itself, `workspace.import` `{ workspace }`. `None` for any other command, and for one that made nothing.
+pub fn made_workspace<'a>(action: &str, result: &'a Value) -> Option<&'a str> {
+    let id = match action {
+        "workspace.add" => result.get("id"),
+        "workspace.import" => result.pointer("/workspace/id"),
+        _ => None,
+    };
+    id.and_then(Value::as_str).filter(|id| !id.is_empty())
+}
+
 /// Whether `action` is something a user does. A read is what an interface does to draw itself (status polls,
 /// lists, variable resolution), apart from the few a user asks for by hand; switching an entity on or off and
 /// the steps of a transfer are not counted either.
