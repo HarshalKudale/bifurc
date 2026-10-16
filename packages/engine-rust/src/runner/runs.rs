@@ -20,6 +20,7 @@ use crate::{
         json::{array_of, str_of},
         replay::decode_base64_lenient,
     },
+    workspace::tree::{self, Scope},
 };
 
 type Run = Arc<Mutex<Value>>;
@@ -160,12 +161,13 @@ async fn run_one(ctx: &CommandContext, ws_id: &str, request: &Value) -> Value {
     }
 }
 
-/// The run's report from its results.
-fn build_report(folder_id: &str, started_at: i64, results: Vec<Value>) -> Value {
+/// The run's report from its results. The folder's name titles an exported report.
+fn build_report(ws_id: &str, folder_id: &str, started_at: i64, results: Vec<Value>) -> Value {
     let tests: Vec<&Value> = results.iter().flat_map(|result| array_of(result, "tests")).collect();
     let passed = tests.iter().filter(|test| test.get("passed").and_then(Value::as_bool) == Some(true)).count();
     json!({
         "folderId": folder_id,
+        "folderName": tree::folder(ws_id, Scope::Requests, folder_id).map(|folder| folder.name),
         "startedAt": started_at,
         "completedAt": now_ms(),
         "totalRequests": results.len(),
@@ -206,7 +208,7 @@ async fn run_collection(
             json!({ "workspaceId": ws_id, "folderId": folder_id, "index": index, "total": total, "result": result }),
         );
     }
-    build_report(&folder_id, started_at, results)
+    build_report(&ws_id, &folder_id, started_at, results)
 }
 
 /// Start a run in the background. `{ ok: true, total }`, or `{ ok: false, error }` if the folder is already
