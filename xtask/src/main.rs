@@ -2,6 +2,7 @@
 //!
 //! ```text
 //! cargo xtask dev-ui                        # debug build of the engine and tray helper, then run the UI (`cargo dev:ui`)
+//! cargo xtask licenses [--check]            # regenerate (or verify) crates/app/licenses/third-party.json
 //! cargo xtask package                       # everything this platform has: packages and store manifests
 //! cargo xtask package --target nsis,msix    # windows: installer exe, Store package
 //! cargo xtask package --target appimage,deb # linux
@@ -45,6 +46,8 @@
 //! The one thing a wrapper adds is `resources/install.json`, which names it (`{"package": "nsis"}`): how the
 //! engine knows how this copy is updated (`crates/engine/src/updates/channel.rs`). The staged folder
 //! itself has none, and is a build.
+
+mod licenses;
 
 use std::{
     env, fs,
@@ -155,9 +158,13 @@ fn run() -> Result<()> {
     match args.next().as_deref() {
         Some("package") => {}
         Some("dev-ui") => return dev_ui(),
+        Some("licenses") => {
+            let repo = Path::new(env!("CARGO_MANIFEST_DIR")).parent().ok_or("no repository above xtask")?;
+            return licenses::run(repo, args.any(|a| a == "--check"));
+        }
         _ => {
             return Err(format!(
-                "usage: cargo xtask dev-ui | cargo xtask package [--target dir,{},{},{}] [--skip-build] [--release-tag <tag>]",
+                "usage: cargo xtask dev-ui | cargo xtask licenses [--check] | cargo xtask package [--target dir,{},{},{}] [--skip-build] [--release-tag <tag>]",
                 WINDOWS_TARGETS.join(","),
                 LINUX_TARGETS.join(","),
                 MACOS_TARGETS.join(",")
@@ -221,6 +228,7 @@ fn run() -> Result<()> {
         release_tag: value_of("--release-tag")?.filter(|tag| !tag.is_empty()).map_or_else(|| format!("v{VERSION}"), str::to_owned),
     };
 
+    licenses::run(&ctx.repo, true)?; // a release must not ship stale notices
     if !skip_build {
         build(&ctx)?;
     }

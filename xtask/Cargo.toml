@@ -4,8 +4,9 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 authors.workspace = true
-description = "Build tasks for the repository: `cargo xtask package`."
+description = "Build tasks for the repository: `cargo xtask package`, `cargo xtask licenses`."
 publish = false
 
 [dependencies]
 sha2 = "0.10"
+serde_json = { version = "1", features = ["preserve_order"] }
