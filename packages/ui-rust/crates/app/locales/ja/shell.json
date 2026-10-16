@@ -114,6 +114,7 @@
   "palette.close_tab": "タブを閉じる",
   "palette.reopen_tab": "閉じたタブを再度開く",
   "palette.new_environment": "新しい環境…",
+  "palette.new_flow": "新しいフロー…",
   "palette.add_workspace": "ワークスペースを追加…",
   "palette.rename_workspace": "このワークスペースの名前を変更…",
   "palette.publish_screen": "この画面の変更を公開",

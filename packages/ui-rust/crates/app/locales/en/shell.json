@@ -114,6 +114,7 @@
   "palette.close_tab": "Close tab",
   "palette.reopen_tab": "Reopen closed tab",
   "palette.new_environment": "New environment…",
+  "palette.new_flow": "New flow…",
   "palette.add_workspace": "Add workspace…",
   "palette.rename_workspace": "Rename this workspace…",
   "palette.publish_screen": "Publish this screen's changes",
