@@ -49,15 +49,47 @@ pub fn trim_log(messages: &mut Vec<Value>, max: usize) {
     }
 }
 
-pub struct Streams<E>(Mutex<HashMap<String, E>>);
+/// Finished entries kept per workspace. The UI re-reads a finished stream's log from the engine when its tab
+/// reopens (`*.status`), and stream sessions are not in response history, so a finished entry is the only
+/// copy: keep the latest few, drop the oldest.
+pub const MAX_FINISHED_PER_WORKSPACE: usize = 20;
+
+pub struct Streams<E> {
+    entries: Mutex<HashMap<String, E>>,
+    /// When each finished entry was first seen finished; lower is older. Only finished entries have one.
+    finished: Mutex<HashMap<String, u64>>,
+}
 
 impl<E: Stream> Streams<E> {
     pub fn new() -> Self {
-        Self(Mutex::new(HashMap::new()))
+        Self { entries: Mutex::new(HashMap::new()), finished: Mutex::new(HashMap::new()) }
     }
 
     pub fn lock(&self) -> MutexGuard<'_, HashMap<String, E>> {
-        self.0.lock()
+        self.entries.lock()
+    }
+
+    /// Drop the oldest finished entries of a workspace beyond `max`. Live entries are never dropped, and a
+    /// later connect to a dropped id simply creates a fresh entry.
+    fn evict_finished(&self, workspace_id: &str, max: usize) {
+        let mut entries = self.entries.lock();
+        let mut finished = self.finished.lock();
+        finished.retain(|key, _| entries.get(key).is_some_and(|e| !e.is_live()));
+        let mut next = finished.values().max().map_or(0, |n| n + 1);
+        let mut mine: Vec<(u64, String)> = Vec::new();
+        for (key, _) in entries.iter().filter(|(_, e)| !e.is_live() && e.workspace_id() == workspace_id) {
+            let stamp = *finished.entry(key.clone()).or_insert_with(|| {
+                next += 1;
+                next - 1
+            });
+            mine.push((stamp, key.clone()));
+        }
+        mine.sort();
+        let excess = mine.len().saturating_sub(max);
+        for (_, key) in mine.into_iter().take(excess) {
+            entries.remove(&key);
+            finished.remove(&key);
+        }
     }
 
     /// The snapshot for one entry, live or finished.
@@ -82,13 +114,14 @@ impl<E: Stream> Streams<E> {
     /// Change the entry of a connection that has not been superseded and emit what `change` returns. `false`
     /// when the connection has been superseded.
     pub fn record(&self, key: &str, generation: u64, change: impl FnOnce(&mut E) -> Vec<Event>) -> bool {
-        let events = {
+        let (events, workspace_id) = {
             let mut entries = self.lock();
             let Some(entry) = entries.get_mut(key).filter(|e| e.generation() == generation) else {
                 return false;
             };
-            change(entry)
+            (change(entry), entry.workspace_id().to_owned())
         };
+        self.evict_finished(&workspace_id, MAX_FINISHED_PER_WORKSPACE);
         emit(events);
         true
     }
@@ -178,5 +211,38 @@ mod tests {
         }));
         assert!(!streams.lock()[&key].live);
         assert!(!streams.record("missing", 1, |_| Vec::new()));
+    }
+
+    #[test]
+    fn the_oldest_finished_entries_go_first_and_live_ones_stay() {
+        let streams = Streams::new();
+        streams.lock().insert(key_of("w", "live"), probe("w", true));
+        streams.lock().insert(key_of("x", "other"), probe("x", false));
+        for id in ["a", "b", "c"] {
+            streams.lock().insert(key_of("w", id), probe("w", true));
+            let key = key_of("w", id);
+            assert!(streams.record(&key, 1, |e| {
+                e.live = false;
+                Vec::new()
+            }));
+            streams.evict_finished("w", 2);
+        }
+        assert!(streams.get("w", "a").is_none());
+        assert!(streams.get("w", "b").is_some() && streams.get("w", "c").is_some());
+        assert!(streams.get("w", "live").is_some() && streams.get("x", "other").is_some());
+    }
+
+    #[test]
+    fn a_reconnect_after_eviction_starts_a_fresh_entry() {
+        let streams = Streams::new();
+        for id in ["a", "b"] {
+            streams.lock().insert(key_of("w", id), probe("w", false));
+        }
+        streams.evict_finished("w", 1);
+        assert!(streams.get("w", "a").is_none() || streams.get("w", "b").is_none());
+        let gone = if streams.get("w", "a").is_none() { "a" } else { "b" };
+        streams.lock().insert(key_of("w", gone), Probe { generation: 1, ..probe("w", true) });
+        assert!(streams.record(&key_of("w", gone), 1, |_| Vec::new()));
+        assert_eq!(streams.live_count("w"), 1);
     }
 }
