@@ -51,7 +51,8 @@ pub struct CertIdentity {
 
 /// The first certificate of a PEM text as DER.
 pub fn first_cert_der(pem: &str) -> Option<Vec<u8>> {
-    rustls_pemfile::certs(&mut pem.as_bytes()).find_map(|c| c.ok()).map(|c| c.as_ref().to_vec())
+    use rustls::pki_types::{CertificateDer, pem::PemObject};
+    CertificateDer::pem_slice_iter(pem.as_bytes()).find_map(|c| c.ok()).map(|c| c.as_ref().to_vec())
 }
 
 fn attribute_label(oid: &str) -> String {
