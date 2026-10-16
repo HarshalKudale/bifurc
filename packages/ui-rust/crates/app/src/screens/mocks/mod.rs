@@ -555,6 +555,35 @@ impl MocksScreen {
         }
     }
 
+    /// The saved mock in front, unless it is deleted or saved by a newer Bifurc.
+    fn active_saved(&self, cx: &Context<Self>) -> Option<(Entity<MockEditor>, String)> {
+        let editor = self.active_editor()?.clone();
+        let id = editor.read(cx).saved_id()?.to_owned();
+        let key = TreeKey::Item(id.clone());
+        let model = self.model.read(cx);
+        (!is_deleted(model, &key) && locked_to(model, &key).is_none()).then_some((editor, id))
+    }
+
+    /// Copies the saved mock in front, as the tab's menu and the tree's do.
+    pub fn duplicate_active(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some((_, id)) = self.active_saved(cx) {
+            self.duplicate(id, window, cx);
+        }
+    }
+
+    /// Renames the mock in front where its name is shown: the tree's prompt refuses an open mock.
+    pub fn rename_active(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(editor) = self.active_editor().cloned() else { return };
+        // A draft has no file to disagree with its name field; a saved mock must be neither deleted nor locked.
+        if self.active_curl().is_some() || (editor.read(cx).saved_id().is_some() && self.active_saved(cx).is_none()) {
+            return;
+        }
+        editor.read(cx).name_input().clone().update(cx, |name, cx| {
+            name.focus(window, cx);
+            name.select_all(window, cx);
+        });
+    }
+
     /// Reopens the newest closed mock that still exists. One already open is brought to the front.
     pub fn reopen_closed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let config = self.model.read(cx).config();
