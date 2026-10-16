@@ -289,9 +289,11 @@ pub fn load_config() -> Value {
     };
     let flows = read_all_entities(ws_id, "flows");
     let mut all_flows: Vec<Value> = flows.iter().map(flow_stub).collect();
-    all_flows.extend(read_locked(ws_id, "flows").into_iter().map(|(id, mut stored, version)| {
-        stored["id"] = json!(id);
-        marked_locked(flow_stub(&stored), &version)
+    // Flows are a tree: its index knows which are locked, and in which folder, as it does for mocks.
+    all_flows.extend(tree::entries(ws_id, Scope::Flows).iter().filter_map(|entry| {
+        let version = entry.lock()?;
+        let listed = json!({ "id": entry.id, "name": entry.name, "folderId": entry.folder_id });
+        Some(marked_locked(flow_stub(&listed), &version))
     }));
     all_flows.extend(pending(ws_id, "flows", &flows, flow_stub));
 
