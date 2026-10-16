@@ -38,7 +38,7 @@
 //! resources/bifurc-cli[.exe]   the CLI (`packages/cli-rust`)
 //! ```
 //!
-//! `packages/ui-rust/crates/engine-client/src/sidecar.rs` and `packages/ui-rust/crates/cli/src/main.rs` look for exactly these paths
+//! `packages/ui-rust/crates/engine-client/src/sidecar.rs` and `packages/ui-rust/crates/cli/src/main.rs` (`bifurc-launcher`) look for exactly these paths
 //! beside their own executable, and the engine finds the tray helper beside itself, so the folder works from
 //! wherever it is put and no installer has to write a configuration.
 //!
@@ -456,33 +456,20 @@ fn release_rustflags(ctx: &Ctx) -> String {
 }
 
 fn build(ctx: &Ctx) -> Result<()> {
-    let rustflags = release_rustflags(ctx);
-    // The engine, the CLI and the MCP server: the repository's own cargo workspace.
-    let mut engine = Command::new("cargo");
-    engine
-        .args(["build", "--release", "--locked", "-p", "bifurc-engine", "-p", "bifurc-cli", "-p", "bifurc-mcp"])
-        .env("RUSTFLAGS", &rustflags)
+    // One workspace, one cargo: the engine, CLI and MCP server, the app (which builds the tray helper beside it,
+    // `packages/ui-rust/crates/app/build.rs`) and the `bifurc` launcher that goes on PATH.
+    let mut cargo = Command::new("cargo");
+    cargo
+        .args(["build", "--release", "--locked"])
+        .args(["-p", "bifurc-engine", "-p", "bifurc-cli", "-p", "bifurc-mcp", "-p", "bifurc-ui", "-p", "bifurc-launcher"])
+        .env("RUSTFLAGS", release_rustflags(ctx))
         .current_dir(&ctx.repo);
-    // The UI workspace: the app, which builds the tray helper beside it (`packages/ui-rust/crates/app/build.rs`), and the
-    // `bifurc` launcher that goes on PATH.
-    let mut ui = Command::new("cargo");
-    ui.args(["build", "--release", "--locked", "-p", "bifurc-ui", "-p", "bifurc-cli"])
-        .env("RUSTFLAGS", &rustflags)
-        .current_dir(ctx.repo.join("packages").join("ui-rust"));
-    // The two workspaces have their own target directories, so they build side by side: a fat-LTO link runs on
-    // one core, and the other build uses the rest.
-    std::thread::scope(|scope| {
-        let engine = scope.spawn(|| exec(engine, false));
-        let ui = exec(ui, false);
-        engine.join().unwrap_or_else(|_| Err("the engine build panicked".to_owned()))?;
-        ui
-    })
+    exec(cargo, false)
 }
 
-/// A release build from `workspace` (the repository root, or `ui`).
-fn cargo_output(ctx: &Ctx, name: &str, root: bool) -> Result<PathBuf> {
-    let base = if root { ctx.repo.clone() } else { ctx.repo.join("packages").join("ui-rust") };
-    let target_dir = env_path("CARGO_TARGET_DIR").map_or_else(|| base.join("target"), |dir| base.join(dir));
+/// A release build of `name` from the repository's cargo target directory.
+fn cargo_output(ctx: &Ctx, name: &str) -> Result<PathBuf> {
+    let target_dir = env_path("CARGO_TARGET_DIR").map_or_else(|| ctx.repo.join("target"), |dir| ctx.repo.join(dir));
     let file = target_dir.join("release").join(name);
     if file.exists() { Ok(file) } else { Err(format!("{} is missing — build first (drop --skip-build)", file.display())) }
 }
@@ -500,15 +487,15 @@ fn stage(ctx: &Ctx) -> Result<PathBuf> {
         "linux-unpacked"
     });
     empty_dir(&dir)?;
-    copy_file(&cargo_output(ctx, &format!("bifurc-ui{EXE}"), false)?, &dir.join(format!("bifurc-ui{EXE}")))?;
-    copy_file(&cargo_output(ctx, &format!("bifurc-tray{EXE}"), false)?, &dir.join(format!("bifurc-tray{EXE}")))?;
+    copy_file(&cargo_output(ctx, &format!("bifurc-ui{EXE}"))?, &dir.join(format!("bifurc-ui{EXE}")))?;
+    copy_file(&cargo_output(ctx, &format!("bifurc-tray{EXE}"))?, &dir.join(format!("bifurc-tray{EXE}")))?;
     make_executable(&dir.join(format!("bifurc-tray{EXE}")))?;
-    // The launcher (ui workspace) is `bin/bifurc`; the CLI it runs (repository workspace) and the engine are the others.
-    copy_file(&cargo_output(ctx, &format!("bifurc{EXE}"), false)?, &dir.join("bin").join(format!("bifurc{EXE}")))?;
-    copy_file(&cargo_output(ctx, &format!("bifurc{EXE}"), true)?, &dir.join("resources").join(format!("bifurc-cli{EXE}")))?;
+    // The launcher is `bin/bifurc`; the CLI it runs and the engine are the others.
+    copy_file(&cargo_output(ctx, &format!("bifurc-launcher{EXE}"))?, &dir.join("bin").join(format!("bifurc{EXE}")))?;
+    copy_file(&cargo_output(ctx, &format!("bifurc{EXE}"))?, &dir.join("resources").join(format!("bifurc-cli{EXE}")))?;
     // The MCP server is a command of its own: it finds the engine above its `bin/` (`cli-rust/src/locate.rs`).
-    copy_file(&cargo_output(ctx, &format!("bifurc-mcp{EXE}"), true)?, &dir.join("resources").join(format!("bifurc-mcp{EXE}")))?;
-    copy_file(&cargo_output(ctx, &format!("bifurc-engine{EXE}"), true)?, &dir.join(format!("bifurc-engine{EXE}")))?;
+    copy_file(&cargo_output(ctx, &format!("bifurc-mcp{EXE}"))?, &dir.join("resources").join(format!("bifurc-mcp{EXE}")))?;
+    copy_file(&cargo_output(ctx, &format!("bifurc-engine{EXE}"))?, &dir.join(format!("bifurc-engine{EXE}")))?;
     copy_file(&ctx.repo.join("build").join("icon.png"), &dir.join("resources").join("icon.png"))?;
     copy_file(&ctx.repo.join("LICENSE"), &dir.join("LICENSE"))?;
     for file in [format!("bifurc-ui{EXE}"), format!("bifurc-engine{EXE}"), format!("bin/bifurc{EXE}"), format!("resources/bifurc-mcp{EXE}"), format!("resources/bifurc-cli{EXE}")] {

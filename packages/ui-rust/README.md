@@ -28,7 +28,7 @@ engine, and `bootstrap.rs` the root view that is on screen before the engine is.
 ## Run
 
 Prerequisites: Rust (stable, 2024 edition). The engine and the CLI are Rust too (`packages/engine-rust`,
-`packages/cli-rust`, the repository's own cargo workspace).
+`packages/cli-rust`); all of them are members of the one cargo workspace at the repository root.
 
 ```sh
 cargo dev:ui           # from the repository root: runs the UI, which joins a running engine or starts one
@@ -83,7 +83,7 @@ Rust engine, the tray helper (Windows), and the `bifurc` command. No Node is shi
 bifurc-ui[.exe]      the interface
 bifurc-engine[.exe]  the engine (packages/engine-rust)
 bifurc-tray.exe      the engine's tray icon (Windows)
-bin/bifurc[.exe]     the bifurc command (crates/cli): a launcher that runs resources/bifurc-cli and points it at the engine
+bin/bifurc[.exe]     the bifurc command (crates/cli, built as bifurc-launcher): a launcher that runs resources/bifurc-cli and points it at the engine
 resources/bifurc-cli[.exe]   the CLI (packages/cli-rust)
 ```
 

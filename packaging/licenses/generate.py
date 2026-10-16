@@ -3,7 +3,7 @@
 
     python packaging/licenses/generate.py
 
-It reads `cargo metadata` for both workspaces (the engine here, the desktop app in `packages/ui-rust`), follows normal
+It reads `cargo metadata` for the workspace (the engine and the desktop app in `packages/ui-rust`), follows normal
 dependencies only (build tools and test crates are not shipped), and for each crate takes its LICENSE/COPYING/
 NOTICE files from the cargo registry. A crate that publishes no license file gets the standard text of its
 license, with its authors as the copyright holder. Texts are grouped by license and de-duplicated, so a notice
@@ -149,7 +149,7 @@ def standard_text(kind, who, library):
 
 def main():
     crates = {}
-    for manifest in ("Cargo.toml", "packages/ui-rust/Cargo.toml"):
+    for manifest in ("Cargo.toml",):
         for p in shipped(ROOT / manifest):
             if not p["name"].startswith("bifurc-"):
                 crates.setdefault((p["name"], p["version"]), p)

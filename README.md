@@ -96,8 +96,8 @@ Load the `bifurc-extension` repository's folder unpacked in Chrome or Edge to:
 ## Testing
 
 ```bash
-cargo test --workspace                                  # protocol, engine, CLI
-cargo test --workspace --manifest-path packages/ui-rust/Cargo.toml    # UI
+cargo test                # protocol, engine, CLI, MCP server (the default members)
+cargo test --workspace    # and the UI crates, which need GPUI's build dependencies
 ```
 
 ## Licensing
