@@ -13,7 +13,7 @@ use gpui_kit::component::{
 };
 use gpui_kit::{
     AppContext as _, Context, Entity, EventEmitter, InteractiveElement as _, IntoElement, ParentElement as _, Render,
-    SharedString, StatefulInteractiveElement as _, Styled as _, Subscription, Window, div,
+    SharedString, StatefulInteractiveElement as _, Styled, Subscription, Window, div, px,
 };
 
 use super::var_editor::VarEditor;
@@ -135,8 +135,16 @@ impl KeyValueTable {
 }
 
 impl Render for KeyValueTable {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
+        // A flow node zooms what is in it by the rem (16 px unzoomed); the fields, sized in pixels, follow it.
+        let scale = window.rem_size() / px(16.);
+        let row_height = VarEditor::row_height_at(scale, cx);
+        // The kit's editor pads its line by 8 px above and below, 6 px left and 10 px right, whatever the zoom.
+        // The box is drawn here instead, and the editor overhangs it by the share of padding the zoom takes away.
+        let (cut_y, cut_left, cut_right) = (px(8.) * (1. - scale), px(6.) * (1. - scale), px(10.) * (1. - scale));
+        let editor_background =
+            theme.highlight_theme.style.editor_background.unwrap_or_else(|| theme.input_background());
         let last = self.rows.len().saturating_sub(1);
         let readonly = self.readonly;
         v_flex()
@@ -162,8 +170,34 @@ impl Render for KeyValueTable {
                 h_flex()
                     .id(("pair", id))
                     .gap_2()
-                    .child(div().w_1_3().min_w_0().child(VarEditor::row_input(&row.key, cx)))
-                    .child(div().flex_1().min_w_0().child(row.value.line_field(cx)))
+                    .child(
+                        div().w_1_3().min_w_0().child(
+                            Styled::h(VarEditor::row_input(&row.key, cx), row_height)
+                                .px(px(10.) * scale)
+                                .py(px(8.) * scale),
+                        ),
+                    )
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .relative()
+                            .h(row_height)
+                            .overflow_hidden()
+                            .rounded(theme.radius)
+                            .border_1()
+                            .border_color(theme.input)
+                            .bg(editor_background)
+                            .child(
+                                div().absolute().top(-cut_y).bottom(-cut_y).left(-cut_left).right(-cut_right).child(
+                                    row.value
+                                        .line_field(cx)
+                                        .appearance(false)
+                                        .size_full()
+                                        .text_size(theme.mono_font_size * scale),
+                                ),
+                            ),
+                    )
                     .child(div().w_6().flex_none().children(removable.then(|| {
                         Button::new(("remove-pair", id))
                             .icon(IconName::Close)

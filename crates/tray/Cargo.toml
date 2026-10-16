@@ -29,6 +29,10 @@ windows-sys = { version = "0.59", features = [
     "Win32_UI_WindowsAndMessaging",
 ] }
 
+# The executable's icon (what Task Manager and Explorer show) is a resource compiled in by build.rs.
+[target.'cfg(windows)'.build-dependencies]
+winresource = "0.1"
+
 # The menu-bar icon needs AppKit's event loop.
 [target.'cfg(target_os = "macos")'.dependencies]
 objc2 = "0.6"
