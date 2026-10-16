@@ -492,6 +492,7 @@ impl WorkspaceScreen {
                             .child(
                                 div()
                                     .flex_1()
+                                    .min_w_0()
                                     .text_color(cx.theme().muted_foreground)
                                     .child(t("workspace.sync.git_missing")),
                             )

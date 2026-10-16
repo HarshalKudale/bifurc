@@ -45,9 +45,7 @@ fn a_published_workspace_can_pull_and_push(cx: &mut gpui_kit::TestAppContext) {
 
 #[gpui_kit::test]
 fn without_git_the_screen_says_so_and_can_check_again(cx: &mut gpui_kit::TestAppContext) {
-    // The "git is missing" row is wider than the window; a wide one keeps its button in reach.
-    let wide = gpui_kit::size(gpui_kit::px(2600.), gpui_kit::px(900.));
-    let mut ui = Ui::open_sized(cx, wide, |fake| {
+    let mut ui = Ui::open(cx, |fake| {
         fake.reply("setup.getState", json!({"gitInstalled": false, "onboarded": true}));
     });
     ui.show(Screen::WorkspaceConfig);
