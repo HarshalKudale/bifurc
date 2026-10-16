@@ -19,13 +19,16 @@ const MAIN_THREAD_STACK_BYTES: usize = 8 * 1024 * 1024;
 
 fn main() {
     println!("cargo:rerun-if-changed=build.rs");
-    if env::var("CARGO_CFG_TARGET_OS").as_deref() != Ok("windows") {
+    let target_os = env::var("CARGO_CFG_TARGET_OS").unwrap_or_default();
+    if target_os != "windows" && target_os != "macos" {
         return;
     }
-    if env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc") {
-        println!("cargo:rustc-link-arg-bins=/STACK:{MAIN_THREAD_STACK_BYTES}");
-    } else {
-        println!("cargo:rustc-link-arg-bins=-Wl,--stack,{MAIN_THREAD_STACK_BYTES}");
+    if target_os == "windows" {
+        if env::var("CARGO_CFG_TARGET_ENV").as_deref() == Ok("msvc") {
+            println!("cargo:rustc-link-arg-bins=/STACK:{MAIN_THREAD_STACK_BYTES}");
+        } else {
+            println!("cargo:rustc-link-arg-bins=-Wl,--stack,{MAIN_THREAD_STACK_BYTES}");
+        }
     }
     if let Err(problem) = build_tray_helper() {
         println!("cargo:warning=the tray helper was not built, so the engine will have no tray icon: {problem}");
@@ -94,7 +97,7 @@ fn build_tray_helper() -> Result<(), String> {
         return Err(format!("cargo build of the helper failed ({status})"));
     }
 
-    let name = "bifurc-tray.exe";
+    let name = if env::var("CARGO_CFG_TARGET_OS").as_deref() == Ok("windows") { "bifurc-tray.exe" } else { "bifurc-tray" };
     let built = helper_target.join(&target).join("release").join(name);
     let beside_app = profile_dir.join(name);
     match fs::copy(&built, &beside_app) {

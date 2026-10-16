@@ -23,11 +23,12 @@ pub enum Channel {
     Deb,
     Aur,
     Tarball,
+    Dmg,
     /// Not an install: a build run from where it was built.
     Unknown,
 }
 
-const ALL: [Channel; 10] = [
+const ALL: [Channel; 11] = [
     Channel::Store,
     Channel::Installer,
     Channel::Winget,
@@ -37,6 +38,7 @@ const ALL: [Channel; 10] = [
     Channel::Deb,
     Channel::Aur,
     Channel::Tarball,
+    Channel::Dmg,
     Channel::Unknown,
 ];
 
@@ -52,6 +54,7 @@ impl Channel {
             Channel::Deb => "deb",
             Channel::Aur => "aur",
             Channel::Tarball => "tarball",
+            Channel::Dmg => "dmg",
             Channel::Unknown => "unknown",
         }
     }
@@ -78,6 +81,7 @@ impl Channel {
             Channel::AppImage => ("appimage", if arm { "aarch64" } else { "x86_64" }),
             Channel::Deb => ("deb", if arm { "arm64" } else { "amd64" }),
             Channel::Tarball => ("tarball", if arm { "aarch64" } else { "x86_64" }),
+            Channel::Dmg => ("dmg", if arm { "arm64" } else { "x64" }),
             _ => return None,
         };
         Some(format!("{package}-{arch}"))
@@ -111,6 +115,7 @@ pub fn channel_of(app_dir: &Path) -> Channel {
         Some("deb") => Channel::Deb,
         Some("tarball") if path.starts_with("/usr/") => Channel::Aur,
         Some("tarball") => Channel::Tarball,
+        Some("dmg") => Channel::Dmg,
         _ => Channel::Unknown,
     }
 }
@@ -154,6 +159,7 @@ mod tests {
             ("appimage", Channel::AppImage),
             ("deb", Channel::Deb),
             ("tarball", Channel::Tarball),
+            ("dmg", Channel::Dmg),
         ] {
             let (_root, dir) = app(package, &["app"]);
             assert_eq!(channel_of(&dir), channel, "{package}");
