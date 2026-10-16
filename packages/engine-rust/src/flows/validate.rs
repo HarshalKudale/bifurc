@@ -1,7 +1,10 @@
 //! What is wrong with a flow before it runs, and what a client needs to draw it: each node's ports, the
 //! request it names and the inputs it takes, with where each gets its value.
 
-use std::collections::{HashMap, HashSet};
+use std::{
+    collections::{HashMap, HashSet},
+    sync::LazyLock,
+};
 
 use regress::Regex;
 use serde_json::{Map, Value, json};
@@ -312,7 +315,8 @@ pub fn check(ws_id: &str, flow: &Flow) -> Vec<Problem> {
 
 /// The names of the `{{variables}}` a saved request takes, in the order it first uses them.
 fn variables_of(entity: &Value) -> Vec<String> {
-    let pattern = Regex::new(r"\{\{(\w+)\}\}").expect("a valid pattern");
+    static PATTERN: LazyLock<Regex> = LazyLock::new(|| Regex::new(r"\{\{(\w+)\}\}").expect("a valid pattern"));
+    let pattern = &*PATTERN;
     let text = entity.to_string();
     let mut names: Vec<String> = Vec::new();
     for found in pattern.find_iter(&text) {

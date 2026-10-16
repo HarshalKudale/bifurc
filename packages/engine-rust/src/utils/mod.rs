@@ -11,5 +11,6 @@ pub mod net;
 pub mod process;
 pub mod random_names;
 pub mod randomizer;
+pub mod regex;
 pub mod replay;
 pub mod send_html;
