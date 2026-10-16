@@ -10,3 +10,6 @@ publish = false
 [dependencies]
 sha2 = "0.10"
 serde_json = { version = "1", features = ["preserve_order"] }
+
+[lints]
+workspace = true

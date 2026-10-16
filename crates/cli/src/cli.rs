@@ -167,19 +167,19 @@ pub fn run_with_env(
 ) -> i32 {
     // `bifurc vault run <vault> -- <command…>`: what follows `--` is the command to run, not arguments of
     // ours, and the exit code is that command's.
-    if let Some(split) = argv.iter().position(|a| a == "--") {
-        if let Ok(head) = parse_args(&argv[..split]) {
-            if is_vault_run(&head) && !head.has("help") {
-                let data_dir = data_dir_of(&head, env_data_dir);
-                return match vault::run(&mut context(&head, &data_dir), &argv[split + 1..]) {
-                    Ok(code) => code,
-                    Err(err) => {
-                        let _ = writeln!(stderr, "{}", err.line());
-                        1
-                    }
-                };
+    if let Some(split) = argv.iter().position(|a| a == "--")
+        && let Ok(head) = parse_args(&argv[..split])
+        && is_vault_run(&head)
+        && !head.has("help")
+    {
+        let data_dir = data_dir_of(&head, env_data_dir);
+        return match vault::run(&mut context(&head, &data_dir), &argv[split + 1..]) {
+            Ok(code) => code,
+            Err(err) => {
+                let _ = writeln!(stderr, "{}", err.line());
+                1
             }
-        }
+        };
     }
     let args = match parse_args(argv) {
         Ok(args) => args,

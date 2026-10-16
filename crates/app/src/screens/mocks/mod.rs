@@ -136,7 +136,8 @@ impl MocksScreen {
             }),
             cx.subscribe_in(&tree, window, Self::on_tree_event),
         ];
-        let this = Self {
+
+        Self {
             model,
             tree,
             tabs: Vec::new(),
@@ -149,8 +150,7 @@ impl MocksScreen {
             next_draft: 1,
             closed: ClosedTabs::new(),
             _subscriptions: subscriptions,
-        };
-        this
+        }
     }
 
     pub fn active_editor(&self) -> Option<&Entity<MockEditor>> {

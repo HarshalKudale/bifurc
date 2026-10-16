@@ -90,12 +90,11 @@ fn resolve_companions(
         .or_else(|| env_tray.map(PathBuf::from))
         .or_else(|| search_upward(starts, &tray_binary()));
     let mut ui = ui.map(PathBuf::from).or_else(|| env_ui.map(PathBuf::from));
-    if ui.is_none() {
-        if let Some(sibling) = tray.as_deref().and_then(Path::parent).map(|dir| dir.join(ui_binary())) {
-            if sibling.exists() {
-                ui = Some(sibling);
-            }
-        }
+    if ui.is_none()
+        && let Some(sibling) = tray.as_deref().and_then(Path::parent).map(|dir| dir.join(ui_binary()))
+        && sibling.exists()
+    {
+        ui = Some(sibling);
     }
     DesktopCompanions { tray, ui }
 }
@@ -343,11 +342,11 @@ mod tests {
         let nested = root.join("a").join("b");
         std::fs::create_dir_all(&nested).unwrap();
         touch(&root.join("target").join("debug").join(tray_binary()));
-        let found = resolve_companions(None, None, None, None, &[nested.clone()]);
+        let found = resolve_companions(None, None, None, None, std::slice::from_ref(&nested));
         assert_eq!(found.tray, Some(root.join("target").join("debug").join(tray_binary())));
 
         touch(&root.join("target").join("release").join(tray_binary()));
-        let found = resolve_companions(None, None, None, None, &[nested.clone()]);
+        let found = resolve_companions(None, None, None, None, std::slice::from_ref(&nested));
         assert_eq!(found.tray, Some(root.join("target").join("release").join(tray_binary())));
 
         touch(&root.join(tray_binary()));

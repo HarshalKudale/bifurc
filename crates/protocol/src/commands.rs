@@ -97,70 +97,66 @@ fn check(schema: &Value, value: &Value, path: &str) -> Result<Value, String> {
     }
 
     match schema.get("type") {
-        Some(Value::String(expected)) => {
-            if !type_matches(expected, value) {
-                return Err(format!("{}: expected {expected}, received {}", at(path), type_name(value)));
-            }
+        Some(Value::String(expected)) if !type_matches(expected, value) => {
+            return Err(format!("{}: expected {expected}, received {}", at(path), type_name(value)));
         }
-        Some(Value::Array(allowed)) => {
-            if !allowed.iter().filter_map(Value::as_str).any(|t| type_matches(t, value)) {
-                let names: Vec<&str> = allowed.iter().filter_map(Value::as_str).collect();
-                return Err(format!("{}: expected {}, received {}", at(path), names.join(" or "), type_name(value)));
-            }
+        Some(Value::Array(allowed)) if !allowed.iter().filter_map(Value::as_str).any(|t| type_matches(t, value)) => {
+            let names: Vec<&str> = allowed.iter().filter_map(Value::as_str).collect();
+            return Err(format!("{}: expected {}, received {}", at(path), names.join(" or "), type_name(value)));
         }
         _ => {}
     }
 
-    if let Some(allowed) = schema.get("enum").and_then(Value::as_array) {
-        if !allowed.contains(value) {
-            let names: Vec<String> = allowed.iter().map(Value::to_string).collect();
-            return Err(format!("{}: expected one of {}", at(path), names.join(" | ")));
-        }
+    if let Some(allowed) = schema.get("enum").and_then(Value::as_array)
+        && !allowed.contains(value)
+    {
+        let names: Vec<String> = allowed.iter().map(Value::to_string).collect();
+        return Err(format!("{}: expected one of {}", at(path), names.join(" | ")));
     }
-    if let Some(expected) = schema.get("const") {
-        if expected != value {
-            return Err(format!("{}: expected {expected}", at(path)));
-        }
+    if let Some(expected) = schema.get("const")
+        && expected != value
+    {
+        return Err(format!("{}: expected {expected}", at(path)));
     }
 
     match value {
         Value::String(text) => {
-            if let Some(min) = schema.get("minLength").and_then(Value::as_u64) {
-                if (text.chars().count() as u64) < min {
-                    return Err(format!("{}: expected at least {min} character(s)", at(path)));
-                }
+            if let Some(min) = schema.get("minLength").and_then(Value::as_u64)
+                && (text.chars().count() as u64) < min
+            {
+                return Err(format!("{}: expected at least {min} character(s)", at(path)));
             }
             Ok(value.clone())
         }
         Value::Number(number) => {
             let n = number.as_f64().unwrap_or(f64::NAN);
-            if let Some(min) = schema.get("minimum").and_then(Value::as_f64) {
-                if n < min {
-                    return Err(format!("{}: expected a number >= {min}", at(path)));
-                }
+            if let Some(min) = schema.get("minimum").and_then(Value::as_f64)
+                && n < min
+            {
+                return Err(format!("{}: expected a number >= {min}", at(path)));
             }
-            if let Some(max) = schema.get("maximum").and_then(Value::as_f64) {
-                if n > max {
-                    return Err(format!("{}: expected a number <= {max}", at(path)));
-                }
+            if let Some(max) = schema.get("maximum").and_then(Value::as_f64)
+                && n > max
+            {
+                return Err(format!("{}: expected a number <= {max}", at(path)));
             }
-            if let Some(min) = schema.get("exclusiveMinimum").and_then(Value::as_f64) {
-                if n <= min {
-                    return Err(format!("{}: expected a number > {min}", at(path)));
-                }
+            if let Some(min) = schema.get("exclusiveMinimum").and_then(Value::as_f64)
+                && n <= min
+            {
+                return Err(format!("{}: expected a number > {min}", at(path)));
             }
-            if let Some(max) = schema.get("exclusiveMaximum").and_then(Value::as_f64) {
-                if n >= max {
-                    return Err(format!("{}: expected a number < {max}", at(path)));
-                }
+            if let Some(max) = schema.get("exclusiveMaximum").and_then(Value::as_f64)
+                && n >= max
+            {
+                return Err(format!("{}: expected a number < {max}", at(path)));
             }
             Ok(value.clone())
         }
         Value::Array(items) => {
-            if let Some(min) = schema.get("minItems").and_then(Value::as_u64) {
-                if (items.len() as u64) < min {
-                    return Err(format!("{}: expected at least {min} item(s)", at(path)));
-                }
+            if let Some(min) = schema.get("minItems").and_then(Value::as_u64)
+                && (items.len() as u64) < min
+            {
+                return Err(format!("{}: expected at least {min} item(s)", at(path)));
             }
             match schema.get("items") {
                 Some(item_schema) => {

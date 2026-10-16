@@ -133,7 +133,7 @@ mod tests {
         assert_eq!(out.unwrap(), "SSE disconnected  http://x/events");
         let key = json!({"workspaceId": "w1", "streamId": "e1"});
         // A saved stream is opened by its id: the connect carries nothing of the request.
-        assert_eq!(payloads(&calls, "sse.connect"), [key.clone()]);
+        assert_eq!(payloads(&calls, "sse.connect"), std::slice::from_ref(&key));
         assert_eq!(payloads(&calls, "sse.disconnect"), [key]);
     }
 

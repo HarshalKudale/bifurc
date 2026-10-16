@@ -95,41 +95,39 @@ async fn discard_locked(ws_id: &str, rel_path: &str) -> Value {
 
     // A deleted entity comes back into its folder, so a deleted folder is a folder again first: the
     // directory the checkout makes must be that folder's, not a new one's.
-    if let Some(record) = entity_id.as_deref().and_then(|id| pending_entity(ws_id, &kind, id)) {
-        if let Some(folder_id) = opt_str(&record, "folderId") {
-            if let Err(e) = restore_folder_chain(ws_id, &kind, folder_id) {
-                return json!({ "ok": false, "error": e.to_string() });
-            }
-        }
+    if let Some(record) = entity_id.as_deref().and_then(|id| pending_entity(ws_id, &kind, id))
+        && let Some(folder_id) = opt_str(&record, "folderId")
+        && let Err(e) = restore_folder_chain(ws_id, &kind, folder_id)
+    {
+        return json!({ "ok": false, "error": e.to_string() });
     }
 
     let mut checkout_succeeded =
         with_index_lock_retry(ws_id, &["checkout", "HEAD", "--", normalized.as_str()]).await.is_ok();
 
     // Maybe git tracks it under a different subfolder path.
-    if !checkout_succeeded && base.ends_with(".json") {
-        if let Ok(listed) = git(ws_id, &["ls-files", &format!("*{base}")]).await {
-            if let Some(tracked) = listed.lines().map(str::trim).find(|l| !l.is_empty()) {
-                normalized = tracked.replace('\\', "/");
-                checkout_succeeded =
-                    with_index_lock_retry(ws_id, &["checkout", "HEAD", "--", normalized.as_str()]).await.is_ok();
-            }
-        }
+    if !checkout_succeeded
+        && base.ends_with(".json")
+        && let Ok(listed) = git(ws_id, &["ls-files", &format!("*{base}")]).await
+        && let Some(tracked) = listed.lines().map(str::trim).find(|l| !l.is_empty())
+    {
+        normalized = tracked.replace('\\', "/");
+        checkout_succeeded =
+            with_index_lock_retry(ws_id, &["checkout", "HEAD", "--", normalized.as_str()]).await.is_ok();
     }
 
     if !checkout_succeeded {
         let mut full_path = ws_dir(ws_id).join(&normalized);
-        if !full_path.exists() {
-            if let Some(id) = &entity_id {
-                if let Some(disk_rel) = find_entity_rel_path(ws_id, &kind, id) {
-                    full_path = ws_dir(ws_id).join(disk_rel);
-                }
-            }
+        if !full_path.exists()
+            && let Some(id) = &entity_id
+            && let Some(disk_rel) = find_entity_rel_path(ws_id, &kind, id)
+        {
+            full_path = ws_dir(ws_id).join(disk_rel);
         }
-        if full_path.exists() {
-            if let Err(e) = std::fs::remove_file(&full_path) {
-                return json!({ "ok": false, "error": e.to_string() });
-            }
+        if full_path.exists()
+            && let Err(e) = std::fs::remove_file(&full_path)
+        {
+            return json!({ "ok": false, "error": e.to_string() });
         }
     }
 
@@ -138,10 +136,10 @@ async fn discard_locked(ws_id: &str, rel_path: &str) -> Value {
 
     if let Some(id) = &entity_id {
         for k in ALL_ENTITY_KINDS {
-            if get_pending_deletions(ws_id, k).iter().any(|e| str_of(e, "id") == id) {
-                if let Err(e) = remove_pending_deletion(ws_id, k, id) {
-                    return json!({ "ok": false, "error": e.to_string() });
-                }
+            if get_pending_deletions(ws_id, k).iter().any(|e| str_of(e, "id") == id)
+                && let Err(e) = remove_pending_deletion(ws_id, k, id)
+            {
+                return json!({ "ok": false, "error": e.to_string() });
             }
         }
 

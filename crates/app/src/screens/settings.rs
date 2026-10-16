@@ -453,7 +453,7 @@ impl SettingsScreen {
                     .with_size(options.size())
                     .label(if listener.running { t("settings.listener.stop") } else { t("settings.listener.start") })
                     .loading(listener.busy)
-                    .on_click(move |_, _, cx| toggle_model.update(cx, |m, cx| toggle(m, cx))),
+                    .on_click(move |_, _, cx| toggle_model.update(cx, toggle)),
             )
         })
         .keywords(keywords)

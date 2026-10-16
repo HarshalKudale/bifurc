@@ -54,12 +54,11 @@ async fn pull(ws_id: &str, branch: &str) -> Result<PullOutcome, GitError> {
     };
 
     let mut stashed = false;
-    if let Ok(status) = git(ws_id, &["status", "--porcelain", "--untracked-files=all"]).await {
-        if !status.trim().is_empty()
-            && git(ws_id, &["stash", "push", "--include-untracked", "-m", "auto-stash before pull"]).await.is_ok()
-        {
-            stashed = true;
-        }
+    if let Ok(status) = git(ws_id, &["status", "--porcelain", "--untracked-files=all"]).await
+        && !status.trim().is_empty()
+        && git(ws_id, &["stash", "push", "--include-untracked", "-m", "auto-stash before pull"]).await.is_ok()
+    {
+        stashed = true;
     }
 
     if git(ws_id, &["merge", &remote_ref, "--no-edit"]).await.is_err() {

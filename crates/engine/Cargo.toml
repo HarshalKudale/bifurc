@@ -99,3 +99,6 @@ tower-service = "0.3"
 tonic = { version = "0.14", default-features = false, features = ["transport", "router"] }
 tempfile = "3"
 tokio = { version = "1", features = ["full", "test-util"] }
+
+[lints]
+workspace = true

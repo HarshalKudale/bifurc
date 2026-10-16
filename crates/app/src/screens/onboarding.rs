@@ -648,7 +648,7 @@ impl Onboarding {
                         "onboarding.preferences.theme.light"
                     });
                     let label: SharedString =
-                        if name.contains(&mode) { name.clone() } else { format!("{name} ({mode})").into() };
+                        if name.contains(mode) { name.clone() } else { format!("{name} ({mode})").into() };
                     let name = name.clone();
                     menu.item(PopupMenuItem::new(label).checked(name == chosen).on_click(move |_, _, cx| {
                         if theme::apply(&name, cx) {
@@ -785,7 +785,7 @@ impl Onboarding {
                 .small()
                 .label(if listener.running { t("onboarding.listener.stop") } else { t("onboarding.listener.start") })
                 .loading(listener.busy)
-                .on_click(move |_, _, cx| model.update(cx, |model, cx| toggle(model, cx))),
+                .on_click(move |_, _, cx| model.update(cx, toggle)),
         )
     }
 

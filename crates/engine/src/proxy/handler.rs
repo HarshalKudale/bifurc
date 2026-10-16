@@ -46,10 +46,10 @@ pub async fn tcp_tunnel<S: AsyncRead + AsyncWrite + Unpin>(
             return;
         }
     };
-    if let Some(preamble) = preamble {
-        if client.write_all(preamble.as_bytes()).await.is_err() {
-            return;
-        }
+    if let Some(preamble) = preamble
+        && client.write_all(preamble.as_bytes()).await.is_err()
+    {
+        return;
     }
     if !initial_data.is_empty() && upstream.write_all(initial_data).await.is_err() {
         return;
@@ -136,6 +136,7 @@ fn script_of<'a>(rule: &'a Value, key: &str) -> Option<&'a str> {
 /// Forward to a rule's target, running the rule's request script on the way out and, if it has one, its
 /// response script on the way back. With a response script the whole answer is buffered, decompressed,
 /// rewritten and written with its own `content-length`.
+#[allow(clippy::too_many_arguments)] // the proxy's per-request state, passed through as is
 pub async fn proxy_with_scripts<W: AsyncWrite + Unpin>(
     out: &mut W,
     method: &str,

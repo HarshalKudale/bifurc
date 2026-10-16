@@ -181,6 +181,7 @@ fn request_headers(head: &RequestHead) -> Headers {
     headers
 }
 
+#[allow(clippy::too_many_arguments)] // the proxy's per-request state, passed through as is
 fn base_entry(
     id: String,
     t0: i64,

@@ -193,6 +193,7 @@ mod tests {
     async fn serve(tcp: tokio::net::TcpStream, frames: Arc<Mutex<Vec<String>>>) {
         let handshake = Arc::new(Mutex::new((String::new(), String::new())));
         let noted = handshake.clone();
+        #[allow(clippy::result_large_err)] // the error type is fixed by tungstenite's handshake callback
         let Ok(mut ws) = accept_hdr_async(tcp, move |request: &Request, response: Response| {
             let token = request.headers().get("x-token").and_then(|v| v.to_str().ok()).unwrap_or_default();
             *noted.lock().unwrap() = (request.uri().to_string(), token.to_string());

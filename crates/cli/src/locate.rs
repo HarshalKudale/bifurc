@@ -30,10 +30,10 @@ pub fn locate_engine_from(explicit: Option<OsString>, current_exe: Option<&Path>
         if beside.is_file() {
             return Ok(beside);
         }
-        if dir.file_name().is_some_and(|folder| folder == "bin") {
-            if let Some(above) = dir.parent().map(|root| root.join(&name)).filter(|above| above.is_file()) {
-                return Ok(above);
-            }
+        if dir.file_name().is_some_and(|folder| folder == "bin")
+            && let Some(above) = dir.parent().map(|root| root.join(&name)).filter(|above| above.is_file())
+        {
+            return Ok(above);
         }
         for ancestor in dir.ancestors() {
             for profile in ["release", "debug"] {

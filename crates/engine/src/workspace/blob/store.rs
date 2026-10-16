@@ -152,13 +152,13 @@ fn assert_blob_id(blob_id: &str) -> BlobResult<()> {
 
 /// A workspace id becomes one path segment; anything that could leave the blob root is refused.
 fn assert_workspace_segment(workspace_id: Option<&str>) -> BlobResult<()> {
-    if let Some(ws) = workspace_id {
-        if ws == "." || ws == ".." || ws.contains(['/', '\\', '\0']) {
-            return Err(BlobError::new(
-                BlobErrorCode::InvalidId,
-                format!("Not a valid workspace id: {}.", serde_json::to_string(ws).unwrap_or_default()),
-            ));
-        }
+    if let Some(ws) = workspace_id
+        && (ws == "." || ws == ".." || ws.contains(['/', '\\', '\0']))
+    {
+        return Err(BlobError::new(
+            BlobErrorCode::InvalidId,
+            format!("Not a valid workspace id: {}.", serde_json::to_string(ws).unwrap_or_default()),
+        ));
     }
     Ok(())
 }

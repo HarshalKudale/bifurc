@@ -75,10 +75,10 @@ pub fn authored_variables_text(env: &Value) -> String {
 /// The environment in force: the stored pointer if it names a real, non-global environment; otherwise the
 /// only non-global environment, if there is exactly one.
 pub fn effective_environment_id(environments: &[Value], stored_id: Option<&str>) -> Option<String> {
-    if let Some(stored) = stored_id.filter(|id| !id.is_empty() && *id != GLOBAL_ENV_ID) {
-        if environments.iter().any(|e| str_of(e, "id") == stored) {
-            return Some(stored.to_string());
-        }
+    if let Some(stored) = stored_id.filter(|id| !id.is_empty() && *id != GLOBAL_ENV_ID)
+        && environments.iter().any(|e| str_of(e, "id") == stored)
+    {
+        return Some(stored.to_string());
     }
     let mut others = environments.iter().filter(|e| str_of(e, "id") != GLOBAL_ENV_ID);
     match (others.next(), others.next()) {
@@ -137,7 +137,7 @@ pub fn apply_variable_changes(ws_id: &str, set: &[(String, String)], removed: &[
     for env in environments {
         let id = str_of(&env, "id").to_string();
         let is_target = id == active_id;
-        if !is_target && !(id == GLOBAL_ENV_ID && !removed.is_empty()) {
+        if !is_target && (id != GLOBAL_ENV_ID || removed.is_empty()) {
             continue;
         }
         let mut env = env;
@@ -241,10 +241,10 @@ pub fn register(registry: &mut CommandRegistry) {
         if let Some(version) = id.as_str().and_then(|id| entity_lock(&active_ws, "environments", id)) {
             return Err(crate::workspace::stamp::update_required(&version));
         }
-        if let Some(workspaces) = cfg.get_mut("workspaces").and_then(Value::as_array_mut) {
-            if let Some(ws) = workspaces.iter_mut().find(|w| str_of(w, "id") == active_ws) {
-                ws["activeEnvironmentId"] = id;
-            }
+        if let Some(workspaces) = cfg.get_mut("workspaces").and_then(Value::as_array_mut)
+            && let Some(ws) = workspaces.iter_mut().find(|w| str_of(w, "id") == active_ws)
+        {
+            ws["activeEnvironmentId"] = id;
         }
         save_config(&cfg)?;
         notify_config_changed();

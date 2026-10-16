@@ -30,10 +30,10 @@ pub fn to_log_entry_event(payload: &Value) -> Value {
             out.insert(key.into(), value.clone());
         }
     }
-    if let Some(origin) = e.get("origin").and_then(Value::as_str) {
-        if origin == "forward" || origin == "reverse" {
-            out.insert("origin".into(), json!(origin));
-        }
+    if let Some(origin) = e.get("origin").and_then(Value::as_str)
+        && (origin == "forward" || origin == "reverse")
+    {
+        out.insert("origin".into(), json!(origin));
     }
     if let Some(target) = e.get("target").filter(|v| v.is_string() || v.is_null()) {
         out.insert("target".into(), target.clone());

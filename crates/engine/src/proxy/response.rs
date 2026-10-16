@@ -269,6 +269,7 @@ pub async fn passthrough_to_upstream<W: AsyncWrite + Unpin>(
 }
 
 /// Forward a request of an intercepted TLS connection to the real `hostname:port` over HTTPS.
+#[allow(clippy::too_many_arguments)] // the proxy's per-request state, passed through as is
 pub async fn passthrough_to_upstream_https<W: AsyncWrite + Unpin>(
     out: &mut W,
     method: &str,

@@ -62,10 +62,10 @@ fn engine_error(raw: &Value) -> CliError {
     let text = |key: &str| raw.get(key).and_then(Value::as_str).map(str::to_string);
     // The engine refuses the command line until the first-run setup is finished, and opens the interface
     // itself. Its message is the whole story; the code in front of it would only be noise.
-    if raw.pointer("/details/reason").and_then(Value::as_str) == Some(SETUP_REQUIRED) {
-        if let Some(message) = text("message") {
-            return CliError::msg(message);
-        }
+    if raw.pointer("/details/reason").and_then(Value::as_str) == Some(SETUP_REQUIRED)
+        && let Some(message) = text("message")
+    {
+        return CliError::msg(message);
     }
     match (text("code"), text("message")) {
         (Some(code), Some(message)) => CliError::Engine { code, message },

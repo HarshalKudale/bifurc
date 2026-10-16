@@ -221,9 +221,12 @@ fn deleted_entity(ws_id: &str, kind: &str, id: &str) -> Result<Value> {
     pending_entity(ws_id, kind, id).ok_or_else(|| EngineError::not_found("It is not waiting to be deleted."))
 }
 
+/// The folder, the ids of the folders under it, and the entities in them with their kinds.
+type DeletedFolder = (Value, Vec<String>, Vec<(String, Value)>);
+
 /// The deleted folder `id` with the deleted folders under it, and the deleted entities in them, each with its
 /// kind: the folders of a tree hold entities of every kind of the tree.
-fn deleted_folder(ws_id: &str, kind: &str, id: &str) -> Result<(Value, Vec<String>, Vec<(String, Value)>)> {
+fn deleted_folder(ws_id: &str, kind: &str, id: &str) -> Result<DeletedFolder> {
     let folders = pending_folders(ws_id, kind);
     let folder = folders
         .iter()

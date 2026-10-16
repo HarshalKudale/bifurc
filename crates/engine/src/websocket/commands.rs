@@ -134,6 +134,8 @@ mod tests {
                     let Ok(mut ws) = accept_async(tcp).await else { return };
                     while let Some(Ok(message)) = ws.next().await {
                         match (behavior, message) {
+                            // The guard would move `message`, so the `if` cannot be folded into it.
+                            #[allow(clippy::collapsible_match)]
                             (Behavior::Echo, message @ (Message::Text(_) | Message::Binary(_))) => {
                                 if ws.send(message).await.is_err() {
                                     return;
