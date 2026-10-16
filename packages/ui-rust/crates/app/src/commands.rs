@@ -85,26 +85,38 @@ pub struct ShellHandle(pub WeakEntity<Shell>);
 
 impl Global for ShellHandle {}
 
+/// Where the keys that act on the open tab (save, send, close, new, step) apply: inside the shell, not in a
+/// dialog or the palette above it, where Ctrl+S or Ctrl+W would otherwise reach the editor behind. The shell
+/// takes focus when it opens (see `Shell::new`) so these work before the first click.
+const IN_SHELL: Option<&str> = Some("Shell");
+
 pub fn bind_keys(cx: &mut App) {
-    cx.bind_keys([
+    cx.bind_keys(keys());
+}
+
+fn keys() -> Vec<KeyBinding> {
+    vec![
         // The later of two bindings for one action is the one shown beside it, so the plain key comes second.
         KeyBinding::new("secondary-shift-p", OpenCommandPalette, None),
         KeyBinding::new("secondary-k", OpenCommandPalette, None),
         KeyBinding::new("secondary-p", OpenFinder, None),
-        KeyBinding::new("secondary-n", NewRestRequest, None),
-        KeyBinding::new("secondary-t", NewRestRequest, None),
-        KeyBinding::new("secondary-shift-n", NewWebSocketRequest, None),
-        KeyBinding::new("secondary-shift-m", NewMock, None),
-        KeyBinding::new("secondary-s", SaveRequest, None),
-        KeyBinding::new("secondary-enter", RunRequest, None),
-        // The only binding with a key context: Esc cancels a send only from inside a request editor.
+        KeyBinding::new("secondary-n", NewRestRequest, IN_SHELL),
+        KeyBinding::new("secondary-t", NewRestRequest, IN_SHELL),
+        KeyBinding::new("secondary-shift-n", NewWebSocketRequest, IN_SHELL),
+        KeyBinding::new("secondary-shift-m", NewMock, IN_SHELL),
+        KeyBinding::new("secondary-s", SaveRequest, IN_SHELL),
+        KeyBinding::new("secondary-enter", RunRequest, IN_SHELL),
+        // A text field binds Ctrl+Enter itself (a newline in a body, a submit in a line), and a deeper context
+        // outranks `Shell`. This one sits at the field's own depth and comes later, so Send still wins there.
+        KeyBinding::new("secondary-enter", RunRequest, Some("Shell > Input")),
+        // Esc cancels a send only from inside a request editor; elsewhere it closes what is open.
         KeyBinding::new("escape", CancelRequest, Some("RestEditor")),
-        KeyBinding::new("secondary-w", CloseRequestTab, None),
+        KeyBinding::new("secondary-w", CloseRequestTab, IN_SHELL),
         // Not Ctrl+arrows: macOS takes those for Spaces, and in text they jump by word.
-        KeyBinding::new("ctrl-pagedown", NextTab, None),
-        KeyBinding::new("ctrl-pageup", PreviousTab, None),
-        KeyBinding::new("ctrl-shift-tab", PreviousItem, None),
-        KeyBinding::new("ctrl-tab", NextItem, None),
+        KeyBinding::new("ctrl-pagedown", NextTab, IN_SHELL),
+        KeyBinding::new("ctrl-pageup", PreviousTab, IN_SHELL),
+        KeyBinding::new("ctrl-shift-tab", PreviousItem, IN_SHELL),
+        KeyBinding::new("ctrl-tab", NextItem, IN_SHELL),
         KeyBinding::new("secondary-b", ToggleSidebar, None),
         KeyBinding::new("secondary-shift-b", ToggleInspector, None),
         KeyBinding::new("secondary-shift-e", ToggleFolderTree, None),
@@ -122,7 +134,7 @@ pub fn bind_keys(cx: &mut App) {
         KeyBinding::new("secondary-,", ShowSettings, None),
         KeyBinding::new("f5", ReloadWorkspace, None),
         KeyBinding::new("secondary-q", Quit, None),
-    ]);
+    ]
 }
 
 /// Runs `f` on the shell of the active window.
@@ -214,4 +226,47 @@ pub fn register_actions(cx: &mut App) {
     cx.on_action(|_: &Quit, cx: &mut App| {
         cx.quit();
     });
+}
+
+#[cfg(test)]
+mod tests {
+    use gpui_kit::{Action, KeyContext, Keymap, Keystroke, actions};
+
+    use super::*;
+
+    actions!(test, [InputEnter]);
+
+    fn first_for(keys: &str, contexts: &[&str]) -> Option<Box<dyn Action>> {
+        // gpui-kit's own binding for a text field, which is registered before the app's.
+        let mut all = vec![KeyBinding::new("secondary-enter", InputEnter, Some("Input"))];
+        all.extend(super::keys());
+        let contexts: Vec<_> = contexts.iter().map(|c| KeyContext::parse(c).unwrap()).collect();
+        let (found, _) = Keymap::new(all).bindings_for_input(&[Keystroke::parse(keys).unwrap()], &contexts);
+        found.first().map(|binding| binding.action().boxed_clone())
+    }
+
+    #[test]
+    fn save_and_send_reach_a_field_in_the_shell() {
+        let field = ["Root", "Shell", "RestEditor", "Input"];
+        assert!(first_for("ctrl-s", &field).unwrap().as_any().is::<SaveRequest>());
+        assert!(first_for("ctrl-enter", &field).unwrap().as_any().is::<RunRequest>());
+        assert!(first_for("ctrl-enter", &["Root", "Shell", "Input mode=editor"]).unwrap().as_any().is::<RunRequest>());
+        assert!(first_for("ctrl-s", &["Root", "Shell"]).unwrap().as_any().is::<SaveRequest>());
+    }
+
+    #[test]
+    fn editor_keys_do_not_reach_through_a_dialog() {
+        let dialog = ["Root", "Dialog", "Input"];
+        assert!(first_for("ctrl-s", &dialog).is_none());
+        assert!(first_for("ctrl-w", &dialog).is_none());
+        assert!(first_for("ctrl-enter", &dialog).unwrap().as_any().is::<InputEnter>());
+        // Palette and finder stay reachable from anywhere.
+        assert!(first_for("ctrl-k", &dialog).unwrap().as_any().is::<OpenCommandPalette>());
+    }
+
+    #[test]
+    fn escape_cancels_from_a_field_in_a_request_editor_only() {
+        assert!(first_for("escape", &["Root", "Shell", "RestEditor", "Input"]).unwrap().as_any().is::<CancelRequest>());
+        assert!(first_for("escape", &["Root", "Shell"]).is_none());
+    }
 }
