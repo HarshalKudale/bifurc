@@ -38,7 +38,24 @@ pub fn parse_any(text: &str) -> Result<Value, String> {
     if trimmed.starts_with(['{', '[']) {
         return parse_json(text);
     }
-    serde_yaml_ng::from_str::<Value>(text).map_err(|err| format!("YAMLException: {err}"))
+    parse_yaml(text).map_err(|err| format!("YAMLException: {err}"))
+}
+
+/// YAML text as a JSON value, with serde_yaml_ng's old rules: only `true`/`false` are booleans, a repeated key
+/// keeps the last value, and `<<` is an ordinary key.
+pub fn parse_yaml(text: &str) -> Result<Value, serde_saphyr::Error> {
+    use serde_saphyr::{Budget, DuplicateKeyPolicy, MergeKeyPolicy};
+    let mut options = serde_saphyr::Options::default();
+    // The default budget (250k nodes, 1M events) refuses large real specs. Depth stays 64: deeper overflows the stack.
+    let mut budget = Budget::default();
+    budget.max_events = 50_000_000;
+    budget.max_nodes = 20_000_000;
+    options.budget = Some(budget);
+    options.strict_booleans = true;
+    options.duplicate_keys = DuplicateKeyPolicy::LastWins;
+    options.merge_keys = MergeKeyPolicy::AsOrdinary;
+    options.reject_non_finite_typeless_float = false;
+    serde_saphyr::from_str_with_options(text, options)
 }
 
 /// `JSON.stringify(value, null, 2)`.
@@ -345,5 +362,39 @@ mod tests {
         assert_eq!(js_trim("\u{feff} a \n"), "a");
         assert_eq!(js_str(&json!(3)), "3");
         assert_eq!(js_str(&json!(null)), "null");
+    }
+
+    #[test]
+    fn yaml_reads_as_serde_yaml_did() {
+        let y = |text: &str| parse_yaml(text).unwrap();
+        // Integer keys become string keys; YAML 1.1 words stay strings; quoted scalars stay strings.
+        assert_eq!(y("200:\n  d: ok\n'404': x\n"), json!({"200": {"d": "ok"}, "404": "x"}));
+        assert_eq!(
+            y("a: yes\nb: off\nc: '1'\nd: 1\ne: 1.5\nf: true\ng: ~\nh: null\ni:\n"),
+            json!({"a": "yes", "b": "off", "c": "1", "d": 1, "e": 1.5, "f": true, "g": null, "h": null, "i": null})
+        );
+        assert_eq!(
+            y("b: &b {x: 1}\nu: *b\nm: {<<: *b, y: 2}\n"),
+            json!({"b": {"x": 1}, "u": {"x": 1}, "m": {"<<": {"x": 1}, "y": 2}})
+        );
+        assert_eq!(y("t: |\n  l1\n  l2\nf: >-\n  a\n  b\n"), json!({"t": "l1\nl2\n", "f": "a b"}));
+        assert_eq!(y("a: 1\na: 2\n"), json!({"a": 2}));
+        assert_eq!(y("a: 9223372036854775807\nb: 18446744073709551615\n"), json!({"a": i64::MAX, "b": u64::MAX}));
+        // JSON has no infinity or NaN: serde_yaml_ng gave null here, the new parser keeps the text.
+        assert_eq!(y("a: .inf\nb: .nan\n"), json!({"a": ".inf", "b": ".nan"}));
+        assert_eq!(y(""), Value::Null);
+        assert!(parse_any("a: [1, 2\n").unwrap_err().starts_with("YAMLException: "));
+        // `017` and `1_000` were strings to serde_yaml_ng; now they are numbers.
+        assert_eq!(y("a: 017\nb: 1_000\n"), json!({"a": 17.0, "b": 1000}));
+    }
+
+    #[test]
+    fn yaml_the_size_of_a_big_openapi_spec_still_parses() {
+        // 400k scalars, and nesting up to the depth limit (64; serde_yaml_ng allowed 128).
+        let wide = format!("[{}]", vec!["1"; 400_000].join(","));
+        assert_eq!(parse_yaml(&wide).unwrap().as_array().map(Vec::len), Some(400_000));
+        let deep = |n: usize| format!("{}1{}", "[".repeat(n), "]".repeat(n));
+        assert!(parse_yaml(&deep(63)).is_ok());
+        assert!(parse_yaml(&deep(100)).is_err());
     }
 }
