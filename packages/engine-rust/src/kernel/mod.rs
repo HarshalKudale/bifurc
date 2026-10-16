@@ -3,6 +3,7 @@
 pub mod bus;
 pub mod kinds;
 pub mod registry;
+pub mod streams;
 pub mod telemetry;
 
 pub use bus::{EngineEventBus, ListenerId, bus};
