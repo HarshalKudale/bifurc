@@ -286,6 +286,25 @@ mod tests {
         assert_eq!(execute_flow_script("bc.output = undefined", data(), json!({})).await["output"], Json::Null);
     }
 
+    #[tokio::test(flavor = "multi_thread", worker_threads = 2)]
+    async fn concurrent_scripts_run_off_the_async_workers() {
+        let spin = "var t = Date.now(); while (Date.now() - t < 300) {} bc.output = { ok: 1 };";
+        let data = || json!({ "output": {}, "input": {}, "nodes": {}, "flow": {} });
+        let start = Instant::now();
+        let ticker = tokio::spawn(async {
+            tokio::time::sleep(Duration::from_millis(20)).await;
+            Instant::now()
+        });
+        let (a, b) = tokio::join!(
+            execute_flow_script(spin, data(), json!({})),
+            execute_flow_script(spin, data(), json!({}))
+        );
+        assert_eq!((a["output"]["ok"].clone(), b["output"]["ok"].clone()), (json!(1), json!(1)));
+        // The timer fired long before the 300ms scripts finished: they did not occupy the async workers.
+        assert!(ticker.await.unwrap().duration_since(start) < Duration::from_millis(250));
+        assert!(start.elapsed() < Duration::from_millis(590), "the two scripts ran in parallel");
+    }
+
     fn headers(pairs: &[(&str, &str)]) -> Headers {
         pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
     }
