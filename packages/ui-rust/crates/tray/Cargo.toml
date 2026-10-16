@@ -10,10 +10,16 @@ description = "The Bifurc engine's tray icon: a helper the engine runs, and talk
 name = "bifurc-tray"
 path = "src/main.rs"
 
+# The tray icon ships as a PNG.
+[target.'cfg(any(windows, target_os = "macos", target_os = "linux"))'.dependencies]
+png = "0.17"
+
 [target.'cfg(any(windows, target_os = "macos"))'.dependencies]
 tray-icon = "0.1"
-# The tray icon ships as a PNG.
-png = "0.17"
+
+# Pure Rust (zbus), no GTK; the blocking API on async-io needs no tokio.
+[target.'cfg(target_os = "linux")'.dependencies]
+ksni = { version = "0.3", default-features = false, features = ["async-io", "blocking"] }
 
 [target.'cfg(windows)'.dependencies]
 windows = { version = "0.54", features = [
