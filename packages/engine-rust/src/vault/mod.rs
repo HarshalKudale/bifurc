@@ -111,6 +111,41 @@ fn require_cli_session(ctx: &CommandContext) -> Result<()> {
     Ok(())
 }
 
+pub use state::MIN_SECRET_LEN;
+
+/// The name and the secrets of an unsealed vault, for the engine's own use: an import that moves values into
+/// it reuses a secret that already holds a value. Never handed to a client.
+pub(crate) async fn read_unsealed(ws_id: &str, id: &str) -> Result<(String, Vec<(String, String)>)> {
+    let (ws_id, id) = (ws_id.to_string(), id.to_string());
+    blocking(move || {
+        let vault = store::get(&ws_id, &id)?;
+        let key = ready_key(&ws_id, &vault)?;
+        let secrets = vault.read_all(&key).into_iter().map(|(name, value)| (name, value.to_string())).collect();
+        Ok((vault.name, secrets))
+    })
+    .await
+}
+
+/// Seal `secrets` into an unsealed vault, as `vault.setSecret` does for one.
+pub(crate) async fn add_secrets(ws_id: &str, id: &str, secrets: Vec<(String, String)>) -> Result<()> {
+    if secrets.is_empty() {
+        return Ok(());
+    }
+    let (ws_id, id) = (ws_id.to_string(), id.to_string());
+    blocking(move || {
+        let mut vault = store::get(&ws_id, &id)?;
+        let key = ready_key(&ws_id, &vault)?;
+        for (name, value) in &secrets {
+            store::check_secret_name(name)?;
+            vault.set_secret(&key, name, value)?;
+        }
+        store::save(&ws_id, &vault)?;
+        changed_event(&ws_id, &id);
+        Ok(())
+    })
+    .await
+}
+
 pub fn register(registry: &mut CommandRegistry) {
     registry.register("vault.list", |params, _| async move {
         let ws_id = str_of(&params, "workspaceId").to_string();
