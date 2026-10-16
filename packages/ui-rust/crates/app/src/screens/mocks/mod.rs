@@ -32,8 +32,8 @@ use self::editor::{MockEditor, MockEvent};
 use crate::{
     app_model::{AppModel, Deleted, Load, ModelEvent},
     components::{
-        CURL_TAB_BADGE, CURL_TAB_TITLE, CurlImport, CurlImportEvent, CurlTarget, EntityAction, EntityBar, FolderPicker,
-        StripTab, TabAction, TabStrip,
+        CURL_TAB_BADGE, CURL_TAB_TITLE, ClosedTabs, CurlImport, CurlImportEvent, CurlTarget, EntityAction,
+        EntityBar, FolderPicker, StripTab, TabAction, TabStrip,
         dialogs::{
             FOLDER_DELETE_CONSEQUENCE, PromptField, confirm_danger, delete_consequence, needs_update, prompt,
             resolve_deleted,
@@ -95,6 +95,8 @@ pub struct MocksScreen {
     rule_panel: Entity<HostPanel>,
     response_panel: Entity<HostPanel>,
     next_draft: u64,
+    /// Saved mocks the user closed, for Ctrl+Shift+T. Drafts are discarded for good.
+    closed: ClosedTabs<String>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -177,6 +179,7 @@ impl MocksScreen {
             rule_panel,
             response_panel,
             next_draft: 1,
+            closed: ClosedTabs::new(),
             _subscriptions: subscriptions,
         };
         this.rebuild(cx);
@@ -428,6 +431,11 @@ impl MocksScreen {
                 tab.editor.update(cx, |editor, cx| editor.flush(window, cx));
             }
         }
+        for tab in self.tabs.iter().filter(|tab| keys.contains(&tab.key)) {
+            if let TabKey::Saved(id) = &tab.key {
+                self.closed.push(id.clone());
+            }
+        }
         self.tabs.retain(|tab| !keys.contains(&tab.key));
         let next = match front.and_then(|key| self.tabs.iter().position(|tab| tab.key == key)) {
             Some(ix) => Some(ix),
@@ -544,6 +552,15 @@ impl MocksScreen {
                 Some(id) => self.confirm_delete(TreeKey::Item(id), window, cx),
                 None => self.close_tab(ix, window, cx),
             },
+        }
+    }
+
+    /// Reopens the newest closed mock that still exists. One already open is brought to the front.
+    pub fn reopen_closed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let config = self.model.read(cx).config();
+        let id = self.closed.pop_openable(|id| config.mock(id).is_some_and(|m| !m.deleted && m.locked.is_none()));
+        if let Some(id) = id {
+            self.open_mock(&id, window, cx);
         }
     }
 
