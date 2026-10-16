@@ -11,9 +11,10 @@ use std::{
 };
 
 use parking_lot::Mutex;
+use serde_json::json;
 use tokio::{net::TcpListener, task::JoinHandle};
 
-use crate::kernel::traffic::emit_server_error;
+use crate::{kernel::traffic::emit_server_error, protocol::EngineError};
 
 /// Serves one accepted connection.
 pub type ConnectionHandler =
@@ -29,7 +30,7 @@ struct State {
     generation: u64,
     port: u16,
     running: bool,
-    error: Option<String>,
+    error: Option<EngineError>,
     task: Option<JoinHandle<()>>,
     stopped_at: Option<Instant>,
 }
@@ -46,11 +47,15 @@ fn bind(port: u16) -> std::io::Result<TcpListener> {
     TcpListener::from_std(listener)
 }
 
-fn bind_error_message(err: &std::io::Error, port: u16) -> String {
+fn bind_error(err: &std::io::Error, port: u16) -> EngineError {
     match err.kind() {
-        ErrorKind::PermissionDenied => format!("Permission denied — run as Administrator to bind port {port}"),
-        ErrorKind::AddrInUse => format!("Port {port} is already in use"),
-        _ => err.to_string(),
+        ErrorKind::PermissionDenied => {
+            EngineError::engine(format!("Permission denied — run as Administrator to bind port {port}"))
+                .keyed("server.permission_denied", json!({ "port": port }))
+        }
+        ErrorKind::AddrInUse => EngineError::engine(format!("Port {port} is already in use"))
+            .keyed("server.port_in_use", json!({ "port": port })),
+        _ => EngineError::engine(err.to_string()).keyed("server.bind_failed", json!({ "detail": err.to_string() })),
     }
 }
 
@@ -76,7 +81,7 @@ impl ListenerCore {
         self.state.lock().port
     }
 
-    pub fn error(&self) -> Option<String> {
+    pub fn error(&self) -> Option<EngineError> {
         self.state.lock().error.clone()
     }
 
@@ -120,9 +125,9 @@ impl ListenerCore {
     }
 
     fn fail(&self, err: &std::io::Error, port: u16) {
-        let message = bind_error_message(err, port);
-        self.state.lock().error = Some(message.clone());
-        emit_server_error(&message);
+        let error = bind_error(err, port);
+        emit_server_error(&error.message);
+        self.state.lock().error = Some(error);
         crate::analytics::failed("listener_bind");
     }
 
@@ -187,7 +192,8 @@ mod tests {
         assert!(!core.is_running());
         core.start(port, greeter());
         assert!(core.is_running());
-        assert_eq!((core.port(), core.error()), (port, None));
+        assert_eq!(core.port(), port);
+        assert!(core.error().is_none());
         assert_eq!(greeting(port).await, "hi");
         core.stop();
         assert!(!core.is_running());
@@ -200,7 +206,9 @@ mod tests {
         let core = ListenerCore::default();
         core.start(port, greeter());
         assert!(!core.is_running());
-        assert_eq!(core.error(), Some(format!("Port {port} is already in use")));
+        let error = core.error().expect("the bind failed");
+        assert_eq!(error.message, format!("Port {port} is already in use"));
+        assert_eq!((error.key(), error.params()), (Some("server.port_in_use"), Some(&json!({ "port": port }))));
     }
 
     #[tokio::test]

@@ -39,7 +39,10 @@ async fn blocking<T: Send + 'static>(work: impl FnOnce() -> Result<T> + Send + '
         work()
     })
     .await
-    .map_err(|e| EngineError::engine(format!("The vault task failed: {e}")))?
+    .map_err(|e| {
+        EngineError::engine(format!("The vault task failed: {e}"))
+            .keyed("vault.task_failed", json!({ "detail": e.to_string() }))
+    })?
 }
 
 /// A vault as clients see it: names and state, never a value.
@@ -110,13 +113,16 @@ fn changed_event(ws_id: &str, id: &str) {
 /// `vault.secrets` hands plaintext to its caller, so only the CLI session that will launch the program gets it.
 fn require_cli_session(ctx: &CommandContext) -> Result<()> {
     let Some(session) = &ctx.session else {
-        return Err(EngineError::bad_request("vault.secrets needs a client session."));
+        return Err(
+            EngineError::bad_request("vault.secrets needs a client session.").keyed("vault.needs_session", json!({}))
+        );
     };
     if session.client_name.as_deref() != Some("cli") {
         return Err(EngineError::new(
             ErrorCode::Forbidden,
             "Secret values are given only to the command line, which launches programs with them.",
-        ));
+        )
+        .keyed("vault.cli_only", json!({})));
     }
     Ok(())
 }

@@ -100,7 +100,7 @@ impl Drop for Logs {
 fn start_proxy(port: u16) -> Arc<dyn Listener> {
     let proxy = create_proxy_server();
     proxy.start(port);
-    assert_eq!(proxy.error(), None);
+    assert!(proxy.error().is_none());
     proxy
 }
 
@@ -444,7 +444,10 @@ async fn the_server_commands_control_the_bound_proxy() {
     assert_eq!(call("proxy.status", json!({})).await, json!({ "running": false }));
     assert_eq!(
         call("server.status", json!({ "target": "reverse" })).await,
-        json!({ "running": false, "port": 0, "error": "There is no reverse proxy in this engine.", "https": false })
+        json!({
+            "running": false, "port": 0, "error": "There is no reverse proxy in this engine.",
+            "errorKey": "server.no_reverse", "errorParams": {}, "https": false,
+        })
     );
     bind_forward_proxy(None);
 }

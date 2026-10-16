@@ -28,6 +28,9 @@ pub struct Capture {
     pub body: Vec<u8>,
     pub duration_ms: u64,
     pub error: Option<String>,
+    /// The key and params the UI translates `error` by. Stored beside it only when there is one, so a history
+    /// file written before the key existed reads the same and an older build ignores the new members.
+    pub error_key: Option<(String, Value)>,
     pub method: String,
     pub url: String,
 }
@@ -74,6 +77,10 @@ fn entry_of(capture: Capture) -> Value {
     }
     if let Some(error) = capture.error {
         entry["error"] = json!(error);
+        if let Some((key, params)) = capture.error_key {
+            entry["errorKey"] = json!(key);
+            entry["errorParams"] = params;
+        }
     }
     entry
 }
@@ -122,22 +129,24 @@ pub fn record_text(ws_id: &str, params: &Value, method: &str, url: &str, outcome
             body: str_of(v, "body").as_bytes().to_vec(),
             duration_ms: v["durationMs"].as_u64().unwrap_or(0),
             error: None,
+            error_key: None,
             method,
             url,
         },
-        Err(e) => failed(e.message.clone(), method, url),
+        Err(e) => failed(e, method, url),
     };
     record(ws_id, id, capture);
 }
 
-pub fn failed(error: String, method: String, url: String) -> Capture {
+pub fn failed(error: &crate::protocol::EngineError, method: String, url: String) -> Capture {
     Capture {
         status: 0,
         status_text: None,
         headers: json!({}),
         body: Vec::new(),
         duration_ms: 0,
-        error: Some(error),
+        error: Some(error.message.clone()),
+        error_key: error.key().zip(error.params()).map(|(key, params)| (key.to_owned(), params.clone())),
         method,
         url,
     }
@@ -180,6 +189,7 @@ mod tests {
             body: body.to_vec(),
             duration_ms: 3,
             error: None,
+            error_key: None,
             method: "GET".into(),
             url: "http://x".into(),
         }
@@ -196,6 +206,42 @@ mod tests {
         assert_eq!(bodies, ["body 6", "body 5", "body 4", "body 3", "body 2"]);
         let file = file_of(root.ws_id, "r1").unwrap();
         assert!(file.exists() && !file.starts_with(ws_dir(root.ws_id)));
+    }
+
+    #[test]
+    fn a_history_file_from_before_error_keys_loads_as_it_did() {
+        let root = scratch_data_root();
+        let old = json!([
+            { "at": 900, "durationMs": 0, "status": 0, "headers": {}, "size": 0, "truncated": false,
+              "request": { "method": "GET", "url": "http://x" }, "body": "", "error": "Nothing is listening." },
+            { "at": 800, "durationMs": 5, "status": 200, "headers": { "a": "b" }, "size": 2, "truncated": false,
+              "request": { "method": "GET", "url": "http://x" }, "body": "hi", "statusText": "OK" },
+        ]);
+        let path = file_of(root.ws_id, "old").unwrap();
+        std::fs::create_dir_all(path.parent().unwrap()).unwrap();
+        std::fs::write(&path, serde_json::to_vec(&old).unwrap()).unwrap();
+        assert_eq!(entries(root.ws_id, "old"), old.as_array().unwrap().clone());
+        assert!(entries(root.ws_id, "old")[0].get("errorKey").is_none());
+        // A new entry is added on top of an old file without touching the old ones.
+        record(root.ws_id, "old", capture(b"new"));
+        let all = entries(root.ws_id, "old");
+        assert_eq!((all.len(), all[1].clone(), all[2].clone()), (3, old[0].clone(), old[1].clone()));
+    }
+
+    #[test]
+    fn a_failed_send_keeps_its_error_key_and_params_beside_the_english_text() {
+        let root = scratch_data_root();
+        let refused =
+            crate::protocol::EngineError::upstream("Nothing is listening at localhost:1. Is the server running?")
+                .keyed("request.send.refused", json!({ "host": "localhost", "port": "1" }));
+        record(root.ws_id, "r1", failed(&refused, "GET".into(), "http://localhost:1".into()));
+        record(root.ws_id, "r1", failed(&crate::protocol::EngineError::engine("boom"), "GET".into(), "u".into()));
+        let kept = entries(root.ws_id, "r1");
+        assert_eq!(kept[0]["error"], "boom");
+        assert!(kept[0].get("errorKey").is_none() && kept[0].get("errorParams").is_none());
+        assert_eq!(kept[1]["error"], "Nothing is listening at localhost:1. Is the server running?");
+        assert_eq!(kept[1]["errorKey"], "request.send.refused");
+        assert_eq!(kept[1]["errorParams"], json!({ "host": "localhost", "port": "1" }));
     }
 
     #[test]

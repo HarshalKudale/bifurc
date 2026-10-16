@@ -287,8 +287,10 @@ impl WorkspaceSetup {
                     });
                 }
                 Ok(started) => {
-                    this.error =
-                        Some(t_with("workspace_setup.error.start_sign_in", &[("reason", &text(&started, "error"))]))
+                    this.error = Some(t_with(
+                        "workspace_setup.error.start_sign_in",
+                        &[("reason", &error_text(&started).unwrap_or_default())],
+                    ))
                 }
                 Err(error) => {
                     this.error = Some(t_with("workspace_setup.error.start_sign_in", &[("reason", &describe(&error))]))

@@ -57,12 +57,71 @@ fn keys_in_source() -> BTreeSet<String> {
     keys
 }
 
+/// Keys picked in `match` arms (`=> "import.failed"`), which the `keyed("…")` scan cannot see: the key is a
+/// word of one of these areas, and only these files choose a key that way.
+fn arm_keys_in_source() -> BTreeSet<String> {
+    let src = PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("src");
+    let mut files = vec![src.join("importexport/commands.rs"), src.join("rest/commands.rs")];
+    rust_files(&src.join("certificates"), &mut files);
+    let is_key = |text: &str| {
+        text.split_once('.').is_some_and(|(area, name)| {
+            ["import", "export", "curl", "tls"].contains(&area)
+                && !name.is_empty()
+                && name.chars().all(|c| c.is_ascii_lowercase() || c == '_')
+        })
+    };
+    let mut keys = BTreeSet::new();
+    for file in files {
+        let text = fs::read_to_string(&file).unwrap_or_else(|e| panic!("{}: {e}", file.display()));
+        for (at, _) in text.match_indices("=>") {
+            let rest = text[at + 2..].trim_start();
+            if let Some(rest) = rest.strip_prefix('"')
+                && let Some(end) = rest.find('"')
+                && is_key(&rest[..end])
+            {
+                keys.insert(rest[..end].to_owned());
+            }
+        }
+    }
+    keys
+}
+
+/// The catch-all keys of the protocol crate's `From` impls (`keyed("engine.io_failed"`, …), which every
+/// error that slips through unkeyed ends up under.
+fn catch_all_keys() -> BTreeSet<String> {
+    let mut files = Vec::new();
+    rust_files(&PathBuf::from(env!("CARGO_MANIFEST_DIR")).join("../protocol/src"), &mut files);
+    let mut keys = BTreeSet::new();
+    for file in files {
+        let text = fs::read_to_string(&file).expect("source is readable");
+        for (at, opener) in text.match_indices("keyed(\"engine.") {
+            let rest = &text[at + opener.len() - "engine.".len()..];
+            keys.insert(rest[..rest.find('"').expect("a closing quote")].to_owned());
+        }
+    }
+    keys
+}
+
 #[test]
 fn every_key_the_engine_names_has_english_text() {
     let english = locale_keys("en");
     let used = keys_in_source();
     assert!(used.len() > 30, "the scan found only {} keys", used.len());
     let missing: Vec<_> = used.difference(&english).collect();
+    assert!(missing.is_empty(), "keys with no text in locales/en/errors.json: {missing:?}");
+}
+
+#[test]
+fn keys_chosen_in_match_arms_and_the_catch_alls_have_english_text() {
+    let english = locale_keys("en");
+    let arms = arm_keys_in_source();
+    assert!(arms.len() >= 8, "the scan found only {} arm keys: {arms:?}", arms.len());
+    let catch_alls = catch_all_keys();
+    assert_eq!(
+        catch_alls.iter().map(String::as_str).collect::<Vec<_>>(),
+        ["engine.failed", "engine.io_failed", "engine.json_failed"]
+    );
+    let missing: Vec<_> = arms.union(&catch_alls).filter(|key| !english.contains(*key)).collect();
     assert!(missing.is_empty(), "keys with no text in locales/en/errors.json: {missing:?}");
 }
 

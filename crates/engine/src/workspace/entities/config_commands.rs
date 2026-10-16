@@ -54,7 +54,8 @@ pub fn register(registry: &mut CommandRegistry) {
         if let Some(account_id) = account_id
             && find_account(account_id).is_none()
         {
-            return Err(EngineError::not_found("That account is not signed in on this device."));
+            return Err(EngineError::not_found("That account is not signed in on this device.")
+                .keyed("workspace.account_not_signed_in", json!({})));
         }
         let id = generate_id();
         let mut settings = load_settings();

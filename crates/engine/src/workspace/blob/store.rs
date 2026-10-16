@@ -103,7 +103,15 @@ impl From<std::io::Error> for BlobError {
 
 impl From<BlobError> for EngineError {
     fn from(err: BlobError) -> Self {
-        EngineError::engine(err.message)
+        let key = match err.code {
+            Some(BlobErrorCode::NotFound) => "blob.not_found",
+            Some(BlobErrorCode::InvalidId) => "blob.invalid_id",
+            Some(BlobErrorCode::TooLarge) => "blob.too_large",
+            Some(BlobErrorCode::SizeMismatch) => "blob.size_mismatch",
+            Some(BlobErrorCode::InvalidOffset) => "blob.invalid_offset",
+            None => "blob.failed",
+        };
+        EngineError::engine(err.message.clone()).keyed(key, json!({ "detail": err.message }))
     }
 }
 

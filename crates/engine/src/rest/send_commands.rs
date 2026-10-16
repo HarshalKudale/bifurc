@@ -106,10 +106,11 @@ pub fn register(registry: &mut CommandRegistry) {
                     body: STANDARD.decode(str_of(&done["response"], "body").trim()).unwrap_or_default(),
                     duration_ms: done["durationMs"].as_u64().unwrap_or(0),
                     error: None,
+                    error_key: None,
                     method,
                     url,
                 },
-                Err(error) => response_history::failed(error.message.clone(), method, url),
+                Err(error) => response_history::failed(error, method, url),
             };
             response_history::record(&ws_id, id, capture);
         }

@@ -48,15 +48,23 @@ impl Kdf {
             return Err(EngineError::unsupported(format!(
                 "This vault uses the unknown key derivation \"{}\".",
                 self.alg
-            )));
+            ))
+            .keyed("vault.unknown_kdf", serde_json::json!({ "alg": self.alg })));
         }
-        let salt = STANDARD.decode(&self.salt).map_err(|_| EngineError::engine("The vault's salt is not valid."))?;
-        let params = Params::new(self.m, self.t, self.p, Some(KEY_LEN))
-            .map_err(|e| EngineError::engine(format!("The vault's key derivation settings are invalid: {e}")))?;
+        let salt = STANDARD.decode(&self.salt).map_err(|_| {
+            EngineError::engine("The vault's salt is not valid.").keyed("vault.salt_invalid", serde_json::json!({}))
+        })?;
+        let params = Params::new(self.m, self.t, self.p, Some(KEY_LEN)).map_err(|e| {
+            EngineError::engine(format!("The vault's key derivation settings are invalid: {e}"))
+                .keyed("vault.kdf_settings_invalid", serde_json::json!({ "detail": e.to_string() }))
+        })?;
         let mut key = Zeroizing::new([0u8; KEY_LEN]);
         Argon2::new(Algorithm::Argon2id, Version::V0x13, params)
             .hash_password_into(passphrase.as_bytes(), &salt, key.as_mut())
-            .map_err(|e| EngineError::engine(format!("Could not derive the vault key: {e}")))?;
+            .map_err(|e| {
+                EngineError::engine(format!("Could not derive the vault key: {e}"))
+                    .keyed("vault.derive_failed", serde_json::json!({ "detail": e.to_string() }))
+            })?;
         Ok(Key(key))
     }
 }
@@ -71,9 +79,10 @@ pub struct Sealed {
 pub fn seal(key: &Key, aad: &str, plaintext: &[u8]) -> Result<Sealed> {
     let cipher = Aes256Gcm::new_from_slice(key.0.as_ref()).expect("a 32 byte key");
     let nonce: [u8; NONCE_LEN] = rand::random();
-    let ct = cipher
-        .encrypt(Nonce::from_slice(&nonce), Payload { msg: plaintext, aad: aad.as_bytes() })
-        .map_err(|_| EngineError::engine("Could not encrypt the secret."))?;
+    let ct =
+        cipher.encrypt(Nonce::from_slice(&nonce), Payload { msg: plaintext, aad: aad.as_bytes() }).map_err(|_| {
+            EngineError::engine("Could not encrypt the secret.").keyed("vault.encrypt_failed", serde_json::json!({}))
+        })?;
     Ok(Sealed { nonce: STANDARD.encode(nonce), ct: STANDARD.encode(ct) })
 }
 
