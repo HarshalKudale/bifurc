@@ -906,6 +906,7 @@ mod tests {
             assert_eq!(listed["requiredVersion"], "999.0.0", "{kind}");
             assert!(listed.get("somethingNewer").is_none(), "{kind}");
             assert_eq!(array_of(&cfg, kind).iter().filter(|e| str_of(e, "id") == id).count(), 1, "{kind}");
+            assert_eq!(listed["folderId"], entity["folderId"], "{kind}: listed in its folder");
             assert!(read_all_entities(WS, store).iter().all(|e| str_of(e, "id") != id), "{kind}: nothing reads it");
 
             let load = json!({ "workspaceId": WS, "kind": kind, "id": id });
