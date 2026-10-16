@@ -7,6 +7,7 @@
 //! The states and directions are the WebSocket's ([`SocketState`], [`Direction`]); what differs is the message,
 //! which is a named event with arguments, or the acknowledgement of one.
 
+use crate::engine::error_text;
 use serde_json::Value;
 
 use super::socket::{Direction, SocketState};
@@ -121,7 +122,7 @@ impl SocketIoView {
         }
         Self {
             state: SocketState::parse(result.get("status").and_then(Value::as_str).unwrap_or("")),
-            error: text(result, "error"),
+            error: error_text(result),
             namespace: text(result, "namespace").unwrap_or_default(),
             sid: text(result, "sid"),
             close_reason: text(result, "closeReason"),
@@ -136,7 +137,7 @@ impl SocketIoView {
     /// Applies an `event.socketio.status` payload.
     pub fn apply_status_event(&mut self, payload: &Value) {
         self.state = SocketState::parse(payload.get("status").and_then(Value::as_str).unwrap_or(""));
-        self.error = text(payload, "error");
+        self.error = error_text(payload);
         self.sid = text(payload, "sid");
         self.close_reason = text(payload, "reason");
         if let Some(namespace) = text(payload, "namespace") {

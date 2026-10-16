@@ -17,7 +17,7 @@ use serde_json::{Map, Value, json};
 use crate::{
     env::{load_merged_environment, resolve_vars},
     kernel::CommandRegistry,
-    protocol::EngineError,
+    protocol::{EngineError, ErrorCode},
     utils::json::{opt_str, str_of, string_map},
     workspace::{config::load_entity, response_history},
 };
@@ -53,27 +53,32 @@ fn is_reflection_service(name: &str) -> bool {
     name.starts_with("grpc.reflection.")
 }
 
-fn failure(message: impl Into<String>) -> Value {
-    json!({ "ok": false, "error": message.into() })
-}
-
 /// Finds the method a request names, in the schema its request selects.
-async fn find_method(params: &Value, channel: Option<&tonic::transport::Channel>) -> Result<MethodDescriptor, String> {
+async fn find_method(
+    params: &Value,
+    channel: Option<&tonic::transport::Channel>,
+) -> Result<MethodDescriptor, EngineError> {
     let use_reflection = params.get("useReflection").and_then(Value::as_bool).unwrap_or(false);
     let proto_file_id = opt_str(params, "protoFileId").filter(|id| !id.is_empty());
     let pool = match (proto_file_id, use_reflection) {
         (Some(id), false) => proto::pool_from_saved(str_of(params, "workspaceId"), id)?,
-        _ => reflection::reflect(channel.cloned().ok_or("No connection.")?).await?.pool,
+        _ => {
+            let channel = channel
+                .cloned()
+                .ok_or_else(|| EngineError::engine("No connection.").keyed("grpc.no_connection", json!({})))?;
+            reflection::reflect(channel).await?.pool
+        }
     };
     let service_name = str_of(params, "serviceName").trim().trim_start_matches('/');
     let method_name = str_of(params, "methodName").trim();
-    let service = pool
-        .get_service_by_name(service_name)
-        .ok_or_else(|| format!("The schema has no service \"{service_name}\"."))?;
-    service
-        .methods()
-        .find(|method| method.name() == method_name)
-        .ok_or_else(|| format!("The service \"{service_name}\" has no method \"{method_name}\"."))
+    let service = pool.get_service_by_name(service_name).ok_or_else(|| {
+        EngineError::not_found(format!("The schema has no service \"{service_name}\"."))
+            .keyed("grpc.service_not_found", json!({ "service": service_name }))
+    })?;
+    service.methods().find(|method| method.name() == method_name).ok_or_else(|| {
+        EngineError::not_found(format!("The service \"{service_name}\" has no method \"{method_name}\"."))
+            .keyed("grpc.method_not_found", json!({ "service": service_name, "method": method_name }))
+    })
 }
 
 pub fn register(registry: &mut CommandRegistry) {
@@ -86,19 +91,19 @@ pub fn register(registry: &mut CommandRegistry) {
         };
         let channel = match call::connect(str_of(&params, "serverAddress")).await {
             Ok(channel) => channel,
-            Err(message) => return Ok(elapsed(failure(message))),
+            Err(error) => return Ok(elapsed(crate::runtime::failed(&error))),
         };
         let method = match find_method(&params, Some(&channel)).await {
             Ok(method) => method,
-            Err(message) => return Ok(elapsed(failure(message))),
+            Err(error) => return Ok(elapsed(crate::runtime::failed(&error))),
         };
         let messages = match call::parse_messages(str_of(&params, "requestBody"), &method) {
             Ok(messages) => messages,
-            Err(message) => return Ok(elapsed(failure(message))),
+            Err(error) => return Ok(elapsed(crate::runtime::failed(&error))),
         };
         let metadata = match call::to_metadata(&string_map(&params, "metadata")) {
             Ok(metadata) => metadata,
-            Err(message) => return Ok(elapsed(failure(message))),
+            Err(error) => return Ok(elapsed(crate::runtime::failed(&error))),
         };
         let outcome = call::invoke(channel, &method, messages, metadata).await;
         let ok = outcome.status == tonic::Code::Ok;
@@ -110,8 +115,10 @@ pub fn register(registry: &mut CommandRegistry) {
             "statusMessage": outcome.status_message,
         });
         if !ok {
-            result["error"] =
-                json!(format!("{}: {}", status_name(outcome.status), result["statusMessage"].as_str().unwrap_or("")));
+            let (status, message) = (status_name(outcome.status), outcome.status_message.clone());
+            let error = EngineError::upstream(format!("{status}: {message}"))
+                .keyed("grpc.status", json!({ "status": status, "message": message }));
+            crate::runtime::set_failure(&mut result, &error);
         }
         Ok(elapsed(result))
     });
@@ -124,15 +131,18 @@ pub fn register(registry: &mut CommandRegistry) {
         };
         let channel = match call::connect(&address).await {
             Ok(channel) => channel,
-            Err(message) => return Ok(failure(message)),
+            Err(error) => return Ok(crate::runtime::failed(&error)),
         };
         // A server that is not gRPC may accept the connection and never answer.
         let asked = tokio::time::timeout(std::time::Duration::from_secs(15), reflection::reflect(channel))
             .await
-            .unwrap_or_else(|_| Err("The server did not answer the reflection request.".to_owned()));
+            .unwrap_or_else(|_| {
+                Err(EngineError::new(ErrorCode::Timeout, "The server did not answer the reflection request.")
+                    .keyed("grpc.reflection_timeout", json!({})))
+            });
         Ok(match asked {
             Ok(found) => json!({ "ok": true, "services": services_json(&found.pool, Some(&found.services)) }),
-            Err(message) => failure(message),
+            Err(error) => crate::runtime::failed(&error),
         })
     });
 
@@ -141,6 +151,7 @@ pub fn register(registry: &mut CommandRegistry) {
         let stored = match opt_str(&params, "id") {
             Some(id) => load_entity(ws_id, "grpcRequests", id).ok_or_else(|| {
                 EngineError::not_found(format!("No saved grpcRequests entity \"{id}\" in workspace \"{ws_id}\"."))
+                    .keyed("request.saved_not_found", json!({ "kind": "grpcRequests", "id": id, "workspace": ws_id }))
             })?,
             None => params.get("request").cloned().unwrap_or(Value::Null),
         };

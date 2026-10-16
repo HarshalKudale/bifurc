@@ -7,9 +7,10 @@
 use std::collections::HashMap;
 
 use parking_lot::{Mutex, MutexGuard};
-use serde_json::Value;
+use serde_json::{Map, Value, json};
 
 use super::bus;
+use crate::protocol::EngineError;
 
 /// What an entry gives the shared registry.
 pub trait Stream {
@@ -20,6 +21,42 @@ pub trait Stream {
     fn generation(&self) -> u64;
     fn snapshot(&self) -> Value;
     fn clear_log(&mut self);
+}
+
+/// Writes `error` (the message, or null) into a snapshot or status payload, and for a keyed error `errorKey` and
+/// `errorParams` beside it. A failure is also logged here by the caller through `runtime::log_failure`.
+pub fn put_error(map: &mut Map<String, Value>, error: Option<&EngineError>) {
+    map.insert("error".into(), json!(error.map(|e| &e.message)));
+    if let Some(error) = error
+        && let (Some(key), Some(params)) = (error.key(), error.params())
+    {
+        map.insert("errorKey".into(), json!(key));
+        map.insert("errorParams".into(), params.clone());
+    }
+}
+
+/// An error a stream records on its entry: logged once, as every failure is.
+pub fn recorded(error: EngineError) -> EngineError {
+    crate::runtime::log_failure(None, &error);
+    error
+}
+
+pub fn not_connected() -> EngineError {
+    EngineError::bad_request("Not connected").keyed("stream.not_connected", json!({}))
+}
+
+pub fn send_failed() -> EngineError {
+    EngineError::engine("Send failed").keyed("stream.send_failed", json!({}))
+}
+
+pub fn header_name_invalid(name: &str, detail: &dyn std::fmt::Display) -> EngineError {
+    EngineError::bad_request(format!("Invalid header name \"{name}\": {detail}"))
+        .keyed("stream.header_name_invalid", json!({ "name": name, "detail": detail.to_string() }))
+}
+
+pub fn header_value_invalid(name: &str, detail: &dyn std::fmt::Display) -> EngineError {
+    EngineError::bad_request(format!("Invalid value for header \"{name}\": {detail}"))
+        .keyed("stream.header_value_invalid", json!({ "name": name, "detail": detail.to_string() }))
 }
 
 /// A bus event to emit once the registry lock is released.

@@ -2,7 +2,9 @@
 //!
 //! Nothing here does I/O: the SDK carries the messages, the registry decides what to send.
 
-use serde_json::{Map, Value};
+use serde_json::{Map, Value, json};
+
+use crate::protocol::EngineError;
 
 /// What a server declares and a client lists.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -135,7 +137,7 @@ pub fn tool_arguments(
     schema: Option<&Value>,
     typed: Option<&Map<String, Value>>,
     resolve: &dyn Fn(&str) -> String,
-) -> Result<Map<String, Value>, String> {
+) -> Result<Map<String, Value>, EngineError> {
     let properties = schema.and_then(|schema| schema.get("properties"));
     let required = |name: &str| {
         schema
@@ -161,7 +163,11 @@ pub fn tool_arguments(
                 Some(value) => out.insert(name.clone(), (*value).clone()),
                 None => {
                     let listed: Vec<String> = allowed.iter().map(|value| as_typed(value)).collect();
-                    return Err(format!("Argument \"{name}\" must be one of {}, not \"{wanted}\".", listed.join(", ")));
+                    let allowed = listed.join(", ");
+                    return Err(EngineError::bad_request(format!(
+                        "Argument \"{name}\" must be one of {allowed}, not \"{wanted}\"."
+                    ))
+                    .keyed("mcp.argument_choice", json!({ "name": name, "allowed": allowed, "wanted": wanted })));
                 }
             };
             continue;
@@ -177,29 +183,31 @@ pub fn tool_arguments(
         if trimmed.is_empty() {
             continue;
         }
-        let wrong = |what: &str| format!("Argument \"{name}\" must be {what}, not \"{trimmed}\".");
+        let wrong =
+            |what: &str| EngineError::bad_request(format!("Argument \"{name}\" must be {what}, not \"{trimmed}\"."));
+        let params = || json!({ "name": name, "value": trimmed });
         let parsed = serde_json::from_str::<Value>(trimmed).ok();
         let value = match kind {
             Some("integer") => match parsed.filter(|v| v.is_i64() || v.is_u64()) {
                 Some(number) => number,
-                None => return Err(wrong("a whole number")),
+                None => return Err(wrong("a whole number").keyed("mcp.argument_whole_number", params())),
             },
             Some("number") => match parsed.filter(Value::is_number) {
                 Some(number) => number,
-                None => return Err(wrong("a number")),
+                None => return Err(wrong("a number").keyed("mcp.argument_number", params())),
             },
             Some("boolean") => match trimmed.to_ascii_lowercase().as_str() {
                 "true" => Value::Bool(true),
                 "false" => Value::Bool(false),
-                _ => return Err(wrong("true or false")),
+                _ => return Err(wrong("true or false").keyed("mcp.argument_boolean", params())),
             },
             Some("object") => match parsed.filter(Value::is_object) {
                 Some(object) => object,
-                None => return Err(wrong("a JSON object")),
+                None => return Err(wrong("a JSON object").keyed("mcp.argument_object", params())),
             },
             Some("array") => match parsed.filter(Value::is_array) {
                 Some(array) => array,
-                None => return Err(wrong("a JSON array")),
+                None => return Err(wrong("a JSON array").keyed("mcp.argument_array", params())),
             },
             // No declared type: JSON when it reads as JSON, the text otherwise.
             _ => parsed.unwrap_or(Value::String(text.clone())),
@@ -310,7 +318,8 @@ mod tests {
             ("tags", "{}", "a JSON array"),
         ] {
             let error = tool_arguments(Some(&schema), Some(&typed(json!({ name: text }))), &same).unwrap_err();
-            assert_eq!(error, format!("Argument \"{name}\" must be {wanted}, not \"{text}\"."));
+            assert_eq!(error.message, format!("Argument \"{name}\" must be {wanted}, not \"{text}\"."));
+            assert!(error.key().is_some_and(|key| key.starts_with("mcp.argument_")), "{name}");
         }
     }
 
@@ -338,7 +347,9 @@ mod tests {
         assert_eq!(level["level"], json!(2));
 
         let error = tool_arguments(Some(&schema), Some(&typed(json!({ "interval": "year" }))), &same).unwrap_err();
-        assert_eq!(error, "Argument \"interval\" must be one of day, week, month, not \"year\".");
+        assert_eq!(error.message, "Argument \"interval\" must be one of day, week, month, not \"year\".");
+        assert_eq!(error.key(), Some("mcp.argument_choice"));
+        assert_eq!(error.params().unwrap()["allowed"], "day, week, month");
         // Nothing chosen is nothing sent.
         assert!(tool_arguments(Some(&schema), Some(&typed(json!({ "interval": " " }))), &same).unwrap().is_empty());
     }
@@ -354,7 +365,7 @@ mod tests {
             tool_arguments(Some(&schema), Some(&typed(json!({ "count": "4", "loud": "false", "text": "12" }))), &same);
         assert_eq!(Value::Object(arguments.unwrap()), json!({ "count": 4, "loud": false, "text": "12" }));
         let error = tool_arguments(Some(&schema), Some(&typed(json!({ "count": "x" }))), &same).unwrap_err();
-        assert_eq!(error, "Argument \"count\" must be a whole number, not \"x\".");
+        assert_eq!(error.message, "Argument \"count\" must be a whole number, not \"x\".");
     }
 
     #[test]

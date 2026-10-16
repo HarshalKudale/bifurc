@@ -19,7 +19,7 @@ use crate::{
 fn ok_result(result: OkResult) -> Result<Value> {
     Ok(match result {
         Ok(()) => json!({ "ok": true }),
-        Err(error) => json!({ "ok": false, "error": error }),
+        Err(error) => crate::runtime::failed(&error),
     })
 }
 
@@ -36,7 +36,8 @@ fn resolve_target(params: &Value) -> Result<Value> {
     if TARGET_FIELDS.iter().any(|field| params.get(*field).is_some()) {
         return Err(EngineError::bad_request(
             "mcp.connect takes `transport` and `headers` only together with `url`; a saved request supplies its own.",
-        ));
+        )
+        .keyed("mcp.headers_need_url", json!({})));
     }
     let workspace_id = str_of(params, "workspaceId");
     let id = opt_str(params, "id").unwrap_or_else(|| str_of(params, "connectionId"));
@@ -44,6 +45,7 @@ fn resolve_target(params: &Value) -> Result<Value> {
         EngineError::not_found(format!(
             "No saved mcpRequests entity \"{id}\" in workspace \"{workspace_id}\". Pass `url` to connect a draft."
         ))
+        .keyed("mcp.saved_not_found", json!({ "id": id, "workspace": workspace_id }))
     })
 }
 
@@ -73,7 +75,7 @@ pub fn register(registry: &mut CommandRegistry) {
         );
         Ok(match called {
             Ok(call_id) => json!({ "ok": true, "callId": call_id }),
-            Err(error) => json!({ "ok": false, "error": error }),
+            Err(error) => crate::runtime::failed(&error),
         })
     });
 
@@ -511,7 +513,7 @@ mod tests {
         let refused = call("mcp.call", payload).await;
         assert_eq!(
             refused,
-            json!({ "ok": false, "error": "Argument \"count\" must be a whole number, not \"many\"." })
+            json!({ "ok": false, "error": "Argument \"count\" must be a whole number, not \"many\".", "errorKey": "mcp.argument_whole_number", "errorParams": { "name": "count", "value": "many" } })
         );
         assert_eq!(server.asked("tools/call").len(), 1);
 
@@ -550,7 +552,10 @@ mod tests {
         assert_eq!(server.asked("resources/read")[0].message["params"]["uri"], "mem://alpha");
 
         let payload = json!({ "workspaceId": WS, "connectionId": "more", "type": "resource", "name": " " });
-        assert_eq!(call("mcp.call", payload).await, json!({ "ok": false, "error": "A resource URI is required." }));
+        assert_eq!(
+            call("mcp.call", payload).await,
+            json!({ "ok": false, "error": "A resource URI is required.", "errorKey": "mcp.resource_uri_required", "errorParams": {} })
+        );
         disconnect("more").await;
         wait_status("more", "disconnected").await;
     }
@@ -724,7 +729,10 @@ mod tests {
         let _root = scratch_data_root();
         let server = Server::start().await;
         let payload = json!({ "workspaceId": WS, "connectionId": "ghost", "type": "tool", "name": "echo" });
-        assert_eq!(call("mcp.call", payload).await, json!({ "ok": false, "error": "Not connected" }));
+        assert_eq!(
+            call("mcp.call", payload).await,
+            json!({ "ok": false, "error": "Not connected", "errorKey": "stream.not_connected", "errorParams": {} })
+        );
 
         let events = Events::watch("waiting");
         connect("waiting", &server.url).await;
@@ -745,7 +753,10 @@ mod tests {
         assert_eq!(events.messages().last().unwrap()["status"], "error");
 
         let payload = json!({ "workspaceId": WS, "connectionId": "waiting", "type": "tool", "name": "echo" });
-        assert_eq!(call("mcp.call", payload).await, json!({ "ok": false, "error": "Not connected" }));
+        assert_eq!(
+            call("mcp.call", payload).await,
+            json!({ "ok": false, "error": "Not connected", "errorKey": "stream.not_connected", "errorParams": {} })
+        );
     }
 
     #[tokio::test]
@@ -784,7 +795,7 @@ mod tests {
     async fn unknown_ids_and_the_connection_limit() {
         let _root = scratch_data_root();
         assert_eq!(status("ghost").await, Value::Null);
-        let expected = json!({ "ok": false, "error": "No connection \"ghost\" in workspace \"ws1\"." });
+        let expected = json!({ "ok": false, "error": "No connection \"ghost\" in workspace \"ws1\".", "errorKey": "mcp.not_found", "errorParams": { "id": "ghost", "workspace": "ws1" } });
         assert_eq!(disconnect("ghost").await, expected);
         assert_eq!(call("mcp.clearMessages", json!({ "workspaceId": WS, "connectionId": "ghost" })).await, expected);
 

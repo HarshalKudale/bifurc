@@ -16,7 +16,7 @@ use crate::{
 fn ok_result(result: OkResult) -> Result<Value> {
     Ok(match result {
         Ok(()) => json!({ "ok": true }),
-        Err(error) => json!({ "ok": false, "error": error }),
+        Err(error) => crate::runtime::failed(&error),
     })
 }
 
@@ -29,14 +29,16 @@ fn resolve_target(params: &Value) -> Result<(String, Option<Value>)> {
     if params.get("headers").is_some() {
         return Err(EngineError::bad_request(
             "ws.connect takes `headers` only together with `url`; a saved request supplies its own.",
-        ));
+        )
+        .keyed("websocket.headers_need_url", json!({})));
     }
     let workspace_id = str_of(params, "workspaceId");
     let socket_id = opt_str(params, "id").unwrap_or_else(|| str_of(params, "socketId"));
     let Some(saved) = load_entity(workspace_id, "sockets", socket_id) else {
         return Err(EngineError::not_found(format!(
             "No saved sockets entity \"{socket_id}\" in workspace \"{workspace_id}\". Pass `url` to connect a draft."
-        )));
+        ))
+        .keyed("websocket.saved_not_found", json!({ "id": socket_id, "workspace": workspace_id })));
     };
     Ok((str_of(&saved, "url").to_string(), saved.get("headers").cloned()))
 }
@@ -284,7 +286,10 @@ mod tests {
         let listed = call("ws.list", json!({ "workspaceId": WS })).await;
         assert!(!listed["connections"].as_array().unwrap().iter().any(|c| c["socketId"] == "echo"));
         assert_eq!(disconnect("echo").await, json!({ "ok": true }));
-        assert_eq!(send("echo", "late").await, json!({ "ok": false, "error": "Not connected" }));
+        assert_eq!(
+            send("echo", "late").await,
+            json!({ "ok": false, "error": "Not connected", "errorKey": "stream.not_connected", "errorParams": {} })
+        );
     }
 
     #[tokio::test]
@@ -425,6 +430,10 @@ mod tests {
         let snapshot = call("ws.status", json!({ "workspaceId": WS, "socketId": "refused" })).await;
         assert_eq!(snapshot["closeCode"], 1006);
         assert_eq!(snapshot["error"], "Connection closed (code 1006)");
+        assert_eq!(
+            (&snapshot["errorKey"], &snapshot["errorParams"]),
+            (&json!("websocket.closed"), &json!({ "code": 1006 }))
+        );
         assert_eq!(snapshot["openedAt"], Value::Null);
 
         let invalid = connect("badurl", "not a url").await;
@@ -472,10 +481,13 @@ mod tests {
     async fn unknown_ids_and_the_connection_limit() {
         let _root = scratch_data_root();
         assert_eq!(call("ws.status", json!({ "workspaceId": WS, "socketId": "ghost" })).await, Value::Null);
-        let expected = json!({ "ok": false, "error": "No socket \"ghost\" in workspace \"ws1\"." });
+        let expected = json!({ "ok": false, "error": "No socket \"ghost\" in workspace \"ws1\".", "errorKey": "websocket.not_found", "errorParams": { "id": "ghost", "workspace": "ws1" } });
         assert_eq!(disconnect("ghost").await, expected);
         assert_eq!(call("ws.clearMessages", json!({ "workspaceId": WS, "socketId": "ghost" })).await, expected);
-        assert_eq!(send("ghost", "x").await, json!({ "ok": false, "error": "Not connected" }));
+        assert_eq!(
+            send("ghost", "x").await,
+            json!({ "ok": false, "error": "Not connected", "errorKey": "stream.not_connected", "errorParams": {} })
+        );
 
         let url = server(Behavior::Echo).await;
         for i in 0..5 {

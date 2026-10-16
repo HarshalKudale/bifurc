@@ -118,6 +118,9 @@ pub fn decode(text: &str) -> Result<Packet, String> {
     Ok(Packet { kind, namespace, id, data })
 }
 
+/// What a refused connection says when the server gave no message.
+pub const REFUSED_BY_DEFAULT: &str = "The server refused the connection.";
+
 /// What a frame the server sent means to a client connected (or connecting) to `namespace`.
 #[derive(Debug, Clone, PartialEq)]
 pub enum Incoming {
@@ -179,7 +182,7 @@ fn read_packet(packet: Packet) -> Incoming {
                 Some(message) => message.to_string(),
                 None => data.as_str().map(str::to_string).unwrap_or_else(|| data.to_string()),
             },
-            None => "The server refused the connection.".to_string(),
+            None => REFUSED_BY_DEFAULT.to_string(),
         }),
         PacketType::Disconnect => Incoming::Disconnected,
         PacketType::Event | PacketType::BinaryEvent => {

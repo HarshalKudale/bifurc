@@ -9,7 +9,9 @@ use protox::{
     file::{ChainFileResolver, File, FileResolver, GoogleFileResolver},
 };
 
-use crate::{utils::json::str_of, workspace::fs::read_all_entities};
+use serde_json::json;
+
+use crate::{protocol::EngineError, utils::json::str_of, workspace::fs::read_all_entities};
 
 /// The workspace's saved proto files, as (name, source).
 struct SavedProtos(Vec<(String, String)>);
@@ -38,7 +40,7 @@ impl FileResolver for SavedProtos {
     }
 }
 
-pub fn pool_from_saved(workspace_id: &str, proto_file_id: &str) -> Result<DescriptorPool, String> {
+pub fn pool_from_saved(workspace_id: &str, proto_file_id: &str) -> Result<DescriptorPool, EngineError> {
     let saved: Vec<(String, String, String)> = read_all_entities(workspace_id, "protoFiles")
         .iter()
         .map(|entity| {
@@ -49,19 +51,22 @@ pub fn pool_from_saved(workspace_id: &str, proto_file_id: &str) -> Result<Descri
             )
         })
         .collect();
-    let main = saved
-        .iter()
-        .find(|(id, ..)| id == proto_file_id)
-        .ok_or_else(|| format!("The proto file \"{proto_file_id}\" is not saved in this workspace."))?;
+    let main = saved.iter().find(|(id, ..)| id == proto_file_id).ok_or_else(|| {
+        EngineError::not_found(format!("The proto file \"{proto_file_id}\" is not saved in this workspace."))
+            .keyed("grpc.proto_not_saved", json!({ "id": proto_file_id }))
+    })?;
     compile(&main.1, saved.iter().map(|(_, name, source)| (name.clone(), source.clone())).collect())
 }
 
-pub fn compile(main_name: &str, files: Vec<(String, String)>) -> Result<DescriptorPool, String> {
+pub fn compile(main_name: &str, files: Vec<(String, String)>) -> Result<DescriptorPool, EngineError> {
     let mut resolver = ChainFileResolver::new();
     resolver.add(SavedProtos(files));
     resolver.add(GoogleFileResolver::new());
     let mut compiler = Compiler::with_file_resolver(resolver);
     compiler.include_imports(true);
-    compiler.open_file(main_name).map_err(|e| format!("The proto file does not compile: {e}"))?;
+    compiler.open_file(main_name).map_err(|e| {
+        EngineError::bad_request(format!("The proto file does not compile: {e}"))
+            .keyed("grpc.proto_compile_failed", json!({ "detail": e.to_string() }))
+    })?;
     Ok(compiler.descriptor_pool())
 }
