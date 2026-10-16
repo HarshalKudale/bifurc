@@ -22,13 +22,15 @@ use serde_json::{Value, json};
 
 use crate::{
     app_model::AppModel,
-    i18n::{t, t_with},
     components::{
         EntityAction, EntityBar,
         dialogs::{PromptField, confirm_danger, prompt},
-        entity_bar, master_detail::{list_rows, master_detail}, page,
+        entity_bar,
+        master_detail::{list_rows, master_detail},
+        page,
     },
     engine::{call, failure},
+    i18n::{t, t_with},
     model::vault::{VaultInfo, VaultState},
 };
 
@@ -63,7 +65,9 @@ impl VaultsScreen {
     }
 
     fn report(&mut self, what: &str, message: String, cx: &mut Context<Self>) {
-        self.model.update(cx, |model, cx| model.notice(t_with("vaults.report", &[("what", &what), ("message", &message)]), cx));
+        self.model.update(cx, |model, cx| {
+            model.notice(t_with("vaults.report", &[("what", &what), ("message", &message)]), cx)
+        });
     }
 
     /// Runs a vault command; a refusal (a wrong passphrase, a bad name) is shown as a notice. The list
@@ -98,13 +102,14 @@ impl VaultsScreen {
                     this.report(t("vaults.error_create"), t("vaults.passphrases_differ").to_owned(), cx);
                     return;
                 }
-                let payload =
-                    json!({ "workspaceId": this.workspace(cx), "name": values[0], "passphrase": values[1] });
+                let payload = json!({ "workspaceId": this.workspace(cx), "name": values[0], "passphrase": values[1] });
                 let client = this.model.read(cx).client().clone();
                 call(&client, cx, "vault.create", payload, |this, outcome, cx| match failure(&outcome) {
                     Some(message) => this.report(t("vaults.error_create"), message, cx),
                     None => {
-                        if let Some(id) = outcome.ok().and_then(|r| r.get("id").and_then(Value::as_str).map(str::to_owned)) {
+                        if let Some(id) =
+                            outcome.ok().and_then(|r| r.get("id").and_then(Value::as_str).map(str::to_owned))
+                        {
                             this.selected = Some(id);
                             cx.notify();
                         }
@@ -263,25 +268,24 @@ impl VaultsScreen {
 
     fn render_list(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let vaults = self.model.read(cx).vaults().to_vec();
-        list_rows("vault-list")
-            .children(vaults.into_iter().map(|vault| {
-                let id = vault.id.clone();
-                ListItem::new(gpui_kit::ElementId::Name(format!("vault-{}", vault.id).into()))
-                    .selected(self.selected.as_deref() == Some(vault.id.as_str()))
-                    .px_2()
-                    .py_1()
-                    .text_sm()
-                    .child(
-                        h_flex()
-                            .gap_2()
-                            .child(div().flex_1().min_w_0().overflow_hidden().text_ellipsis().child(vault.name.clone()))
-                            .child(Self::state_tag(&vault)),
-                    )
-                    .on_click(cx.listener(move |this, _, _, cx| {
-                        this.selected = Some(id.clone());
-                        cx.notify();
-                    }))
-            }))
+        list_rows("vault-list").children(vaults.into_iter().map(|vault| {
+            let id = vault.id.clone();
+            ListItem::new(gpui_kit::ElementId::Name(format!("vault-{}", vault.id).into()))
+                .selected(self.selected.as_deref() == Some(vault.id.as_str()))
+                .px_2()
+                .py_1()
+                .text_sm()
+                .child(
+                    h_flex()
+                        .gap_2()
+                        .child(div().flex_1().min_w_0().overflow_hidden().text_ellipsis().child(vault.name.clone()))
+                        .child(Self::state_tag(&vault)),
+                )
+                .on_click(cx.listener(move |this, _, _, cx| {
+                    this.selected = Some(id.clone());
+                    cx.notify();
+                }))
+        }))
     }
 
     fn render_secret(&self, vault: &VaultInfo, name: &str, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
@@ -350,7 +354,8 @@ impl VaultsScreen {
         let sealed = vault.state == VaultState::Sealed;
         let model = self.model.read(cx);
         // A vault's file is not an entity in the engine's maps, so its state is looked up by path.
-        let bar = EntityBar { git: model.git().files.get(&vault.path).copied(), ..EntityBar::of(model, Some(&vault.id)) };
+        let bar =
+            EntityBar { git: model.git().files.get(&vault.path).copied(), ..EntityBar::of(model, Some(&vault.id)) };
 
         let toolbar = h_flex()
             .flex_none()
@@ -401,7 +406,11 @@ impl VaultsScreen {
             .px_4()
             .py_2()
             .gap_2()
-            .child(div().flex_1().child(page::section_label(t_with("vaults.secrets_count", &[("count", &vault.secrets.len())]), cx)))
+            .child(
+                div()
+                    .flex_1()
+                    .child(page::section_label(t_with("vaults.secrets_count", &[("count", &vault.secrets.len())]), cx)),
+            )
             .child(
                 Button::new("add-secret")
                     .outline()
@@ -423,7 +432,13 @@ impl VaultsScreen {
                 .children(vault.secrets.iter().map(|name| self.render_secret(&vault, name, cx)))
                 .into_any_element()
         };
-        let usage = div().flex_none().px_4().py_2().text_xs().text_color(theme.muted_foreground).child(t_with("vaults.usage", &[("name", &vault.name)]));
+        let usage = div()
+            .flex_none()
+            .px_4()
+            .py_2()
+            .text_xs()
+            .text_color(theme.muted_foreground)
+            .child(t_with("vaults.usage", &[("name", &vault.name)]));
 
         v_flex()
             .size_full()

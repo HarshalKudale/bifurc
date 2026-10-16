@@ -61,8 +61,12 @@ fn truncated(body: &Value) -> Value {
             while !text.is_char_boundary(end) {
                 end -= 1;
             }
-            json!(format!("{}
-... truncated, {} bytes in all", &text[..end], text.len()))
+            json!(format!(
+                "{}
+... truncated, {} bytes in all",
+                &text[..end],
+                text.len()
+            ))
         }
         _ => body.clone(),
     }

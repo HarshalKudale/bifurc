@@ -3,8 +3,8 @@
 //! The tree itself is the shared [`FolderTree`]; this is what the Requests screen gives it: the explorer's
 //! nodes (five request types merged), the method badge, and the items that start a request of a type.
 
-use gpui_kit::component::menu::{PopupMenu, PopupMenuItem};
 use gpui_kit::WeakEntity;
+use gpui_kit::component::menu::{PopupMenu, PopupMenuItem};
 
 use crate::{
     app_model::AppModel,
@@ -22,7 +22,10 @@ use crate::{
 /// What only a request tree can ask for.
 #[derive(Debug, Clone)]
 pub enum RequestExtra {
-    NewRequest { kind: RequestKind, folder: Option<String> },
+    NewRequest {
+        kind: RequestKind,
+        folder: Option<String>,
+    },
     /// Start a request from a cURL command; its type comes from the command.
     ImportCurl,
     /// Open the folder with this id as a runner tab.
@@ -118,13 +121,17 @@ impl FolderTreeSource for RequestSource {
         let extra = |extra| emitter(tree, FolderTreeEvent::Extra(extra));
         menu
             // The engine runs the REST requests of a folder; the other types in it have no runner.
-            .item(PopupMenuItem::new(t("requests.tree.menu.open_as_runner")).on_click(extra(RequestExtra::RunFolder(folder.to_owned()))))
+            .item(
+                PopupMenuItem::new(t("requests.tree.menu.open_as_runner"))
+                    .on_click(extra(RequestExtra::RunFolder(folder.to_owned()))),
+            )
             .separator()
             // A new request starts as REST; its type is changed in the breadcrumb until it is saved.
-            .item(PopupMenuItem::new(t("requests.tree.menu.new_request_here")).on_click(extra(RequestExtra::NewRequest {
-                kind: RequestKind::Rest,
-                folder: Some(folder.to_owned()),
-            })))
+            .item(
+                PopupMenuItem::new(t("requests.tree.menu.new_request_here")).on_click(extra(
+                    RequestExtra::NewRequest { kind: RequestKind::Rest, folder: Some(folder.to_owned()) },
+                )),
+            )
     }
 
     /// One request of each type, one from a cURL command, then a folder. A folder takes requests of every
@@ -132,12 +139,16 @@ impl FolderTreeSource for RequestSource {
     fn new_menu(menu: PopupMenu, folder: Option<String>, tree: &WeakEntity<RequestTree>) -> PopupMenu {
         let menu = RequestKind::ALL.into_iter().fold(menu, |menu, kind| {
             menu.item(
-                PopupMenuItem::new(t_with("requests.tree.new_menu.kind_request", &[("kind", &kind.label())]))
-                    .on_click(emitter(tree, FolderTreeEvent::Extra(RequestExtra::NewRequest { kind, folder: folder.clone() }))),
+                PopupMenuItem::new(t_with("requests.tree.new_menu.kind_request", &[("kind", &kind.label())])).on_click(
+                    emitter(tree, FolderTreeEvent::Extra(RequestExtra::NewRequest { kind, folder: folder.clone() })),
+                ),
             )
         });
         menu.separator()
-            .item(PopupMenuItem::new(t(CURL_TAB_TITLE)).on_click(emitter(tree, FolderTreeEvent::Extra(RequestExtra::ImportCurl))))
+            .item(
+                PopupMenuItem::new(t(CURL_TAB_TITLE))
+                    .on_click(emitter(tree, FolderTreeEvent::Extra(RequestExtra::ImportCurl))),
+            )
             .separator()
     }
 }

@@ -238,7 +238,7 @@ pub fn describe(action: &str, params: &Value) -> Option<Event> {
         "socketio.connect" => {
             event("request sent", json!({ "request_type": "socketio", "saved": !has_text(params, "url") }))
         }
-        "ws.connect" =>event("request sent", json!({ "request_type": "websocket", "saved": true })),
+        "ws.connect" => event("request sent", json!({ "request_type": "websocket", "saved": true })),
         "request.replay" => event("request replayed", json!({ "method": http_method(str_of(params, "method")) })),
         "runner.start" => event("runner started", json!({})),
         "flow.run" => event("flow started", json!({})),
@@ -505,8 +505,21 @@ mod tests {
             "variables": secret, "protoFileId": secret, "mockedResponseHeaders": [secret],
         });
         let kinds = [
-            "mocks", "proxyRules", "mappings", "environments", "requests", "graphqlRequests", "soapRequests",
-            "grpcRequests", "sseRequests", "socketioRequests", "mcpRequests", "wsConnections", "graphqlSchemas", "wsdls", "protoFiles",
+            "mocks",
+            "proxyRules",
+            "mappings",
+            "environments",
+            "requests",
+            "graphqlRequests",
+            "soapRequests",
+            "grpcRequests",
+            "sseRequests",
+            "socketioRequests",
+            "mcpRequests",
+            "wsConnections",
+            "graphqlSchemas",
+            "wsdls",
+            "protoFiles",
         ];
         let mut events: Vec<Event> = Vec::new();
         for kind in kinds {
@@ -572,7 +585,8 @@ mod tests {
     #[test]
     fn a_finished_command_is_one_event() {
         let create = json!({ "kind": "requests", "entity": { "id": "r1", "method": "GET" } });
-        let created = finished(describe("entity.create", &create), "entity.create", Ok(&json!({ "ok": true }))).unwrap();
+        let created =
+            finished(describe("entity.create", &create), "entity.create", Ok(&json!({ "ok": true }))).unwrap();
         assert_eq!(created.name, "request created");
 
         let parsed = finished(describe("request.parseCurl", &json!({})), "request.parseCurl", Ok(&json!({}))).unwrap();
@@ -606,7 +620,8 @@ mod tests {
         let reasoned = json!({ "ok": false, "reason": "notOwner" });
         let failed = finished(None, "request.parseCurl", Ok(&reasoned)).unwrap();
         assert_eq!(failed.properties["reason"], "notOwner");
-        let failed = finished(None, "request.parseCurl", Ok(&json!({ "ok": false, "reason": "no such file" }))).unwrap();
+        let failed =
+            finished(None, "request.parseCurl", Ok(&json!({ "ok": false, "reason": "no such file" }))).unwrap();
         assert_eq!(failed.properties["reason"], "other");
         // A result that only says nothing was added is neither an event nor a failure.
         let saved = describe("healthbar.saveServices", &json!({ "workspaceId": "w" }));

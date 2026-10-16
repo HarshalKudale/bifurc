@@ -15,8 +15,7 @@ fn neutral_dir() -> PathBuf {
 
 /// The commit a remote branch points at, or `None` if it cannot be read or the branch does not exist.
 pub async fn fetch_remote_head(remote: &str, branch: &str, auth: Option<&RemoteAuth>) -> Option<String> {
-    let out =
-        git_net_in(&neutral_dir(), &["ls-remote", remote, &format!("refs/heads/{branch}")], auth).await.ok()?;
+    let out = git_net_in(&neutral_dir(), &["ls-remote", remote, &format!("refs/heads/{branch}")], auth).await.ok()?;
     out.split_whitespace().next().filter(|sha| !sha.is_empty()).map(str::to_string)
 }
 

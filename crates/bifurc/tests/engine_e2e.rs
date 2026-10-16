@@ -31,7 +31,8 @@ fn sse_server() -> u16 {
                           event: tick\ndata: one\n\ndata: two\ndata: lines\n\n",
                     );
                 } else {
-                    let _ = stream.write_all(b"HTTP/1.1 404 Not Found\r\ncontent-length: 0\r\nconnection: close\r\n\r\n");
+                    let _ =
+                        stream.write_all(b"HTTP/1.1 404 Not Found\r\ncontent-length: 0\r\nconnection: close\r\n\r\n");
                 }
             });
         }
@@ -121,7 +122,9 @@ fn start_status_call_and_stop_a_real_engine() {
 
     // A data directory whose first-run setup is not finished is the interface's: every command is refused,
     // except asking how far the setup is.
-    for argv in [vec!["--no-start", "call", "config.get", "{}"], vec!["--no-start", "status"], vec!["--no-start", "mocks"]] {
+    for argv in
+        [vec!["--no-start", "call", "config.get", "{}"], vec!["--no-start", "status"], vec!["--no-start", "mocks"]]
+    {
         let (ok, out, err) = bifurc(data, &argv);
         assert!(!ok && out.is_empty(), "{argv:?}: {out}");
         assert!(err.starts_with("bifurc: Bifurc has not been set up yet."), "{argv:?}: {err}");
@@ -163,7 +166,18 @@ fn start_status_call_and_stop_a_real_engine() {
             (vec!["mocks", "show", "Users"], "\"responseStatus\": 404"),
         ),
         (
-            vec!["requests", "create", "--type", "grpc", "--url", "127.0.0.1:1", "--method", "pkg.S/M", "--name", "Rpc"],
+            vec![
+                "requests",
+                "create",
+                "--type",
+                "grpc",
+                "--url",
+                "127.0.0.1:1",
+                "--method",
+                "pkg.S/M",
+                "--name",
+                "Rpc",
+            ],
             vec!["requests", "update", "Rpc", "--method", "pkg.S/Other"],
             (vec!["requests", "show", "Rpc"], "\"methodName\": \"Other\""),
         ),
@@ -183,7 +197,13 @@ fn start_status_call_and_stop_a_real_engine() {
         assert!(!ok && err.contains("deleting is done in the desktop app"), "{err}");
     }
     for group in ["mappings", "rules", "mocks"] {
-        let named = if group == "mappings" { "api.localhost" } else if group == "rules" { "V1" } else { "Users" };
+        let named = if group == "mappings" {
+            "api.localhost"
+        } else if group == "rules" {
+            "V1"
+        } else {
+            "Users"
+        };
         let (ok, out, err) = bifurc(data, &[group, "disable", named]);
         assert!(ok && out.starts_with("Disabled "), "{out}{err}");
         let (ok, out, err) = bifurc(data, &[group, "list"]);
@@ -215,7 +235,8 @@ fn start_status_call_and_stop_a_real_engine() {
     // Nothing is left open by the sends above.
     let (ok, out, err) = bifurc(data, &["--no-start", "call", "config.get", "{}"]);
     assert!(ok, "{out}{err}");
-    let active = serde_json::from_str::<serde_json::Value>(&out).unwrap()["activeWorkspaceId"].as_str().unwrap().to_string();
+    let active =
+        serde_json::from_str::<serde_json::Value>(&out).unwrap()["activeWorkspaceId"].as_str().unwrap().to_string();
     let payload = serde_json::json!({ "workspaceId": active }).to_string();
     let (ok, out, err) = bifurc(data, &["--no-start", "call", "sse.list", &payload]);
     assert!(ok && out.contains("\"streams\": []"), "{out}{err}");
@@ -224,8 +245,10 @@ fn start_status_call_and_stop_a_real_engine() {
     // with its auth payload, emits the event asked for and prints what came back.
     let port = socketio_server();
     let url = format!("http://127.0.0.1:{port}");
-    let (ok, out, err) =
-        bifurc(data, &["requests", "create", "--type", "socketio", "--url", &url, "--name", "Chat", "--namespace", "/chat"]);
+    let (ok, out, err) = bifurc(
+        data,
+        &["requests", "create", "--type", "socketio", "--url", &url, "--name", "Chat", "--namespace", "/chat"],
+    );
     assert!(ok && out.starts_with("Saved socketio request "), "{out}{err}");
     let (ok, out, err) = bifurc(data, &["requests", "update", "Chat", "--auth", "{\"token\":\"abc\"}"]);
     assert!(ok, "{out}{err}");
@@ -233,24 +256,34 @@ fn start_status_call_and_stop_a_real_engine() {
     assert!(ok && out.contains("\"namespace\": \"/chat\"") && out.contains("\"type\": \"socketio\""), "{out}{err}");
     let (ok, out, err) = bifurc(data, &["requests", "list", "--type", "socketio"]);
     assert!(ok && out.contains("Chat") && out.contains("/chat") && out.contains(&url), "{out}{err}");
-    let (ok, out, err) =
-        bifurc(data, &["requests", "send", "Chat", "--event", "echo", "-d", "[\"hi\", {\"n\": 1}]", "--ack", "--wait", "1"]);
+    let (ok, out, err) = bifurc(
+        data,
+        &["requests", "send", "Chat", "--event", "echo", "-d", "[\"hi\", {\"n\": 1}]", "--ack", "--wait", "1"],
+    );
     let exchange = format!(
         "Socket.IO connected  {url}  /chat\n< [welcome] [{{\"token\":\"abc\"}}]\n> [echo #0] [\"hi\",{{\"n\":1}}]\n\
          < [echo] [\"hi\",{{\"n\":1}}]\n< [ack #0] [\"got it\"]"
     );
     assert!(ok && out.trim_end() == exchange, "{out}{err}");
-    let (ok, out, err) =
-        bifurc(data, &["requests", "send", "--type", "socketio", "--url", &url, "--event", "echo", "-d", "plain", "--wait", "1"]);
-    let exchange = format!("Socket.IO connected  {url}\n< [welcome] [null]\n> [echo] [\"plain\"]\n< [echo] [\"plain\"]");
+    let (ok, out, err) = bifurc(
+        data,
+        &["requests", "send", "--type", "socketio", "--url", &url, "--event", "echo", "-d", "plain", "--wait", "1"],
+    );
+    let exchange =
+        format!("Socket.IO connected  {url}\n< [welcome] [null]\n> [echo] [\"plain\"]\n< [echo] [\"plain\"]");
     assert!(ok && out.trim_end() == exchange, "{out}{err}");
-    let (ok, out, _) =
-        bifurc(data, &["requests", "send", "--type", "socketio", "--url", &url, "--namespace", "/deny", "--event", "echo"]);
+    let (ok, out, _) = bifurc(
+        data,
+        &["requests", "send", "--type", "socketio", "--url", &url, "--namespace", "/deny", "--event", "echo"],
+    );
     assert!(!ok && out.contains("error: Not authorized") && !out.contains("> [echo]"), "{out}");
     // Only the events listened to are printed: the server's welcome is not among them.
     let (ok, out, err) = bifurc(
         data,
-        &["requests", "send", "--type", "socketio", "--url", &url, "--listen", "echo", "--event", "echo", "-d", "plain", "--wait", "1"],
+        &[
+            "requests", "send", "--type", "socketio", "--url", &url, "--listen", "echo", "--event", "echo", "-d",
+            "plain", "--wait", "1",
+        ],
     );
     let exchange = format!("Socket.IO connected  {url}\n> [echo] [\"plain\"]\n< [echo] [\"plain\"]");
     assert!(ok && out.trim_end() == exchange, "{out}{err}");

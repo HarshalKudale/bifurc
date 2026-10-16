@@ -110,7 +110,8 @@ pub fn register(registry: &mut CommandRegistry) {
             "statusMessage": outcome.status_message,
         });
         if !ok {
-            result["error"] = json!(format!("{}: {}", status_name(outcome.status), result["statusMessage"].as_str().unwrap_or("")));
+            result["error"] =
+                json!(format!("{}: {}", status_name(outcome.status), result["statusMessage"].as_str().unwrap_or("")));
         }
         Ok(elapsed(result))
     });

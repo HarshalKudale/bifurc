@@ -229,8 +229,7 @@ impl SettingsScreen {
         ];
         let certificate = cx.new(|cx| Certificate::new(model.clone(), cx));
         subscriptions.push(cx.observe(&certificate, |_, _, cx| cx.notify()));
-        let mut this =
-            Self {
+        let mut this = Self {
             model,
             certificate,
             accounts: Vec::new(),
@@ -319,8 +318,11 @@ impl SettingsScreen {
             .into_iter()
             .map(|(name, is_dark)| {
                 // Most themes say which they are in their name; the rest get it appended.
-                let (mode, mode_name) =
-                    if is_dark { ("Dark", t("settings.theme.mode.dark")) } else { ("Light", t("settings.theme.mode.light")) };
+                let (mode, mode_name) = if is_dark {
+                    ("Dark", t("settings.theme.mode.dark"))
+                } else {
+                    ("Light", t("settings.theme.mode.light"))
+                };
                 let label: SharedString = if name.contains(mode) {
                     name.clone()
                 } else {
@@ -332,7 +334,10 @@ impl SettingsScreen {
         let sizes: Vec<(SharedString, SharedString)> = theme::FONT_SIZES
             .iter()
             .map(|size| {
-                (SharedString::from(size.to_string()), SharedString::from(t_with("settings.text.size.option", &[("size", size)])))
+                (
+                    SharedString::from(size.to_string()),
+                    SharedString::from(t_with("settings.text.size.option", &[("size", size)])),
+                )
             })
             .collect();
 
@@ -440,9 +445,7 @@ impl SettingsScreen {
             let toggle_model = model.clone();
             let state = match (&listener.error, listener.running) {
                 (Some(error), _) => Tag::danger().child(error.clone()),
-                (None, true) => {
-                    Tag::success().child(t_with("settings.listener.running", &[("port", &listener.port)]))
-                }
+                (None, true) => Tag::success().child(t_with("settings.listener.running", &[("port", &listener.port)])),
                 (None, false) => Tag::secondary().child(t("settings.listener.stopped")),
             };
             h_flex().w_full().gap_2().child(div().flex_1().child(name)).child(state).child(
@@ -556,11 +559,7 @@ impl SettingsScreen {
                     AppModel::reverse_proxy,
                     AppModel::toggle_reverse_proxy,
                 ))
-                .item(self.port_item(
-                    t("settings.port.title"),
-                    t("settings.port.reverse_description"),
-                    "port",
-                ))
+                .item(self.port_item(t("settings.port.title"), t("settings.port.reverse_description"), "port"))
                 .footer(|_, _| t("settings.reverse_proxy.footer")),
             SettingGroup::new()
                 .title(t("settings.companion.title"))
@@ -583,7 +582,9 @@ impl SettingsScreen {
                 t(title),
                 SettingField::switch(
                     move |cx: &App| read(&reader.read(cx).config().request_defaults),
-                    move |value: bool, cx: &mut App| set_request_default(&writer, cx, |defaults| change(defaults, value)),
+                    move |value: bool, cx: &mut App| {
+                        set_request_default(&writer, cx, |defaults| change(defaults, value))
+                    },
                 ),
             )
             .description(t(description))
@@ -613,7 +614,9 @@ impl SettingsScreen {
                             move |value: f64, cx: &mut App| {
                                 // The field reports every keystroke; only a whole, non-negative number is sent.
                                 if value >= 0.0 && value.fract() == 0.0 {
-                                    set_request_default(&timeout_writer, cx, |defaults| defaults.timeout_ms = value as u64)
+                                    set_request_default(&timeout_writer, cx, |defaults| {
+                                        defaults.timeout_ms = value as u64
+                                    })
                                 }
                             },
                         ),
@@ -684,7 +687,9 @@ impl SettingsScreen {
                                     })
                                     .loading(certificate.busy)
                                     .disabled(working)
-                                    .on_click(move |_, _, cx| generate.update(cx, |certificate, cx| certificate.generate(cx))),
+                                    .on_click(move |_, _, cx| {
+                                        generate.update(cx, |certificate, cx| certificate.generate(cx))
+                                    }),
                             )
                             .child(
                                 Button::new("import-certificate")
@@ -693,14 +698,18 @@ impl SettingsScreen {
                                     .loading(certificate.importing)
                                     .disabled(working)
                                     .tooltip(t("settings.certificate.import_tooltip"))
-                                    .on_click(move |_, _, cx| import.update(cx, |certificate, cx| certificate.import(cx))),
+                                    .on_click(move |_, _, cx| {
+                                        import.update(cx, |certificate, cx| certificate.import(cx))
+                                    }),
                             )
                             .child(
                                 Button::new("remove-certificate")
                                     .with_size(options.size())
                                     .label(t("settings.certificate.remove"))
                                     .disabled(!certificate.generated || working)
-                                    .on_click(move |_, _, cx| remove.update(cx, |certificate, cx| certificate.remove(cx))),
+                                    .on_click(move |_, _, cx| {
+                                        remove.update(cx, |certificate, cx| certificate.remove(cx))
+                                    }),
                             )
                     })
                     .keywords([
@@ -718,10 +727,7 @@ impl SettingsScreen {
                         let install = install_control.clone();
                         let certificate = install_control.read(cx);
                         let note = certificate.note.clone().map(|(ok, text)| {
-                            div()
-                                .text_xs()
-                                .text_color(if ok { theme.success } else { theme.danger })
-                                .child(text)
+                            div().text_xs().text_color(if ok { theme.success } else { theme.danger }).child(text)
                         });
                         h_flex()
                             .w_full()
@@ -741,7 +747,9 @@ impl SettingsScreen {
                                     .loading(certificate.installing)
                                     .disabled(!certificate.generated || certificate.installing)
                                     .tooltip(t("settings.certificate.install_tooltip"))
-                                    .on_click(move |_, _, cx| install.update(cx, |certificate, cx| certificate.install(cx))),
+                                    .on_click(move |_, _, cx| {
+                                        install.update(cx, |certificate, cx| certificate.install(cx))
+                                    }),
                             )
                     })
                     .keywords([
@@ -800,12 +808,10 @@ impl SettingsScreen {
                             .with_size(options.size())
                             .primary()
                             .label(t("settings.account.sign_in_again"))
-                            .on_click(
-                            move |_, window, cx| {
+                            .on_click(move |_, window, cx| {
                                 let purpose = Purpose::SignIn { account_id: relogin_id.clone() };
                                 open_setup_dialog(model.clone(), purpose, window, cx);
-                            },
-                        )
+                            })
                     }))
                     .child(
                         Button::new(("sign-out", index))
@@ -866,7 +872,7 @@ impl SettingsScreen {
         let (telemetry_read, telemetry_write) = (self.model.clone(), self.model.clone());
         let policy_url = self.model.read(cx).setup().privacy_policy_url.clone();
         let terms_url = self.model.read(cx).setup().terms_of_service_url.clone();
-        let fact =|title: &'static str, value: String| {
+        let fact = |title: &'static str, value: String| {
             SettingItem::new(
                 title,
                 SettingField::render(move |_, _, cx| {
@@ -926,7 +932,10 @@ impl SettingsScreen {
                     t("settings.about.desktop_app"),
                     t_with("settings.version", &[("version", &env!("CARGO_PKG_VERSION"))]),
                 ),
-                fact(t("settings.engine.name"), t_with("settings.version", &[("version", &engine.hello.engine_version)])),
+                fact(
+                    t("settings.engine.name"),
+                    t_with("settings.version", &[("version", &engine.hello.engine_version)]),
+                ),
                 fact(t("settings.about.protocol"), engine.hello.protocol_version.to_string()),
                 fact(
                     t("settings.about.engine_process"),
@@ -1048,9 +1057,10 @@ impl SettingsScreen {
             let security = update.critical.then(|| t("settings.update.security").to_owned());
             let notes = [update.summary.clone(), update.steps(), security];
             let get = match &action {
-                UpdateAction::Store(url) => {
-                    Link::new("update-store").href(url.clone()).child(t("settings.update.open_store")).into_any_element()
-                }
+                UpdateAction::Store(url) => Link::new("update-store")
+                    .href(url.clone())
+                    .child(t("settings.update.open_store"))
+                    .into_any_element(),
                 UpdateAction::Download(url) => Link::new("update-download")
                     .href(url.clone())
                     .child(t_with("settings.update.download", &[("version", &update.next())]))
@@ -1065,7 +1075,9 @@ impl SettingsScreen {
                                 .with_size(options.size())
                                 .icon(IconName::Copy)
                                 .label(t("settings.update.copy"))
-                                .on_click(move |_, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(copied.clone()))),
+                                .on_click(move |_, _, cx| {
+                                    cx.write_to_clipboard(ClipboardItem::new_string(copied.clone()))
+                                }),
                         )
                         .into_any_element()
                 }
@@ -1073,7 +1085,13 @@ impl SettingsScreen {
             let skip = if update.critical {
                 None
             } else if update.skipped {
-                Some(div().text_xs().text_color(theme.muted_foreground).child(t("settings.update.skipped")).into_any_element())
+                Some(
+                    div()
+                        .text_xs()
+                        .text_color(theme.muted_foreground)
+                        .child(t("settings.update.skipped"))
+                        .into_any_element(),
+                )
             } else {
                 let (skip_model, version) = (model.clone(), update.version.clone());
                 Some(
@@ -1085,10 +1103,9 @@ impl SettingsScreen {
                         .into_any_element(),
                 )
             };
-            let changes = update
-                .notes_url
-                .clone()
-                .map(|url| Link::new("update-notes").href(url).child(t("settings.update.what_changed")).into_any_element());
+            let changes = update.notes_url.clone().map(|url| {
+                Link::new("update-notes").href(url).child(t("settings.update.what_changed")).into_any_element()
+            });
             h_flex()
                 .w_full()
                 .gap_3()
@@ -1098,7 +1115,10 @@ impl SettingsScreen {
                         .min_w_0()
                         .child(t_with("settings.version", &[("version", &update.version)]))
                         .children(
-                            notes.into_iter().flatten().map(|note| div().text_xs().text_color(theme.muted_foreground).child(note)),
+                            notes
+                                .into_iter()
+                                .flatten()
+                                .map(|note| div().text_xs().text_color(theme.muted_foreground).child(note)),
                         ),
                 )
                 .children(changes)

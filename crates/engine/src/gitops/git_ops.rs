@@ -172,9 +172,8 @@ pub async fn sync_changes(ws_id: &str, paths: &[String], message: Option<String>
         publish_entities(PublishOptions { ws_id: ws_id.to_string(), paths: normalized.clone(), message }).await;
     if result.get("ok") == Some(&Value::Bool(true)) {
         // A deletion that was just committed is final: by its file, or by a folder it was under.
-        let published = |path: &str| {
-            normalized.iter().any(|p| p == path || (p.ends_with('/') && path.starts_with(p.as_str())))
-        };
+        let published =
+            |path: &str| normalized.iter().any(|p| p == path || (p.ends_with('/') && path.starts_with(p.as_str())));
         for kind in ALL_ENTITY_KINDS {
             for record in get_pending_deletions(ws_id, kind) {
                 if published(&record_path(kind, &record)) {

@@ -286,7 +286,9 @@ fn collection_json(json_text: &str) -> Result<Value, String> {
     let col = parse_json(json_text)?;
     // `info.schema` names the version; a draft of v2 had `_postman_schema` instead. Either way it has items.
     let is_collection = col.get("info").is_some_and(|info| {
-        ["schema", "_postman_schema"].iter().any(|key| opt_str(info, key).is_some_and(|schema| schema.contains("postman")))
+        ["schema", "_postman_schema"]
+            .iter()
+            .any(|key| opt_str(info, key).is_some_and(|schema| schema.contains("postman")))
     }) && col.get("item").is_some_and(Value::is_array);
     if !is_collection {
         return Err(thrown(NOT_A_COLLECTION));
@@ -367,7 +369,9 @@ struct Scope {
 fn v3_body(call: &mut Http, body: Option<&Value>) {
     let Some(body) = body.filter(|b| b.is_object()) else { return };
     let content = body.get("content");
-    let text = || content.map(|c| c.as_str().map_or_else(|| serde_json::to_string_pretty(c).unwrap_or_default(), str::to_string));
+    let text = || {
+        content.map(|c| c.as_str().map_or_else(|| serde_json::to_string_pretty(c).unwrap_or_default(), str::to_string))
+    };
     match text_or(body, "type", "").as_str() {
         "formdata" => call.parts = form_parts(content),
         "urlencoded" => {
@@ -433,10 +437,13 @@ fn v3_request(file: &Value, fallback_name: &str, scope: &Scope) -> Option<(&'sta
                 .map(|event| json!({ "event": text_or(event, "name", ""), "description": text_or(event, "description", "") }))
                 .collect();
             let path = file.get("settings").map(|s| text_or(s, "path", "")).unwrap_or_default();
-            Some(("socketioRequests", json!({
-                "name": name, "url": url, "headers": header_record(&headers), "path": path, "namespace": "",
-                "auth": "", "listeners": listeners,
-            })))
+            Some((
+                "socketioRequests",
+                json!({
+                    "name": name, "url": url, "headers": header_record(&headers), "path": path, "namespace": "",
+                    "auth": "", "listeners": listeners,
+                }),
+            ))
         }
         "mcp-request" => {
             let stdio = opt_str(file, "transport") == Some("stdio");
@@ -446,9 +453,12 @@ fn v3_request(file: &Value, fallback_name: &str, scope: &Scope) -> Option<(&'sta
                 let call = with_auth(Http { url, headers, ..Http::default() });
                 (call.url.clone(), header_record(&call.headers))
             };
-            Some(("mcpRequests", json!({
-                "name": name, "transport": if stdio { "stdio" } else { "http" }, "url": address, "headers": record,
-            })))
+            Some((
+                "mcpRequests",
+                json!({
+                    "name": name, "transport": if stdio { "stdio" } else { "http" }, "url": address, "headers": record,
+                }),
+            ))
         }
         _ => None,
     }
@@ -693,7 +703,11 @@ mod tests {
         assert_eq!(inside.folder.as_deref(), Some("/1"));
         assert_eq!(inside.entity["method"], "POST");
         assert_eq!(inside.entity["url"], "{{base-url}}/users/7?x=1");
-        assert_eq!(inside.entity["headers"], json!({ "K": "V", "Content-Type": "application/json" }), "the folder says no auth");
+        assert_eq!(
+            inside.entity["headers"],
+            json!({ "K": "V", "Content-Type": "application/json" }),
+            "the folder says no auth"
+        );
         assert_eq!(inside.entity["testScript"], "a\nbc.test('b')");
 
         let query = by_name("Query");
@@ -704,7 +718,10 @@ mod tests {
 
         let form = by_name("Form");
         assert_eq!(form.entity["url"], "http://h/form?k=v");
-        assert_eq!(form.entity["bodyParts"][1], json!({ "name": "f", "kind": "file", "value": "", "fileName": "pic.png", "contentType": "" }));
+        assert_eq!(
+            form.entity["bodyParts"][1],
+            json!({ "name": "f", "kind": "file", "value": "", "fileName": "pic.png", "contentType": "" })
+        );
     }
 
     #[test]
@@ -720,8 +737,11 @@ mod tests {
         assert_eq!(out.drafts[0].entity["method"], "GET");
         let old = &out.drafts[1].entity;
         assert_eq!(old["body"], "a%20b=x%26y&c=");
-        assert_eq!(old["headers"], json!({ "A": "b", "C": "d", "Content-Type": "application/x-www-form-urlencoded",
-            "Authorization": "Basic dTpw" }));
+        assert_eq!(
+            old["headers"],
+            json!({ "A": "b", "C": "d", "Content-Type": "application/x-www-form-urlencoded",
+            "Authorization": "Basic dTpw" })
+        );
     }
 
     #[test]
@@ -763,17 +783,34 @@ mod tests {
     #[test]
     fn a_v3_tree_brings_every_protocol() {
         let bytes = zipped(&[
-            ("postman/collections/Shop/.resources/definition.yaml",
-             "$kind: collection\nname: Shop API\nvariables:\n  - key: host\n    value: shop.test\nauth:\n  type: bearer\n  credentials:\n    - key: token\n      value: '{{token}}'\n"),
-            ("postman/collections/Shop/list.request.yaml",
-             "$kind: http-request\nmethod: POST\nurl: 'https://{{host}}/items/:id'\norder: 2000\npathVariables:\n  - key: id\n    value: '4'\nqueryParams:\n  - key: page\n    value: '2'\nbody:\n  type: json\n  content: |-\n    {\"a\":1}\nscripts:\n  - type: afterResponse\n    code: pm.test('ok')\n"),
-            ("postman/collections/Shop/rpc/say.request.yaml",
-             "$kind: grpc-request\nname: Say hello\nurl: grpc.shop.test:443\nmethodPath: shop.Greeter/SayHello\nmessage:\n  content: '{\"name\":\"a\"}'\nmetadata:\n  - key: x-trace\n    value: '1'\n"),
-            ("postman/collections/Shop/rpc/feed.request.yaml", "$kind: websocket-request\nurl: wss://shop.test/feed\norder: 1\n"),
-            ("postman/collections/Shop/rpc/chat.request.yaml",
-             "$kind: socket.io-request\nurl: https://shop.test\nevents:\n  - name: message\n    subscribeOnConnect: true\n  - name: quiet\n    subscribeOnConnect: false\nsettings:\n  path: /io\n"),
-            ("postman/collections/Shop/rpc/tools.request.yaml", "$kind: mcp-request\ntransport: stdio\ncommand: npx server\nenv:\n  - key: A\n    value: b\n"),
-            ("postman/collections/Shop/rpc/q.request.yaml", "$kind: graphql-request\nurl: https://shop.test/graphql\nquery: '{ me }'\n"),
+            (
+                "postman/collections/Shop/.resources/definition.yaml",
+                "$kind: collection\nname: Shop API\nvariables:\n  - key: host\n    value: shop.test\nauth:\n  type: bearer\n  credentials:\n    - key: token\n      value: '{{token}}'\n",
+            ),
+            (
+                "postman/collections/Shop/list.request.yaml",
+                "$kind: http-request\nmethod: POST\nurl: 'https://{{host}}/items/:id'\norder: 2000\npathVariables:\n  - key: id\n    value: '4'\nqueryParams:\n  - key: page\n    value: '2'\nbody:\n  type: json\n  content: |-\n    {\"a\":1}\nscripts:\n  - type: afterResponse\n    code: pm.test('ok')\n",
+            ),
+            (
+                "postman/collections/Shop/rpc/say.request.yaml",
+                "$kind: grpc-request\nname: Say hello\nurl: grpc.shop.test:443\nmethodPath: shop.Greeter/SayHello\nmessage:\n  content: '{\"name\":\"a\"}'\nmetadata:\n  - key: x-trace\n    value: '1'\n",
+            ),
+            (
+                "postman/collections/Shop/rpc/feed.request.yaml",
+                "$kind: websocket-request\nurl: wss://shop.test/feed\norder: 1\n",
+            ),
+            (
+                "postman/collections/Shop/rpc/chat.request.yaml",
+                "$kind: socket.io-request\nurl: https://shop.test\nevents:\n  - name: message\n    subscribeOnConnect: true\n  - name: quiet\n    subscribeOnConnect: false\nsettings:\n  path: /io\n",
+            ),
+            (
+                "postman/collections/Shop/rpc/tools.request.yaml",
+                "$kind: mcp-request\ntransport: stdio\ncommand: npx server\nenv:\n  - key: A\n    value: b\n",
+            ),
+            (
+                "postman/collections/Shop/rpc/q.request.yaml",
+                "$kind: graphql-request\nurl: https://shop.test/graphql\nquery: '{ me }'\n",
+            ),
             ("postman/collections/Shop/rpc/topic.request.yaml", "$kind: mqtt-request\nurl: mqtt://x\n"),
             ("postman/collections/Shop/.resources/list.resources/examples/ok.example.yaml", "$kind: http-example\n"),
         ]);
@@ -788,13 +825,18 @@ mod tests {
 
         assert_eq!(kind_of("list"), Some("requests"));
         assert_eq!(entity("list")["url"], "https://{{host}}/items/4?page=2");
-        assert_eq!(entity("list")["headers"], json!({ "Content-Type": "application/json", "Authorization": "Bearer {{token}}" }));
+        assert_eq!(
+            entity("list")["headers"],
+            json!({ "Content-Type": "application/json", "Authorization": "Bearer {{token}}" })
+        );
         assert_eq!(entity("list")["testScript"], "bc.test('ok')");
 
         let grpc = entity("Say hello");
         assert_eq!(kind_of("Say hello"), Some("grpcRequests"));
-        assert_eq!((&grpc["serverAddress"], &grpc["serviceName"], &grpc["methodName"]),
-            (&json!("grpc.shop.test:443"), &json!("shop.Greeter"), &json!("SayHello")));
+        assert_eq!(
+            (&grpc["serverAddress"], &grpc["serviceName"], &grpc["methodName"]),
+            (&json!("grpc.shop.test:443"), &json!("shop.Greeter"), &json!("SayHello"))
+        );
         assert_eq!(grpc["requestBody"], "{\"name\":\"a\"}");
         assert_eq!(grpc["metadata"], json!({ "x-trace": "1", "Authorization": "Bearer {{token}}" }));
         assert_eq!(grpc["useReflection"], true);

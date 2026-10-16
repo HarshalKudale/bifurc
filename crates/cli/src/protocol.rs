@@ -1,8 +1,8 @@
 //! What the CLI knows of the engine protocol: the handshake constants and the command names `call` accepts.
 //! Both come from `bifurc-protocol` (`crates/protocol`).
 
-pub use bifurc_protocol::{PROTOCOL_VERSION, crash};
 use bifurc_protocol::commands;
+pub use bifurc_protocol::{PROTOCOL_VERSION, crash};
 
 /// This client's name in the `hello` handshake.
 pub const CLIENT_NAME: &str = "cli";

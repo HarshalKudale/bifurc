@@ -38,14 +38,19 @@ impl Shell {
     pub(super) fn render_title_bar(&self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
         let config = self.model.read(cx).config();
-        let environment_name =
-            config.active_environment().map(|e| e.name.clone()).unwrap_or_else(|| t("shell.chrome.no_environment").to_owned());
-        let environments: Vec<(Option<String>, String, bool)> =
-            std::iter::once((None, t("shell.chrome.no_environment").to_owned(), config.active_environment_id.is_none()))
-                .chain(config.selectable_environments().map(|e| {
-                    (Some(e.id.clone()), e.name.clone(), config.active_environment_id.as_deref() == Some(e.id.as_str()))
-                }))
-                .collect();
+        let environment_name = config
+            .active_environment()
+            .map(|e| e.name.clone())
+            .unwrap_or_else(|| t("shell.chrome.no_environment").to_owned());
+        let environments: Vec<(Option<String>, String, bool)> = std::iter::once((
+            None,
+            t("shell.chrome.no_environment").to_owned(),
+            config.active_environment_id.is_none(),
+        ))
+        .chain(config.selectable_environments().map(|e| {
+            (Some(e.id.clone()), e.name.clone(), config.active_environment_id.as_deref() == Some(e.id.as_str()))
+        }))
+        .collect();
         let model = self.model.clone();
         let shell = cx.weak_entity();
         let shortcut = Kbd::binding_for_action(&OpenCommandPalette, None, window);
@@ -73,12 +78,7 @@ impl Shell {
                                         .gap_2()
                                         .text_color(theme.muted_foreground)
                                         .child(Icon::new(IconName::Search).small())
-                                        .child(
-                                            div()
-                                                .flex_1()
-                                                .text_left()
-                                                .child(t("shell.chrome.search_placeholder")),
-                                        )
+                                        .child(div().flex_1().text_left().child(t("shell.chrome.search_placeholder")))
                                         .children(finder_shortcut),
                                 )
                                 .on_click(|_, window, cx| window.dispatch_action(Box::new(OpenFinder), cx)),
@@ -113,15 +113,17 @@ impl Shell {
                                         ))
                                     });
                                     let shell = shell.clone();
-                                    menu.separator().item(PopupMenuItem::new(t("shell.chrome.manage_environments")).on_click(
-                                        move |_, window, cx| {
-                                            shell
-                                                .update(cx, |shell, cx| {
-                                                    shell.show_screen(Screen::Environments, window, cx)
-                                                })
-                                                .ok();
-                                        },
-                                    ))
+                                    menu.separator().item(
+                                        PopupMenuItem::new(t("shell.chrome.manage_environments")).on_click(
+                                            move |_, window, cx| {
+                                                shell
+                                                    .update(cx, |shell, cx| {
+                                                        shell.show_screen(Screen::Environments, window, cx)
+                                                    })
+                                                    .ok();
+                                            },
+                                        ),
+                                    )
                                 }),
                         ),
                     ),
@@ -394,7 +396,9 @@ impl Shell {
                             .icon(IconName::ArrowUp)
                             .label(t("shell.chrome.update_available"))
                             .tooltip(t_with("shell.chrome.update_tooltip", &[("version", &version)]))
-                            .on_click(cx.listener(|this, _, window, cx| this.show_screen(Screen::Settings, window, cx))),
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.show_screen(Screen::Settings, window, cx)),
+                            ),
                     )
                 })
                 .child(

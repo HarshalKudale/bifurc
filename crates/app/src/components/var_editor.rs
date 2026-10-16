@@ -8,8 +8,8 @@
 use gpui_kit::component::{
     ActiveTheme as _, Theme,
     input::{
-        Editor, EditorState, Input, InputEvent, InputState, RangeDecoration, RangeDecorationCollection, RangeDecorationStyle,
-        TextDecoration, TextDecorationCollection,
+        Editor, EditorState, Input, InputEvent, InputState, RangeDecoration, RangeDecorationCollection,
+        RangeDecorationStyle, TextDecoration, TextDecorationCollection,
     },
 };
 use gpui_kit::{

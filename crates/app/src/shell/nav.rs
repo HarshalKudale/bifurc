@@ -75,7 +75,16 @@ impl Screen {
     /// A screen that is not about saved entities covers the whole workspace.
     pub fn git_prefixes(self) -> &'static [&'static str] {
         match self {
-            Screen::Requests => &["requests/", "graphqlRequests/", "soapRequests/", "grpcRequests/", "sseRequests/", "socketioRequests/", "mcpRequests/", "sockets/"],
+            Screen::Requests => &[
+                "requests/",
+                "graphqlRequests/",
+                "soapRequests/",
+                "grpcRequests/",
+                "sseRequests/",
+                "socketioRequests/",
+                "mcpRequests/",
+                "sockets/",
+            ],
             Screen::Mocks => &["mocks/"],
             Screen::Flows => &["flows/"],
             Screen::Mappings => &["mappings/"],
@@ -136,7 +145,10 @@ impl Shell {
     fn render_workspace_switcher(&self, collapsed: bool, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
         let config = self.model.read(cx).config();
-        let name = config.active_workspace().map(|w| w.name.clone()).unwrap_or_else(|| t("shell.workspace.default_name").to_owned());
+        let name = config
+            .active_workspace()
+            .map(|w| w.name.clone())
+            .unwrap_or_else(|| t("shell.workspace.default_name").to_owned());
         let active_id = config.active_workspace_id.clone();
         let workspaces: Vec<(String, String)> =
             config.workspaces.iter().map(|w| (w.id.clone(), w.name.clone())).collect();
@@ -168,7 +180,12 @@ impl Shell {
                             v_flex()
                                 .min_w_0()
                                 .child(div().text_sm().font_medium().overflow_hidden().text_ellipsis().child(name))
-                                .child(div().text_xs().text_color(theme.muted_foreground).child(t("shell.workspace.caption"))),
+                                .child(
+                                    div()
+                                        .text_xs()
+                                        .text_color(theme.muted_foreground)
+                                        .child(t("shell.workspace.caption")),
+                                ),
                         )
                     }),
             )

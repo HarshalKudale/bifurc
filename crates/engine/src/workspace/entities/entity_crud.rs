@@ -230,8 +230,18 @@ fn update_entity_core(kind: &CrudKind, entity: &Value) -> Result<Value> {
 /// The fields of an entity that `config.get` lists for it, so a client can patch its snapshot from the event.
 fn listing_of(kind: &str, entity: &Value) -> Value {
     const FIELDS: [&str; 12] = [
-        "id", "name", "folderId", "method", "url", "endpointUrl", "serverAddress", "serviceName", "methodName",
-        "urlPattern", "domain", "target",
+        "id",
+        "name",
+        "folderId",
+        "method",
+        "url",
+        "endpointUrl",
+        "serverAddress",
+        "serviceName",
+        "methodName",
+        "urlPattern",
+        "domain",
+        "target",
     ];
     let mut listing = serde_json::Map::new();
     for field in FIELDS.into_iter().chain(["label"]).chain((kind == "environments").then_some("variables")) {
@@ -533,9 +543,12 @@ mod tests {
         assert_eq!(mine[1]["action"], "updated");
         assert_eq!(mine[1]["kind"], "requests");
         let listing = &mine[1]["listing"];
-        assert_eq!(*listing, json!({
-            "id": id, "name": "Sign in", "folderId": created["folderId"], "method": "POST", "url": "http://a/login",
-        }));
+        assert_eq!(
+            *listing,
+            json!({
+                "id": id, "name": "Sign in", "folderId": created["folderId"], "method": "POST", "url": "http://a/login",
+            })
+        );
         assert_eq!(mine[2]["action"], "deleted");
         assert_eq!(mine[2]["pending"], false);
     }
@@ -553,8 +566,10 @@ mod tests {
 
         // No folder, an empty one and one that does not exist all land in Default, which is made on the way.
         let request = |folder: Value| json!({ "name": "R", "method": "GET", "url": "http://a", "folderId": folder });
-        let loose = call(&ctx, "entity.create", json!({ "kind": "requests", "entity": request(Value::Null) })).await.unwrap();
-        let empty = call(&ctx, "entity.create", json!({ "kind": "requests", "entity": request(json!("")) })).await.unwrap();
+        let loose =
+            call(&ctx, "entity.create", json!({ "kind": "requests", "entity": request(Value::Null) })).await.unwrap();
+        let empty =
+            call(&ctx, "entity.create", json!({ "kind": "requests", "entity": request(json!("")) })).await.unwrap();
         let dangling =
             call(&ctx, "entity.create", json!({ "kind": "requests", "entity": request(json!("gone")) })).await.unwrap();
         for created in [&loose, &empty, &dangling] {
@@ -572,9 +587,11 @@ mod tests {
         assert_eq!(listed["mocks"][0]["folderId"], default_id("mocks"));
 
         // A folder of the caller's own is kept, and moving out of it goes to Default, never to the top level.
-        let own = call(&ctx, "folder.add", json!({ "kind": "request", "name": "Auth", "parentId": null })).await.unwrap();
-        let kept =
-            call(&ctx, "entity.create", json!({ "kind": "requests", "entity": request(own["id"].clone()) })).await.unwrap();
+        let own =
+            call(&ctx, "folder.add", json!({ "kind": "request", "name": "Auth", "parentId": null })).await.unwrap();
+        let kept = call(&ctx, "entity.create", json!({ "kind": "requests", "entity": request(own["id"].clone()) }))
+            .await
+            .unwrap();
         assert_eq!(kept["entity"]["folderId"], own["id"]);
         let mut moved = kept["entity"].clone();
         moved["folderId"] = Value::Null;
@@ -613,8 +630,9 @@ mod tests {
         assert_eq!(listed["entities"].as_array().unwrap().len(), 1);
 
         // Into a folder in a folder: the file is in the directory in the directory.
-        let inner =
-            call(&ctx, "folder.add", json!({ "kind": "request", "name": "Tokens", "parentId": own["id"] })).await.unwrap();
+        let inner = call(&ctx, "folder.add", json!({ "kind": "request", "name": "Tokens", "parentId": own["id"] }))
+            .await
+            .unwrap();
         let mut deep = socket["entity"].clone();
         deep["folderId"] = inner["id"].clone();
         call(&ctx, "entity.update", json!({ "kind": "wsConnections", "entity": deep })).await.unwrap();
@@ -634,7 +652,11 @@ mod tests {
         call(&ctx, "entity.create", json!({ "kind": "requests", "entity": other })).await.unwrap();
 
         let search = |query: &str, kinds: Value| {
-            call(&ctx, "entity.search", json!({ "workspaceId": WS, "scope": "requests", "query": query, "kinds": kinds }))
+            call(
+                &ctx,
+                "entity.search",
+                json!({ "workspaceId": WS, "scope": "requests", "query": query, "kinds": kinds }),
+            )
         };
         // By name or by address, whatever the case, across every request type.
         let found = search("USERS", json!([])).await.unwrap();
@@ -911,7 +933,9 @@ mod tests {
         let stream = create(&ctx, "sseRequests", json!({ "name": "Feed", "url": "http://a/feed" })).await;
         let made_mock = create(&ctx, "mocks", mock("/a")).await;
         let rule = create(&ctx, "proxyRules", json!({ "name": "R", "pattern": "/x" })).await;
-        for (kind, entity) in [("requests", &request), ("sseRequests", &stream), ("mocks", &made_mock), ("rules", &rule)] {
+        for (kind, entity) in
+            [("requests", &request), ("sseRequests", &stream), ("mocks", &made_mock), ("rules", &rule)]
+        {
             assert_eq!(stamp_of(kind, str_of(entity, "id")), crate::ENGINE_VERSION, "{kind}");
         }
 
@@ -1055,8 +1079,7 @@ mod tests {
         };
         let (request_folder, mock_folder, rule_folder) =
             (folder_of("request").await, folder_of("mock").await, folder_of("rule").await);
-        let request =
-            json!({ "name": "Ping", "method": "POST", "url": "http://a/secret", "folderId": request_folder });
+        let request = json!({ "name": "Ping", "method": "POST", "url": "http://a/secret", "folderId": request_folder });
         let mut held_mock = mock("/held");
         held_mock["folderId"] = json!(mock_folder);
         let rule = json!({ "name": "R", "pattern": "/x", "folderId": rule_folder });

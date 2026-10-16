@@ -24,16 +24,17 @@ use gpui_kit::component::{
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AppContext as _, Context, Entity, EventEmitter, InteractiveElement as _, IntoElement, ParentElement as _, Render,
-    SharedString, Styled as _,
-    Subscription, Window, div,
+    SharedString, Styled as _, Subscription, Window, div,
 };
 use serde_json::{Map, Value, json};
 
-use super::{Carry, LoadState, SaveMode, SessionEvent, engine_folder, exchange::{Exchange, HistorySource, Replay}};
+use super::{
+    Carry, LoadState, SaveMode, SessionEvent, engine_folder,
+    exchange::{Exchange, HistorySource, Replay},
+};
 use crate::{
-    commands::CancelRequest,
-    i18n::{t, t_with},
     app_model::{AppModel, ModelEvent},
+    commands::CancelRequest,
     components::{
         Autosave, FileData, KeyValueEvent, KeyValueTable, Part, PartValue, PartsEvent, PartsTable, SettingsChanged,
         SettingsForm, Syntax, VarEditor,
@@ -43,11 +44,12 @@ use crate::{
         request_bar,
     },
     engine::{call_in, describe},
+    i18n::{t, t_with},
     model::{
         RequestKind,
         http::{
-            BodyEncoding, BodyMode, HTTP_METHODS, RequestSettings, decode_form, encode_form, header_map, header_pairs, join_query,
-            pretty_json, split_query,
+            BodyEncoding, BodyMode, HTTP_METHODS, RequestSettings, decode_form, encode_form, header_map, header_pairs,
+            join_query, pretty_json, split_query,
         },
         media::{BodyClass, classify, size_label},
         snippet::RequestParts,
@@ -158,17 +160,24 @@ impl RestSession {
         cx: &mut Context<Self>,
     ) -> Self {
         let workspace_id = model.read(cx).workspace_id().to_owned();
-        let name = cx.new(|cx| InputState::new(window, cx).placeholder(t("session.rest.name_placeholder")).default_value(DEFAULT_NAME));
+        let name = cx.new(|cx| {
+            InputState::new(window, cx).placeholder(t("session.rest.name_placeholder")).default_value(DEFAULT_NAME)
+        });
         let method = cx.new(|cx| SelectState::new(HTTP_METHODS.to_vec(), Some(IndexPath::default()), window, cx));
         let url = VarEditor::line("https://api.example.test/resource", window, cx);
-        let params = cx.new(|cx| KeyValueTable::new(t("session.rest.column_parameter"), t("session.rest.column_value"), window, cx));
-        let headers = cx.new(|cx| KeyValueTable::new(t("session.rest.column_header"), t("session.rest.column_value"), window, cx));
-        let form = cx.new(|cx| KeyValueTable::new(t("session.rest.column_field"), t("session.rest.column_value"), window, cx));
+        let params = cx.new(|cx| {
+            KeyValueTable::new(t("session.rest.column_parameter"), t("session.rest.column_value"), window, cx)
+        });
+        let headers = cx
+            .new(|cx| KeyValueTable::new(t("session.rest.column_header"), t("session.rest.column_value"), window, cx));
+        let form =
+            cx.new(|cx| KeyValueTable::new(t("session.rest.column_field"), t("session.rest.column_value"), window, cx));
         let parts = cx.new(|cx| PartsTable::new(window, cx));
         let body = VarEditor::code(Syntax::Json, t("session.rest.body_placeholder"), window, cx);
         let pre_script = VarEditor::code(Syntax::JavaScript, t("session.rest.pre_script_placeholder"), window, cx);
         let post_script = VarEditor::code(Syntax::JavaScript, t("session.rest.post_script_placeholder"), window, cx);
-        let test_script = VarEditor::code(Syntax::JavaScript, "// bc.test(\"status is 200\", () => { ... })", window, cx);
+        let test_script =
+            VarEditor::code(Syntax::JavaScript, "// bc.test(\"status is 200\", () => { ... })", window, cx);
         let settings = cx.new(|cx| SettingsForm::new(model.clone(), window, cx));
         let exchange = cx.new(|cx| Exchange::new(window, cx));
 
@@ -179,19 +188,16 @@ impl RestSession {
             InputEvent::PressEnter { .. } | InputEvent::Blur => this.commit_name(window, cx),
             InputEvent::Focus => {}
         }));
-        subscriptions.push(cx.subscribe_in(&model, window, |this, _, event: &ModelEvent, window, cx| {
-            match event {
-                ModelEvent::EntityReverted(id) if this.saved_id.as_deref() == Some(id.as_str()) => {
-                    this.reload(window, cx);
-                }
-                ModelEvent::RequestStream(payload)
-                    if this.sending
-                        && payload.get("streamId").and_then(Value::as_str) == Some(this.stream_id.as_str()) =>
-                {
-                    this.exchange.update(cx, |exchange, cx| exchange.receive(payload, cx));
-                }
-                _ => {}
+        subscriptions.push(cx.subscribe_in(&model, window, |this, _, event: &ModelEvent, window, cx| match event {
+            ModelEvent::EntityReverted(id) if this.saved_id.as_deref() == Some(id.as_str()) => {
+                this.reload(window, cx);
             }
+            ModelEvent::RequestStream(payload)
+                if this.sending && payload.get("streamId").and_then(Value::as_str) == Some(this.stream_id.as_str()) =>
+            {
+                this.exchange.update(cx, |exchange, cx| exchange.receive(payload, cx));
+            }
+            _ => {}
         }));
         subscriptions.push(cx.subscribe_in(
             url.state(),
@@ -597,7 +603,8 @@ impl RestSession {
         match pretty_json(&self.body.value(cx)) {
             Some(pretty) => self.body.set_value(pretty, window, cx),
             None => window.push_notification(
-                Notification::warning(t("session.rest.format_invalid_json")).title(t("session.rest.format_failed_title")),
+                Notification::warning(t("session.rest.format_invalid_json"))
+                    .title(t("session.rest.format_failed_title")),
                 cx,
             ),
         }
@@ -764,8 +771,7 @@ impl RestSession {
                             cx.emit(SessionEvent::Saved { id });
                         }
                     }
-                    None => window
-                        .push_notification(Notification::error(t("session.rest.engine_no_saved")), cx),
+                    None => window.push_notification(Notification::error(t("session.rest.engine_no_saved")), cx),
                 },
                 Ok(_) => {
                     this.entity = this.edited_entity(&fields);
@@ -795,7 +801,10 @@ impl RestSession {
         }
         let fields = self.fields(cx);
         if fields.url.is_empty() {
-            window.push_notification(Notification::warning(t("session.rest.send_no_url")).title(t("session.rest.send_no_url_title")), cx);
+            window.push_notification(
+                Notification::warning(t("session.rest.send_no_url")).title(t("session.rest.send_no_url_title")),
+                cx,
+            );
             return;
         }
         self.sends += 1;
@@ -1060,9 +1069,11 @@ impl Render for RestSession {
         // Esc cancels only from inside this editor; a dialog or menu above it handles its own Esc first.
         v_flex()
             .key_context("RestEditor")
-            .on_action(cx.listener(|this, _: &CancelRequest, window, cx| {
-                if this.sending { this.cancel(window, cx) } else { cx.propagate() }
-            }))
+            .on_action(cx.listener(
+                |this, _: &CancelRequest, window, cx| {
+                    if this.sending { this.cancel(window, cx) } else { cx.propagate() }
+                },
+            ))
             .size_full()
             .bg(theme.background)
             .child(request_bar(
@@ -1072,9 +1083,11 @@ impl Render for RestSession {
                     .when(sending, |button| button.outline())
                     .when(!sending, |button| button.primary())
                     .label(if sending { t("session.rest.cancel") } else { t("session.rest.send") })
-                    .on_click(cx.listener(move |this, _, window, cx| {
-                        if sending { this.cancel(window, cx) } else { this.send(window, cx) }
-                    })),
+                    .on_click(cx.listener(
+                        move |this, _, window, cx| {
+                            if sending { this.cancel(window, cx) } else { this.send(window, cx) }
+                        },
+                    )),
                 [],
                 cx,
             ))

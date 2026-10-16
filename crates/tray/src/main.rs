@@ -141,8 +141,8 @@ mod tray {
     use super::say;
     use std::io::Read as _;
 
-    use tray_icon::menu::{Menu, MenuItem, PredefinedMenuItem};
     use tray_icon::TrayIconBuilder;
+    use tray_icon::menu::{Menu, MenuItem, PredefinedMenuItem};
 
     pub fn run() {
         // macOS wants its application object before any status item exists; Windows has nothing to do here.
@@ -155,7 +155,8 @@ mod tray {
         // Right click shows this menu (on macOS a left click does too, as every menu-bar icon does); on Windows
         // a left click is handled as a plain click below, so the two do not collide.
         let menu = Menu::new();
-        menu.append_items(&[&open, &restart, &PredefinedMenuItem::separator(), &quit]).expect("a fresh menu takes its items");
+        menu.append_items(&[&open, &restart, &PredefinedMenuItem::separator(), &quit])
+            .expect("a fresh menu takes its items");
 
         // Held until the loop ends: dropping the icon takes it out of the notification area.
         let icon = TrayIconBuilder::new()
@@ -279,7 +280,8 @@ mod tray {
 
         /// An accessory application: a menu-bar icon, and no Dock icon or menu bar of its own.
         pub fn init() {
-            NSApplication::sharedApplication(main_thread()).setActivationPolicy(NSApplicationActivationPolicy::Accessory);
+            NSApplication::sharedApplication(main_thread())
+                .setActivationPolicy(NSApplicationActivationPolicy::Accessory);
         }
 
         /// The system takes a status item away when its process ends, so ending the process is the stop.

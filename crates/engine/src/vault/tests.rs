@@ -39,7 +39,8 @@ async fn a_vault_resolves_in_text_but_its_values_never_reach_a_client() {
     let root = scratch_data_root();
     let (ws, engine) = (root.ws_id, Engine::new());
 
-    let created = engine.call("vault.create", json!({ "workspaceId": ws, "name": "api_keys", "passphrase": PASS })).await;
+    let created =
+        engine.call("vault.create", json!({ "workspaceId": ws, "name": "api_keys", "passphrase": PASS })).await;
     let id = created["id"].as_str().unwrap().to_string();
     assert_eq!(created["state"], "unsealed");
     engine
@@ -49,7 +50,8 @@ async fn a_vault_resolves_in_text_but_its_values_never_reach_a_client() {
     let listed = engine.call("vault.list", json!({ "workspaceId": ws })).await;
     assert_eq!(listed[0]["secrets"], json!(["STRIPE"]));
     assert!(!listed.to_string().contains("sk_live_123456"));
-    let on_disk = std::fs::read_to_string(crate::workspace::fs::entity_dir(ws, "vaults").join(format!("{id}.json"))).unwrap();
+    let on_disk =
+        std::fs::read_to_string(crate::workspace::fs::entity_dir(ws, "vaults").join(format!("{id}.json"))).unwrap();
     assert!(!on_disk.contains("sk_live_123456"));
 
     let env = load_merged_environment(ws);
@@ -75,7 +77,8 @@ async fn unsealing_needs_the_passphrase_and_names_are_checked() {
     let id = created["id"].as_str().unwrap().to_string();
     engine.call("vault.seal", json!({ "workspaceId": ws, "id": id })).await;
 
-    let wrong = engine.try_as(None, "vault.unseal", json!({ "workspaceId": ws, "id": id, "passphrase": "not the one" })).await;
+    let wrong =
+        engine.try_as(None, "vault.unseal", json!({ "workspaceId": ws, "id": id, "passphrase": "not the one" })).await;
     assert_eq!(wrong.unwrap_err().code, ErrorCode::Forbidden);
     let unsealed = engine.call("vault.unseal", json!({ "workspaceId": ws, "id": id, "passphrase": PASS })).await;
     assert_eq!(unsealed["state"], "unsealed");
@@ -97,7 +100,9 @@ async fn only_the_cli_reads_the_secrets_and_only_of_an_unsealed_vault() {
     let (ws, engine) = (root.ws_id, Engine::new());
     let created = engine.call("vault.create", json!({ "workspaceId": ws, "name": "keys", "passphrase": PASS })).await;
     let id = created["id"].as_str().unwrap().to_string();
-    engine.call("vault.setSecret", json!({ "workspaceId": ws, "id": id, "name": "TOKEN", "value": "t0ken-value" })).await;
+    engine
+        .call("vault.setSecret", json!({ "workspaceId": ws, "id": id, "name": "TOKEN", "value": "t0ken-value" }))
+        .await;
     engine.call("vault.seal", json!({ "workspaceId": ws, "id": id })).await;
 
     let secrets = json!({ "workspaceId": ws, "id": id });
@@ -129,7 +134,9 @@ async fn wrong_passphrases_are_throttled_and_short_secrets_refused() {
     let (ws, engine) = (root.ws_id, Engine::new());
     let created = engine.call("vault.create", json!({ "workspaceId": ws, "name": "keys", "passphrase": PASS })).await;
     let id = created["id"].as_str().unwrap().to_string();
-    let short = engine.try_as(None, "vault.setSecret", json!({ "workspaceId": ws, "id": id, "name": "PIN", "value": "1234" })).await;
+    let short = engine
+        .try_as(None, "vault.setSecret", json!({ "workspaceId": ws, "id": id, "name": "PIN", "value": "1234" }))
+        .await;
     assert_eq!(short.unwrap_err().code, ErrorCode::BadRequest);
     engine.call("vault.seal", json!({ "workspaceId": ws, "id": id })).await;
     let try_pass = |p: &str| json!({ "workspaceId": ws, "id": id, "passphrase": p });
@@ -148,10 +155,15 @@ async fn changing_the_passphrase_keeps_the_secrets() {
     let id = created["id"].as_str().unwrap().to_string();
     engine.call("vault.setSecret", json!({ "workspaceId": ws, "id": id, "name": "A", "value": "value-of-a" })).await;
     engine
-        .call("vault.changePassphrase", json!({ "workspaceId": ws, "id": id, "passphrase": PASS, "newPassphrase": "a new passphrase" }))
+        .call(
+            "vault.changePassphrase",
+            json!({ "workspaceId": ws, "id": id, "passphrase": PASS, "newPassphrase": "a new passphrase" }),
+        )
         .await;
     engine.call("vault.seal", json!({ "workspaceId": ws, "id": id })).await;
-    assert!(engine.try_as(None, "vault.unseal", json!({ "workspaceId": ws, "id": id, "passphrase": PASS })).await.is_err());
+    assert!(
+        engine.try_as(None, "vault.unseal", json!({ "workspaceId": ws, "id": id, "passphrase": PASS })).await.is_err()
+    );
     engine.call("vault.unseal", json!({ "workspaceId": ws, "id": id, "passphrase": "a new passphrase" })).await;
     let env = load_merged_environment(ws);
     assert_eq!(resolve_vars("{{keys.A}}", env.as_ref()), "value-of-a");
@@ -167,7 +179,9 @@ async fn a_request_is_sent_with_the_secret_but_echoed_and_returned_without_it() 
     let (ws, engine) = (root.ws_id, Engine::new());
     let created = engine.call("vault.create", json!({ "workspaceId": ws, "name": "keys", "passphrase": PASS })).await;
     let id = created["id"].as_str().unwrap().to_string();
-    engine.call("vault.setSecret", json!({ "workspaceId": ws, "id": id, "name": "TOKEN", "value": "t0ken-value-123" })).await;
+    engine
+        .call("vault.setSecret", json!({ "workspaceId": ws, "id": id, "name": "TOKEN", "value": "t0ken-value-123" }))
+        .await;
 
     let request = json!({ "method": "GET", "url": "http://h/{{keys.TOKEN}}", "headers": { "authorization": "Bearer {{keys.TOKEN}}" }, "body": "" });
     let sent = std::sync::Arc::new(parking_lot::Mutex::new(Value::Null));

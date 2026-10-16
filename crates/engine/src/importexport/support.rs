@@ -127,7 +127,12 @@ pub fn commit_config(cfg: &Value) -> Result<(), String> {
 
 /// The Default folder of a kind, for an imported entity that came with none. It is listed in `cfg[folders_key]` so
 /// a snapshot saved later finds its name.
-pub fn default_folder(cfg: &mut Value, folders_key: &str, fs_kind: &str, ws_id: &str) -> Result<(String, String), String> {
+pub fn default_folder(
+    cfg: &mut Value,
+    folders_key: &str,
+    fs_kind: &str,
+    ws_id: &str,
+) -> Result<(String, String), String> {
     let (id, name) = ensure_default_folder(ws_id, fs_kind).map_err(io_failure)?;
     if !array_of(cfg, folders_key).iter().any(|f| str_of(f, "id") == id) {
         push_to(cfg, folders_key, new_folder(&id, &name, None, json!(now_ms()), ws_id));
@@ -143,7 +148,12 @@ fn list_folder(cfg: &mut Value, folders_key: &str, id: &str, name: &str, parent_
 }
 
 /// The folder one import run puts everything it brings in: `import-<date>_<time>`, at the top level.
-pub fn import_folder(cfg: &mut Value, folders_key: &str, fs_kind: &str, ws_id: &str) -> Result<(String, String), String> {
+pub fn import_folder(
+    cfg: &mut Value,
+    folders_key: &str,
+    fs_kind: &str,
+    ws_id: &str,
+) -> Result<(String, String), String> {
     let stamp = iso_from_ms(now_ms() as i64)?;
     let name = format!("import-{}", stamp[..19].replace('T', "_").replace(':', "-"));
     let (id, name) = create_folder(ws_id, fs_kind, &name, None, true).map_err(io_failure)?;
@@ -214,8 +224,7 @@ pub fn add_import_folders(
         if waiting.len() == before {
             // A cycle of parents: what is left goes into the root.
             for spec in waiting.drain(..) {
-                let (id, name) =
-                    create_folder(ws_id, fs_kind, &spec.name, Some(root_id), false).map_err(io_failure)?;
+                let (id, name) = create_folder(ws_id, fs_kind, &spec.name, Some(root_id), false).map_err(io_failure)?;
                 list_folder(cfg, folders_key, &id, &name, Some(root_id), ws_id);
                 made.insert(spec.key.clone(), id);
             }

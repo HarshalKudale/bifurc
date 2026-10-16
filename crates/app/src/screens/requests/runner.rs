@@ -69,7 +69,9 @@ struct RowResult {
 fn text_list(value: Option<&Value>) -> Vec<String> {
     value
         .and_then(Value::as_array)
-        .map(|items| items.iter().map(|item| item.as_str().map(str::to_owned).unwrap_or_else(|| item.to_string())).collect())
+        .map(|items| {
+            items.iter().map(|item| item.as_str().map(str::to_owned).unwrap_or_else(|| item.to_string())).collect()
+        })
         .unwrap_or_default()
 }
 
@@ -77,7 +79,9 @@ fn header_list(value: Option<&Value>) -> Vec<(String, String)> {
     value
         .and_then(Value::as_object)
         .map(|map| {
-            map.iter().map(|(k, v)| (k.clone(), v.as_str().map(str::to_owned).unwrap_or_else(|| v.to_string()))).collect()
+            map.iter()
+                .map(|(k, v)| (k.clone(), v.as_str().map(str::to_owned).unwrap_or_else(|| v.to_string())))
+                .collect()
         })
         .unwrap_or_default()
 }
@@ -151,7 +155,10 @@ impl RowResult {
                 .iter()
                 .map(|test| {
                     (
-                        test.get("name").and_then(Value::as_str).unwrap_or(t("requests.runner.unnamed_test")).to_owned(),
+                        test.get("name")
+                            .and_then(Value::as_str)
+                            .unwrap_or(t("requests.runner.unnamed_test"))
+                            .to_owned(),
                         test.get("passed").and_then(Value::as_bool) == Some(true),
                         test.get("error").and_then(Value::as_str).filter(|e| !e.is_empty()).map(str::to_owned),
                     )
@@ -385,9 +392,11 @@ impl FolderRunner {
             }
             other => {
                 let message = match &other {
-                    Ok(result) => {
-                        result.get("error").and_then(Value::as_str).unwrap_or(t("requests.runner.engine_refused")).to_owned()
-                    }
+                    Ok(result) => result
+                        .get("error")
+                        .and_then(Value::as_str)
+                        .unwrap_or(t("requests.runner.engine_refused"))
+                        .to_owned(),
                     Err(error) => describe(error),
                 };
                 this.set_running(false, cx);
@@ -404,13 +413,17 @@ impl FolderRunner {
         let workspace = model.workspace_id().to_owned();
         let payload = json!({ "report": report, "format": "html", "workspaceId": workspace });
         call(&client.clone(), cx, "runner.exportReport", payload, move |this, outcome, cx| match outcome {
-            Ok(artifact) => fetch_artifact(this, &client, cx, &workspace, &artifact, |this, fetched, cx| match fetched {
-                Ok((bytes, name)) => save_to_file(bytes, name, cx, |this, outcome, cx| match outcome {
-                    Ok(path) => this.report(t_with("requests.runner.exported", &[("path", &path.display())]), cx),
-                    Err(message) => this.report(t_with("requests.runner.errors.save_report", &[("message", &message)]), cx),
-                }),
-                Err(message) => this.report(t_with("requests.runner.errors.export", &[("message", &message)]), cx),
-            }),
+            Ok(artifact) => {
+                fetch_artifact(this, &client, cx, &workspace, &artifact, |this, fetched, cx| match fetched {
+                    Ok((bytes, name)) => save_to_file(bytes, name, cx, |this, outcome, cx| match outcome {
+                        Ok(path) => this.report(t_with("requests.runner.exported", &[("path", &path.display())]), cx),
+                        Err(message) => {
+                            this.report(t_with("requests.runner.errors.save_report", &[("message", &message)]), cx)
+                        }
+                    }),
+                    Err(message) => this.report(t_with("requests.runner.errors.export", &[("message", &message)]), cx),
+                })
+            }
             Err(error) => this.report(t_with("requests.runner.errors.export", &[("message", &describe(&error))]), cx),
         });
     }
@@ -444,27 +457,16 @@ impl FolderRunner {
         let tests: usize = self.results.values().map(|result| result.passed + result.failed.len()).sum();
         let tests_failed: usize = self.results.values().map(|result| result.failed.len()).sum();
         let progress = if self.running {
-            t_with(
-                "requests.runner.summary_running",
-                &[("done", &self.completed), ("total", &self.total)],
-            )
+            t_with("requests.runner.summary_running", &[("done", &self.completed), ("total", &self.total)])
         } else if self.completed < self.total {
-            t_with(
-                "requests.runner.summary_stopped",
-                &[("done", &self.completed), ("total", &self.total)],
-            )
+            t_with("requests.runner.summary_stopped", &[("done", &self.completed), ("total", &self.total)])
         } else {
             t_with("requests.runner.summary_done", &[("done", &self.completed)])
         };
         if tests > 0 {
             t_with(
                 "requests.runner.summary_tests",
-                &[
-                    ("progress", &progress),
-                    ("failed", &failed),
-                    ("passed", &(tests - tests_failed)),
-                    ("total", &tests),
-                ],
+                &[("progress", &progress), ("failed", &failed), ("passed", &(tests - tests_failed)), ("total", &tests)],
             )
         } else {
             t_with("requests.runner.summary_failed", &[("progress", &progress), ("failed", &failed)])
@@ -537,7 +539,11 @@ impl FolderRunner {
                             .icon(if open { IconName::ChevronDown } else { IconName::ChevronRight })
                             .ghost()
                             .xsmall()
-                            .tooltip(if open { t("requests.runner.hide_details") } else { t("requests.runner.show_details") })
+                            .tooltip(if open {
+                                t("requests.runner.hide_details")
+                            } else {
+                                t("requests.runner.show_details")
+                            })
                             .on_click({
                                 let id = id.clone();
                                 cx.listener(move |this, _, _, cx| {
@@ -550,7 +556,14 @@ impl FolderRunner {
                             .into_any_element(),
                         None => div().size_6().flex_none().into_any_element(),
                     })
-                    .child(div().w_6().flex_none().text_xs().text_color(theme.muted_foreground).child((ix + 1).to_string()))
+                    .child(
+                        div()
+                            .w_6()
+                            .flex_none()
+                            .text_xs()
+                            .text_color(theme.muted_foreground)
+                            .child((ix + 1).to_string()),
+                    )
                     .child(
                         h_flex()
                             .flex_none()
@@ -610,15 +623,19 @@ impl FolderRunner {
                     .child(div().flex_none().child(self.render_result(ix, &id, cx))),
             )
             .children(
-                problems
-                    .into_iter()
-                    .map(|problem| div().pl_8().text_xs().text_color(theme.danger).child(problem)),
+                problems.into_iter().map(|problem| div().pl_8().text_xs().text_color(theme.danger).child(problem)),
             )
             .children(self.results.get(&id).filter(|_| open).map(|result| self.render_details(&id, result, cx)))
             .into_any_element()
     }
 
-    fn block(&self, id: String, text: String, tint: Option<gpui_kit::Hsla>, cx: &Context<Self>) -> gpui_kit::AnyElement {
+    fn block(
+        &self,
+        id: String,
+        text: String,
+        tint: Option<gpui_kit::Hsla>,
+        cx: &Context<Self>,
+    ) -> gpui_kit::AnyElement {
         let theme = cx.theme();
         div()
             .id(SharedString::from(id))
@@ -666,7 +683,11 @@ impl FolderRunner {
             .gap_2()
             .child(h_flex().gap_2().child(outcome))
             .children(error.map(|error| {
-                div().text_sm().text_color(theme.danger).font_family(theme.mono_font_family.clone()).child(error.clone())
+                div()
+                    .text_sm()
+                    .text_color(theme.danger)
+                    .font_family(theme.mono_font_family.clone())
+                    .child(error.clone())
             }))
             .child(self.block(format!("script-{which}-{id}"), source.clone(), tint, cx))
             .into_any_element()
@@ -676,29 +697,42 @@ impl FolderRunner {
     fn render_tests(&self, id: &str, result: &RowResult, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
         let theme = cx.theme().clone();
         if result.tests.is_empty() {
-            return div().text_sm().text_color(theme.muted_foreground).child(t("requests.runner.no_tests")).into_any_element();
+            return div()
+                .text_sm()
+                .text_color(theme.muted_foreground)
+                .child(t("requests.runner.no_tests"))
+                .into_any_element();
         }
         let picked = self.picked.get(id).copied().filter(|ix| *ix < result.tests.len()).unwrap_or(0);
-        let list = v_flex().w_64().flex_none().gap_1().children(result.tests.iter().enumerate().map(|(ix, (name, ok, _))| {
-            let (mark, color) = if *ok { ("\u{2713}", theme.success) } else { ("\u{2717}", theme.danger) };
-            let key = id.to_owned();
-            h_flex()
-                .id(SharedString::from(format!("pick-{id}-{ix}")))
-                .gap_2()
-                .px_2()
-                .py_1()
-                .rounded_md()
-                .text_sm()
-                .cursor_pointer()
-                .when(ix == picked, |row| row.bg(theme.muted))
-                .hover(|row| row.bg(theme.muted))
-                .child(div().flex_none().text_color(color).child(mark))
-                .child(div().flex_1().min_w_0().overflow_hidden().text_ellipsis().whitespace_nowrap().child(name.clone()))
-                .on_click(cx.listener(move |this, _, _, cx| {
-                    this.picked.insert(key.clone(), ix);
-                    cx.notify();
-                }))
-        }));
+        let list =
+            v_flex().w_64().flex_none().gap_1().children(result.tests.iter().enumerate().map(|(ix, (name, ok, _))| {
+                let (mark, color) = if *ok { ("\u{2713}", theme.success) } else { ("\u{2717}", theme.danger) };
+                let key = id.to_owned();
+                h_flex()
+                    .id(SharedString::from(format!("pick-{id}-{ix}")))
+                    .gap_2()
+                    .px_2()
+                    .py_1()
+                    .rounded_md()
+                    .text_sm()
+                    .cursor_pointer()
+                    .when(ix == picked, |row| row.bg(theme.muted))
+                    .hover(|row| row.bg(theme.muted))
+                    .child(div().flex_none().text_color(color).child(mark))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .overflow_hidden()
+                            .text_ellipsis()
+                            .whitespace_nowrap()
+                            .child(name.clone()),
+                    )
+                    .on_click(cx.listener(move |this, _, _, cx| {
+                        this.picked.insert(key.clone(), ix);
+                        cx.notify();
+                    }))
+            }));
         let (name, ok, error) = &result.tests[picked];
         let code = result
             .test_script
@@ -720,7 +754,11 @@ impl FolderRunner {
                     .child(div().text_sm().child(name.clone())),
             )
             .children(error.as_ref().map(|error| {
-                div().text_sm().text_color(theme.danger).font_family(theme.mono_font_family.clone()).child(error.clone())
+                div()
+                    .text_sm()
+                    .text_color(theme.danger)
+                    .font_family(theme.mono_font_family.clone())
+                    .child(error.clone())
             }))
             .child(self.block(
                 format!("test-code-{id}"),
@@ -729,10 +767,12 @@ impl FolderRunner {
                 cx,
             ))
             .children((!result.logs.is_empty()).then(|| {
-                v_flex()
-                    .gap_1()
-                    .child(self.label(t("requests.runner.console"), cx))
-                    .child(self.block(format!("test-logs-{id}"), result.logs.join("\n"), None, cx))
+                v_flex().gap_1().child(self.label(t("requests.runner.console"), cx)).child(self.block(
+                    format!("test-logs-{id}"),
+                    result.logs.join("\n"),
+                    None,
+                    cx,
+                ))
             }));
         h_flex().w_full().gap_4().items_start().child(list).child(detail).into_any_element()
     }
@@ -754,15 +794,12 @@ impl FolderRunner {
         v_flex()
             .gap_2()
             .child(
-                h_flex()
-                    .gap_3()
-                    .child(tag.small().child(status.to_string()))
-                    .child(
-                        div()
-                            .text_sm()
-                            .text_color(theme.muted_foreground)
-                            .child(t_with("requests.runner.duration", &[("ms", &result.duration_ms)])),
-                    ),
+                h_flex().gap_3().child(tag.small().child(status.to_string())).child(
+                    div()
+                        .text_sm()
+                        .text_color(theme.muted_foreground)
+                        .child(t_with("requests.runner.duration", &[("ms", &result.duration_ms)])),
+                ),
             )
             .child(self.label(t("requests.common.headers"), cx))
             .child(self.block(format!("response-headers-{id}"), headers, None, cx))
@@ -934,11 +971,7 @@ impl Render for FolderRunner {
                 .overflow_y_scroll()
                 .children(rows.iter().enumerate().map(|(ix, request)| self.render_row(ix, last, request, cx)));
             let started = self.running || !self.results.is_empty();
-            v_flex()
-                .size_full()
-                .children(started.then(|| self.render_stats(cx)))
-                .child(rows)
-                .into_any_element()
+            v_flex().size_full().children(started.then(|| self.render_stats(cx))).child(rows).into_any_element()
         };
         let export = (!self.running && self.report.is_some()).then(|| {
             Button::new("export-report")
@@ -958,7 +991,7 @@ mod tests {
     #[test]
     fn a_result_keeps_its_tests_scripts_and_what_was_exchanged() {
         let result = RowResult::from_value(&json!({
-            "status": 200, "responseTime": 12, 
+            "status": 200, "responseTime": 12,
             "tests": [{ "name": "ok", "passed": true }, { "name": "bad", "passed": false, "error": "expected 1" }],
             "testLogs": ["hello"],
             "scripts": { "pre": "", "post": "bc.environment.set('a', 1)", "test": "bc.test('ok', () => {})" },
@@ -977,7 +1010,8 @@ mod tests {
 
     #[test]
     fn a_test_is_found_in_its_script_by_name() {
-        let script = "const x = 1;\nbc.test('a (b)', () => {\n  expect(f(')')).to.equal(1);\n});\ntest(\"second\", () => {});";
+        let script =
+            "const x = 1;\nbc.test('a (b)', () => {\n  expect(f(')')).to.equal(1);\n});\ntest(\"second\", () => {});";
         assert_eq!(
             test_source(script, "a (b)").as_deref(),
             Some("bc.test('a (b)', () => {\n  expect(f(')')).to.equal(1);\n});")

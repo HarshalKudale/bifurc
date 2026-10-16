@@ -34,7 +34,11 @@ pub fn master_detail(list: Option<impl IntoElement>, detail: impl IntoElement, c
 }
 
 /// A list filling the region, with a resizable detail panel below it while `detail` is `Some`.
-pub fn list_over_detail(id: impl Into<ElementId>, list: impl IntoElement, detail: Option<AnyElement>) -> impl IntoElement {
+pub fn list_over_detail(
+    id: impl Into<ElementId>,
+    list: impl IntoElement,
+    detail: Option<AnyElement>,
+) -> impl IntoElement {
     let visible = detail.is_some();
     // The panel's size is a physical starting point the user resizes, not part of the rem scale.
     v_resizable(id)

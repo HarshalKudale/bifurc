@@ -71,7 +71,10 @@ mod tests {
         let files: Vec<_> = std::fs::read_dir(dir.join(DIR)).unwrap().flatten().collect();
         assert_eq!(files.len(), 1);
         let report: Value = serde_json::from_str(&std::fs::read_to_string(files[0].path()).unwrap()).unwrap();
-        assert_eq!((&report["kind"], &report["process"], &report["what"]), (&json!("failure"), &json!("desktop"), &json!("engine_start")));
+        assert_eq!(
+            (&report["kind"], &report["process"], &report["what"]),
+            (&json!("failure"), &json!("desktop"), &json!("engine_start"))
+        );
         assert!(report["at"].as_u64().unwrap() > 0);
         let _ = std::fs::remove_dir_all(dir);
     }

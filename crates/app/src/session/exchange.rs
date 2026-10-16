@@ -7,6 +7,7 @@
 //! ("Pretty") or exactly as received ("Raw").
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
+use bifurc_engine_client::EngineClient;
 use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, IconName, Sizable as _,
     alert::Alert,
@@ -23,18 +24,17 @@ use gpui_kit::{
     ParentElement as _, Render, ScrollHandle, SharedString, StatefulInteractiveElement as _, Styled as _, Window, div,
     list, px,
 };
-use bifurc_engine_client::EngineClient;
 use serde_json::{Value, json};
 
 use crate::{
-    engine::call_in,
-    i18n::{t, t_with},
     components::{
         BodyPane, Syntax,
-        stream_log::{LogRow, LogSearch, OpenRows, Way, compact, found, log_row, nothing_found, search_button},
         binary::{BinaryBody, save_to_file, suggested_file_name},
         page,
+        stream_log::{LogRow, LogSearch, OpenRows, Way, compact, found, log_row, nothing_found, search_button},
     },
+    engine::call_in,
+    i18n::{t, t_with},
     model::{
         history::{self, HistoryEntry},
         http::{BodyEncoding, HttpResponse, TestOutcome, pretty_json, status_text},
@@ -612,51 +612,54 @@ impl Exchange {
                     } else {
                         Tag::danger().child(t("session.response.test_failed"))
                     }))
-                    .child(v_flex().flex_1().min_w_0().child(test.name.clone()).when_some(test.error.clone(), |this, error| {
-                        this.child(div().text_sm().text_color(theme.muted_foreground).child(error))
-                    }))
+                    .child(
+                        v_flex()
+                            .flex_1()
+                            .min_w_0()
+                            .child(test.name.clone())
+                            .when_some(test.error.clone(), |this, error| {
+                                this.child(div().text_sm().text_color(theme.muted_foreground).child(error))
+                            }),
+                    )
             }))
             .into_any_element()
     }
 
     fn render_http(&self, response: &HttpResponse, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
         let theme = cx.theme().clone();
-        let content =
-            match self.section {
-                Section::Body if self.binary.is_some() => {
-                    let binary = self.binary.clone().expect("checked by the guard");
-                    self.render_binary(&binary, cx)
-                }
-                Section::Body if response.is_binary => page::empty(
-                    t("session.response.binary_title"),
-                    t_with("session.response.binary_description", &[("size", &response.body_size_label())]),
-                ),
-                Section::Body if response.size_bytes == 0 => {
-                    page::empty(t("session.response.empty_title"), t("session.response.empty_description"))
-                }
-                Section::Body => self.render_body(),
-                Section::Headers => v_flex()
-                    .id("response-headers")
-                    .overflow_y_scroll()
-                    .size_full()
-                    .p_3()
-                    .gap_2()
-                    .children(response.headers.iter().map(|(name, value)| {
-                        h_flex()
-                            .gap_3()
-                            .items_start()
-                            .text_sm()
-                            .child(div().w_48().flex_none().text_color(theme.muted_foreground).child(name.clone()))
-                            .child(div().flex_1().min_w_0().child(value.clone()))
-                    }))
-                    .into_any_element(),
-                Section::Tests => Self::render_tests(&response.tests, cx),
-            };
+        let content = match self.section {
+            Section::Body if self.binary.is_some() => {
+                let binary = self.binary.clone().expect("checked by the guard");
+                self.render_binary(&binary, cx)
+            }
+            Section::Body if response.is_binary => page::empty(
+                t("session.response.binary_title"),
+                t_with("session.response.binary_description", &[("size", &response.body_size_label())]),
+            ),
+            Section::Body if response.size_bytes == 0 => {
+                page::empty(t("session.response.empty_title"), t("session.response.empty_description"))
+            }
+            Section::Body => self.render_body(),
+            Section::Headers => v_flex()
+                .id("response-headers")
+                .overflow_y_scroll()
+                .size_full()
+                .p_3()
+                .gap_2()
+                .children(response.headers.iter().map(|(name, value)| {
+                    h_flex()
+                        .gap_3()
+                        .items_start()
+                        .text_sm()
+                        .child(div().w_48().flex_none().text_color(theme.muted_foreground).child(name.clone()))
+                        .child(div().flex_1().min_w_0().child(value.clone()))
+                }))
+                .into_any_element(),
+            Section::Tests => Self::render_tests(&response.tests, cx),
+        };
 
-        let can_find = self.section == Section::Body
-            && self.binary.is_none()
-            && !response.is_binary
-            && response.size_bytes != 0;
+        let can_find =
+            self.section == Section::Body && self.binary.is_none() && !response.is_binary && response.size_bytes != 0;
         v_flex()
             .size_full()
             .child(
@@ -678,7 +681,8 @@ impl Exchange {
             )
             .children(response.script_errors.iter().enumerate().map(|(ix, error)| {
                 div().px_3().pt_2().child(
-                    Alert::warning(("script-error", ix), SharedString::from(error.clone())).title(t("session.response.script_failed")),
+                    Alert::warning(("script-error", ix), SharedString::from(error.clone()))
+                        .title(t("session.response.script_failed")),
                 )
             }))
             .child(div().flex_none().px_3().child(self.tabs(response, cx)))
@@ -774,12 +778,10 @@ impl Exchange {
                         .child(div().flex_1().min_w_0().child(value.clone()))
                 }))
                 .into_any_element(),
-            _ if live.entries.is_empty() => {
-                page::empty(
-                    if live.running { t("session.log.waiting_for_messages") } else { t("session.log.no_messages") },
-                    t("session.log.messages_appear_here"),
-                )
-            }
+            _ if live.entries.is_empty() => page::empty(
+                if live.running { t("session.log.waiting_for_messages") } else { t("session.log.no_messages") },
+                t("session.log.messages_appear_here"),
+            ),
             _ if shown.is_empty() => nothing_found(),
             // An HTTP response has the newest message first, and builds only the rows that are in view.
             _ if live.http.is_some() => {
@@ -835,25 +837,32 @@ impl Exchange {
                     }))
                     .child(div().text_sm().text_color(theme.muted_foreground).child(t("session.log.times_utc")))
                     .child(div().flex_1())
-                    .child(search_button("search-log").disabled(self.section != Section::Body).on_click(
-                        cx.listener(|this, _, window, cx| {
+                    .child(search_button("search-log").disabled(self.section != Section::Body).on_click(cx.listener(
+                        |this, _, window, cx| {
                             this.live_search.toggle(window, cx);
                             cx.notify();
-                        }),
-                    )),
+                        },
+                    ))),
             )
             .when(!live.running && !live.message.is_empty() && (!ok || live.http.is_some()), |this| {
                 this.child(div().px_3().pt_2().child(
                     Alert::error("grpc-live-status", SharedString::from(live.message.clone())).title(t(
-                        if live.http.is_some() { "session.response.send_failed" } else { "session.response.call_failed" },
+                        if live.http.is_some() {
+                            "session.response.send_failed"
+                        } else {
+                            "session.response.call_failed"
+                        },
                     )),
                 ))
             })
-            .children(live.http.iter().flat_map(|response| response.script_errors.iter()).enumerate().map(|(ix, error)| {
-                div().px_3().pt_2().child(
-                    Alert::warning(("script-error", ix), SharedString::from(error.clone())).title(t("session.response.script_failed")),
-                )
-            }))
+            .children(live.http.iter().flat_map(|response| response.script_errors.iter()).enumerate().map(
+                |(ix, error)| {
+                    div().px_3().pt_2().child(
+                        Alert::warning(("script-error", ix), SharedString::from(error.clone()))
+                            .title(t("session.response.script_failed")),
+                    )
+                },
+            ))
             .child(
                 div().flex_none().px_3().child(
                     TabBar::new("grpc-live-sections")
@@ -866,7 +875,11 @@ impl Exchange {
                         }))
                         .child(Tab::new().label(t("session.response.tab_messages")))
                         .child(Tab::new().label(t_with(
-                            if live.http.is_some() { "session.response.tab_headers" } else { "session.response.tab_metadata" },
+                            if live.http.is_some() {
+                                "session.response.tab_headers"
+                            } else {
+                                "session.response.tab_metadata"
+                            },
                             &[("count", &live.metadata.len())],
                         )))
                         .children(live.http.as_ref().map(|response| Self::tests_tab(&response.tests))),
@@ -902,7 +915,11 @@ impl Exchange {
                 .into_any_element(),
             _ if reply.messages == 0 => page::empty(
                 if ok { t("session.log.no_messages") } else { t("session.response.no_response_title") },
-                if ok { t("session.response.finished_without_message") } else { t("session.response.failed_before_message") },
+                if ok {
+                    t("session.response.finished_without_message")
+                } else {
+                    t("session.response.failed_before_message")
+                },
             ),
             _ => self.render_body(),
         };
@@ -915,7 +932,12 @@ impl Exchange {
                     .pt_2()
                     .gap_3()
                     .child(if ok { Tag::success() } else { Tag::danger() }.child(grpc_status_name(reply.code)))
-                    .child(div().text_sm().text_color(theme.muted_foreground).child(t_with("session.response.duration", &[("ms", &reply.duration_ms)])))
+                    .child(
+                        div()
+                            .text_sm()
+                            .text_color(theme.muted_foreground)
+                            .child(t_with("session.response.duration", &[("ms", &reply.duration_ms)])),
+                    )
                     .child(div().text_sm().text_color(theme.muted_foreground).child(match reply.messages {
                         1 => t_with("session.response.messages_one", &[("count", &reply.messages)]),
                         n => t_with("session.response.messages_other", &[("count", &n)]),
@@ -924,9 +946,12 @@ impl Exchange {
                     .child(self.find_button(self.section == Section::Body && reply.messages != 0, cx)),
             )
             .when(!ok && !reply.message.is_empty(), |this| {
-                this.child(div().px_3().pt_2().child(
-                    Alert::error("grpc-status", SharedString::from(reply.message.clone())).title(t("session.response.call_failed")),
-                ))
+                this.child(
+                    div().px_3().pt_2().child(
+                        Alert::error("grpc-status", SharedString::from(reply.message.clone()))
+                            .title(t("session.response.call_failed")),
+                    ),
+                )
             })
             .child(
                 div().flex_none().px_3().child(
@@ -939,7 +964,10 @@ impl Exchange {
                             cx.notify();
                         }))
                         .child(Tab::new().label(t("session.response.tab_body")))
-                        .child(Tab::new().label(t_with("session.response.tab_metadata", &[("count", &reply.metadata.len())]))),
+                        .child(
+                            Tab::new()
+                                .label(t_with("session.response.tab_metadata", &[("count", &reply.metadata.len())])),
+                        ),
                 ),
             )
             .child(div().flex_1().min_h_0().child(content))
@@ -1001,7 +1029,12 @@ impl Exchange {
                     this.child(Tag::warning().child(t("session.history.past")))
                         .child(div().text_sm().text_color(theme.muted_foreground).child(relative_time(now, entry.at)))
                         .when(entry.truncated, |this| {
-                            this.child(div().text_sm().text_color(theme.muted_foreground).child(t("session.history.truncated")))
+                            this.child(
+                                div()
+                                    .text_sm()
+                                    .text_color(theme.muted_foreground)
+                                    .child(t("session.history.truncated")),
+                            )
                         })
                         .child(
                             Button::new("response-history-latest")
@@ -1023,11 +1056,14 @@ impl Render for Exchange {
         let body = match &self.phase {
             Phase::Idle => page::empty(t("session.response.idle_title"), t("session.response.idle_description")),
             Phase::Sending => page::loading(t("session.response.waiting")),
-            Phase::Cancelled => page::empty(t("session.response.cancelled_title"), t("session.response.cancelled_description")),
+            Phase::Cancelled => {
+                page::empty(t("session.response.cancelled_title"), t("session.response.cancelled_description"))
+            }
             Phase::Failed(message) => div()
                 .p_3()
                 .child(
-                    Alert::error("send-failed", SharedString::from(message.clone())).title(t("session.response.send_failed")),
+                    Alert::error("send-failed", SharedString::from(message.clone()))
+                        .title(t("session.response.send_failed")),
                 )
                 .into_any_element(),
             Phase::Http(_) => {
@@ -1056,8 +1092,9 @@ impl Render for Exchange {
                 element
             }
         };
-        div().size_full().bg(cx.theme().background).child(
-            v_flex().size_full().children(strip).child(div().flex_1().min_h_0().child(body)),
-        )
+        div()
+            .size_full()
+            .bg(cx.theme().background)
+            .child(v_flex().size_full().children(strip).child(div().flex_1().min_h_0().child(body)))
     }
 }

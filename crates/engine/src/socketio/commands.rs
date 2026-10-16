@@ -85,11 +85,7 @@ pub fn register(registry: &mut CommandRegistry) {
     });
 
     registry.register_sync("socketio.listen", |params, _| {
-        ok_result(set_listeners(
-            str_of(&params, "workspaceId"),
-            str_of(&params, "connectionId"),
-            listeners_of(&params),
-        ))
+        ok_result(set_listeners(str_of(&params, "workspaceId"), str_of(&params, "connectionId"), listeners_of(&params)))
     });
 
     registry.register_sync("socketio.status", |params, _| {
@@ -307,7 +303,10 @@ mod tests {
         /// The log as `(direction, type, event, data)`.
         fn lines(&self) -> Vec<(String, String, String, String)> {
             let text = |m: &Value, key: &str| m[key].as_str().unwrap().to_string();
-            self.messages().iter().map(|m| (text(m, "direction"), text(m, "type"), text(m, "event"), text(m, "data"))).collect()
+            self.messages()
+                .iter()
+                .map(|m| (text(m, "direction"), text(m, "type"), text(m, "event"), text(m, "data")))
+                .collect()
         }
     }
 
@@ -431,15 +430,13 @@ mod tests {
         assert_eq!(result, json!({ "ok": true }));
         assert_eq!(wait_status("chat", "connected").await["namespace"], "/chat");
         wait_for("the welcome", || events.messages().len() == 1).await;
-        let welcome = "[{\"uri\":\"/realtime/?room=7&EIO=4&transport=websocket\",\"token\":\"t-1\"},{\"token\":\"abc\"}]";
+        let welcome =
+            "[{\"uri\":\"/realtime/?room=7&EIO=4&transport=websocket\",\"token\":\"t-1\"},{\"token\":\"abc\"}]";
         assert_eq!(events.lines(), [line("received", "event", "welcome", welcome)]);
 
         emit("chat", "echo", "one").await;
         wait_for("the echo", || events.messages().len() == 3).await;
-        assert_eq!(
-            server.frames(),
-            ["40/chat,{\"token\":\"abc\"}", "42/chat,[\"echo\",\"one\"]"]
-        );
+        assert_eq!(server.frames(), ["40/chat,{\"token\":\"abc\"}", "42/chat,[\"echo\",\"one\"]"]);
         disconnect("chat").await;
         wait_status("chat", "disconnected").await;
         wait_for("the disconnect packet", || server.frames().last().is_some_and(|f| f == "41/chat,")).await;
@@ -461,7 +458,8 @@ mod tests {
         wait_for("the welcome", || events.messages().len() == 1).await;
 
         for args in ["[1, \"two\"]", "{\"three\": 3}"] {
-            let payload = json!({ "workspaceId": WS, "connectionId": "ack", "event": "echo", "args": args, "ack": true });
+            let payload =
+                json!({ "workspaceId": WS, "connectionId": "ack", "event": "echo", "args": args, "ack": true });
             assert_eq!(call("socketio.emit", payload).await, json!({ "ok": true }));
         }
         wait_for("both acknowledgements", || events.messages().len() == 7).await;
@@ -469,7 +467,9 @@ mod tests {
         let acks: Vec<Value> = events.messages().into_iter().filter(|m| m["type"] == "ack").collect();
         // An acknowledgement is named after the event it answers and carries what the server answered with.
         assert_eq!(
-            acks.iter().map(|m| (m["event"].as_str().unwrap(), m["ackId"].as_u64().unwrap(), m["data"].as_str().unwrap())).collect::<Vec<_>>(),
+            acks.iter()
+                .map(|m| (m["event"].as_str().unwrap(), m["ackId"].as_u64().unwrap(), m["data"].as_str().unwrap()))
+                .collect::<Vec<_>>(),
             [("echo", 0, "[1,\"two\"]"), ("echo", 1, "[{\"three\":3}]")]
         );
         let sent: Vec<Value> = events.messages().into_iter().filter(|m| m["direction"] == "sent").collect();
@@ -551,7 +551,8 @@ mod tests {
     }
 
     async fn listen_to(connection_id: &str, listeners: Value) -> Value {
-        call("socketio.listen", json!({ "workspaceId": WS, "connectionId": connection_id, "listeners": listeners })).await
+        call("socketio.listen", json!({ "workspaceId": WS, "connectionId": connection_id, "listeners": listeners }))
+            .await
     }
 
     #[tokio::test]
@@ -559,7 +560,8 @@ mod tests {
         let root = scratch_data_root();
         let server = Server::start().await;
         let saved = |id: &str, extra: Value| {
-            let mut entity = json!({ "id": id, "name": id, "url": server.url, "createdAt": 1, "workspaceId": root.ws_id });
+            let mut entity =
+                json!({ "id": id, "name": id, "url": server.url, "createdAt": 1, "workspaceId": root.ws_id });
             entity.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
             write_entity(root.ws_id, "socketioRequests", id, &entity, None).unwrap();
         };
@@ -572,7 +574,10 @@ mod tests {
             assert_eq!(wait_status(id, "connected").await["listeners"], expected, "{id}");
         }
         // The welcome reaches the two that hear everything, not the one with a list.
-        wait_for("the welcomes", || ["all", "plain"].iter().all(|id| get_connection(WS, id).unwrap()["messages"][0]["event"] == "welcome")).await;
+        wait_for("the welcomes", || {
+            ["all", "plain"].iter().all(|id| get_connection(WS, id).unwrap()["messages"][0]["event"] == "welcome")
+        })
+        .await;
         assert_eq!(status("listed").await["messages"], json!([]));
         for id in ["listed", "all", "plain"] {
             disconnect(id).await;
@@ -672,7 +677,10 @@ mod tests {
         wait_status("kicked", "connected").await;
         emit("kicked", "kick", "").await;
         let ended = wait_status("kicked", "disconnected").await;
-        assert_eq!((ended["error"].clone(), ended["closeReason"].clone()), (Value::Null, json!("io server disconnect")));
+        assert_eq!(
+            (ended["error"].clone(), ended["closeReason"].clone()),
+            (Value::Null, json!("io server disconnect"))
+        );
 
         let events = Events::watch("dropped");
         connect("dropped", &server.url).await;
@@ -709,7 +717,10 @@ mod tests {
         let payload = json!({ "workspaceId": WS, "connectionId": "mute", "url": server.url, "path": "/mute" });
         call("socketio.connect", payload).await;
         let failed = wait_status("mute", "error").await;
-        assert!(failed["error"].as_str().unwrap().starts_with("Timed out waiting for the Socket.IO handshake"), "{failed}");
+        assert!(
+            failed["error"].as_str().unwrap().starts_with("Timed out waiting for the Socket.IO handshake"),
+            "{failed}"
+        );
         assert_eq!(failed["closeReason"], "timeout");
 
         let payload = json!({ "workspaceId": WS, "connectionId": "quiet", "url": server.url, "path": "/quiet" });
@@ -740,7 +751,8 @@ mod tests {
             assert!(result["error"].as_str().unwrap().contains("Invalid URL"), "{result}");
             assert_eq!(status(connection_id).await["status"], "error");
         }
-        let payload = json!({ "workspaceId": WS, "connectionId": "bad-auth", "url": "http://127.0.0.1", "auth": "nope" });
+        let payload =
+            json!({ "workspaceId": WS, "connectionId": "bad-auth", "url": "http://127.0.0.1", "auth": "nope" });
         let result = call("socketio.connect", payload).await;
         assert!(result["error"].as_str().unwrap().contains("Invalid auth"), "{result}");
     }
@@ -776,7 +788,10 @@ mod tests {
         assert_eq!(snapshot["messages"].as_array().unwrap().len(), 2);
         assert_eq!(snapshot["messages"][1]["id"], "again-2");
         let listed = call("socketio.list", json!({ "workspaceId": WS })).await;
-        assert_eq!(listed["connections"].as_array().unwrap().iter().filter(|c| c["connectionId"] == "again").count(), 1);
+        assert_eq!(
+            listed["connections"].as_array().unwrap().iter().filter(|c| c["connectionId"] == "again").count(),
+            1
+        );
         disconnect("again").await;
         wait_status("again", "disconnected").await;
     }
@@ -791,7 +806,8 @@ mod tests {
             assert_eq!(emit("cap", "echo", &n.to_string()).await, json!({ "ok": true }));
         }
         wait_for("all echoes", || {
-            get_connection(WS, "cap").is_some_and(|c| c["messages"][499]["data"] == "[259]" && c["messages"][499]["direction"] == "received")
+            get_connection(WS, "cap")
+                .is_some_and(|c| c["messages"][499]["data"] == "[259]" && c["messages"][499]["direction"] == "received")
         })
         .await;
         let messages = status("cap").await["messages"].as_array().unwrap().clone();
@@ -814,7 +830,10 @@ mod tests {
         assert_eq!(status("ghost").await, Value::Null);
         let expected = json!({ "ok": false, "error": "No connection \"ghost\" in workspace \"ws1\"." });
         assert_eq!(disconnect("ghost").await, expected);
-        assert_eq!(call("socketio.clearMessages", json!({ "workspaceId": WS, "connectionId": "ghost" })).await, expected);
+        assert_eq!(
+            call("socketio.clearMessages", json!({ "workspaceId": WS, "connectionId": "ghost" })).await,
+            expected
+        );
 
         let server = Server::start().await;
         for n in 0..MAX_SOCKETIO_CONNECTIONS {

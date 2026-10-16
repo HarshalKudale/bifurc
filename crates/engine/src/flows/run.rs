@@ -541,7 +541,10 @@ fn deliver(run: Arc<Run>, node_id: String, token: Token) -> BoxFuture<'static, (
                     0 => passed_on(PORT_PASS),
                     failing => {
                         let error = format!("{failing} of {} checks failed", checks.len());
-                        (PORT_ERROR.to_string(), Arc::new(json!({ "ok": false, "error": error, "input": *token.input })))
+                        (
+                            PORT_ERROR.to_string(),
+                            Arc::new(json!({ "ok": false, "error": error, "input": *token.input })),
+                        )
                     }
                 }
             }
@@ -558,7 +561,11 @@ fn deliver(run: Arc<Run>, node_id: String, token: Token) -> BoxFuture<'static, (
                     _ => {
                         let path = if node.path.trim().is_empty() { "input" } else { node.path.as_str() };
                         lookup(path, &run.scope(&token)).as_ref().and_then(Value::as_array).map(|items| {
-                            items.iter().enumerate().map(|(index, item)| json!({ "index": index, "item": item })).collect()
+                            items
+                                .iter()
+                                .enumerate()
+                                .map(|(index, item)| json!({ "index": index, "item": item }))
+                                .collect()
                         })
                     }
                 };

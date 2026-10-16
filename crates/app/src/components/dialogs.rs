@@ -74,7 +74,10 @@ pub fn prompt<V: 'static>(
             .map(|field| {
                 let secret = field.secret;
                 let input = cx.new(|cx| {
-                    InputState::new(window, cx).placeholder(field.placeholder).default_value(field.initial).masked(secret)
+                    InputState::new(window, cx)
+                        .placeholder(field.placeholder)
+                        .default_value(field.initial)
+                        .masked(secret)
                 });
                 (field.label, field.optional, field.secret, input)
             })
@@ -92,7 +95,8 @@ pub fn prompt<V: 'static>(
             let missing = inputs.iter().zip(&values).any(|((_, optional, _, _), value)| !optional && value.is_empty());
             if missing {
                 window.push_notification(
-                    Notification::warning(t("components.dialogs.fill_required")).title(t("components.dialogs.cant_continue")),
+                    Notification::warning(t("components.dialogs.fill_required"))
+                        .title(t("components.dialogs.cant_continue")),
                     cx,
                 );
                 return false;
@@ -208,18 +212,25 @@ pub fn resolve_deleted(
                                 .label(t("components.cancel"))
                                 .on_click(|_, window, cx| window.close_dialog(cx)),
                         )
-                        .child(Button::new("deleted-revert").outline().label(t("components.dialogs.revert_delete")).on_click(
-                            move |_, window, cx| {
-                                revert_model.update(cx, |model, cx| model.revert_delete(revert_target.clone(), cx));
-                                window.close_dialog(cx);
-                            },
-                        ))
-                        .child(Button::new("deleted-confirm").danger().label(t("components.dialogs.confirm_delete")).on_click(
-                            move |_, window, cx| {
-                                confirm_model.update(cx, |model, cx| model.confirm_delete(confirm_target.clone(), cx));
-                                window.close_dialog(cx);
-                            },
-                        )),
+                        .child(
+                            Button::new("deleted-revert")
+                                .outline()
+                                .label(t("components.dialogs.revert_delete"))
+                                .on_click(move |_, window, cx| {
+                                    revert_model.update(cx, |model, cx| model.revert_delete(revert_target.clone(), cx));
+                                    window.close_dialog(cx);
+                                }),
+                        )
+                        .child(
+                            Button::new("deleted-confirm")
+                                .danger()
+                                .label(t("components.dialogs.confirm_delete"))
+                                .on_click(move |_, window, cx| {
+                                    confirm_model
+                                        .update(cx, |model, cx| model.confirm_delete(confirm_target.clone(), cx));
+                                    window.close_dialog(cx);
+                                }),
+                        ),
                 )
         });
     });
@@ -227,7 +238,12 @@ pub fn resolve_deleted(
 
 /// Opened in place of something a newer Bifurc than this one last saved: it can't be opened, changed or
 /// deleted here until this install is `version` or later. Settings is where an update is found.
-pub fn needs_update(name: impl Into<SharedString>, version: impl Into<SharedString>, window: &mut Window, cx: &mut App) {
+pub fn needs_update(
+    name: impl Into<SharedString>,
+    version: impl Into<SharedString>,
+    window: &mut Window,
+    cx: &mut App,
+) {
     let (name, version) = (name.into(), version.into());
     window.defer(cx, move |window, cx| {
         window.open_alert_dialog(cx, move |alert, _, _| {
@@ -242,12 +258,15 @@ pub fn needs_update(name: impl Into<SharedString>, version: impl Into<SharedStri
                                 .label(t("components.cancel"))
                                 .on_click(|_, window, cx| window.close_dialog(cx)),
                         )
-                        .child(Button::new("needs-update-settings").primary().label(t("components.dialogs.open_settings")).on_click(
-                            |_, window, cx| {
-                                window.close_dialog(cx);
-                                window.dispatch_action(Box::new(ShowSettings), cx);
-                            },
-                        )),
+                        .child(
+                            Button::new("needs-update-settings")
+                                .primary()
+                                .label(t("components.dialogs.open_settings"))
+                                .on_click(|_, window, cx| {
+                                    window.close_dialog(cx);
+                                    window.dispatch_action(Box::new(ShowSettings), cx);
+                                }),
+                        ),
                 )
         });
     });

@@ -22,8 +22,8 @@ use gpui_kit::component::{
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    AppContext as _, Context, Entity, IntoElement, ParentElement as _, Render, SharedString,
-    Styled as _, Subscription, Window, div,
+    AppContext as _, Context, Entity, IntoElement, ParentElement as _, Render, SharedString, Styled as _, Subscription,
+    Window, div,
 };
 use serde_json::{Map, Value, json};
 
@@ -32,7 +32,9 @@ use crate::{
     components::{
         Autosave, EntityAction, EntityBar, Syntax, VarEditor,
         dialogs::{confirm_danger, delete_consequence, needs_update, resolve_deleted},
-        entity_bar, master_detail::{list_rows, master_detail}, page,
+        entity_bar,
+        master_detail::{list_rows, master_detail},
+        page,
     },
     engine::{call, call_in, describe, failure},
     i18n::{t, t_with},
@@ -483,7 +485,10 @@ impl ProxyRulesScreen {
         }
         if let Some(problem) = problem_of(&fields) {
             if mode == SaveMode::Explicit {
-                window.push_notification(Notification::warning(problem).title(t("proxy_rules.problem.cant_save_yet")), cx);
+                window.push_notification(
+                    Notification::warning(problem).title(t("proxy_rules.problem.cant_save_yet")),
+                    cx,
+                );
             }
             cx.notify();
             return;
@@ -659,11 +664,9 @@ impl ProxyRulesScreen {
                 )
                 .on_click(move |_, window, cx| needs_update(name.clone(), version.clone(), window, cx))
         });
-        list_rows("rule-list")
-            .children(rows)
-            .children(deleted_rows)
-            .children(locked_rows)
-            .when(self.selection == Selection::Draft, |this| {
+        list_rows("rule-list").children(rows).children(deleted_rows).children(locked_rows).when(
+            self.selection == Selection::Draft,
+            |this| {
                 this.child(
                     ListItem::new("rule-draft")
                         .selected(true)
@@ -672,16 +675,30 @@ impl ProxyRulesScreen {
                         .text_sm()
                         .child(div().text_color(theme.muted_foreground).child(t("proxy_rules.list.draft"))),
                 )
-            })
+            },
+        )
     }
 
     fn render_target(&self, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
-        let mappings: Vec<(String, String)> =
-            self.model.read(cx).config().mappings.iter().filter(|m| !m.deleted).map(|m| (m.id.clone(), m.domain.clone())).collect();
+        let mappings: Vec<(String, String)> = self
+            .model
+            .read(cx)
+            .config()
+            .mappings
+            .iter()
+            .filter(|m| !m.deleted)
+            .map(|m| (m.id.clone(), m.domain.clone()))
+            .collect();
         let chosen =
             mappings.iter().find(|(id, _)| *id == self.mapping_id).map(|(_, domain)| domain.clone()).unwrap_or_else(
-                || if mappings.is_empty() { t("proxy_rules.target.no_mappings").to_owned() } else { t("proxy_rules.target.choose_mapping").to_owned() },
+                || {
+                    if mappings.is_empty() {
+                        t("proxy_rules.target.no_mappings").to_owned()
+                    } else {
+                        t("proxy_rules.target.choose_mapping").to_owned()
+                    }
+                },
             );
         let this = cx.weak_entity();
         let current = self.mapping_id.clone();
@@ -774,14 +791,18 @@ impl ProxyRulesScreen {
                             .flex_none()
                             .gap_3()
                             .p_3()
-                            .child(h_flex().gap_3().child(
-                                Switch::new("rule-enabled").checked(self.enabled).small().label(t("proxy_rules.label.enabled")).on_change(
-                                    cx.listener(|this, checked: &bool, _, cx| {
-                                        this.enabled = *checked;
-                                        this.changed(cx);
-                                    }),
+                            .child(
+                                h_flex().gap_3().child(
+                                    Switch::new("rule-enabled")
+                                        .checked(self.enabled)
+                                        .small()
+                                        .label(t("proxy_rules.label.enabled"))
+                                        .on_change(cx.listener(|this, checked: &bool, _, cx| {
+                                            this.enabled = *checked;
+                                            this.changed(cx);
+                                        })),
                                 ),
-                            ))
+                            )
                             .child(
                                 h_flex()
                                     .gap_3()
@@ -838,11 +859,10 @@ impl Render for ProxyRulesScreen {
                 .on_click(cx.listener(|this, _, window, cx| this.go_to(Selection::Draft, window, cx))),
             cx,
         );
-        let has_list =
-            !self.rules.is_empty()
-                || !self.deleted_rules(cx).is_empty()
-                || !self.locked_rules(cx).is_empty()
-                || self.selection == Selection::Draft;
+        let has_list = !self.rules.is_empty()
+            || !self.deleted_rules(cx).is_empty()
+            || !self.locked_rules(cx).is_empty()
+            || self.selection == Selection::Draft;
         let list = has_list.then(|| self.render_list(cx).into_any_element());
         let detail = self.render_detail(cx);
         let body = master_detail(list, detail, cx);

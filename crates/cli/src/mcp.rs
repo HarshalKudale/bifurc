@@ -177,7 +177,9 @@ mod tests {
             ("entity.list:socketioRequests", listing(json!([]))),
             (
                 "entity.list:mcpRequests",
-                listing(json!([{"id": "m1", "name": "Tools", "transport": "stdio", "url": "npx my-server", "headers": {}}])),
+                listing(
+                    json!([{"id": "m1", "name": "Tools", "transport": "stdio", "url": "npx my-server", "headers": {}}]),
+                ),
             ),
         ]
     }
@@ -221,9 +223,16 @@ mod tests {
     fn a_tool_is_called_over_a_connection_the_engine_holds_which_is_left_open() {
         let mut answers = engine();
         answers.extend([
-            ("mcp.status", connection("connected", Value::Null, json!([
+            (
+                "mcp.status",
+                connection(
+                    "connected",
+                    Value::Null,
+                    json!([
                 {"id": "m1-1", "type": "tool", "name": "old", "arguments": "{}", "status": "ok", "data": "{}"},
-                line("ok", "hi")]))),
+                line("ok", "hi")]),
+                ),
+            ),
             ("mcp.call", Ok(json!({"ok": true, "callId": "m1-4"}))),
         ]);
         let argv = ["requests", "send", "m1", "--tool", "echo", "--arg", "text=hi", "--arg", "count=2"];
@@ -246,11 +255,15 @@ mod tests {
     #[test]
     fn a_prompt_and_a_resource_are_asked_for_by_name() {
         for (argv, expected) in [
-            (vec!["requests", "send", "m1", "--prompt", "greet", "--arg", "who=Ada"],
-             json!({"workspaceId": "w1", "connectionId": "m1", "type": "prompt", "name": "greet",
-                    "arguments": {"who": "Ada"}})),
-            (vec!["requests", "send", "m1", "--resource", "mem://a"],
-             json!({"workspaceId": "w1", "connectionId": "m1", "type": "resource", "name": "mem://a"})),
+            (
+                vec!["requests", "send", "m1", "--prompt", "greet", "--arg", "who=Ada"],
+                json!({"workspaceId": "w1", "connectionId": "m1", "type": "prompt", "name": "greet",
+                    "arguments": {"who": "Ada"}}),
+            ),
+            (
+                vec!["requests", "send", "m1", "--resource", "mem://a"],
+                json!({"workspaceId": "w1", "connectionId": "m1", "type": "resource", "name": "mem://a"}),
+            ),
         ] {
             let mut answers = engine();
             answers.extend([
@@ -274,7 +287,9 @@ mod tests {
         let (out, _) = run(&argv, answers, |c| requests(c, sub(&argv)));
         assert_eq!(
             out.unwrap_err(),
-            CliError::Failed("MCP connected  stdio  npx my-server\n> tool echo {\"text\":\"hi\"}\n< error  (12 ms)\nit broke".into())
+            CliError::Failed(
+                "MCP connected  stdio  npx my-server\n> tool echo {\"text\":\"hi\"}\n< error  (12 ms)\nit broke".into()
+            )
         );
     }
 
@@ -344,8 +359,10 @@ mod tests {
         assert!(out.unwrap().starts_with("MCP disconnected"));
         assert_eq!(
             payloads(&calls, "mcp.connect"),
-            [json!({"workspaceId": "w1", "connectionId": format!("cli-{}", std::process::id()), "url": "npx my-server",
-                    "transport": "stdio", "headers": {"API_KEY": "k"}})]
+            [
+                json!({"workspaceId": "w1", "connectionId": format!("cli-{}", std::process::id()), "url": "npx my-server",
+                    "transport": "stdio", "headers": {"API_KEY": "k"}})
+            ]
         );
         assert_eq!(payloads(&calls, "mcp.disconnect").len(), 1);
 
@@ -361,20 +378,36 @@ mod tests {
     #[test]
     fn options_that_do_not_belong_to_the_send_are_refused() {
         for (argv, message) in [
-            (vec!["requests", "send", "m1", "--transport", "http"],
-             "a saved request is sent as it is saved, without --transport; change it with: bifurc requests update"),
+            (
+                vec!["requests", "send", "m1", "--transport", "http"],
+                "a saved request is sent as it is saved, without --transport; change it with: bifurc requests update",
+            ),
             (vec!["requests", "send", "m1", "--arg", "a=1"], "--arg goes with --tool <name> or --prompt <name>"),
-            (vec!["requests", "send", "m1", "--resource", "mem://a", "--arg", "a=1"],
-             "--arg goes with --tool <name> or --prompt <name>"),
-            (vec!["requests", "send", "m1", "--tool", "a", "--prompt", "b"], "give one of --tool, --prompt and --resource"),
-            (vec!["requests", "send", "m1", "--tool", "a", "--arg", "novalue"], "argument \"novalue\" must be \"name=value\""),
+            (
+                vec!["requests", "send", "m1", "--resource", "mem://a", "--arg", "a=1"],
+                "--arg goes with --tool <name> or --prompt <name>",
+            ),
+            (
+                vec!["requests", "send", "m1", "--tool", "a", "--prompt", "b"],
+                "give one of --tool, --prompt and --resource",
+            ),
+            (
+                vec!["requests", "send", "m1", "--tool", "a", "--arg", "novalue"],
+                "argument \"novalue\" must be \"name=value\"",
+            ),
             (vec!["requests", "send", "m1", "--wait", "soon"], "--wait must be a number of seconds, not \"soon\""),
-            (vec!["requests", "send", "-t", "mcp", "--url", "x", "-X", "POST"],
-             "--method is not an option of a mcp request (see: bifurc requests --help)"),
-            (vec!["requests", "send", "-t", "rest", "--url", "http://x", "--tool", "echo"],
-             "--tool is not an option of a rest request (see: bifurc requests --help)"),
-            (vec!["requests", "create", "-t", "mcp", "x", "--transport", "pigeon"],
-             "--transport is stdio or http, not \"pigeon\""),
+            (
+                vec!["requests", "send", "-t", "mcp", "--url", "x", "-X", "POST"],
+                "--method is not an option of a mcp request (see: bifurc requests --help)",
+            ),
+            (
+                vec!["requests", "send", "-t", "rest", "--url", "http://x", "--tool", "echo"],
+                "--tool is not an option of a rest request (see: bifurc requests --help)",
+            ),
+            (
+                vec!["requests", "create", "-t", "mcp", "x", "--transport", "pigeon"],
+                "--transport is stdio or http, not \"pigeon\"",
+            ),
         ] {
             let (out, calls) = run(&argv, engine(), |c| requests(c, sub(&argv)));
             assert_eq!(out.unwrap_err(), CliError::msg(message), "{argv:?}");
@@ -385,7 +418,10 @@ mod tests {
     #[test]
     fn create_and_update_build_an_mcp_request() {
         let mut answers = engine();
-        answers.extend([("entity.create", Ok(json!({"id": "n1", "entity": {"id": "n1"}}))), ("entity.update", Ok(json!({"ok": true})))]);
+        answers.extend([
+            ("entity.create", Ok(json!({"id": "n1", "entity": {"id": "n1"}}))),
+            ("entity.update", Ok(json!({"ok": true}))),
+        ]);
         let argv = ["requests", "create", "--type", "mcp", "npx -y my-server", "-H", "API_KEY: {{vault.key}}"];
         let (out, calls) = run(&argv, answers.clone(), |c| requests(c, sub(&argv)));
         assert_eq!(out.unwrap(), "Saved mcp request n1");
@@ -402,7 +438,10 @@ mod tests {
         assert_eq!(out.unwrap(), "Updated mcp request m1");
         let sent = &payloads(&calls, "entity.update")[0];
         assert_eq!(sent["kind"], "mcpRequests");
-        assert_eq!((sent["entity"]["url"].clone(), sent["entity"]["transport"].clone()), (json!("https://x/mcp"), json!("http")));
+        assert_eq!(
+            (sent["entity"]["url"].clone(), sent["entity"]["transport"].clone()),
+            (json!("https://x/mcp"), json!("http"))
+        );
         let argv = ["requests", "update", "Tools", "--name", "Mine"];
         let (_, calls) = run(&argv, answers, |c| requests(c, sub(&argv)));
         assert_eq!(payloads(&calls, "entity.update")[0]["entity"]["transport"], "stdio");

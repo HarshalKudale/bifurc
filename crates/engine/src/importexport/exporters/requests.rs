@@ -8,11 +8,7 @@ use crate::{
         types::{ExportFile, ExportOutcome},
     },
     utils::json::str_of,
-    workspace::{
-        config::load_config,
-        fs::read_all_entities,
-        tree::Scope,
-    },
+    workspace::{config::load_config, fs::read_all_entities, tree::Scope},
 };
 
 /// The requests of workspace `ws_id`, of every type. Each names its type in `type`.
@@ -70,7 +66,8 @@ mod tests {
         let file: Value = serde_json::from_str(&out.content).unwrap();
         assert_eq!(file["schema"], "lp-requests-v1");
         assert_eq!(file["name"], "Workspace 1");
-        let types: Vec<_> = file["requests"].as_array().unwrap().iter().map(|r| (str_of(r, "id"), str_of(r, "type"))).collect();
+        let types: Vec<_> =
+            file["requests"].as_array().unwrap().iter().map(|r| (str_of(r, "id"), str_of(r, "type"))).collect();
         assert_eq!(types, [("r1", "rest"), ("g1", "grpc"), ("s1", "websocket")]);
         assert_eq!(file["requests"][0]["folderId"], folder.as_str());
 

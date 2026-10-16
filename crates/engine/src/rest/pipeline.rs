@@ -13,11 +13,11 @@ use crate::{
     env::{apply_variable_changes, authored_variables_text, load_merged_environment, resolve_headers, resolve_vars},
     protocol::Result,
     scripting::execute_ipc_script,
-    vault::{Redactor, references_in, resolve_value_allowed},
     utils::{
         json::{array_of, merged, opt_str, str_of},
         replay::decode_base64_lenient,
     },
+    vault::{Redactor, references_in, resolve_value_allowed},
 };
 
 /// The three scripts a request may carry. Absent or whitespace-only means "do not run it".

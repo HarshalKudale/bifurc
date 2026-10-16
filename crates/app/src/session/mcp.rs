@@ -20,6 +20,7 @@
 
 use std::collections::BTreeMap;
 
+use bifurc_engine_client::ClientError;
 use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, IndexPath, Sizable as _, StyledExt as _, WindowExt as _,
     alert::Alert,
@@ -38,7 +39,6 @@ use gpui_kit::{
     AnyElement, AppContext as _, Context, ElementId, Entity, EventEmitter, InteractiveElement as _, IntoElement,
     ParentElement as _, Render, SharedString, StatefulInteractiveElement as _, Styled as _, Subscription, Window, div,
 };
-use bifurc_engine_client::ClientError;
 use serde_json::{Map, Value, json};
 
 use super::{
@@ -46,10 +46,10 @@ use super::{
     mcp_connection::{McpConnection, McpEvent},
 };
 use crate::{
-    i18n::{t, t_with},
     app_model::{AppModel, ModelEvent},
     components::{Autosave, KeyValueEvent, KeyValueTable, Syntax, VarEditor, page, request_bar},
     engine::{call, call_in, describe},
+    i18n::{t, t_with},
     model::{
         RequestKind,
         http::{header_map, header_pairs},
@@ -187,7 +187,9 @@ impl McpSession {
         let name = cx.new(|cx| InputState::new(window, cx).placeholder(t("session.rest.name_placeholder")));
         let transport = cx.new(|cx| SelectState::new(TRANSPORTS.to_vec(), Some(IndexPath::default()), window, cx));
         let url = VarEditor::line("npx -y some-mcp-server   or   https://example.test/mcp", window, cx);
-        let headers = cx.new(|cx| KeyValueTable::new(t("session.protocol.column_name"), t("session.rest.column_value"), window, cx));
+        let headers = cx.new(|cx| {
+            KeyValueTable::new(t("session.protocol.column_name"), t("session.rest.column_value"), window, cx)
+        });
         let resource = VarEditor::line(t("session.mcp.resource_placeholder"), window, cx);
         let connection = cx.new(|cx| McpConnection::new(window, cx));
 
@@ -197,23 +199,25 @@ impl McpSession {
             InputEvent::PressEnter { .. } | InputEvent::Blur => this.commit_name(window, cx),
             InputEvent::Focus => {}
         }));
-        subscriptions.push(cx.subscribe_in(url.state(), window, |this, _, event: &InputEvent, window, cx| match event {
-            InputEvent::Change => {
-                this.follow_address(window, cx);
-                this.changed(cx);
-            }
-            InputEvent::PressEnter { .. } => this.connect(window, cx),
-            _ => {}
-        }));
         subscriptions.push(cx.subscribe_in(
-            resource.state(),
+            url.state(),
             window,
             |this, _, event: &InputEvent, window, cx| match event {
-                InputEvent::Change => this.changed(cx),
-                InputEvent::PressEnter { .. } => this.ask(Section::Resources, window, cx),
+                InputEvent::Change => {
+                    this.follow_address(window, cx);
+                    this.changed(cx);
+                }
+                InputEvent::PressEnter { .. } => this.connect(window, cx),
                 _ => {}
             },
         ));
+        subscriptions.push(cx.subscribe_in(resource.state(), window, |this, _, event: &InputEvent, window, cx| {
+            match event {
+                InputEvent::Change => this.changed(cx),
+                InputEvent::PressEnter { .. } => this.ask(Section::Resources, window, cx),
+                _ => {}
+            }
+        }));
         subscriptions
             .push(cx.subscribe(&transport, |this, _, _: &SelectEvent<Vec<&'static str>>, cx| this.changed(cx)));
         subscriptions.push(cx.subscribe(&headers, |this, _, _: &KeyValueEvent, cx| this.changed(cx)));
@@ -305,10 +309,7 @@ impl McpSession {
             // The connection's status is asked for once, when the tab opens; a re-read does not change it.
             let opening = this.load == LoadState::Loading;
             match outcome.map_err(|e| describe(&e)).and_then(|v| {
-                v.get("entity")
-                    .and_then(Value::as_object)
-                    .cloned()
-                    .ok_or_else(|| t("session.rest.gone").to_owned())
+                v.get("entity").and_then(Value::as_object).cloned().ok_or_else(|| t("session.rest.gone").to_owned())
             }) {
                 Ok(entity) => {
                     this.adopt_entity(entity, window, cx);
@@ -613,8 +614,7 @@ impl McpSession {
                             cx.emit(SessionEvent::Saved { id });
                         }
                     }
-                    None => window
-                        .push_notification(Notification::error(t("session.rest.engine_no_saved")), cx),
+                    None => window.push_notification(Notification::error(t("session.rest.engine_no_saved")), cx),
                 },
                 Ok(_) => {
                     this.entity = this.edited_entity(&fields);
@@ -643,7 +643,8 @@ impl McpSession {
         let fields = self.fields(cx);
         if fields.url.is_empty() {
             window.push_notification(
-                Notification::warning(t("session.mcp.connect_no_address")).title(t("session.connection.connect_no_url_title")),
+                Notification::warning(t("session.mcp.connect_no_address"))
+                    .title(t("session.connection.connect_no_url_title")),
                 cx,
             );
             return;
@@ -665,7 +666,8 @@ impl McpSession {
         let client = self.model.read(cx).client().clone();
         call_in(&client, window, cx, "mcp.connect", payload, move |_this, outcome, window, cx| {
             if let Some(message) = refusal(outcome, t("session.websocket.open_failed")) {
-                window.push_notification(Notification::error(message).title(t("session.connection.connect_failed")), cx);
+                window
+                    .push_notification(Notification::error(message).title(t("session.connection.connect_failed")), cx);
             }
         });
     }
@@ -675,7 +677,10 @@ impl McpSession {
         let payload = json!({ "workspaceId": self.workspace_id, "connectionId": self.connection_id });
         call(&client, cx, "mcp.disconnect", payload, |_, outcome, cx| {
             if let Err(error) = outcome {
-                cx.emit(SessionEvent::Notice(t_with("session.connection.disconnect_failed", &[("error", &describe(&error))])));
+                cx.emit(SessionEvent::Notice(t_with(
+                    "session.connection.disconnect_failed",
+                    &[("error", &describe(&error))],
+                )));
             }
         });
     }
@@ -939,13 +944,7 @@ impl McpSession {
     }
 
     /// One row of a list of what the server declares: its name, and under it what it is.
-    fn render_item(
-        &self,
-        section: Section,
-        item: &McpItem,
-        selected: bool,
-        cx: &mut Context<Self>,
-    ) -> AnyElement {
+    fn render_item(&self, section: Section, item: &McpItem, selected: bool, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme().clone();
         let name = item.name.clone();
         let detail = match (item.title.as_str(), item.summary()) {
@@ -1028,15 +1027,12 @@ impl McpSession {
                         item.title.clone()
                     }))
                     .when(!item.description.is_empty(), |this| {
-                        this.child(
-                            div().text_sm().text_color(theme.muted_foreground).child(item.description.clone()),
-                        )
+                        this.child(div().text_sm().text_color(theme.muted_foreground).child(item.description.clone()))
                     }),
             );
             if item.arguments.is_empty() {
-                detail = detail.child(
-                    div().text_sm().text_color(theme.muted_foreground).child(t("session.mcp.no_arguments")),
-                );
+                detail = detail
+                    .child(div().text_sm().text_color(theme.muted_foreground).child(t("session.mcp.no_arguments")));
             }
             for (index, (argument, control)) in item.arguments.iter().zip(&form.controls).enumerate() {
                 let held = self.input(form, index);
@@ -1046,7 +1042,11 @@ impl McpSession {
                         .child(
                             Select::new(state)
                                 .h(row_height)
-                                .placeholder(if argument.required { t("session.mcp.choose_one") } else { t("session.mcp.not_set") })
+                                .placeholder(if argument.required {
+                                    t("session.mcp.choose_one")
+                                } else {
+                                    t("session.mcp.not_set")
+                                })
                                 // An argument that need not be sent can be put back to nothing chosen.
                                 .cleanable(!argument.required),
                         )
@@ -1058,25 +1058,29 @@ impl McpSession {
                             .gap_4()
                             .h(row_height)
                             // The group would otherwise take the row and push what follows to its far end.
-                            .child(div().flex_none().child(
-                                RadioGroup::horizontal(group)
-                                    .selected_index(match held.as_str() {
-                                        "true" => Some(0),
-                                        "false" => Some(1),
-                                        _ => None,
-                                    })
-                                    .on_change(cx.listener(move |this, chosen: &usize, _, cx| {
-                                        let value = if *chosen == 0 { "true" } else { "false" };
-                                        this.set_input(section, index, value.to_owned(), cx);
-                                    }))
-                                    .child(t("session.mcp.true"))
-                                    .child(t("session.mcp.false")),
-                            ))
+                            .child(
+                                div().flex_none().child(
+                                    RadioGroup::horizontal(group)
+                                        .selected_index(match held.as_str() {
+                                            "true" => Some(0),
+                                            "false" => Some(1),
+                                            _ => None,
+                                        })
+                                        .on_change(cx.listener(move |this, chosen: &usize, _, cx| {
+                                            let value = if *chosen == 0 { "true" } else { "false" };
+                                            this.set_input(section, index, value.to_owned(), cx);
+                                        }))
+                                        .child(t("session.mcp.true"))
+                                        .child(t("session.mcp.false")),
+                                ),
+                            )
                             // An argument that need not be sent can be put back to neither.
                             .when(!argument.required && !held.is_empty(), |this| {
-                                this.child(Button::new(clear).ghost().small().label(t("session.mcp.not_set")).on_click(cx.listener(
-                                    move |this, _, _, cx| this.set_input(section, index, String::new(), cx),
-                                )))
+                                this.child(Button::new(clear).ghost().small().label(t("session.mcp.not_set")).on_click(
+                                    cx.listener(move |this, _, _, cx| {
+                                        this.set_input(section, index, String::new(), cx)
+                                    }),
+                                ))
                             })
                             .into_any_element()
                     }
@@ -1097,7 +1101,8 @@ impl McpSession {
                 };
                 let mut hint = argument.description.clone();
                 if let Some(default) = &argument.default {
-                    hint = t_with("session.mcp.with_default", &[("hint", &hint), ("default", default)]).trim().to_owned();
+                    hint =
+                        t_with("session.mcp.with_default", &[("hint", &hint), ("default", default)]).trim().to_owned();
                 }
                 detail = detail.child(
                     v_flex()
@@ -1142,10 +1147,8 @@ impl McpSession {
         let theme = cx.theme().clone();
         let items = self.connection.read(cx).view().resources.clone();
         let uri = self.resource.line_value(cx);
-        let rows: Vec<AnyElement> = items
-            .iter()
-            .map(|item| self.render_item(Section::Resources, item, item.name == uri, cx))
-            .collect();
+        let rows: Vec<AnyElement> =
+            items.iter().map(|item| self.render_item(Section::Resources, item, item.name == uri, cx)).collect();
         let listed = if items.is_empty() {
             self.render_nothing("resources", cx)
         } else {
@@ -1263,7 +1266,10 @@ mod tests {
             "inputs": {"tool:echo": {"message": "hi", "empty": "", "odd": 3}, "tool:none": {}},
             "resourceUri": "mem://a",
         })));
-        assert_eq!((fields.name.as_str(), fields.transport.as_str(), fields.url.as_str()), ("Tools", "http", "https://x/mcp"));
+        assert_eq!(
+            (fields.name.as_str(), fields.transport.as_str(), fields.url.as_str()),
+            ("Tools", "http", "https://x/mcp")
+        );
         assert_eq!(fields.headers, [("Authorization".to_owned(), "Bearer t".to_owned())]);
         // Only what was typed is kept: text that is not empty.
         assert_eq!(fields.inputs.len(), 1);

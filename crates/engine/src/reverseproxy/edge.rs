@@ -16,6 +16,7 @@ use tokio_rustls::TlsAcceptor;
 
 use super::pages::{build_home_page, build_not_mapped_page, build_unserved_page};
 use crate::{
+    certificates::{apply_settings, listener_server_config},
     kernel::traffic::{RequestLogEntry, emit_log},
     mocks::{
         UpstreamResponse, is_fully_mocked, is_streaming_mock, match_mock, merge_mock_with_upstream,
@@ -27,7 +28,6 @@ use crate::{
         log_body, log_outcome, proxy_to_upstream, send_html,
         wire::{Duplicates, parse_header_lines, read_body, read_head},
     },
-    certificates::{apply_settings, listener_server_config},
     runtime::instances::Listener,
     utils::{
         cache_policy::strip_cache_headers,
@@ -56,7 +56,6 @@ impl Shared {
     fn scheme(&self) -> &'static str {
         if self.is_secure() { "https" } else { "http" }
     }
-
 }
 
 /// The edge as a [`Listener`].
@@ -67,11 +66,7 @@ pub struct EdgeRouter {
 impl EdgeRouter {
     pub fn new(resolve_config: ResolveConfig) -> Self {
         Self {
-            shared: Arc::new(Shared {
-                core: ListenerCore::default(),
-                secure: AtomicBool::new(false),
-                resolve_config,
-            }),
+            shared: Arc::new(Shared { core: ListenerCore::default(), secure: AtomicBool::new(false), resolve_config }),
         }
     }
 }

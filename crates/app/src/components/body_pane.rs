@@ -145,12 +145,17 @@ impl BodyPane {
                 )
             })
             .child(div().flex_1())
-            .child(Button::new("copy-body").ghost().small().icon(IconName::Copy).label(t("components.body_pane.copy")).on_click(cx.listener(
-                |this, _, _, cx| {
-                    let text = this.editor.read(cx).value().to_string();
-                    cx.write_to_clipboard(ClipboardItem::new_string(text));
-                },
-            )))
+            .child(
+                Button::new("copy-body")
+                    .ghost()
+                    .small()
+                    .icon(IconName::Copy)
+                    .label(t("components.body_pane.copy"))
+                    .on_click(cx.listener(|this, _, _, cx| {
+                        let text = this.editor.read(cx).value().to_string();
+                        cx.write_to_clipboard(ClipboardItem::new_string(text));
+                    })),
+            )
     }
 }
 
