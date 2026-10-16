@@ -83,6 +83,7 @@
   "menu.new_folder_here": "Neuer Ordner hier…",
   "menu.rename": "Umbenennen…",
   "menu.delete": "Löschen…",
+  "menu.update_required": "Update erforderlich…",
   "menu.revert_delete": "Löschung zurücksetzen",
   "menu.confirm_delete": "Löschung bestätigen",
 

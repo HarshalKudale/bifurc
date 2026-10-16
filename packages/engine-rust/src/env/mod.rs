@@ -19,7 +19,7 @@ use crate::{
     },
     workspace::{
         config::{GLOBAL_ENV_ID, load_config, save_config},
-        fs::{read_all_entities, write_flat_entity},
+        fs::{entity_lock, read_all_entities, write_flat_entity},
         settings::load_settings,
     },
 };
@@ -233,6 +233,9 @@ pub fn register(registry: &mut CommandRegistry) {
         let mut cfg = load_config();
         cfg["activeEnvironmentId"] = id.clone();
         let active_ws = str_of(&cfg, "activeWorkspaceId").to_string();
+        if let Some(version) = id.as_str().and_then(|id| entity_lock(&active_ws, "environments", id)) {
+            return Err(crate::workspace::stamp::update_required(&version));
+        }
         if let Some(workspaces) = cfg.get_mut("workspaces").and_then(Value::as_array_mut) {
             if let Some(ws) = workspaces.iter_mut().find(|w| str_of(w, "id") == active_ws) {
                 ws["activeEnvironmentId"] = id;

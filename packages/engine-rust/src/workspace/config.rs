@@ -12,7 +12,7 @@ use super::{
     deletions::pending_folders,
     fs::{
         EntityStub, auto_sync_fs_directories, bootstrap_names_index, default_global_environment,
-        ensure_global_environment, get_pending_deletions, load_enabled_set, read_all_entities, read_entity, read_entity_stubs, read_names_index, write_entity, write_flat_entity,
+        ensure_global_environment, get_pending_deletions, load_enabled_set, read_all_entities, read_entity, read_entity_stubs, read_locked, read_names_index, write_entity, write_flat_entity,
     },
     settings::{DEFAULT_COMPANION_PORT, DEFAULT_FORWARD_PROXY_PORT, load_settings, save_settings},
     tree::{self, Scope},
@@ -149,8 +149,13 @@ pub fn load_config() -> Value {
     let mappings: Vec<Value> =
         read_all_entities(ws_id, "mappings").iter().map(|m| with_state(m, ws_id, &mapping_enabled)).collect();
 
+    let locked_mappings = read_locked(ws_id, "mappings");
+    let locked_environments = read_locked(ws_id, "environments");
     let mut environments = read_all_entities(ws_id, "environments");
-    if !environments.iter().any(|e| str_of(e, "id") == GLOBAL_ENV_ID) {
+    // A locked Global environment is listed as locked, not replaced by a default one.
+    if !environments.iter().any(|e| str_of(e, "id") == GLOBAL_ENV_ID)
+        && !locked_environments.iter().any(|(id, ..)| id == GLOBAL_ENV_ID)
+    {
         let global = ensure_global_environment(ws_id).ok().flatten().unwrap_or_else(|| default_global_environment(ws_id));
         environments.insert(0, global);
     }
@@ -214,6 +219,13 @@ pub fn load_config() -> Value {
     }
 
     let mut all_mappings = mappings.clone();
+    all_mappings.extend(locked_mappings.iter().map(|(id, stored, version)| {
+        let listed = json!({
+            "id": id, "workspaceId": ws_id, "domain": str_of(stored, "domain"), "target": "",
+            "label": stored.get("label").cloned().unwrap_or(Value::Null), "enabled": false, "createdAt": 0,
+        });
+        marked_locked(listed, version)
+    }));
     all_mappings.extend(pending(ws_id, "mappings", &mappings, |p| {
         json!({
             "id": str_of(p, "id"), "workspaceId": ws_id, "domain": str_of(p, "url"), "target": "",
@@ -253,6 +265,13 @@ pub fn load_config() -> Value {
     }));
 
     let mut all_environments: Vec<Value> = environments.iter().map(|e| with_workspace(e, ws_id)).collect();
+    all_environments.extend(locked_environments.iter().map(|(id, stored, version)| {
+        let listed = json!({
+            "id": id, "name": stored.get("name").cloned().unwrap_or(Value::Null),
+            "variables": [], "createdAt": 0, "workspaceId": ws_id,
+        });
+        marked_locked(listed, version)
+    }));
     all_environments.extend(pending(ws_id, "environments", &environments, |p| {
         json!({
             "id": str_of(p, "id"), "name": p.get("name").cloned().unwrap_or(Value::Null),
@@ -270,6 +289,10 @@ pub fn load_config() -> Value {
     };
     let flows = read_all_entities(ws_id, "flows");
     let mut all_flows: Vec<Value> = flows.iter().map(flow_stub).collect();
+    all_flows.extend(read_locked(ws_id, "flows").into_iter().map(|(id, mut stored, version)| {
+        stored["id"] = json!(id);
+        marked_locked(flow_stub(&stored), &version)
+    }));
     all_flows.extend(pending(ws_id, "flows", &flows, flow_stub));
 
     // The requests of one type, listed from the request tree's index with the fields a listing shows, then
@@ -478,8 +501,9 @@ pub fn save_config(cfg: &Value) -> std::io::Result<()> {
     }
     for kind in ["mappings", "environments"] {
         for entity in array_of(cfg, kind) {
-            // A deleted entity is listed in a snapshot but has no file; writing it would bring a stub back.
-            if str_of(entity, "workspaceId") == ws_id && !truthy(entity, "deleted") {
+            // A deleted entity is listed in a snapshot but has no file, and a locked one is listed without
+            // ever having been read; writing either would bring a stub back.
+            if str_of(entity, "workspaceId") == ws_id && !truthy(entity, "deleted") && !truthy(entity, "locked") {
                 write_flat_entity(ws_id, kind, str_of(entity, "id"), entity)?;
             }
         }

@@ -1,10 +1,11 @@
 //! The engine version an entity was last written by, and what that locks.
 //!
-//! Every request, mock and proxy rule is stamped with the version of the engine that writes it
+//! Every request, mock, proxy rule, flow, mapping and environment is stamped with the version of the engine that writes it
 //! (`engineVersion` in its file). An entity stamped by a newer engine than this one is locked here: it is
 //! listed, by name, and nothing else is done with it. It is not read, changed, moved, switched on or deleted
 //! until this install is updated, because this engine cannot know what the newer one meant by its fields and
-//! writing it back would lose them. Mappings and environments carry no stamp.
+//! writing it back would lose them. A locked mapping is not applied and a locked environment is not resolved
+//! from or selected; the Global environment, when locked, adds no variables and is left as it is.
 
 use serde_json::{Value, json};
 
@@ -22,7 +23,7 @@ pub const UPDATE_REQUIRED: &str = "updateRequired";
 
 /// Whether the entities of `kind` (the store's name for it) are stamped.
 pub fn is_stamped_kind(kind: &str) -> bool {
-    kind == "rules" || tree::is_tree_kind(kind)
+    matches!(kind, "rules" | "flows" | "mappings" | "environments") || tree::is_tree_kind(kind)
 }
 
 /// `major.minor.patch`, with whatever follows a `-` or `+` left out: a pre-release of a version is read
