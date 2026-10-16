@@ -1,4 +1,4 @@
-//! The built `bifurc-mcp` spoken to as an MCP host does: JSON-RPC, one message a line, on its stdin and stdout.
+//! The built `bifurc --mcp` spoken to as an MCP host does: JSON-RPC, one message a line, on its stdin and stdout.
 //! No engine is involved: the server is started with `--no-start` on an empty data directory.
 
 use std::{
@@ -20,8 +20,8 @@ impl Host {
     /// Start the server and shake hands.
     fn start(options: &[&str]) -> Self {
         let dir = tempfile::tempdir().unwrap();
-        let mut child = Command::new(env!("CARGO_BIN_EXE_bifurc-mcp"))
-            .args(["--no-start", "--data-dir"])
+        let mut child = Command::new(env!("CARGO_BIN_EXE_bifurc"))
+            .args(["--mcp", "--no-start", "--data-dir"])
             .arg(dir.path())
             .args(options)
             .stdin(Stdio::piped())
@@ -133,11 +133,11 @@ fn all_tools_lists_every_tool() {
 #[test]
 fn help_version_and_a_wrong_option_do_not_serve() {
     let run = |args: &[&str]| {
-        Command::new(env!("CARGO_BIN_EXE_bifurc-mcp")).args(args).stdin(Stdio::null()).output().unwrap()
+        Command::new(env!("CARGO_BIN_EXE_bifurc")).arg("--mcp").args(args).stdin(Stdio::null()).output().unwrap()
     };
     let help = run(&["--help"]);
     assert_eq!(help.status.code(), Some(0));
-    assert!(String::from_utf8_lossy(&help.stdout).starts_with("Usage: bifurc-mcp"));
+    assert!(String::from_utf8_lossy(&help.stdout).starts_with("Usage: bifurc --mcp"));
     let version = run(&["--version"]);
     assert_eq!(String::from_utf8_lossy(&version.stdout).trim(), format!("bifurc-mcp {}", env!("CARGO_PKG_VERSION")));
     let wrong = run(&["--frobnicate"]);

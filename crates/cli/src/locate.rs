@@ -52,7 +52,9 @@ pub fn locate_engine_from(explicit: Option<OsString>, current_exe: Option<&Path>
 
 /// The engine binary for this process: `BIFURC_ENGINE`, then the surroundings of the running executable.
 pub fn locate_engine() -> Result<PathBuf> {
-    locate_engine_from(env::var_os(ENGINE_ENV), env::current_exe().ok().as_deref())
+    // Resolved, because macOS reports the PATH symlink an install's `bin/bifurc` was called by, not the install.
+    let exe = env::current_exe().ok().map(|exe| exe.canonicalize().unwrap_or(exe));
+    locate_engine_from(env::var_os(ENGINE_ENV), exe.as_deref())
 }
 
 #[cfg(test)]

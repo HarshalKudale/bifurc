@@ -1,9 +1,9 @@
-//! The `bifurc-mcp` binary: reads its options and serves MCP on stdin and stdout until the client closes them.
+//! `bifurc --mcp`: reads the options and serves MCP on stdin and stdout until the client closes them.
 //! Stdout carries the protocol and nothing else; anything said to a person goes to stderr.
 
 use std::process::ExitCode;
 
-use bifurc_mcp::{USAGE, invoke::Settings, server::serve};
+use crate::{USAGE, invoke::Settings, server::serve};
 
 /// The options of one start, or the text to print and the exit code instead of serving.
 fn options(argv: &[String]) -> Result<(Settings, bool), (String, u8)> {
@@ -29,9 +29,9 @@ fn options(argv: &[String]) -> Result<(Settings, bool), (String, u8)> {
     Ok((settings, all_tools))
 }
 
-fn main() -> ExitCode {
-    let argv: Vec<String> = std::env::args().skip(1).collect();
-    let (settings, all_tools) = match options(&argv) {
+/// Runs the server with the options after `--mcp`.
+pub fn run(argv: &[String]) -> ExitCode {
+    let (settings, all_tools) = match options(argv) {
         Ok(options) => options,
         Err((text, 0)) => {
             println!("{text}");
