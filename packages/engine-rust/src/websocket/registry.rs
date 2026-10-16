@@ -8,7 +8,6 @@
 use std::{collections::HashMap, sync::LazyLock, time::Duration};
 
 use futures::{SinkExt, StreamExt};
-use parking_lot::Mutex;
 use serde_json::{Map, Value, json};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 use tokio_tungstenite::{
@@ -24,7 +23,7 @@ use tokio_tungstenite::{
 
 use crate::{
     env::{load_merged_environment, resolve_headers, resolve_vars},
-    kernel::bus,
+    kernel::streams::{Event, Stream, Streams, emit, key_of, trim_log},
     utils::id::now_ms,
 };
 
@@ -68,28 +67,6 @@ struct Entry {
 }
 
 impl Entry {
-    fn is_live(&self) -> bool {
-        self.tx.is_some()
-    }
-
-    fn snapshot(&self) -> Value {
-        let mut out = Map::new();
-        out.insert("workspaceId".into(), json!(self.workspace_id));
-        out.insert("socketId".into(), json!(self.socket_id));
-        out.insert("url".into(), json!(self.url));
-        out.insert("status".into(), json!(self.status));
-        out.insert("error".into(), json!(self.error));
-        if let Some(code) = self.close_code {
-            out.insert("closeCode".into(), json!(code));
-        }
-        if let Some(reason) = &self.close_reason {
-            out.insert("closeReason".into(), json!(reason));
-        }
-        out.insert("openedAt".into(), json!(self.opened_at));
-        out.insert("messages".into(), Value::Array(self.messages.clone()));
-        Value::Object(out)
-    }
-
     fn status_event(&self, error: Option<&str>, code: Option<u16>, reason: Option<&str>) -> Event {
         let mut payload = Map::new();
         payload.insert("workspaceId".into(), json!(self.workspace_id));
@@ -117,10 +94,7 @@ impl Entry {
             "data": data,
         });
         self.messages.push(message.clone());
-        if self.messages.len() > MAX_WS_MESSAGES {
-            let excess = self.messages.len() - MAX_WS_MESSAGES;
-            self.messages.drain(..excess);
-        }
+        trim_log(&mut self.messages, MAX_WS_MESSAGES);
         Event {
             name: "ws.message",
             payload: json!({ "workspaceId": self.workspace_id, "socketId": self.socket_id, "message": message }),
@@ -128,25 +102,43 @@ impl Entry {
     }
 }
 
-struct Event {
-    name: &'static str,
-    payload: Value,
-}
+impl Stream for Entry {
+    fn workspace_id(&self) -> &str {
+        &self.workspace_id
+    }
 
-/// Events are emitted after the registry lock is released: a listener may call back into the registry.
-fn emit(events: Vec<Event>) {
-    for event in events {
-        bus().emit(event.name, event.payload);
+    fn is_live(&self) -> bool {
+        self.tx.is_some()
+    }
+
+    fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    fn snapshot(&self) -> Value {
+        let mut out = Map::new();
+        out.insert("workspaceId".into(), json!(self.workspace_id));
+        out.insert("socketId".into(), json!(self.socket_id));
+        out.insert("url".into(), json!(self.url));
+        out.insert("status".into(), json!(self.status));
+        out.insert("error".into(), json!(self.error));
+        if let Some(code) = self.close_code {
+            out.insert("closeCode".into(), json!(code));
+        }
+        if let Some(reason) = &self.close_reason {
+            out.insert("closeReason".into(), json!(reason));
+        }
+        out.insert("openedAt".into(), json!(self.opened_at));
+        out.insert("messages".into(), Value::Array(self.messages.clone()));
+        Value::Object(out)
+    }
+
+    fn clear_log(&mut self) {
+        self.messages.clear();
     }
 }
 
-static SOCKETS: LazyLock<Mutex<HashMap<String, Entry>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
-
-/// `\0` separates the ids: an id containing a colon is legal, and a collision would attach one workspace's
-/// socket to another's.
-fn key_of(workspace_id: &str, socket_id: &str) -> String {
-    format!("{workspace_id}\0{socket_id}")
-}
+static SOCKETS: LazyLock<Streams<Entry>> = LazyLock::new(Streams::new);
 
 fn no_socket(workspace_id: &str, socket_id: &str) -> String {
     format!("No socket \"{socket_id}\" in workspace \"{workspace_id}\".")
@@ -154,16 +146,16 @@ fn no_socket(workspace_id: &str, socket_id: &str) -> String {
 
 /// The snapshot for one socket, live or finished, or `None` if the engine never opened that id.
 pub fn get_socket(workspace_id: &str, socket_id: &str) -> Option<Value> {
-    SOCKETS.lock().get(&key_of(workspace_id, socket_id)).map(Entry::snapshot)
+    SOCKETS.get(workspace_id, socket_id)
 }
 
 /// The live sockets of a workspace. A finished socket keeps its entry but does not appear here.
 pub fn list_sockets(workspace_id: &str) -> Vec<Value> {
-    SOCKETS.lock().values().filter(|e| e.workspace_id == workspace_id && e.is_live()).map(Entry::snapshot).collect()
+    SOCKETS.list(workspace_id)
 }
 
 fn live_count(workspace_id: &str) -> usize {
-    SOCKETS.lock().values().filter(|e| e.workspace_id == workspace_id && e.is_live()).count()
+    SOCKETS.live_count(workspace_id)
 }
 
 /// Open a socket, replacing any live one under the same key. The url and every header value are resolved
@@ -308,13 +300,7 @@ pub fn send_socket_message(workspace_id: &str, socket_id: &str, data: &str) -> O
 
 /// Drop the retained log of one socket; the socket itself is untouched.
 pub fn clear_socket_messages(workspace_id: &str, socket_id: &str) -> OkResult {
-    match SOCKETS.lock().get_mut(&key_of(workspace_id, socket_id)) {
-        Some(entry) => {
-            entry.messages.clear();
-            Ok(())
-        }
-        None => Err(no_socket(workspace_id, socket_id)),
-    }
+    if SOCKETS.clear_log(workspace_id, socket_id) { Ok(()) } else { Err(no_socket(workspace_id, socket_id)) }
 }
 
 // ── the connection task ───────────────────────────────────────────────────────────────────────────
@@ -341,55 +327,35 @@ fn build_request(url: &str, headers: Option<&Value>) -> Result<Request, String> 
 
 /// Record a message the peer sent. `false` when the connection has been superseded.
 fn record_received(key: &str, generation: u64, data: String) -> bool {
-    let event = {
-        let mut sockets = SOCKETS.lock();
-        match sockets.get_mut(key) {
-            Some(entry) if entry.generation == generation => entry.push("received", data),
-            _ => return false,
-        }
-    };
-    emit(vec![event]);
-    true
+    SOCKETS.record(key, generation, |entry| vec![entry.push("received", data)])
 }
 
 /// The connection reported an error. A close the caller asked for is not a failure.
 fn record_error(key: &str, generation: u64, message: &str) {
-    let event = {
-        let mut sockets = SOCKETS.lock();
-        let Some(entry) = sockets.get_mut(key).filter(|e| e.generation == generation && !e.close_requested) else {
-            return;
-        };
+    SOCKETS.record(key, generation, |entry| {
+        if entry.close_requested {
+            return Vec::new();
+        }
         entry.status = "error";
         entry.error = Some(message.to_string());
-        entry.status_event(Some(message), None, None)
-    };
-    emit(vec![event]);
+        vec![entry.status_event(Some(message), None, None)]
+    });
 }
 
 /// The handshake completed. `false` when the connection has been superseded meanwhile.
 fn record_open(key: &str, generation: u64) -> bool {
-    let event = {
-        let mut sockets = SOCKETS.lock();
-        let Some(entry) = sockets.get_mut(key).filter(|e| e.generation == generation) else {
-            return false;
-        };
+    SOCKETS.record(key, generation, |entry| {
         entry.status = "connected";
         entry.error = None;
         entry.opened_at = Some(now_ms());
-        entry.status_event(None, None, None)
-    };
-    emit(vec![event]);
-    true
+        vec![entry.status_event(None, None, None)]
+    })
 }
 
 /// The connection closed with `code`. Code 1000, or any close the caller asked for, is a clean disconnect;
 /// anything else is an error carrying the peer's reason.
 fn record_close(key: &str, generation: u64, code: u16, reason: &str) {
-    let event = {
-        let mut sockets = SOCKETS.lock();
-        let Some(entry) = sockets.get_mut(key).filter(|e| e.generation == generation) else {
-            return;
-        };
+    SOCKETS.record(key, generation, |entry| {
         entry.tx = None;
         let clean = code == 1000 || entry.close_requested;
         entry.status = if clean { "disconnected" } else { "error" };
@@ -403,9 +369,8 @@ fn record_close(key: &str, generation: u64, code: u16, reason: &str) {
         entry.close_code = Some(code);
         entry.close_reason = (!reason.is_empty()).then(|| reason.to_string());
         let error = entry.error.clone();
-        entry.status_event(error.as_deref(), Some(code), (!reason.is_empty()).then_some(reason))
-    };
-    emit(vec![event]);
+        vec![entry.status_event(error.as_deref(), Some(code), (!reason.is_empty()).then_some(reason))]
+    });
 }
 
 /// The code and reason of a received close frame; 1005 when the peer sent none.

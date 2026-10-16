@@ -6,9 +6,8 @@
 //! replaces the connection under the same key. The engine does not reconnect by itself: a stream the server
 //! ends is shown as ended, so what the server did is visible.
 
-use std::{collections::HashMap, sync::LazyLock};
+use std::sync::LazyLock;
 
-use parking_lot::Mutex;
 use reqwest::{
     Method,
     header::{ACCEPT, CACHE_CONTROL, HeaderMap, HeaderName, HeaderValue},
@@ -19,7 +18,7 @@ use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
 use super::parser::{Parser, SseEvent};
 use crate::{
     env::{load_merged_environment, resolve_headers, resolve_vars},
-    kernel::bus,
+    kernel::streams::{Event, Stream, Streams, emit, key_of, trim_log},
     rest::direct_http::{client, describe_error},
     utils::id::now_ms,
 };
@@ -64,30 +63,7 @@ struct Entry {
     seq: u64,
 }
 
-struct Event {
-    name: &'static str,
-    payload: Value,
-}
-
 impl Entry {
-    fn is_live(&self) -> bool {
-        self.tx.is_some()
-    }
-
-    fn snapshot(&self) -> Value {
-        let mut out = Map::new();
-        out.insert("workspaceId".into(), json!(self.workspace_id));
-        out.insert("streamId".into(), json!(self.stream_id));
-        out.insert("url".into(), json!(self.url));
-        out.insert("method".into(), json!(self.method));
-        out.insert("status".into(), json!(self.status));
-        out.insert("error".into(), json!(self.error));
-        out.insert("httpStatus".into(), json!(self.http_status));
-        out.insert("openedAt".into(), json!(self.opened_at));
-        out.insert("messages".into(), Value::Array(self.messages.clone()));
-        Value::Object(out)
-    }
-
     fn status_event(&self) -> Event {
         Event {
             name: "sse.status",
@@ -115,10 +91,7 @@ impl Entry {
             "retry": event.retry,
         });
         self.messages.push(message.clone());
-        if self.messages.len() > MAX_SSE_MESSAGES {
-            let excess = self.messages.len() - MAX_SSE_MESSAGES;
-            self.messages.drain(..excess);
-        }
+        trim_log(&mut self.messages, MAX_SSE_MESSAGES);
         Event {
             name: "sse.message",
             payload: json!({ "workspaceId": self.workspace_id, "streamId": self.stream_id, "message": message }),
@@ -126,20 +99,39 @@ impl Entry {
     }
 }
 
-/// Events are emitted after the registry lock is released: a listener may call back into the registry.
-fn emit(events: Vec<Event>) {
-    for event in events {
-        bus().emit(event.name, event.payload);
+impl Stream for Entry {
+    fn workspace_id(&self) -> &str {
+        &self.workspace_id
+    }
+
+    fn is_live(&self) -> bool {
+        self.tx.is_some()
+    }
+
+    fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    fn snapshot(&self) -> Value {
+        let mut out = Map::new();
+        out.insert("workspaceId".into(), json!(self.workspace_id));
+        out.insert("streamId".into(), json!(self.stream_id));
+        out.insert("url".into(), json!(self.url));
+        out.insert("method".into(), json!(self.method));
+        out.insert("status".into(), json!(self.status));
+        out.insert("error".into(), json!(self.error));
+        out.insert("httpStatus".into(), json!(self.http_status));
+        out.insert("openedAt".into(), json!(self.opened_at));
+        out.insert("messages".into(), Value::Array(self.messages.clone()));
+        Value::Object(out)
+    }
+
+    fn clear_log(&mut self) {
+        self.messages.clear();
     }
 }
 
-static STREAMS: LazyLock<Mutex<HashMap<String, Entry>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
-
-/// `\0` separates the ids: an id containing a colon is legal, and a collision would attach one workspace's
-/// stream to another's.
-fn key_of(workspace_id: &str, stream_id: &str) -> String {
-    format!("{workspace_id}\0{stream_id}")
-}
+static STREAMS: LazyLock<Streams<Entry>> = LazyLock::new(Streams::new);
 
 fn no_stream(workspace_id: &str, stream_id: &str) -> String {
     format!("No stream \"{stream_id}\" in workspace \"{workspace_id}\".")
@@ -147,16 +139,16 @@ fn no_stream(workspace_id: &str, stream_id: &str) -> String {
 
 /// The snapshot for one stream, live or finished, or `None` if the engine never opened that id.
 pub fn get_stream(workspace_id: &str, stream_id: &str) -> Option<Value> {
-    STREAMS.lock().get(&key_of(workspace_id, stream_id)).map(Entry::snapshot)
+    STREAMS.get(workspace_id, stream_id)
 }
 
 /// The live streams of a workspace. A finished stream keeps its entry but does not appear here.
 pub fn list_streams(workspace_id: &str) -> Vec<Value> {
-    STREAMS.lock().values().filter(|e| e.workspace_id == workspace_id && e.is_live()).map(Entry::snapshot).collect()
+    STREAMS.list(workspace_id)
 }
 
 fn live_count(workspace_id: &str) -> usize {
-    STREAMS.lock().values().filter(|e| e.workspace_id == workspace_id && e.is_live()).count()
+    STREAMS.live_count(workspace_id)
 }
 
 /// The request a connect makes: the url, header values and body resolved against the environment, the
@@ -290,55 +282,31 @@ pub fn disconnect_stream(workspace_id: &str, stream_id: &str) -> OkResult {
 
 /// Drop the retained log of one stream; the stream itself is untouched.
 pub fn clear_stream_messages(workspace_id: &str, stream_id: &str) -> OkResult {
-    match STREAMS.lock().get_mut(&key_of(workspace_id, stream_id)) {
-        Some(entry) => {
-            entry.messages.clear();
-            Ok(())
-        }
-        None => Err(no_stream(workspace_id, stream_id)),
-    }
+    if STREAMS.clear_log(workspace_id, stream_id) { Ok(()) } else { Err(no_stream(workspace_id, stream_id)) }
 }
 
 // ── the connection task ───────────────────────────────────────────────────────────────────────────
 
 /// Record an event the server sent. `false` when the stream has been superseded.
 fn record_event(key: &str, generation: u64, event: SseEvent) -> bool {
-    let event = {
-        let mut streams = STREAMS.lock();
-        match streams.get_mut(key) {
-            Some(entry) if entry.generation == generation => entry.push(event),
-            _ => return false,
-        }
-    };
-    emit(vec![event]);
-    true
+    STREAMS.record(key, generation, |entry| vec![entry.push(event)])
 }
 
 /// The response headers arrived with a 2xx status. `false` when the stream has been superseded meanwhile.
 fn record_open(key: &str, generation: u64, http_status: u16) -> bool {
-    let event = {
-        let mut streams = STREAMS.lock();
-        let Some(entry) = streams.get_mut(key).filter(|e| e.generation == generation) else {
-            return false;
-        };
+    STREAMS.record(key, generation, |entry| {
         entry.status = "connected";
         entry.error = None;
         entry.http_status = Some(http_status);
         entry.opened_at = Some(now_ms());
-        entry.status_event()
-    };
-    emit(vec![event]);
-    true
+        vec![entry.status_event()]
+    })
 }
 
 /// The stream is over. `error` is why it failed; with none it ended cleanly, whether the server ended it or
 /// the caller closed it. A close the caller asked for is never an error.
 fn record_end(key: &str, generation: u64, http_status: Option<u16>, error: Option<String>) {
-    let event = {
-        let mut streams = STREAMS.lock();
-        let Some(entry) = streams.get_mut(key).filter(|e| e.generation == generation) else {
-            return;
-        };
+    STREAMS.record(key, generation, |entry| {
         entry.tx = None;
         if http_status.is_some() {
             entry.http_status = http_status;
@@ -353,9 +321,8 @@ fn record_end(key: &str, generation: u64, http_status: Option<u16>, error: Optio
                 entry.error = None;
             }
         }
-        entry.status_event()
-    };
-    emit(vec![event]);
+        vec![entry.status_event()]
+    });
 }
 
 /// Owns one stream from request to end. The registry reaches it through `stop`.

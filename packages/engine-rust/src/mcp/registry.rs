@@ -16,7 +16,6 @@ use std::{
     time::{Duration, Instant},
 };
 
-use parking_lot::Mutex;
 use reqwest::header::{HeaderName, HeaderValue};
 use serde_json::{Map, Value, json};
 use tokio::sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel};
@@ -28,7 +27,7 @@ use super::{
 };
 use crate::{
     env::{load_merged_environment, resolve_headers, resolve_vars},
-    kernel::bus,
+    kernel::streams::{Event, Stream, Streams, emit, key_of, trim_log},
     rest::direct_http::header_pairs,
     utils::id::now_ms,
 };
@@ -97,11 +96,6 @@ struct Entry {
     seq: u64,
 }
 
-struct Event {
-    name: &'static str,
-    payload: Value,
-}
-
 /// How a call ended.
 struct Answered {
     status: &'static str,
@@ -140,10 +134,6 @@ struct Logged<'a> {
 }
 
 impl Entry {
-    fn is_live(&self) -> bool {
-        self.tx.is_some()
-    }
-
     fn is_open(&self) -> bool {
         self.tx.is_some() && self.status == "connected" && !self.close_requested
     }
@@ -166,12 +156,6 @@ impl Entry {
         }
         out.insert("openedAt".into(), json!(self.opened_at));
         out
-    }
-
-    fn snapshot(&self) -> Value {
-        let mut out = self.state();
-        out.insert("messages".into(), Value::Array(self.messages.clone()));
-        Value::Object(out)
     }
 
     fn status_event(&self) -> Event {
@@ -210,10 +194,7 @@ impl Entry {
         });
         let event = self.message_event(&message);
         self.messages.push(message);
-        if self.messages.len() > MAX_MCP_MESSAGES {
-            let excess = self.messages.len() - MAX_MCP_MESSAGES;
-            self.messages.drain(..excess);
-        }
+        trim_log(&mut self.messages, MAX_MCP_MESSAGES);
         (id, event)
     }
 
@@ -236,20 +217,31 @@ impl Entry {
     }
 }
 
-/// Events are emitted after the registry lock is released: a listener may call back into the registry.
-fn emit(events: Vec<Event>) {
-    for event in events {
-        bus().emit(event.name, event.payload);
+impl Stream for Entry {
+    fn workspace_id(&self) -> &str {
+        &self.workspace_id
+    }
+
+    fn is_live(&self) -> bool {
+        self.tx.is_some()
+    }
+
+    fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    fn snapshot(&self) -> Value {
+        let mut out = self.state();
+        out.insert("messages".into(), Value::Array(self.messages.clone()));
+        Value::Object(out)
+    }
+
+    fn clear_log(&mut self) {
+        self.messages.clear();
     }
 }
 
-static CONNECTIONS: LazyLock<Mutex<HashMap<String, Entry>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
-
-/// `\0` separates the ids: an id containing a colon is legal, and a collision would attach one workspace's
-/// connection to another's.
-fn key_of(workspace_id: &str, connection_id: &str) -> String {
-    format!("{workspace_id}\0{connection_id}")
-}
+static CONNECTIONS: LazyLock<Streams<Entry>> = LazyLock::new(Streams::new);
 
 fn no_connection(workspace_id: &str, connection_id: &str) -> String {
     format!("No connection \"{connection_id}\" in workspace \"{workspace_id}\".")
@@ -257,21 +249,16 @@ fn no_connection(workspace_id: &str, connection_id: &str) -> String {
 
 /// The snapshot for one connection, live or finished, or `None` if the engine never opened that id.
 pub fn get_connection(workspace_id: &str, connection_id: &str) -> Option<Value> {
-    CONNECTIONS.lock().get(&key_of(workspace_id, connection_id)).map(Entry::snapshot)
+    CONNECTIONS.get(workspace_id, connection_id)
 }
 
 /// The live connections of a workspace. A finished connection keeps its entry but does not appear here.
 pub fn list_connections(workspace_id: &str) -> Vec<Value> {
-    CONNECTIONS
-        .lock()
-        .values()
-        .filter(|e| e.workspace_id == workspace_id && e.is_live())
-        .map(Entry::snapshot)
-        .collect()
+    CONNECTIONS.list(workspace_id)
 }
 
 fn live_count(workspace_id: &str) -> usize {
-    CONNECTIONS.lock().values().filter(|e| e.workspace_id == workspace_id && e.is_live()).count()
+    CONNECTIONS.live_count(workspace_id)
 }
 
 /// The transport a target names, or the one its address implies.
@@ -526,12 +513,10 @@ pub fn call_server(
 
 /// Drop the retained log of one connection; the connection itself is untouched.
 pub fn clear_connection_messages(workspace_id: &str, connection_id: &str) -> OkResult {
-    match CONNECTIONS.lock().get_mut(&key_of(workspace_id, connection_id)) {
-        Some(entry) => {
-            entry.messages.clear();
-            Ok(())
-        }
-        None => Err(no_connection(workspace_id, connection_id)),
+    if CONNECTIONS.clear_log(workspace_id, connection_id) {
+        Ok(())
+    } else {
+        Err(no_connection(workspace_id, connection_id))
     }
 }
 
@@ -551,15 +536,7 @@ fn unanswered(entry: &mut Entry, why: &str) -> Vec<Event> {
 /// Change the entry of a connection that has not been superseded and report what `change` returns. `false`
 /// when the connection has been superseded.
 fn record(key: &str, generation: u64, change: impl FnOnce(&mut Entry) -> Vec<Event>) -> bool {
-    let events = {
-        let mut connections = CONNECTIONS.lock();
-        let Some(entry) = connections.get_mut(key).filter(|e| e.generation == generation) else {
-            return false;
-        };
-        change(entry)
-    };
-    emit(events);
-    true
+    CONNECTIONS.record(key, generation, change)
 }
 
 /// The connection is over. `error` is why it failed; with none it ended cleanly. A close the caller asked for
