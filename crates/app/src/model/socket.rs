@@ -6,6 +6,7 @@
 
 use serde_json::Value;
 
+use crate::engine::error_text;
 use crate::i18n::t;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -90,7 +91,7 @@ impl SocketView {
         }
         Self {
             state: SocketState::parse(result.get("status").and_then(Value::as_str).unwrap_or("")),
-            error: result.get("error").and_then(Value::as_str).map(str::to_owned),
+            error: error_text(result),
             close_code: result.get("closeCode").and_then(Value::as_u64).and_then(|c| u16::try_from(c).ok()),
             messages: result
                 .get("messages")
@@ -103,7 +104,7 @@ impl SocketView {
     /// Applies an `event.ws.status` payload.
     pub fn apply_status_event(&mut self, payload: &Value) {
         self.state = SocketState::parse(payload.get("status").and_then(Value::as_str).unwrap_or(""));
-        self.error = payload.get("error").and_then(Value::as_str).map(str::to_owned);
+        self.error = error_text(payload);
         self.close_code = payload.get("code").and_then(Value::as_u64).and_then(|c| u16::try_from(c).ok());
     }
 

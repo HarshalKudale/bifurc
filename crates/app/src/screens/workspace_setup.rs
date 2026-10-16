@@ -33,7 +33,7 @@ use std::rc::Rc;
 
 use crate::{
     app_model::{AppModel, ModelEvent},
-    engine::{call, call_in, describe, failure},
+    engine::{call, call_in, describe, error_text, failure},
     i18n::{t, t_with},
     model::config::AccountInfo,
 };
@@ -332,10 +332,8 @@ impl WorkspaceSetup {
             }
             Some("cancelled") => {}
             _ => {
-                let reason = payload
-                    .get("error")
-                    .and_then(Value::as_str)
-                    .unwrap_or(t("workspace_setup.error.sign_in_not_completed"));
+                let reason =
+                    error_text(payload).unwrap_or_else(|| t("workspace_setup.error.sign_in_not_completed").to_owned());
                 self.error = Some(t_with("workspace_setup.error.sign_in_failed", &[("reason", &reason)]));
             }
         }

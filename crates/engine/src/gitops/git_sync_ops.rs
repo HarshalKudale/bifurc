@@ -66,7 +66,7 @@ async fn pull(ws_id: &str, branch: &str) -> Result<PullOutcome, GitError> {
         if stashed {
             let _ = git(ws_id, &["stash", "pop"]).await;
         }
-        return Err(GitError("Pull merge failed".to_string()));
+        return Err(GitError::keyed("sync.pull_merge_failed", "Pull merge failed", serde_json::json!({})));
     }
 
     if stashed && git(ws_id, &["stash", "pop"]).await.is_err() {
@@ -75,10 +75,11 @@ async fn pull(ws_id: &str, branch: &str) -> Result<PullOutcome, GitError> {
         // Only when the pop did apply and left conflicts: a pop that applied nothing must keep its stash.
         let conflicted = git(ws_id, &["ls-files", "--unmerged"]).await.is_ok_and(|out| !out.trim().is_empty());
         if !conflicted || git(ws_id, &["checkout", "--theirs", "--", "."]).await.is_err() {
-            return Err(GitError(
+            return Err(GitError::keyed(
+                "sync.stash_restore_failed",
                 "The remote's changes were pulled, but the changes made here could not be put back on top of them. \
-                 They are kept in the repository's stash."
-                    .to_string(),
+                 They are kept in the repository's stash.",
+                serde_json::json!({}),
             ));
         }
         let _ = git(ws_id, &["reset", "--quiet"]).await;

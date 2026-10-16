@@ -11,6 +11,7 @@
 use serde_json::Value;
 
 use super::socket::SocketState;
+use crate::engine::error_text;
 use crate::i18n::{t, t_with};
 
 /// One argument a tool or a prompt takes.
@@ -364,7 +365,7 @@ impl McpView {
     /// Applies an `event.mcp.status` payload: the connection's state and everything the server declares.
     pub fn apply_status_event(&mut self, payload: &Value) {
         self.state = SocketState::parse(payload.get("status").and_then(Value::as_str).unwrap_or(""));
-        self.error = payload.get("error").and_then(Value::as_str).map(str::to_owned);
+        self.error = error_text(payload);
         self.transport = text(payload, "transport");
         let server = payload.get("serverInfo").cloned().unwrap_or(Value::Null);
         self.server = format!("{} {}", text(&server, "name"), text(&server, "version")).trim().to_owned();

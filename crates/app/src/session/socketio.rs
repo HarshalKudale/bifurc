@@ -39,7 +39,7 @@ use super::{
 use crate::{
     app_model::{AppModel, ModelEvent},
     components::{Autosave, KeyValueEvent, KeyValueTable, Syntax, VarEditor, page, request_bar},
-    engine::{call, call_in, describe},
+    engine::{call, call_in, describe, error_text},
     i18n::{t, t_with},
     model::{
         RequestKind,
@@ -757,7 +757,7 @@ impl SocketIoSession {
 fn refusal(outcome: Result<Value, ClientError>, fallback: &str) -> Option<String> {
     match outcome {
         Ok(result) if result.get("ok").and_then(Value::as_bool) == Some(false) => {
-            Some(result.get("error").and_then(Value::as_str).unwrap_or(fallback).to_owned())
+            Some(error_text(&result).unwrap_or_else(|| fallback.to_owned()))
         }
         Ok(_) => None,
         Err(error) => Some(describe(&error)),

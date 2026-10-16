@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 use crate::{
     app_model::AppModel,
     components::binary::{PickedFile, pick_file},
-    engine::{call, describe, failure, upload_and_call},
+    engine::{call, describe, error_text, failure, upload_and_call},
     i18n::{t, t_with},
     model::trust,
 };
@@ -20,11 +20,7 @@ use crate::{
 fn certificate_bytes(artifact: &Value) -> Result<Vec<u8>, String> {
     use base64::{Engine as _, engine::general_purpose::STANDARD};
     if artifact.get("ok").and_then(Value::as_bool) == Some(false) {
-        return Err(artifact
-            .get("error")
-            .and_then(Value::as_str)
-            .unwrap_or(t("components.certificate.no_certificate"))
-            .to_owned());
+        return Err(error_text(artifact).unwrap_or_else(|| t("components.certificate.no_certificate").to_owned()));
     }
     let inline =
         artifact.get("inline").and_then(Value::as_str).ok_or(t("components.certificate.no_engine_certificate"))?;

@@ -13,7 +13,7 @@ use gpui_kit::{AppContext as _, Context, EventEmitter};
 use serde_json::{Value, json};
 
 use crate::{
-    engine::{EngineSession, call, describe, failure},
+    engine::{EngineSession, call, describe, error_text, failure},
     i18n::{t, t_with},
     model::{ConfigSnapshot, config::AccountInfo, git::GitStatus, update::UpdateStatus, vault::VaultInfo},
 };
@@ -85,7 +85,7 @@ impl ProxyStatus {
         Self {
             running: value.get("running").and_then(Value::as_bool).unwrap_or(false),
             port: value.get("port").and_then(Value::as_u64).and_then(|p| u16::try_from(p).ok()).unwrap_or(0),
-            error: value.get("error").and_then(Value::as_str).map(str::to_owned),
+            error: error_text(value),
             busy: false,
         }
     }
@@ -810,7 +810,7 @@ impl AppModel {
             this.publishing = false;
             let failure = match outcome {
                 Ok(result) if result.get("ok").and_then(Value::as_bool) == Some(false) => {
-                    Some(result.get("error").and_then(Value::as_str).unwrap_or(t("app.engine.refused")).to_owned())
+                    Some(error_text(&result).unwrap_or_else(|| t("app.engine.refused").to_owned()))
                 }
                 Ok(_) => None,
                 Err(error) => Some(describe(&error)),

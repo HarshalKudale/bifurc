@@ -30,7 +30,7 @@ use super::{
 use crate::{
     app_model::{AppModel, ModelEvent},
     components::{Autosave, KeyValueEvent, KeyValueTable, Syntax, VarEditor, page, request_bar},
-    engine::{call, call_in, describe},
+    engine::{call, call_in, describe, error_text},
     i18n::{t, t_with},
     model::{
         RequestKind,
@@ -523,7 +523,7 @@ impl SseSession {
         call_in(&client, window, cx, "sse.connect", payload, move |_this, outcome, window, cx| {
             let failure = match outcome {
                 Ok(result) if result.get("ok").and_then(Value::as_bool) == Some(false) => {
-                    Some(result.get("error").and_then(Value::as_str).unwrap_or(t("session.sse.open_failed")).to_owned())
+                    Some(error_text(&result).unwrap_or_else(|| t("session.sse.open_failed").to_owned()))
                 }
                 Ok(_) => None,
                 Err(error) => Some(describe(&error)),

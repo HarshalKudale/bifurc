@@ -78,17 +78,32 @@ pub fn sidecar_config() -> SidecarConfig {
 /// The engine's own words for `error` in the user's language, when it named a key (`details.key`) this
 /// build has text for; `None` for an old engine or a key added since, which show `message` instead.
 pub fn translated(error: &EngineError) -> Option<String> {
-    let key = format!("errors.{}", error.key()?);
+    translate(error.key()?, error.params()?)
+}
+
+/// `errors.<key>` in the user's language with `params` filled in; `None` when this build has no text for `key`.
+fn translate(key: &str, params: &serde_json::Map<String, Value>) -> Option<String> {
+    let key = format!("errors.{key}");
     if !has(&key) {
         return None;
     }
-    let values: Vec<(&str, String)> = error
-        .params()?
+    let values: Vec<(&str, String)> = params
         .iter()
         .map(|(name, value)| (name.as_str(), value.as_str().map_or_else(|| value.to_string(), str::to_owned)))
         .collect();
     let values: Vec<(&str, &dyn std::fmt::Display)> = values.iter().map(|(n, v)| (*n, v as _)).collect();
     Some(t_with(&key, &values))
+}
+
+/// The failure a result or event carries (`{ error, errorKey, errorParams }`) in the user's language: the
+/// translation of `errorKey` when this build has one, else the English `error`. `None` when it carries neither.
+pub fn error_text(value: &Value) -> Option<String> {
+    let translated = value
+        .get("errorKey")
+        .and_then(Value::as_str)
+        .zip(value.get("errorParams").and_then(Value::as_object))
+        .and_then(|(key, params)| translate(key, params));
+    translated.or_else(|| value.get("error").and_then(Value::as_str).map(str::to_owned))
 }
 
 /// Short text for a failed call, as the UI shows it.
@@ -121,7 +136,7 @@ pub fn call<V: 'static>(
 pub fn failure(outcome: &Result<Value, ClientError>) -> Option<String> {
     match outcome {
         Ok(result) if result.get("ok").and_then(Value::as_bool) == Some(false) => {
-            Some(result.get("error").and_then(Value::as_str).unwrap_or(t("app.engine.refused")).to_owned())
+            Some(error_text(result).unwrap_or_else(|| t("app.engine.refused").to_owned()))
         }
         Ok(_) => None,
         Err(error) => Some(describe(error)),
@@ -199,7 +214,7 @@ pub fn fetch_artifact<V: 'static>(
 ) {
     use base64::{Engine as _, engine::general_purpose::STANDARD};
     if artifact.get("ok").and_then(Value::as_bool) == Some(false) {
-        let message = artifact.get("error").and_then(Value::as_str).unwrap_or(t("app.engine.refused")).to_owned();
+        let message = error_text(artifact).unwrap_or_else(|| t("app.engine.refused").to_owned());
         return then(this, Err(message), cx);
     }
     let name = artifact.get("suggestedName").and_then(Value::as_str).unwrap_or("export").to_owned();
@@ -346,6 +361,23 @@ mod tests {
             engine_error(json!({ "key": "request.send.refused", "params": { "host": "h.test", "port": "9000" } }));
         assert_eq!(describe(&error), t_with("errors.request.send.refused", &[("host", &"h.test"), ("port", &"9000")]));
         assert!(describe(&error).contains("h.test") && describe(&error).contains("9000"), "{}", describe(&error));
+    }
+
+    #[test]
+    fn a_failed_result_is_shown_translated_or_as_its_english_error() {
+        let keyed = json!({
+            "ok": false, "error": "English", "errorKey": "request.send.dns", "errorParams": { "host": "h.test" }
+        });
+        assert_eq!(error_text(&keyed), Some(t_with("errors.request.send.dns", &[("host", &"h.test")])));
+        assert!(error_text(&keyed).unwrap().contains("h.test"));
+        for plain in [
+            json!({ "error": "English", "errorKey": "from.a.newer.engine", "errorParams": {} }),
+            json!({ "error": "English", "errorKey": "request.send.dns" }),
+            json!({ "error": "English" }),
+        ] {
+            assert_eq!(error_text(&plain).as_deref(), Some("English"));
+        }
+        assert_eq!(error_text(&json!({ "ok": true })), None);
     }
 
     #[test]

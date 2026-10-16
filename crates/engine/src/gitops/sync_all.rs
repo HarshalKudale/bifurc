@@ -19,7 +19,8 @@ use super::{
     sync_state::{emit, get_sync_config, get_sync_meta, save_sync_meta, set_state, sync_meta_value},
 };
 use crate::{
-    runtime::instances::notify_config_changed,
+    protocol::EngineError,
+    runtime::{failed, instances::notify_config_changed, set_failure},
     utils::{
         id::now_ms,
         json::{str_of, truthy},
@@ -34,7 +35,7 @@ use crate::{
 fn progress(ws_id: &str, status: &str, message: String) {
     set_state(ws_id, |s| {
         s.status = status.into();
-        s.error = None;
+        s.clear_error();
         s.progress_message = Some(message);
     });
     emit(ws_id);
@@ -65,12 +66,11 @@ pub async fn sync_workspace(ws_id: &str, message: Option<String>) -> Value {
     let _guard = workspace_lock(ws_id).lock_owned().await;
     let result = match sync_locked(ws_id, message).await {
         Ok(result) => result,
-        Err(e) => json!({ "ok": false, "error": e.0 }),
+        Err(e) => failed(&EngineError::from(e)),
     };
-    let error = result.get("error").and_then(Value::as_str).map(str::to_string);
     set_state(ws_id, |s| {
-        s.status = if error.is_some() { "error" } else { "idle" }.into();
-        s.error = error;
+        s.error_from(&result);
+        s.status = if s.error.is_some() { "error" } else { "idle" }.into();
         s.progress_message = None;
         if result.get("pushed") == Some(&Value::Bool(true)) {
             s.last_pushed_at = Some(now_ms());
@@ -83,12 +83,13 @@ pub async fn sync_workspace(ws_id: &str, message: Option<String>) -> Value {
 
 async fn sync_locked(ws_id: &str, message: Option<String>) -> Result<Value, GitError> {
     if load_settings().workspace(ws_id).is_none() {
-        return Err(GitError("No such workspace.".to_string()));
+        return Err(GitError::keyed("sync.no_workspace", "No such workspace.", json!({})));
     }
     if !check_git_installed().await {
-        return Err(GitError(
-            "Git is not installed, so this workspace is not tracked and has nothing to sync with. Install Git, then sync again."
-                .to_string(),
+        return Err(GitError::keyed(
+            "sync.git_missing",
+            "Git is not installed, so this workspace is not tracked and has nothing to sync with. Install Git, then sync again.",
+            json!({}),
         ));
     }
     progress(ws_id, "syncing", "Preparing…".to_string());
@@ -129,19 +130,16 @@ async fn sync_locked(ws_id: &str, message: Option<String>) -> Result<Value, GitE
     }
 
     let failure = failed.first().map(|first: &Value| {
-        format!(
-            "{} of {total} could not be synced. {}: {}",
-            failed.len(),
-            str_of(first, "path"),
-            str_of(first, "error")
-        )
+        let (count, path, detail) = (failed.len(), str_of(first, "path"), str_of(first, "error"));
+        EngineError::engine(format!("{count} of {total} could not be synced. {path}: {detail}"))
+            .keyed("sync.items_failed", json!({ "count": count, "total": total, "path": path, "detail": detail }))
     });
     let mut result = json!({
         "ok": failure.is_none(), "initialized": initialized, "total": total, "synced": synced, "pushed": false,
         "pendingDeletions": pending_deletions, "failed": failed,
     });
     if let Some(failure) = failure {
-        result["error"] = json!(failure);
+        set_failure(&mut result, &failure);
     }
 
     // What was committed is pushed even when something else could not be: it is synced, and says so.
@@ -155,7 +153,13 @@ async fn sync_locked(ws_id: &str, message: Option<String>) -> Result<Value, GitE
             }
             Err(e) => {
                 result["ok"] = json!(false);
-                result["error"] = json!(format!("{synced} of {total} were committed, but the push failed: {}", e.0));
+                let error =
+                    EngineError::engine(format!("{synced} of {total} were committed, but the push failed: {}", e.0))
+                        .keyed(
+                            "sync.push_failed_after_commit",
+                            json!({ "synced": synced, "total": total, "detail": e.0 }),
+                        );
+                set_failure(&mut result, &error);
             }
         }
     }

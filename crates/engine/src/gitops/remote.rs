@@ -52,8 +52,9 @@ use crate::{
     },
 };
 
+/// A refusal whose text is not keyed yet.
 fn refused(message: impl Into<String>) -> Value {
-    json!({ "ok": false, "error": message.into() })
+    crate::runtime::failed(&crate::protocol::EngineError::engine(message))
 }
 
 /// The `reason` of an import refused because the repository is another account's, which only happens with
@@ -159,9 +160,13 @@ fn auth_for(remote: &str, token: &str) -> Option<RemoteAuth> {
 /// whatever the machine's git has); an error when its account was signed out.
 pub fn workspace_auth(ws_id: &str) -> Result<Option<RemoteAuth>, GitError> {
     let Some(account) = workspace_account(ws_id) else { return Ok(None) };
-    let token = account
-        .token
-        .ok_or_else(|| GitError(format!("Sign in to GitHub as {} to sync this workspace.", account.login)))?;
+    let token = account.token.ok_or_else(|| {
+        GitError::keyed(
+            "sync.sign_in_required",
+            format!("Sign in to GitHub as {} to sync this workspace.", account.login),
+            json!({ "login": account.login }),
+        )
+    })?;
     let remote = get_sync_config(ws_id).map(|config| str_of(&config, "remote").to_string()).unwrap_or_default();
     Ok(auth_for(&remote, &token))
 }
@@ -231,11 +236,17 @@ fn record_access(ws_id: &str, access: Access) {
 /// repository now. `None` for a workspace with no account or no repository.
 pub async fn refresh_access(ws_id: &str) -> Result<Option<Access>, GitError> {
     let Some((account, repo_name)) = remote_link(ws_id) else { return Ok(None) };
-    let token = account
-        .token
-        .clone()
-        .ok_or_else(|| GitError(format!("Sign in to GitHub as {} to sync this workspace.", account.login)))?;
-    let repo = github::get_repo(&token, &repo_name).await.map_err(|e| GitError(flag_if_rejected(&account.id, e)))?;
+    let token = account.token.clone().ok_or_else(|| {
+        GitError::keyed(
+            "sync.sign_in_required",
+            format!("Sign in to GitHub as {} to sync this workspace.", account.login),
+            json!({ "login": account.login }),
+        )
+    })?;
+    let repo = github::get_repo(&token, &repo_name).await.map_err(|e| {
+        let detail = flag_if_rejected(&account.id, e);
+        GitError::keyed("github.failed", detail.clone(), json!({ "detail": detail }))
+    })?;
     let access = Access::of(&repo, account.user_id);
     KNOWN_ACCESS
         .lock()
@@ -265,14 +276,22 @@ pub async fn ensure_access(ws_id: &str, need: Need) -> Result<(), GitError> {
     };
     let owner = named(str_of(&workspace_owner(ws_id), "login"));
     if !team_sync() && access != Access::Owner {
-        return Err(GitError(format!("This workspace belongs to {owner}. Only its owner can sync it.")));
+        return Err(GitError::keyed(
+            "sync.not_owner",
+            format!("This workspace belongs to {owner}. Only its owner can sync it."),
+            json!({ "owner": owner }),
+        ));
     }
     if need == Need::Push && access == Access::Read {
-        return Err(GitError(format!(
-            "@{} has read access to {repo_name}, so this workspace is read-only here: what you change stays on \
-             this device. Ask {owner} for write access to sync it.",
-            account.login
-        )));
+        return Err(GitError::keyed(
+            "sync.read_only",
+            format!(
+                "@{} has read access to {repo_name}, so this workspace is read-only here: what you change stays on \
+                 this device. Ask {owner} for write access to sync it.",
+                account.login
+            ),
+            json!({ "login": account.login, "repo": repo_name, "owner": owner }),
+        ));
     }
     Ok(())
 }
