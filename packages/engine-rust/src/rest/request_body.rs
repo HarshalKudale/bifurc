@@ -9,7 +9,7 @@ use serde_json::{Map, Value, json};
 
 use crate::{
     env::resolve_vars,
-    kernel::telemetry::Headers,
+    kernel::traffic::Headers,
     utils::{
         json::{is_truthy, opt_str},
         replay::decode_base64_lenient,

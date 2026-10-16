@@ -16,7 +16,7 @@ use serde_json::{Value, json};
 use tokio::time::Instant;
 
 use crate::{
-    kernel::{bus, telemetry::Headers},
+    kernel::{bus, traffic::Headers},
     sse::parser::Parser,
     utils::{
         content_type::is_text_content_type,

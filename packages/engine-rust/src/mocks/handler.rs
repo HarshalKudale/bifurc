@@ -8,7 +8,7 @@ use tokio::io::{AsyncWrite, AsyncWriteExt};
 
 use crate::{
     env::resolve_vars,
-    kernel::telemetry::Headers,
+    kernel::traffic::Headers,
     utils::{
         content_type::is_text_content_type,
         http::HOP_BY_HOP,

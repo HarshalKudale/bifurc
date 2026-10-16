@@ -4,7 +4,7 @@ use serde_json::{Value, json};
 
 use crate::{
     capture::{captured_to_request, resolve_capture_entry},
-    kernel::{CommandRegistry, telemetry::Headers},
+    kernel::{CommandRegistry, traffic::Headers},
     protocol::{EngineError, ErrorCode},
     rest::from_curl::{curl_to_mock, curl_to_request},
     utils::{
