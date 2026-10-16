@@ -166,7 +166,8 @@ mod tests {
         Some((method, path, Value::Object(headers), body))
     }
 
-    const STREAM_HEAD: &str = "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncache-control: no-cache\r\nconnection: close\r\n\r\n";
+    const STREAM_HEAD: &str =
+        "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\ncache-control: no-cache\r\nconnection: close\r\n\r\n";
 
     /// A loopback SSE server. `/events` sends a few events, one of them split mid-line across writes, then ends;
     /// `/hold` sends one event and stays open until the client leaves; `/echo` answers with one event describing
@@ -335,7 +336,10 @@ mod tests {
         connect("echo-default", &format!("{base}/echo")).await;
         let done = wait_status("echo-default", "disconnected").await;
         let seen: Value = serde_json::from_str(done["messages"][0]["data"].as_str().unwrap()).unwrap();
-        assert_eq!((seen["method"].as_str(), seen["headers"]["accept"].as_str()), (Some("GET"), Some("text/event-stream")));
+        assert_eq!(
+            (seen["method"].as_str(), seen["headers"]["accept"].as_str()),
+            (Some("GET"), Some("text/event-stream"))
+        );
     }
 
     #[tokio::test]
@@ -363,11 +367,17 @@ mod tests {
         )
         .unwrap();
 
-        assert_eq!(call("sse.connect", json!({ "workspaceId": WS, "streamId": "saved1" })).await, json!({ "ok": true }));
+        assert_eq!(
+            call("sse.connect", json!({ "workspaceId": WS, "streamId": "saved1" })).await,
+            json!({ "ok": true })
+        );
         let done = wait_status("saved1", "disconnected").await;
         assert_eq!(done["url"], "{{BASE}}/echo");
         let seen: Value = serde_json::from_str(done["messages"][0]["data"].as_str().unwrap()).unwrap();
-        assert_eq!((seen["method"].as_str(), seen["body"].as_str(), seen["headers"]["x-test"].as_str()), (Some("POST"), Some("from-env"), Some("from-env")));
+        assert_eq!(
+            (seen["method"].as_str(), seen["body"].as_str(), seen["headers"]["x-test"].as_str()),
+            (Some("POST"), Some("from-env"), Some("from-env"))
+        );
 
         // The saved request is named by `id` when the stream has another name.
         call("sse.connect", json!({ "workspaceId": WS, "streamId": "tab-2", "id": "saved1" })).await;
@@ -378,8 +388,12 @@ mod tests {
     #[tokio::test]
     async fn a_missing_saved_request_and_stray_draft_fields_are_refused() {
         let _root = scratch_data_root();
-        assert_eq!(call_err("sse.connect", json!({ "workspaceId": WS, "streamId": "nope" })).await.code, ErrorCode::NotFound);
-        let stray = call_err("sse.connect", json!({ "workspaceId": WS, "streamId": "x", "headers": { "A": "b" } })).await;
+        assert_eq!(
+            call_err("sse.connect", json!({ "workspaceId": WS, "streamId": "nope" })).await.code,
+            ErrorCode::NotFound
+        );
+        let stray =
+            call_err("sse.connect", json!({ "workspaceId": WS, "streamId": "x", "headers": { "A": "b" } })).await;
         assert_eq!(stray.code, ErrorCode::BadRequest);
         let stray = call_err("sse.connect", json!({ "workspaceId": WS, "streamId": "x", "body": "b" })).await;
         assert_eq!(stray.code, ErrorCode::BadRequest);
@@ -413,7 +427,10 @@ mod tests {
             let result = connect(stream_id, url).await;
             assert_eq!(result["ok"], false, "{url}");
             assert!(result["error"].as_str().unwrap().contains("Invalid URL"), "{result}");
-            assert_eq!(call("sse.status", json!({ "workspaceId": WS, "streamId": stream_id })).await["status"], "error");
+            assert_eq!(
+                call("sse.status", json!({ "workspaceId": WS, "streamId": stream_id })).await["status"],
+                "error"
+            );
         }
         let result = call(
             "sse.connect",
@@ -441,7 +458,10 @@ mod tests {
         assert!(listed["streams"].as_array().unwrap().iter().any(|s| s["streamId"] == "held"));
         assert_eq!(listed["max"], MAX_SSE_STREAMS);
 
-        assert_eq!(call("sse.disconnect", json!({ "workspaceId": WS, "streamId": "held" })).await, json!({ "ok": true }));
+        assert_eq!(
+            call("sse.disconnect", json!({ "workspaceId": WS, "streamId": "held" })).await,
+            json!({ "ok": true })
+        );
         let done = wait_status("held", "disconnected").await;
         assert_eq!(done["error"], Value::Null);
         assert_eq!(events.statuses(), ["connecting", "connected", "disconnected"]);
@@ -450,7 +470,10 @@ mod tests {
         let listed = call("sse.list", json!({ "workspaceId": WS })).await;
         assert!(!listed["streams"].as_array().unwrap().iter().any(|s| s["streamId"] == "held"));
         // Closing it again is fine; a stream the engine never opened is not.
-        assert_eq!(call("sse.disconnect", json!({ "workspaceId": WS, "streamId": "held" })).await, json!({ "ok": true }));
+        assert_eq!(
+            call("sse.disconnect", json!({ "workspaceId": WS, "streamId": "held" })).await,
+            json!({ "ok": true })
+        );
         let unknown = call("sse.disconnect", json!({ "workspaceId": WS, "streamId": "never" })).await;
         assert_eq!(unknown["ok"], false);
         assert!(unknown["error"].as_str().unwrap().contains("never"));
@@ -485,7 +508,10 @@ mod tests {
         let events = Events::watch("clear");
         connect("clear", &format!("{base}/hold")).await;
         wait_for("the first event", || events.messages().len() == 1).await;
-        assert_eq!(call("sse.clearMessages", json!({ "workspaceId": WS, "streamId": "clear" })).await, json!({ "ok": true }));
+        assert_eq!(
+            call("sse.clearMessages", json!({ "workspaceId": WS, "streamId": "clear" })).await,
+            json!({ "ok": true })
+        );
         let snapshot = call("sse.status", json!({ "workspaceId": WS, "streamId": "clear" })).await;
         assert_eq!((snapshot["status"].as_str(), snapshot["messages"].clone()), (Some("connected"), json!([])));
         let unknown = call("sse.clearMessages", json!({ "workspaceId": WS, "streamId": "never" })).await;

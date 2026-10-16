@@ -452,8 +452,11 @@ async fn publishing_makes_a_new_repository_and_then_syncs_as_the_account() {
     let eve = sign_in(7, "eve");
 
     // A workspace from before `workspace.json` said what it is.
-    std::fs::write(ws_dir(ws).join("workspace.json"), json!({ "id": ws, "name": "Workspace 1", "createdAt": 1 }).to_string())
-        .unwrap();
+    std::fs::write(
+        ws_dir(ws).join("workspace.json"),
+        json!({ "id": ws, "name": "Workspace 1", "createdAt": 1 }).to_string(),
+    )
+    .unwrap();
     init_workspace_repo(ws).await.unwrap();
     write_entity(ws, "requests", "r1", &request("r1", "First"), None).unwrap();
     engine.call("entity.publish", json!({ "workspaceId": ws, "paths": ["requests/r1.json"] })).await;
@@ -477,7 +480,8 @@ async fn publishing_makes_a_new_repository_and_then_syncs_as_the_account() {
     let pushed: Value = serde_json::from_str(&run(&bare, &["show", "main:workspace.json"]).await).unwrap();
     assert_eq!((pushed["kind"].as_str(), pushed["id"].as_str()), (Some("bifurc-workspace"), Some(ws)));
     // The Global environment every workspace has went with it, so nothing is left unsynced on either side.
-    let global: Value = serde_json::from_str(&run(&bare, &["show", "main:environments/__global__.json"]).await).unwrap();
+    let global: Value =
+        serde_json::from_str(&run(&bare, &["show", "main:environments/__global__.json"]).await).unwrap();
     assert_eq!(global["id"], "__global__");
     let status = get_workspace_sync_status(ws).await;
     assert!(status.values().all(|state| state == "clean"), "{status:?}");
@@ -525,7 +529,8 @@ async fn publishing_makes_a_new_repository_and_then_syncs_as_the_account() {
     assert_eq!(pulled, json!({ "ok": true, "updated": true, "updatedIds": ["s9", "r9"] }));
     // What came in is listed at once, in the folders its directories are: the index read the tree again.
     let cfg = crate::workspace::config::load_config();
-    let folder = |name: &str| cfg["requestFolders"].as_array().unwrap().iter().find(|f| f["name"] == name).cloned().unwrap();
+    let folder =
+        |name: &str| cfg["requestFolders"].as_array().unwrap().iter().find(|f| f["name"] == name).cloned().unwrap();
     assert_eq!(folder("Live")["parentId"], folder("Team")["id"]);
     assert_eq!(cfg["wsConnections"][0]["name"], "Feed");
     assert_eq!(cfg["wsConnections"][0]["folderId"], folder("Live")["id"]);
@@ -543,8 +548,11 @@ async fn publishing_makes_a_new_repository_and_then_syncs_as_the_account() {
     std::fs::write(ws_dir(ws).join("requests/r1.json"), &local).unwrap();
     write_entity(ws, "requests", "r3", &request("r3", "Only here"), None).unwrap();
     run(&other, &["pull", "origin", "main"]).await;
-    std::fs::write(other.join("requests/r1.json"), serde_json::to_string_pretty(&request("r1", "Changed there")).unwrap())
-        .unwrap();
+    std::fs::write(
+        other.join("requests/r1.json"),
+        serde_json::to_string_pretty(&request("r1", "Changed there")).unwrap(),
+    )
+    .unwrap();
     std::fs::write(other.join("requests/r9.json"), serde_json::to_string_pretty(&request("r9", "Nine again")).unwrap())
         .unwrap();
     run(&other, &["commit", "-am", "update requests"]).await;
@@ -558,11 +566,17 @@ async fn publishing_makes_a_new_repository_and_then_syncs_as_the_account() {
     assert!(run(&ws_dir(ws), &["stash", "list"]).await.trim().is_empty());
     crate::workspace::status_cache::invalidate_cache(ws);
     let status = get_workspace_sync_status(ws).await;
-    assert_eq!((status["requests/r1.json"].as_str(), status["requests/r3.json"].as_str()), (Some("modified"), Some("new")));
+    assert_eq!(
+        (status["requests/r1.json"].as_str(), status["requests/r3.json"].as_str()),
+        (Some("modified"), Some("new"))
+    );
 
     // A sync commits on top of what the remote has, even when the remote moved since the last pull.
-    std::fs::write(other.join("requests/r9.json"), serde_json::to_string_pretty(&request("r9", "Nine, third")).unwrap())
-        .unwrap();
+    std::fs::write(
+        other.join("requests/r9.json"),
+        serde_json::to_string_pretty(&request("r9", "Nine, third")).unwrap(),
+    )
+    .unwrap();
     run(&other, &["commit", "-am", "update request Nine"]).await;
     run(&other, &["push", "origin", "HEAD:main"]).await;
     let synced = engine.call("entity.publish", json!({ "workspaceId": ws, "paths": ["requests/r1.json"] })).await;
@@ -748,9 +762,15 @@ async fn a_workspace_of_plain_files_becomes_a_repository_and_is_synced_whole() {
     // One sync commits each of them as created, in a commit of its own.
     let synced = engine.call("sync.all", json!({ "workspaceId": ws })).await;
     assert_eq!(synced["ok"], true, "{synced}");
-    assert_eq!((synced["total"].as_u64(), synced["synced"].as_u64(), synced["pushed"].as_bool()), (Some(3), Some(3), Some(false)));
+    assert_eq!(
+        (synced["total"].as_u64(), synced["synced"].as_u64(), synced["pushed"].as_bool()),
+        (Some(3), Some(3), Some(false))
+    );
     let log = subjects(run(&ws_dir(ws), &["log", "--reverse", "--format=%s"]).await);
-    assert_eq!(log, ["create workspace Workspace 1", "create mock Mock", "create request Second", "create request First"]);
+    assert_eq!(
+        log,
+        ["create workspace Workspace 1", "create mock Mock", "create request Second", "create request First"]
+    );
     assert!(run(&ws_dir(ws), &["log", "-1", "--format=%b"]).await.contains("entity-id: r1"));
     assert!(get_workspace_sync_status(ws).await.values().all(|state| state == "clean"));
     let again = engine.call("sync.all", json!({ "workspaceId": ws })).await;
@@ -777,7 +797,10 @@ async fn a_workspace_of_plain_files_becomes_a_repository_and_is_synced_whole() {
     std::fs::remove_file(ws_dir(ws).join("mocks/m1.json")).unwrap();
     let synced = engine.call("sync.all", json!({ "workspaceId": ws })).await;
     assert_eq!(synced["ok"], true, "{synced}");
-    assert_eq!((synced["synced"].as_u64(), synced["pushed"].as_bool(), synced["pendingDeletions"].as_u64()), (Some(2), Some(true), Some(1)));
+    assert_eq!(
+        (synced["synced"].as_u64(), synced["pushed"].as_bool(), synced["pendingDeletions"].as_u64()),
+        (Some(2), Some(true), Some(1))
+    );
     assert_eq!(run(&bare, &["rev-parse", "main"]).await, run(&ws_dir(ws), &["rev-parse", "HEAD"]).await);
     assert!(run(&bare, &["show", "main:mocks/m1.json"]).await.contains("Mock"));
     assert_eq!(engine.call("sync.getState", json!({ "workspaceId": ws })).await["status"], "idle");
@@ -900,10 +923,7 @@ async fn a_shared_workspace_is_imported_and_synced_with_the_access_github_gives(
     let pushed = engine.call("entity.publish", json!({ "workspaceId": ws, "paths": ["requests/r2.json"] })).await;
     assert_eq!(pushed["ok"], true, "{pushed}");
     assert_eq!(run(&bare, &["rev-parse", "main"]).await, run(&ws_dir(ws), &["rev-parse", "HEAD"]).await);
-    assert_eq!(
-        run(&bare, &["log", "-1", "--format=%ae", "main"]).await.trim(),
-        format!("7+eve@users.noreply.{HOST}")
-    );
+    assert_eq!(run(&bare, &["log", "-1", "--format=%ae", "main"]).await.trim(), format!("7+eve@users.noreply.{HOST}"));
 
     // Taken away again, it is gone at the next thing that would push: nothing waits for a cache to lapse.
     share("octo/team", false);
@@ -981,9 +1001,11 @@ async fn a_collaborator_imports_a_shared_workspace_with_the_access_github_gives(
     }
     let import = |repo: &'static str| engine.call("workspace.import", json!({ "accountId": eve, "repo": repo }));
 
-    for (repo, ws, access) in
-        [("octo/writable", "writable-ws", "write"), ("octo/readable", "readable-ws", "read"), ("octo/declared", "declared-ws", "write")]
-    {
+    for (repo, ws, access) in [
+        ("octo/writable", "writable-ws", "write"),
+        ("octo/readable", "readable-ws", "read"),
+        ("octo/declared", "declared-ws", "write"),
+    ] {
         let imported = import(repo).await;
         assert_eq!(imported["ok"], true, "{repo}: {imported}");
         auto_sync::stop_all_auto_sync();

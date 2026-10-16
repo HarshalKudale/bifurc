@@ -4,14 +4,12 @@
 //! event stream only sends one way. The engine owns the stream; this entity mirrors it ([`StreamView`]).
 
 use gpui_kit::component::{ActiveTheme as _, tag::Tag};
-use gpui_kit::{
-    Context, EventEmitter, IntoElement, ParentElement as _, Render, Styled as _, Window, div,
-};
+use gpui_kit::{Context, EventEmitter, IntoElement, ParentElement as _, Render, Styled as _, Window, div};
 use serde_json::Value;
 
 use crate::{
-    i18n::{t, t_with},
     components::stream_log::{LogFrame, LogRow, LogState, found, log_frame, log_row},
+    i18n::{t, t_with},
     model::stream::{StreamMessage, StreamState, StreamView},
 };
 
@@ -124,7 +122,10 @@ impl Render for SseStream {
                 .map(|status| Tag::secondary().outline().child(format!("HTTP {status}")).into_any_element()),
         );
         lead.extend(
-            self.view.error.clone().map(|error| div().text_sm().text_color(theme.danger).child(error).into_any_element()),
+            self.view
+                .error
+                .clone()
+                .map(|error| div().text_sm().text_color(theme.danger).child(error).into_any_element()),
         );
         log_frame(
             LogFrame {

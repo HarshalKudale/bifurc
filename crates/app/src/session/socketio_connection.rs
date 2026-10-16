@@ -5,14 +5,12 @@
 //! The engine owns the connection; this entity mirrors it ([`SocketIoView`]).
 
 use gpui_kit::component::{ActiveTheme as _, tag::Tag};
-use gpui_kit::{
-    Context, EventEmitter, IntoElement, ParentElement as _, Render, Styled as _, Window, div,
-};
+use gpui_kit::{Context, EventEmitter, IntoElement, ParentElement as _, Render, Styled as _, Window, div};
 use serde_json::Value;
 
 use crate::{
-    i18n::{t, t_with},
     components::stream_log::{LogFrame, LogRow, LogState, Way, found, log_frame, log_row},
+    i18n::{t, t_with},
     model::{
         socket::{Direction, SocketState},
         socketio::{SocketIoMessage, SocketIoView},
@@ -146,11 +144,14 @@ impl Render for SocketIoConnection {
         let mut lead = vec![state_tag.child(state.label()).into_any_element()];
         lead.extend(namespace.map(|namespace| Tag::secondary().outline().child(namespace).into_any_element()));
         lead.extend(
-            self.view.error.clone().map(|error| div().text_sm().text_color(theme.danger).child(error).into_any_element()),
+            self.view
+                .error
+                .clone()
+                .map(|error| div().text_sm().text_color(theme.danger).child(error).into_any_element()),
         );
-        lead.extend(ended.map(|reason| {
-            div().text_sm().text_color(theme.muted_foreground).child(reason).into_any_element()
-        }));
+        lead.extend(
+            ended.map(|reason| div().text_sm().text_color(theme.muted_foreground).child(reason).into_any_element()),
+        );
         log_frame(
             LogFrame {
                 ids: ["socketio-messages", "search-socketio-messages", "clear-socketio-messages"],

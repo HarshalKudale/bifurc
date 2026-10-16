@@ -61,7 +61,8 @@ const CONTENT_TYPES: [&str; 7] = [
     "text/csv",
 ];
 /// Headers that describe how the real server framed its body. A mock never sets them.
-const FRAMING_HEADERS: [&str; 5] = ["connection", "content-length", "transfer-encoding", "keep-alive", "content-encoding"];
+const FRAMING_HEADERS: [&str; 5] =
+    ["connection", "content-length", "transfer-encoding", "keep-alive", "content-encoding"];
 /// The engine's value for "any method"; the editor shows it as a word.
 const ANY_METHOD: &str = "*";
 const ANY_METHOD_LABEL: &str = "ANY";
@@ -202,8 +203,7 @@ impl MockEditor {
             InputState::new(window, cx).placeholder(t("mocks.editor.name_placeholder")).default_value(DEFAULT_NAME)
         });
         let method = cx.new(|cx| SelectState::new(method_options(), Some(IndexPath::default()), window, cx));
-        let pattern =
-            cx.new(|cx| InputState::new(window, cx).placeholder(t("mocks.editor.pattern_placeholder")));
+        let pattern = cx.new(|cx| InputState::new(window, cx).placeholder(t("mocks.editor.pattern_placeholder")));
         let status = cx.new(|cx| InputState::new(window, cx).placeholder("200").default_value("200"));
         let delay = cx.new(|cx| InputState::new(window, cx).placeholder("0").default_value("0"));
         let chunk_delay = cx.new(|cx| InputState::new(window, cx).placeholder("100").default_value("100"));
@@ -543,11 +543,7 @@ impl MockEditor {
         self.probe_key = Some(key.clone());
         let Some(url) = probe_url(method, &pattern, self.use_regex) else {
             self.probing = false;
-            self.apply_standalone(
-                t("mocks.editor.probe.no_url").into(),
-                window,
-                cx,
-            );
+            self.apply_standalone(t("mocks.editor.probe.no_url").into(), window, cx);
             return;
         };
         self.probing = true;
@@ -587,11 +583,7 @@ impl MockEditor {
                         .unwrap_or_default();
                     this.apply_probe(&response, bytes, window, cx);
                 }
-                (Ok(_), None) => this.apply_standalone(
-                    t("mocks.editor.probe.unreadable").into(),
-                    window,
-                    cx,
-                ),
+                (Ok(_), None) => this.apply_standalone(t("mocks.editor.probe.unreadable").into(), window, cx),
             }
         });
     }
@@ -623,7 +615,8 @@ impl MockEditor {
             .headers
             .iter()
             .filter(|(name, _)| {
-                !name.eq_ignore_ascii_case("content-type") && !FRAMING_HEADERS.iter().any(|h| name.eq_ignore_ascii_case(h))
+                !name.eq_ignore_ascii_case("content-type")
+                    && !FRAMING_HEADERS.iter().any(|h| name.eq_ignore_ascii_case(h))
             })
             .cloned()
             .collect();
@@ -783,12 +776,8 @@ impl MockEditor {
         if fields.pattern.is_empty() {
             return Err(t("mocks.editor.error.pattern_required"));
         }
-        let status: u16 = fields
-            .status
-            .parse()
-            .ok()
-            .filter(|s| (100..=599).contains(s))
-            .ok_or(t("mocks.editor.error.status"))?;
+        let status: u16 =
+            fields.status.parse().ok().filter(|s| (100..=599).contains(s)).ok_or(t("mocks.editor.error.status"))?;
         let delay: u64 = fields.delay.parse().map_err(|_| t("mocks.editor.error.delay"))?;
         let chunk_delay: u64 = fields.chunk_delay.parse().map_err(|_| t("mocks.editor.error.chunk_delay"))?;
 
@@ -906,9 +895,7 @@ impl MockEditor {
                             cx.emit(MockEvent::Saved { id });
                         }
                     }
-                    None => {
-                        window.push_notification(Notification::error(t("mocks.editor.error.no_saved_mock")), cx)
-                    }
+                    None => window.push_notification(Notification::error(t("mocks.editor.error.no_saved_mock")), cx),
                 },
                 Ok(_) => {
                     this.entity = sent;
@@ -972,12 +959,16 @@ impl MockEditor {
                     .gap_6()
                     .px_3()
                     .pb_3()
-                    .child(Switch::new("mock-enabled").checked(self.enabled).label(t("mocks.editor.enabled")).small().on_change(
-                        cx.listener(|this, checked: &bool, _, cx| {
-                            this.enabled = *checked;
-                            this.changed(cx);
-                        }),
-                    ))
+                    .child(
+                        Switch::new("mock-enabled")
+                            .checked(self.enabled)
+                            .label(t("mocks.editor.enabled"))
+                            .small()
+                            .on_change(cx.listener(|this, checked: &bool, _, cx| {
+                                this.enabled = *checked;
+                                this.changed(cx);
+                            })),
+                    )
                     .child(
                         Checkbox::new("mock-regex")
                             .checked(self.use_regex)
@@ -1033,10 +1024,12 @@ impl MockEditor {
         let is_data = self.is_data(cx);
         let content_type = media::essence(&self.content_type(cx));
         let shown_type = if content_type.is_empty() { t("mocks.editor.unknown_type") } else { content_type.as_str() };
-        let unsupported: SharedString =
-            t_with("mocks.editor.unsupported_type", &[("type", &shown_type)]).into();
+        let unsupported: SharedString = t_with("mocks.editor.unsupported_type", &[("type", &shown_type)]).into();
         let kind: AnyElement = if self.standalone {
-            div().w_56().child(Select::new(&self.content_type_select).small().placeholder(content_type)).into_any_element()
+            div()
+                .w_56()
+                .child(Select::new(&self.content_type_select).small().placeholder(content_type))
+                .into_any_element()
         } else {
             Tag::secondary()
                 .small()
@@ -1078,10 +1071,7 @@ impl MockEditor {
         let content = match (&self.data_view, is_data) {
             (_, false) => Editor::new(self.body.state()).bordered(false).h_full().into_any_element(),
             (Some(view), true) => view.render(cx),
-            (None, true) => page::empty(
-                unsupported,
-                t("mocks.editor.data_help"),
-            ),
+            (None, true) => page::empty(unsupported, t("mocks.editor.data_help")),
         };
         v_flex().size_full().child(toolbar).child(div().flex_1().min_h_0().child(content)).into_any_element()
     }
@@ -1099,17 +1089,23 @@ impl MockEditor {
             Section::Headers => v_flex()
                 .size_full()
                 .child(
-                    v_flex().flex_none().px_3().py_2().text_sm().text_color(theme.muted_foreground).child(
-                        if self.standalone {
+                    v_flex()
+                        .flex_none()
+                        .px_3()
+                        .py_2()
+                        .text_sm()
+                        .text_color(theme.muted_foreground)
+                        .child(if self.standalone {
                             t("mocks.editor.headers.standalone").to_owned()
                         } else if self.locked_content_type.is_empty() {
                             t("mocks.editor.headers.locked").to_owned()
                         } else {
                             t_with("mocks.editor.headers.locked_to", &[("type", &self.locked_content_type)])
-                        },
-                    ).children((!self.standalone && !self.probed_headers.is_empty()).then(|| {
-                        t("mocks.editor.headers.help")
-                    })),
+                        })
+                        .children(
+                            (!self.standalone && !self.probed_headers.is_empty())
+                                .then(|| t("mocks.editor.headers.help")),
+                        ),
                 )
                 .child(div().flex_1().min_h_0().child(self.headers.clone()))
                 .into_any_element(),

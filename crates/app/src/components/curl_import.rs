@@ -74,7 +74,12 @@ impl EventEmitter<CurlImportEvent> for CurlImport {}
 
 impl CurlImport {
     pub fn new(model: Entity<AppModel>, target: CurlTarget, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let input = VarEditor::pasted(Syntax::Shell, "curl https://api.example.test/resource -H 'Accept: application/json'", window, cx);
+        let input = VarEditor::pasted(
+            Syntax::Shell,
+            "curl https://api.example.test/resource -H 'Accept: application/json'",
+            window,
+            cx,
+        );
         let on_change = cx.subscribe(input.state(), |this, _, event: &InputEvent, cx| {
             if !matches!(event, InputEvent::Change) {
                 return;
@@ -121,7 +126,10 @@ impl CurlImport {
 impl Render for CurlImport {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
-        let error = self.error.clone().map(|message| Alert::error("curl-refused", message).title(t("components.curl_import.refused")));
+        let error = self
+            .error
+            .clone()
+            .map(|message| Alert::error("curl-refused", message).title(t("components.curl_import.refused")));
         div().size_full().flex().justify_center().bg(theme.background).child(
             v_flex()
                 .w(rems(52.))

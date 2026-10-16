@@ -308,7 +308,10 @@ impl AppModel {
                 Ok(value) => this.update = UpdateStatus::from_value(&value),
                 Err(error) => {
                     this.update.checking = false;
-                    cx.emit(ModelEvent::Notice(t_with("app.model.check_updates_failed", &[("error", &describe(&error))])));
+                    cx.emit(ModelEvent::Notice(t_with(
+                        "app.model.check_updates_failed",
+                        &[("error", &describe(&error))],
+                    )));
                 }
             }
             cx.notify();
@@ -323,7 +326,9 @@ impl AppModel {
                 this.update = UpdateStatus::from_value(&value);
                 cx.notify();
             }
-            Err(error) => cx.emit(ModelEvent::Notice(t_with("app.model.skip_version_failed", &[("error", &describe(&error))]))),
+            Err(error) => {
+                cx.emit(ModelEvent::Notice(t_with("app.model.skip_version_failed", &[("error", &describe(&error))])))
+            }
         });
     }
 
@@ -412,7 +417,10 @@ impl AppModel {
                 Ok(incoming) => incoming,
                 Err(error) => {
                     this.update(cx, |_, cx| {
-                        cx.emit(ModelEvent::Notice(t_with("app.model.live_updates_unavailable", &[("error", &describe(&error))])));
+                        cx.emit(ModelEvent::Notice(t_with(
+                            "app.model.live_updates_unavailable",
+                            &[("error", &describe(&error))],
+                        )));
                     })
                     .ok();
                     return;
@@ -682,7 +690,9 @@ impl AppModel {
             // The engine announces the restart to every client, this one included; the announcement is what
             // starts the wait. A reply lost to the closing connection is the same answer.
             Ok(_) | Err(ClientError::Closed) => this.await_successor(cx),
-            Err(error) => cx.emit(ModelEvent::Notice(t_with("app.model.restart_engine_failed", &[("error", &describe(&error))]))),
+            Err(error) => {
+                cx.emit(ModelEvent::Notice(t_with("app.model.restart_engine_failed", &[("error", &describe(&error))])))
+            }
         });
     }
 
@@ -975,7 +985,8 @@ impl AppModel {
         let client = self.engine.client.clone();
         call(&client, cx, "workspace.setActive", json!({ "id": id }), |this, outcome, cx| match outcome {
             Ok(_) => this.refresh(cx),
-            Err(error) => cx.emit(ModelEvent::Notice(t_with("app.model.switch_workspace_failed", &[("error", &describe(&error))]))),
+            Err(error) => cx
+                .emit(ModelEvent::Notice(t_with("app.model.switch_workspace_failed", &[("error", &describe(&error))]))),
         });
     }
 
@@ -983,7 +994,8 @@ impl AppModel {
         let client = self.engine.client.clone();
         call(&client, cx, "workspace.rename", json!({ "id": id, "name": name }), |this, outcome, cx| match outcome {
             Ok(_) => this.refresh(cx),
-            Err(error) => cx.emit(ModelEvent::Notice(t_with("app.model.rename_workspace_failed", &[("error", &describe(&error))]))),
+            Err(error) => cx
+                .emit(ModelEvent::Notice(t_with("app.model.rename_workspace_failed", &[("error", &describe(&error))]))),
         });
     }
 
@@ -991,7 +1003,8 @@ impl AppModel {
         let client = self.engine.client.clone();
         call(&client, cx, "workspace.delete", json!({ "id": id }), |this, outcome, cx| match outcome {
             Ok(_) => this.refresh(cx),
-            Err(error) => cx.emit(ModelEvent::Notice(t_with("app.model.delete_workspace_failed", &[("error", &describe(&error))]))),
+            Err(error) => cx
+                .emit(ModelEvent::Notice(t_with("app.model.delete_workspace_failed", &[("error", &describe(&error))]))),
         });
     }
 
@@ -1000,7 +1013,9 @@ impl AppModel {
         let client = self.engine.client.clone();
         call(&client, cx, "env.setActive", json!({ "id": id }), |this, outcome, cx| match outcome {
             Ok(_) => this.refresh(cx),
-            Err(error) => cx.emit(ModelEvent::Notice(t_with("app.model.environment_failed", &[("error", &describe(&error))]))),
+            Err(error) => {
+                cx.emit(ModelEvent::Notice(t_with("app.model.environment_failed", &[("error", &describe(&error))])))
+            }
         });
     }
 
@@ -1011,7 +1026,9 @@ impl AppModel {
         let payload = json!({ "workspaceId": self.workspace_id(), "kind": kind, "id": id, "enabled": enabled });
         call(&client, cx, "entity.setEnabled", payload, |this, outcome, cx| match outcome {
             Ok(_) => this.refresh(cx),
-            Err(error) => cx.emit(ModelEvent::Notice(t_with("app.model.change_failed", &[("error", &describe(&error))]))),
+            Err(error) => {
+                cx.emit(ModelEvent::Notice(t_with("app.model.change_failed", &[("error", &describe(&error))])))
+            }
         });
     }
 
@@ -1020,7 +1037,9 @@ impl AppModel {
         let client = self.engine.client.clone();
         call(&client, cx, "settings.update", patch, |this, outcome, cx| match outcome {
             Ok(_) => this.refresh(cx),
-            Err(error) => cx.emit(ModelEvent::Notice(t_with("app.model.setting_failed", &[("error", &describe(&error))]))),
+            Err(error) => {
+                cx.emit(ModelEvent::Notice(t_with("app.model.setting_failed", &[("error", &describe(&error))])))
+            }
         });
     }
 

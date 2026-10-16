@@ -566,10 +566,7 @@ impl Render for Shell {
         }
         let screen = match self.screen_view() {
             Some(view) => view.into_any_element(),
-            None => crate::components::page::empty(
-                self.screen.label(),
-                t("shell.mod.screen_not_ready"),
-            ),
+            None => crate::components::page::empty(self.screen.label(), t("shell.mod.screen_not_ready")),
         };
         let center = v_flex()
             .size_full()

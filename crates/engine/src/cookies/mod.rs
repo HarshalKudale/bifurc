@@ -73,7 +73,11 @@ fn jar_file(ws_id: &str) -> PathBuf {
 }
 
 fn clears_on_restart(ws_id: &str) -> bool {
-    load_settings().workspace(ws_id).and_then(|ws| ws.get("clearCookiesOnRestart")).and_then(Value::as_bool).unwrap_or(true)
+    load_settings()
+        .workspace(ws_id)
+        .and_then(|ws| ws.get("clearCookiesOnRestart"))
+        .and_then(Value::as_bool)
+        .unwrap_or(true)
 }
 
 /// The workspace's jar, read from its file the first time it is asked for when the workspace keeps cookies.
@@ -394,16 +398,25 @@ mod tests {
             serde_json::from_slice::<Value>(&body).unwrap()["headers"]["cookie"].clone()
         };
 
-        let script = "bc.cookies.set('token', bc.response.json().token); bc.cookies.set('far', 1, 'http://other.test/');";
+        let script =
+            "bc.cookies.set('token', bc.response.json().token); bc.cookies.set('far', 1, 'http://other.test/');";
         send("/login", json!({ "post": script })).await;
         // A request deep in the site carries it, and its own scripts read it.
-        let answer = send("/api/v1/me", json!({ "test": "test('seen', () => expect(bc.cookies.get('token')).to.equal('t-9'));" })).await;
+        let answer = send(
+            "/api/v1/me",
+            json!({ "test": "test('seen', () => expect(bc.cookies.get('token')).to.equal('t-9'));" }),
+        )
+        .await;
         assert_eq!(answer["tests"][0]["passed"], true, "{answer}");
         assert_eq!(cookie_sent(answer), "token=t-9");
         assert_eq!(for_url("ws1", "http://other.test/x"), json!({ "far": "1" }));
 
         // A pre-script's change is in time for its own request.
-        let answer = send("/me", json!({ "pre": "bc.cookies.unset('token'); bc.cookies.set('fresh', bc.cookies.has('token'));" })).await;
+        let answer = send(
+            "/me",
+            json!({ "pre": "bc.cookies.unset('token'); bc.cookies.set('fresh', bc.cookies.has('token'));" }),
+        )
+        .await;
         assert_eq!(cookie_sent(answer), "fresh=false");
         send("/me", json!({ "post": "bc.cookies.clear();" })).await;
         assert_eq!(for_url("ws1", &base), json!({}));

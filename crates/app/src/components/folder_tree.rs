@@ -170,9 +170,14 @@ pub enum FolderTreeEvent<K, X> {
     RevertDelete(K),
     /// Sync the deletion of a deleted entity or folder, removing it for good.
     ConfirmDelete(K),
-    NewFolder { parent: Option<String> },
+    NewFolder {
+        parent: Option<String>,
+    },
     /// Put the entity or folder in another folder; a folder goes to the top level with `None`.
-    Move { key: K, folder: Option<String> },
+    Move {
+        key: K,
+        folder: Option<String>,
+    },
     /// What only this screen's tree can ask for.
     Extra(X),
 }
@@ -380,12 +385,19 @@ fn context_menu<S: FolderTreeSource>(
     // What is deleted can only be brought back or deleted for good.
     if S::is_deleted(model.read(cx), &key) {
         return menu
-            .item(PopupMenuItem::new(t(text.revert_delete)).on_click(emitter(tree, FolderTreeEvent::RevertDelete(key.clone()))))
-            .item(PopupMenuItem::new(t(text.confirm_delete)).on_click(emitter(tree, FolderTreeEvent::ConfirmDelete(key.clone()))));
+            .item(
+                PopupMenuItem::new(t(text.revert_delete))
+                    .on_click(emitter(tree, FolderTreeEvent::RevertDelete(key.clone()))),
+            )
+            .item(
+                PopupMenuItem::new(t(text.confirm_delete))
+                    .on_click(emitter(tree, FolderTreeEvent::ConfirmDelete(key.clone()))),
+            );
     }
     // What a newer Bifurc saved can only be asked about: opening it says which version it needs.
     if S::locked_to(model.read(cx), &key).is_some() {
-        return menu.item(PopupMenuItem::new(t(text.update_required)).on_click(emitter(tree, FolderTreeEvent::Open(key))));
+        return menu
+            .item(PopupMenuItem::new(t(text.update_required)).on_click(emitter(tree, FolderTreeEvent::Open(key))));
     }
     let menu = match key.folder_id() {
         Some(id) => S::folder_menu(menu, id, tree).item(
@@ -394,7 +406,9 @@ fn context_menu<S: FolderTreeSource>(
         ),
         None => menu
             .item(PopupMenuItem::new(t(text.open)).on_click(emitter(tree, FolderTreeEvent::Open(key.clone()))))
-            .item(PopupMenuItem::new(t(text.duplicate)).on_click(emitter(tree, FolderTreeEvent::Duplicate(key.clone())))),
+            .item(
+                PopupMenuItem::new(t(text.duplicate)).on_click(emitter(tree, FolderTreeEvent::Duplicate(key.clone()))),
+            ),
     };
     menu.separator()
         .item(PopupMenuItem::new(t(text.rename)).on_click(emitter(tree, FolderTreeEvent::Rename(key.clone()))))
@@ -467,7 +481,12 @@ fn render_row<S: FolderTreeSource>(
                         .child(label.clone()),
                 )
                 .children(pending.then(|| {
-                    div().flex_none().text_xs().text_color(theme.warning).when(!has_trailing, |dot| dot.pr_2()).child("●")
+                    div()
+                        .flex_none()
+                        .text_xs()
+                        .text_color(theme.warning)
+                        .when(!has_trailing, |dot| dot.pr_2())
+                        .child("●")
                 }))
                 .children(trailing.map(|trailing| div().flex_none().pr_2().child(trailing))),
         )
@@ -531,9 +550,11 @@ impl<S: FolderTreeSource> Render for FolderTree<S> {
         } else if filtering && self.tree.read(cx).entry(0).is_none() {
             page::empty(t(text.no_matches_title), t(text.no_matches_description))
         } else {
-            tree(&self.tree, move |ix, entry, selected, _, cx| render_row::<S>(ix, entry, selected, &model, &row_tree, cx))
-                .context_menu(move |_, entry, menu, _, cx| context_menu::<S>(entry, menu, &menu_tree, &menu_model, cx))
-                .into_any_element()
+            tree(&self.tree, move |ix, entry, selected, _, cx| {
+                render_row::<S>(ix, entry, selected, &model, &row_tree, cx)
+            })
+            .context_menu(move |_, entry, menu, _, cx| context_menu::<S>(entry, menu, &menu_tree, &menu_model, cx))
+            .into_any_element()
         };
         v_flex()
             .size_full()

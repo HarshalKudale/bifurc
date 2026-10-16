@@ -160,9 +160,11 @@ async fn send(
 
 async fn ask_server(channel: Channel, path: &'static str) -> Result<Reflected, Status> {
     let (outbound, receiver) = mpsc::channel::<ServerReflectionRequest>(8);
-    let stream = futures::stream::unfold(receiver, |mut receiver| async move {
-        receiver.recv().await.map(|item| (item, receiver))
-    });
+    let stream =
+        futures::stream::unfold(
+            receiver,
+            |mut receiver| async move { receiver.recv().await.map(|item| (item, receiver)) },
+        );
     // Some servers send no response headers until they have read a message, and opening the call waits for
     // the headers, so the first request is queued before the call is opened.
     send(&outbound, request::MessageRequest::ListServices(LIST_ALL.to_owned())).await?;
@@ -271,7 +273,9 @@ pub fn build_pool(files: Vec<FileDescriptorProto>) -> Result<DescriptorPool, Str
         let wanted: Vec<String> = pending
             .iter()
             .flat_map(|file| file.dependency.iter())
-            .filter(|name| pool.get_file_by_name(name).is_none() && !pending.iter().any(|file| file.name() == name.as_str()))
+            .filter(|name| {
+                pool.get_file_by_name(name).is_none() && !pending.iter().any(|file| file.name() == name.as_str())
+            })
             .cloned()
             .collect();
         let mut supplied = false;
@@ -295,11 +299,18 @@ pub fn build_pool(files: Vec<FileDescriptorProto>) -> Result<DescriptorPool, Str
 
 #[cfg(test)]
 pub(super) mod server {
-    use std::{pin::Pin, task::{Context, Poll}};
+    use std::{
+        pin::Pin,
+        task::{Context, Poll},
+    };
 
     use futures::Stream;
     use prost_reflect::DescriptorPool;
-    use tonic::{Response, Status, Streaming, body::Body, server::{Grpc, NamedService, StreamingService}};
+    use tonic::{
+        Response, Status, Streaming,
+        body::Body,
+        server::{Grpc, NamedService, StreamingService},
+    };
     use tonic_prost::ProstCodec;
 
     use super::{
@@ -327,12 +338,13 @@ pub(super) mod server {
         fn call(&mut self, request: tonic::Request<Streaming<ServerReflectionRequest>>) -> Self::Future {
             let this = self.clone();
             let mut inbound = request.into_inner();
-            let stream = futures::stream::poll_fn(move |cx: &mut Context<'_>| match Pin::new(&mut inbound).poll_next(cx) {
-                Poll::Ready(Some(Ok(asked))) => Poll::Ready(Some(Ok(this.answer(asked)))),
-                Poll::Ready(Some(Err(status))) => Poll::Ready(Some(Err(status))),
-                Poll::Ready(None) => Poll::Ready(None),
-                Poll::Pending => Poll::Pending,
-            });
+            let stream =
+                futures::stream::poll_fn(move |cx: &mut Context<'_>| match Pin::new(&mut inbound).poll_next(cx) {
+                    Poll::Ready(Some(Ok(asked))) => Poll::Ready(Some(Ok(this.answer(asked)))),
+                    Poll::Ready(Some(Err(status))) => Poll::Ready(Some(Err(status))),
+                    Poll::Ready(None) => Poll::Ready(None),
+                    Poll::Pending => Poll::Pending,
+                });
             std::future::ready(Ok(Response::new(Box::pin(stream) as Answers)))
         }
     }

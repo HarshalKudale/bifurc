@@ -45,7 +45,10 @@ impl Kdf {
 
     pub fn derive(&self, passphrase: &str) -> Result<Key> {
         if self.alg != "argon2id" {
-            return Err(EngineError::unsupported(format!("This vault uses the unknown key derivation \"{}\".", self.alg)));
+            return Err(EngineError::unsupported(format!(
+                "This vault uses the unknown key derivation \"{}\".",
+                self.alg
+            )));
         }
         let salt = STANDARD.decode(&self.salt).map_err(|_| EngineError::engine("The vault's salt is not valid."))?;
         let params = Params::new(self.m, self.t, self.p, Some(KEY_LEN))

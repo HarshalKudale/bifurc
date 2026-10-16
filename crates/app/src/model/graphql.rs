@@ -357,7 +357,10 @@ mod tests {
 
     #[test]
     fn a_response_without_a_schema_says_why() {
-        assert_eq!(Schema::parse(r#"{"errors":[{"message":"introspection disabled"}]}"#), Err("introspection disabled".into()));
+        assert_eq!(
+            Schema::parse(r#"{"errors":[{"message":"introspection disabled"}]}"#),
+            Err("introspection disabled".into())
+        );
         assert!(Schema::parse("<html>").is_err());
         assert!(Schema::parse(r#"{"data":null}"#).is_err());
     }

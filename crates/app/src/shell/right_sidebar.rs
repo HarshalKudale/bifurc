@@ -20,8 +20,8 @@ use gpui_kit::component::{
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    AppContext as _, ClipboardItem, Context, Div, Entity, InteractiveElement as _, IntoElement, ParentElement as _, Render,
-    StatefulInteractiveElement as _, Styled as _, Subscription, Window, div, px,
+    AppContext as _, ClipboardItem, Context, Div, Entity, InteractiveElement as _, IntoElement, ParentElement as _,
+    Render, StatefulInteractiveElement as _, Styled as _, Subscription, Window, div, px,
 };
 use serde_json::json;
 
@@ -273,14 +273,9 @@ impl RightSidebar {
                             .child(t_with("shell.right_sidebar.utc_time", &[("time", &date_time_utc(entry.ts))]))
                             .child(entry.actor.clone()),
                     );
-                v_flex()
-                    .w_full()
-                    .border_b_1()
-                    .border_color(theme.border)
-                    .child(summary)
-                    .when(open, |this| {
-                        this.child(div().px_3().pb_3().child(CommitDiffs::render(&self.diffs, &entry.commit, cx)))
-                    })
+                v_flex().w_full().border_b_1().border_color(theme.border).child(summary).when(open, |this| {
+                    this.child(div().px_3().pb_3().child(CommitDiffs::render(&self.diffs, &entry.commit, cx)))
+                })
             }))
             .into_any_element()
     }
@@ -315,14 +310,19 @@ impl RightSidebar {
                                 .children(SnippetKind::ALL.map(|kind| Tab::new().label(kind.label()))),
                         ),
                     )
-                    .child(div().flex_none().child(
-                        Button::new("copy-snippet").ghost().small().icon(IconName::Copy).tooltip(t("shell.right_sidebar.copy")).on_click(
-                            cx.listener(|this, _, _, cx| {
-                                let text = this.snippet.read(cx).value().to_string();
-                                cx.write_to_clipboard(ClipboardItem::new_string(text));
-                            }),
+                    .child(
+                        div().flex_none().child(
+                            Button::new("copy-snippet")
+                                .ghost()
+                                .small()
+                                .icon(IconName::Copy)
+                                .tooltip(t("shell.right_sidebar.copy"))
+                                .on_click(cx.listener(|this, _, _, cx| {
+                                    let text = this.snippet.read(cx).value().to_string();
+                                    cx.write_to_clipboard(ClipboardItem::new_string(text));
+                                })),
                         ),
-                    )),
+                    ),
             )
             .child(div().flex_1().min_h_0().child(Editor::new(&self.snippet).bordered(false).h_full()))
             .into_any_element()
@@ -352,8 +352,8 @@ impl RightSidebar {
                         .child(cell(variable.value.clone()))
                         .child(cell(env.name.clone()).text_color(theme.muted_foreground))
                         .child(copy_button(("copy-variable", ix), format!("{{{{{}}}}}", variable.key)))
-                },
-            )))
+                }),
+            ))
             .into_any_element()
     }
 }
@@ -452,37 +452,35 @@ impl Render for RightSidebar {
             .text_color(theme.sidebar_foreground)
             // The strip is as tall as the top bar beside it, and its tabs fill it: the kit's tabs come in
             // fixed heights, none of them the bar's, so these are drawn here in the same colors.
-            .child(
-                h_flex().flex_none().h_10().bg(theme.tab_bar).border_b_1().border_color(theme.border).children(
-                    PANELS.iter().enumerate().map(|(ix, panel)| {
-                        let active = ix == selected;
-                        h_flex()
-                            .id(("inspector-panel", ix))
-                            .h_full()
-                            .px_3()
-                            .text_sm()
-                            .border_r_1()
-                            .border_color(theme.border)
-                            .map(|this| {
-                                if active {
-                                    // The active tab reaches over the strip's bottom border into its panel.
-                                    this.bg(theme.tab_active).text_color(theme.tab_active_foreground).mb(px(-1.))
-                                } else {
-                                    this.text_color(theme.tab_foreground)
-                                        .hover(|this| this.text_color(theme.tab_active_foreground))
-                                }
-                            })
-                            .child(panel.label())
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                this.panel = PANELS[ix];
-                                if this.panel == Panel::History {
-                                    this.refresh_history(true, cx);
-                                }
-                                cx.notify();
-                            }))
-                    }),
-                ),
-            )
+            .child(h_flex().flex_none().h_10().bg(theme.tab_bar).border_b_1().border_color(theme.border).children(
+                PANELS.iter().enumerate().map(|(ix, panel)| {
+                    let active = ix == selected;
+                    h_flex()
+                        .id(("inspector-panel", ix))
+                        .h_full()
+                        .px_3()
+                        .text_sm()
+                        .border_r_1()
+                        .border_color(theme.border)
+                        .map(|this| {
+                            if active {
+                                // The active tab reaches over the strip's bottom border into its panel.
+                                this.bg(theme.tab_active).text_color(theme.tab_active_foreground).mb(px(-1.))
+                            } else {
+                                this.text_color(theme.tab_foreground)
+                                    .hover(|this| this.text_color(theme.tab_active_foreground))
+                            }
+                        })
+                        .child(panel.label())
+                        .on_click(cx.listener(move |this, _, _, cx| {
+                            this.panel = PANELS[ix];
+                            if this.panel == Panel::History {
+                                this.refresh_history(true, cx);
+                            }
+                            cx.notify();
+                        }))
+                }),
+            ))
             .child(div().flex_1().min_h_0().child(body))
     }
 }

@@ -79,7 +79,12 @@ async fn allow_low_ports() -> Result<(), String> {
         return Err("The password prompt was dismissed".to_owned());
     }
     let said = String::from_utf8_lossy(&output.stderr);
-    Err(said.lines().map(str::trim).rfind(|line| !line.is_empty()).unwrap_or("pkexec failed without saying why").to_owned())
+    Err(said
+        .lines()
+        .map(str::trim)
+        .rfind(|line| !line.is_empty())
+        .unwrap_or("pkexec failed without saying why")
+        .to_owned())
 }
 
 pub fn register(registry: &mut CommandRegistry) {
@@ -183,8 +188,8 @@ pub fn register(registry: &mut CommandRegistry) {
         }
         let started = start_listeners(&settings);
         // Only Linux has a permission the engine can be given (`setup.allowLowPorts`).
-        let denied = cfg!(target_os = "linux")
-            && [settings.port(), settings.forward_proxy_port()].into_iter().any(port_denied);
+        let denied =
+            cfg!(target_os = "linux") && [settings.port(), settings.forward_proxy_port()].into_iter().any(port_denied);
         Ok(json!({
             "ok": true,
             "forward": started["forward"],

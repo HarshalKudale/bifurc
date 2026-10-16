@@ -17,7 +17,8 @@ use gpui_kit::component::{
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, App, AppContext as _, ClickEvent, Context, Div, ElementId, Entity, InteractiveElement as _,
-    IntoElement, ParentElement as _, ScrollHandle, StatefulInteractiveElement as _, Styled as _, Subscription, Window, div,
+    IntoElement, ParentElement as _, ScrollHandle, StatefulInteractiveElement as _, Styled as _, Subscription, Window,
+    div,
 };
 use serde_json::Value;
 
@@ -73,14 +74,7 @@ impl OpenRows {
     }
 
     /// Closes the row if it is open; opens it to `data` otherwise, with what the log is searched for marked.
-    pub fn toggle<T: 'static>(
-        &mut self,
-        id: &str,
-        data: &str,
-        query: &str,
-        window: &mut Window,
-        cx: &mut Context<T>,
-    ) {
+    pub fn toggle<T: 'static>(&mut self, id: &str, data: &str, query: &str, window: &mut Window, cx: &mut Context<T>) {
         if self.0.remove(id).is_none() {
             let pane = cx.new(|cx| {
                 let mut pane = BodyPane::fitted(data, window, cx);
@@ -146,9 +140,12 @@ impl LogSearch {
     /// Shows the field and puts the cursor in it, or hides it and ends the search.
     pub fn toggle(&mut self, window: &mut Window, cx: &mut App) {
         self.visible = !self.visible;
-        self.input.update(cx, |state, cx| {
-            if self.visible { state.focus(window, cx) } else { state.set_value("", window, cx) }
-        });
+        self.input.update(
+            cx,
+            |state, cx| {
+                if self.visible { state.focus(window, cx) } else { state.set_value("", window, cx) }
+            },
+        );
     }
 
     /// The field, with how many of the rows are shown; nothing while there is no search.
@@ -160,9 +157,11 @@ impl LogSearch {
                 .px_3()
                 .pb_2()
                 .gap_3()
-                .child(div().flex_1().min_w_0().child(
-                    Input::new(&self.input).small().prefix(Icon::new(IconName::Search).small()).cleanable(true),
-                ))
+                .child(
+                    div().flex_1().min_w_0().child(
+                        Input::new(&self.input).small().prefix(Icon::new(IconName::Search).small()).cleanable(true),
+                    ),
+                )
                 .when(self.needle(cx).is_some(), |this| {
                     this.child(
                         div()
@@ -320,11 +319,13 @@ pub fn log_frame(
                 .border_t_1()
                 .border_color(theme.border)
                 .when(total == 0, |this| {
-                    this.child(Empty::new().header(
-                        EmptyHeader::new()
-                            .title(EmptyTitle::new().child(empty.0.to_owned()))
-                            .description(EmptyDescription::new().child(empty.1.to_owned())),
-                    ))
+                    this.child(
+                        Empty::new().header(
+                            EmptyHeader::new()
+                                .title(EmptyTitle::new().child(empty.0.to_owned()))
+                                .description(EmptyDescription::new().child(empty.1.to_owned())),
+                        ),
+                    )
                 })
                 .when(none_found, |this| this.child(nothing_found()))
                 .children(rows),
@@ -387,17 +388,9 @@ pub fn log_row(
         });
     let mut block = v_flex().w_full().border_b_1().border_color(theme.border).child(line);
     if let Some(body) = body {
-        block = block.child(
-            div().px_4().pb_3().child(
-                div()
-                    .w_full()
-                    .rounded_md()
-                    .border_1()
-                    .border_color(theme.border)
-                    .overflow_hidden()
-                    .child(body.clone()),
-            ),
-        );
+        block = block.child(div().px_4().pb_3().child(
+            div().w_full().rounded_md().border_1().border_color(theme.border).overflow_hidden().child(body.clone()),
+        ));
     }
     block.into_any_element()
 }

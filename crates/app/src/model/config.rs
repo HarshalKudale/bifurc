@@ -281,12 +281,22 @@ impl EnvironmentInfo {
             .map(|vars| {
                 vars.iter()
                     .filter_map(|v| {
-                        Some(EnvVariable { id: text(v, "id").unwrap_or_default(), key: text(v, "key")?, value: text(v, "value")? })
+                        Some(EnvVariable {
+                            id: text(v, "id").unwrap_or_default(),
+                            key: text(v, "key")?,
+                            value: text(v, "value")?,
+                        })
                     })
                     .collect()
             })
             .unwrap_or_default();
-        Some(Self { id: text(e, "id")?, name: text(e, "name")?, variables, deleted: is_deleted(e), locked: locked_to(e) })
+        Some(Self {
+            id: text(e, "id")?,
+            name: text(e, "name")?,
+            variables,
+            deleted: is_deleted(e),
+            locked: locked_to(e),
+        })
     }
 }
 
@@ -430,7 +440,11 @@ impl ConfigSnapshot {
             locked_rules: array(config, "proxyRules")
                 .iter()
                 .filter_map(|r| {
-                    Some(LockedRule { version: locked_to(r)?, id: text(r, "id")?, name: text(r, "name").unwrap_or_default() })
+                    Some(LockedRule {
+                        version: locked_to(r)?,
+                        id: text(r, "id")?,
+                        name: text(r, "name").unwrap_or_default(),
+                    })
                 })
                 .collect(),
             request_defaults: RequestDefaults::from_value(config.get("requestDefaults")),
@@ -471,7 +485,9 @@ impl ConfigSnapshot {
 
     fn update_stub(&mut self, kind: &str, id: &str, listing: &Value) -> bool {
         if let Some(request_kind) = RequestKind::from_entity_kind(kind) {
-            let Some(old) = self.requests.iter_mut().find(|r| r.kind == request_kind && r.id == id) else { return false };
+            let Some(old) = self.requests.iter_mut().find(|r| r.kind == request_kind && r.id == id) else {
+                return false;
+            };
             let Some(new) = RequestStub::from_value(request_kind, listing) else { return false };
             *old = RequestStub { deleted: old.deleted, locked: old.locked.take(), ..new };
             return true;
@@ -502,7 +518,9 @@ impl ConfigSnapshot {
     /// (a mapping takes its proxy rules, an environment may have been the active one).
     fn delete_stub(&mut self, kind: &str, id: &str, pending: bool) -> bool {
         if let Some(request_kind) = RequestKind::from_entity_kind(kind) {
-            let Some(at) = self.requests.iter().position(|r| r.kind == request_kind && r.id == id) else { return false };
+            let Some(at) = self.requests.iter().position(|r| r.kind == request_kind && r.id == id) else {
+                return false;
+            };
             if pending {
                 self.requests[at].deleted = true;
             } else {
@@ -664,7 +682,12 @@ mod tests {
         let cases = [
             ("requests", "r1", json!({"name": "New", "method": "PUT", "url": "/new", "folderId": "f1"}), "/new"),
             ("graphqlRequests", "q1", json!({"name": "New", "endpointUrl": "https://new"}), "https://new"),
-            ("grpcRequests", "g1", json!({"name": "New", "serverAddress": "h:1", "serviceName": "S", "methodName": "M"}), "h:1/S/M"),
+            (
+                "grpcRequests",
+                "g1",
+                json!({"name": "New", "serverAddress": "h:1", "serviceName": "S", "methodName": "M"}),
+                "h:1/S/M",
+            ),
             ("wsConnections", "s1", json!({"name": "New", "url": "wss://new", "folderId": "wf"}), "wss://new"),
             ("sseRequests", "e1", json!({"name": "New", "url": "https://sse"}), "https://sse"),
             ("socketioRequests", "i1", json!({"name": "New", "url": "https://io"}), "https://io"),
@@ -697,7 +720,10 @@ mod tests {
         let listing = json!({"id": "k1", "name": "B", "method": "POST", "urlPattern": "/b"});
         assert!(c.apply_change(&change("updated", "mocks", "k1", json!({ "listing": listing }))));
         let mock = c.mock("k1").unwrap();
-        assert_eq!((mock.name.as_str(), mock.method.as_str(), mock.url_pattern.as_str(), mock.enabled), ("B", "POST", "/b", true));
+        assert_eq!(
+            (mock.name.as_str(), mock.method.as_str(), mock.url_pattern.as_str(), mock.enabled),
+            ("B", "POST", "/b", true)
+        );
     }
 
     #[test]
@@ -706,7 +732,10 @@ mod tests {
         let listing = json!({"id": "m1", "domain": "b.localhost", "target": "localhost:1", "label": "B"});
         assert!(c.apply_change(&change("updated", "mappings", "m1", json!({ "listing": listing }))));
         let mapping = &c.mappings[0];
-        assert_eq!((mapping.domain.as_str(), mapping.label.as_deref(), mapping.enabled), ("b.localhost", Some("B"), true));
+        assert_eq!(
+            (mapping.domain.as_str(), mapping.label.as_deref(), mapping.enabled),
+            ("b.localhost", Some("B"), true)
+        );
 
         let listing = json!({"id": "e1", "name": "Prod", "variables": [{"id": "v", "key": "HOST", "value": "prod"}]});
         assert!(c.apply_change(&change("updated", "environments", "e1", json!({ "listing": listing }))));
@@ -766,13 +795,22 @@ mod tests {
     #[test]
     fn request_defaults_fall_back_to_the_built_in_values_per_key() {
         let unset = ConfigSnapshot::from_value(&json!({ "activeWorkspaceId": "w1", "requestDefaults": {} })).unwrap();
-        assert_eq!(unset.request_defaults, RequestDefaults { verify_tls: true, follow_redirects: false, timeout_ms: 0 });
+        assert_eq!(
+            unset.request_defaults,
+            RequestDefaults { verify_tls: true, follow_redirects: false, timeout_ms: 0 }
+        );
         let set = ConfigSnapshot::from_value(
             &json!({ "activeWorkspaceId": "w1", "requestDefaults": { "verifyTls": false, "timeoutMs": 30000 } }),
         )
         .unwrap();
-        assert_eq!(set.request_defaults, RequestDefaults { verify_tls: false, follow_redirects: false, timeout_ms: 30000 });
-        assert_eq!(set.request_defaults.to_json(), json!({ "verifyTls": false, "followRedirects": false, "timeoutMs": 30000 }));
+        assert_eq!(
+            set.request_defaults,
+            RequestDefaults { verify_tls: false, follow_redirects: false, timeout_ms: 30000 }
+        );
+        assert_eq!(
+            set.request_defaults.to_json(),
+            json!({ "verifyTls": false, "followRedirects": false, "timeoutMs": 30000 })
+        );
     }
 
     #[test]
@@ -783,8 +821,11 @@ mod tests {
         config["environments"][1]["variables"] =
             json!([{"id": "c", "key": "PORT", "value": "81"}, {"id": "v", "key": "HOST", "value": "stg"}]);
         let c = ConfigSnapshot::from_value(&config).unwrap();
-        let rows: Vec<_> =
-            c.resolved_variables().into_iter().map(|(v, env)| (v.key.as_str(), v.value.as_str(), env.name.as_str())).collect();
+        let rows: Vec<_> = c
+            .resolved_variables()
+            .into_iter()
+            .map(|(v, env)| (v.key.as_str(), v.value.as_str(), env.name.as_str()))
+            .collect();
         assert_eq!(rows, vec![("HOST", "stg", "Staging"), ("TOKEN", "t", "Global"), ("PORT", "81", "Staging")]);
     }
 
@@ -920,7 +961,8 @@ mod tests {
     #[test]
     fn a_workspace_is_read_only_when_its_account_may_only_read_the_repository() {
         let workspace = |sync: Value| {
-            let config = json!({ "activeWorkspaceId": "w1", "workspaces": [{ "id": "w1", "name": "W", "syncConfig": sync }] });
+            let config =
+                json!({ "activeWorkspaceId": "w1", "workspaces": [{ "id": "w1", "name": "W", "syncConfig": sync }] });
             ConfigSnapshot::from_value(&config).unwrap().workspaces[0].clone()
         };
         let read_only = |sync: Value| workspace(sync).sync.map(|sync| sync.read_only);

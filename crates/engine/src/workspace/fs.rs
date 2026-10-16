@@ -454,7 +454,8 @@ pub fn create_folder(
         return tree::create_folder(ws_id, scope, name, parent_id, unique).map(|folder| (folder.id, folder.name));
     }
     let mut index = auto_sync_fs_directories(ws_id, kind, generate_id);
-    let taken = |name: &str| index.folders.iter().find(|f| sanitize_dir_name(str_of(f, "name")) == sanitize_dir_name(name));
+    let taken =
+        |name: &str| index.folders.iter().find(|f| sanitize_dir_name(str_of(f, "name")) == sanitize_dir_name(name));
     let mut name = name.to_string();
     if unique {
         let base = name.clone();

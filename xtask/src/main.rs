@@ -224,8 +224,13 @@ fn run() -> Result<()> {
     let ctx = Ctx {
         out_dir: repo.join("release").join("desktop"),
         repo,
-        repository: env::var("GITHUB_REPOSITORY").ok().filter(|r| !r.is_empty()).unwrap_or_else(|| DEFAULT_REPOSITORY.to_owned()),
-        release_tag: value_of("--release-tag")?.filter(|tag| !tag.is_empty()).map_or_else(|| format!("v{VERSION}"), str::to_owned),
+        repository: env::var("GITHUB_REPOSITORY")
+            .ok()
+            .filter(|r| !r.is_empty())
+            .unwrap_or_else(|| DEFAULT_REPOSITORY.to_owned()),
+        release_tag: value_of("--release-tag")?
+            .filter(|tag| !tag.is_empty())
+            .map_or_else(|| format!("v{VERSION}"), str::to_owned),
     };
 
     licenses::run(&ctx.repo, true)?; // a release must not ship stale notices
@@ -494,7 +499,11 @@ fn dev_ui() -> Result<()> {
 fn cargo_output(ctx: &Ctx, name: &str) -> Result<PathBuf> {
     let target_dir = env_path("CARGO_TARGET_DIR").map_or_else(|| ctx.repo.join("target"), |dir| ctx.repo.join(dir));
     let file = target_dir.join("release").join(name);
-    if file.exists() { Ok(file) } else { Err(format!("{} is missing — build first (drop --skip-build)", file.display())) }
+    if file.exists() {
+        Ok(file)
+    } else {
+        Err(format!("{} is missing — build first (drop --skip-build)", file.display()))
+    }
 }
 
 // ---------------------------------------------------------------------------------------------------------
@@ -536,7 +545,9 @@ fn smoke_test(dir: &Path) -> Result<()> {
     let mcp = Command::new(dir.join("bin").join(format!("bifurc{EXE}"))).args(["--mcp", "--version"]).output();
     match mcp {
         Ok(out) if out.status.success() => {}
-        Ok(out) => return Err(format!("the staged MCP server does not run:\n{}", String::from_utf8_lossy(&out.stderr))),
+        Ok(out) => {
+            return Err(format!("the staged MCP server does not run:\n{}", String::from_utf8_lossy(&out.stderr)));
+        }
         Err(e) => return Err(format!("the staged MCP server does not run:\n{e}")),
     }
     let engine = Command::new(dir.join(format!("bifurc-engine{EXE}"))).arg("--help").output();
@@ -560,7 +571,9 @@ fn find_makensis() -> Result<PathBuf> {
         env_path("ProgramFiles(x86)").map(|d| d.join("NSIS").join("makensis.exe")),
         env_path("ProgramFiles").map(|d| d.join("NSIS").join("makensis.exe")),
     ])
-    .ok_or_else(|| "makensis was not found. Install NSIS (https://nsis.sourceforge.io) or set MAKENSIS to makensis.exe.".to_owned())
+    .ok_or_else(|| {
+        "makensis was not found. Install NSIS (https://nsis.sourceforge.io) or set MAKENSIS to makensis.exe.".to_owned()
+    })
 }
 
 fn package_nsis(ctx: &Ctx, staged: &Path) -> Result<PathBuf> {
@@ -622,13 +635,20 @@ fn package_msix(ctx: &Ctx, staged: &Path) -> Result<PathBuf> {
     copy_dir(&icons, &layout)?;
     // A package version is four numbers, and the Store keeps the fourth for itself.
     let manifest = layout.join("AppxManifest.xml");
-    write_file(&manifest, &template(ctx, "windows/AppxManifest.xml", &[("VERSION", &format!("{VERSION}.0")), ("ARCH", sdk_arch())])?)?;
+    write_file(
+        &manifest,
+        &template(ctx, "windows/AppxManifest.xml", &[("VERSION", &format!("{VERSION}.0")), ("ARCH", sdk_arch())])?,
+    )?;
 
     // The index that lets Windows pick the unplated, size-matched icons for the taskbar and the Start menu.
     let pri_config = ctx.out_dir.join("priconfig.xml");
     let makepri = find_sdk_tool("makepri.exe")?;
     let mut create = Command::new(&makepri);
-    create.args(["createconfig", "/cf"]).arg(&pri_config).args(["/dq", "en-US", "/pv", "10.0.0", "/o"]).current_dir(&ctx.repo);
+    create
+        .args(["createconfig", "/cf"])
+        .arg(&pri_config)
+        .args(["/dq", "en-US", "/pv", "10.0.0", "/o"])
+        .current_dir(&ctx.repo);
     exec(create, true)?;
     let mut index = Command::new(&makepri);
     index
@@ -662,10 +682,15 @@ fn package_zip(ctx: &Ctx, staged: &Path) -> Result<PathBuf> {
     // Windows' own tar (bsdtar) writes a zip when the name says so. Named by its path: a `tar` earlier on
     // PATH may be GNU tar, which does not.
     let tar = env_path("SystemRoot").map(|root| root.join("System32").join("tar.exe")).filter(|tar| tar.exists());
-    let mut command = Command::new(tar.ok_or("tar.exe was not found in System32 (it ships with Windows 10 1803 and later)")?);
+    let mut command =
+        Command::new(tar.ok_or("tar.exe was not found in System32 (it ships with Windows 10 1803 and later)")?);
     command.args(["-a", "-c", "-f"]).arg(&out).arg("-C").arg(staged);
     // Each entry by name, so the archive's paths start at the app's files and not at `./`.
-    let mut entries: Vec<_> = fs::read_dir(staged).map_err(|e| format!("{}: {e}", staged.display()))?.flatten().map(|e| e.file_name()).collect();
+    let mut entries: Vec<_> = fs::read_dir(staged)
+        .map_err(|e| format!("{}: {e}", staged.display()))?
+        .flatten()
+        .map(|e| e.file_name())
+        .collect();
     entries.sort();
     command.args(entries);
     exec(command, true)?;
@@ -754,7 +779,10 @@ fn make_icns(ctx: &Ctx, out: &Path) -> Result<()> {
         (1024, "512x512@2x"),
     ] {
         let mut sips = Command::new("sips");
-        sips.args(["-z", &size.to_string(), &size.to_string()]).arg(&png).arg("--out").arg(iconset.join(format!("icon_{name}.png")));
+        sips.args(["-z", &size.to_string(), &size.to_string()])
+            .arg(&png)
+            .arg("--out")
+            .arg(iconset.join(format!("icon_{name}.png")));
         exec(sips, true)?;
     }
     fs::create_dir_all(out.parent().ok_or("no folder for the icon")?).map_err(|e| format!("{}: {e}", out.display()))?;
@@ -769,17 +797,14 @@ fn make_icns(ctx: &Ctx, out: &Path) -> Result<()> {
 
 /// The app's three executables, which are what its shared library dependencies are read from.
 fn staged_executables(dir: &Path) -> [PathBuf; 3] {
-    [
-        dir.join("bifurc-ui"),
-        dir.join("bifurc-engine"),
-        dir.join("bin").join("bifurc"),
-    ]
+    [dir.join("bifurc-ui"), dir.join("bifurc-engine"), dir.join("bin").join("bifurc")]
 }
 
 /// The packages the executables' shared libraries come from, as `dpkg-shlibdeps` finds them on this machine.
 /// Vulkan is loaded at run time and is in no executable's list, so it is added.
 fn deb_depends(ctx: &Ctx, lib: &Path) -> String {
-    const FALLBACK: &str = "libc6, libgcc-s1, libasound2, libfontconfig1, libx11-xcb1, libxkbcommon0, libxkbcommon-x11-0, libzstd1";
+    const FALLBACK: &str =
+        "libc6, libgcc-s1, libasound2, libfontconfig1, libx11-xcb1, libxkbcommon0, libxkbcommon-x11-0, libzstd1";
     // The tool reads a source package's control file from where it runs; an empty one is enough for it.
     let work = ctx.out_dir.join("deb-shlibdeps");
     let found = (|| -> Result<String> {
@@ -886,7 +911,9 @@ fn find_appimagetool(ctx: &Ctx) -> Result<PathBuf> {
     let tool = cache.join(format!("appimagetool-{arch}.AppImage"));
     if !tool.exists() {
         fs::create_dir_all(&cache).map_err(|e| format!("{}: {e}", cache.display()))?;
-        let url = format!("https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-{arch}.AppImage");
+        let url = format!(
+            "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-{arch}.AppImage"
+        );
         let mut curl = Command::new("curl");
         curl.args(["-fsSL", "-o"]).arg(&tool).arg(&url);
         exec(curl, false)?;
@@ -911,7 +938,17 @@ fn package_appimage(ctx: &Ctx, staged: &Path) -> Result<PathBuf> {
     let icon = ctx.repo.join("build").join("icon.png");
     copy_file(&icon, &app_dir.join("bifurc.png"))?;
     copy_file(&icon, &app_dir.join(".DirIcon"))?;
-    copy_file(&icon, &app_dir.join("usr").join("share").join("icons").join("hicolor").join("512x512").join("apps").join("bifurc.png"))?;
+    copy_file(
+        &icon,
+        &app_dir
+            .join("usr")
+            .join("share")
+            .join("icons")
+            .join("hicolor")
+            .join("512x512")
+            .join("apps")
+            .join("bifurc.png"),
+    )?;
 
     let out = ctx.out_dir.join(format!("Bifurc-{VERSION}-{arch}.AppImage"));
     // The tool is itself an AppImage; unpacking instead of mounting spares the build machine FUSE.

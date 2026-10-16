@@ -14,10 +14,7 @@ use super::{
     reference::references,
 };
 use crate::{
-    env::load_merged_environment,
-    rest::pipeline::env_to_map,
-    utils::json::str_of,
-    workspace::config::load_entity,
+    env::load_merged_environment, rest::pipeline::env_to_map, utils::json::str_of, workspace::config::load_entity,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -379,7 +376,9 @@ fn inputs_of(flow: &Flow, node: &Node, variables: &[String], env: &Value) -> Vec
             let name = id.split_once(':').map_or(id.as_str(), |(_, name)| name).to_string();
             let wire = flow.wires_into(&node.id).find(|wire| wire.input == id);
             let from_run = flow.inputs.iter().find(|input| input.name == name).filter(|_| id.starts_with("var:"));
-            let from_env = env.get(&name).filter(|_| id.starts_with("var:") && !matches!(node.kind, NodeKind::Evaluate | NodeKind::If));
+            let from_env = env
+                .get(&name)
+                .filter(|_| id.starts_with("var:") && !matches!(node.kind, NodeKind::Evaluate | NodeKind::If));
             let (source, value) = match (wire, typed, from_run, from_env) {
                 (Some(_), ..) => ("wired", Value::Null),
                 (None, Some(text), ..) => ("static", json!(text)),
@@ -504,7 +503,12 @@ mod tests {
         assert_eq!(sources("a"), [pair("var:host", "input"), pair("var:id", "unset"), pair("var:token", "unset")]);
         assert_eq!(
             sources("b"),
-            [pair("var:host", "input"), pair("var:id", "wired"), pair("var:token", "static"), pair("var:gone", "wired")]
+            [
+                pair("var:host", "input"),
+                pair("var:id", "wired"),
+                pair("var:token", "static"),
+                pair("var:gone", "wired")
+            ]
         );
         let wired = &described["nodes"]["b"]["inputs"][1];
         assert_eq!((&wired["from"]["nodeId"], &wired["from"]["path"]), (&json!("a"), &json!(["body", "id"])));

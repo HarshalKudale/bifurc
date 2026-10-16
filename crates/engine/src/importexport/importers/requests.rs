@@ -57,11 +57,15 @@ const NOT_REQUESTS: &str = "Not a valid lp-requests-v1 file";
 fn parse_requests_file(content: &str) -> Result<(Vec<Value>, Vec<Value>), String> {
     let data = parse_json(content)?;
     let requests = match opt_str(&data, "schema") {
-        Some("lp-requests-v1") if data.get("requests").is_some_and(Value::is_array) => array_of(&data, "requests").to_vec(),
-        Some("lp-websockets-v1") if data.get("wsConnections").is_some_and(Value::is_array) => array_of(&data, "wsConnections")
-            .iter()
-            .map(|connection| merged(connection, &json!({ "type": "websocket" })))
-            .collect(),
+        Some("lp-requests-v1") if data.get("requests").is_some_and(Value::is_array) => {
+            array_of(&data, "requests").to_vec()
+        }
+        Some("lp-websockets-v1") if data.get("wsConnections").is_some_and(Value::is_array) => {
+            array_of(&data, "wsConnections")
+                .iter()
+                .map(|connection| merged(connection, &json!({ "type": "websocket" })))
+                .collect()
+        }
         _ => return Err(thrown(NOT_REQUESTS)),
     };
     Ok((requests, array_of(&data, "folders").to_vec()))
@@ -112,7 +116,8 @@ pub async fn json_run(ws_id: String, source: ImportSource, strategy: Strategy) -
             continue;
         }
         let source_id = str_of(request, "id");
-        let new_id = if strategy == Strategy::New || source_id.is_empty() { generate_id() } else { source_id.to_string() };
+        let new_id =
+            if strategy == Strategy::New || source_id.is_empty() { generate_id() } else { source_id.to_string() };
         let (root_id, _) = root.get(&mut cfg, &ws_id)?;
         let in_folder = opt_str(request, "folderId").filter(|f| !f.is_empty()).and_then(|f| folder_ids.get(f)).cloned();
         let folder_id = in_folder.unwrap_or(root_id);
@@ -205,7 +210,10 @@ fn parse_har(source: &ImportSource) -> Result<Collection, String> {
             method: js_str(&request["method"]),
             url: js_str(&request["url"]),
             // HTTP/2 writes the request line as headers named `:method`, `:path`, …
-            headers: named_pairs(array_of(request, "headers")).into_iter().filter(|(name, _)| !name.starts_with(':')).collect(),
+            headers: named_pairs(array_of(request, "headers"))
+                .into_iter()
+                .filter(|(name, _)| !name.starts_with(':'))
+                .collect(),
             ..Http::default()
         };
         if let Some(post) = request.get("postData").filter(|p| p.is_object()) {
@@ -213,7 +221,9 @@ fn parse_har(source: &ImportSource) -> Result<Collection, String> {
             let params = array_of(post, "params");
             match present(post, "text").map(js_str).filter(|text| !text.is_empty()) {
                 Some(text) => call.body = text,
-                None if mime.starts_with("multipart/") || params.iter().any(|p| p.get("fileName").is_some_and(is_truthy)) => {
+                None if mime.starts_with("multipart/")
+                    || params.iter().any(|p| p.get("fileName").is_some_and(is_truthy)) =>
+                {
                     call.parts = params
                         .iter()
                         .map(|p| CurlPart {
@@ -357,7 +367,9 @@ fn operation(spec: &Value, base: &str, op_path: &str, method: &str, path_item: &
     let mut parameters: Vec<&Value> = Vec::new();
     for parameter in array_of(path_item, "parameters").iter().chain(array_of(op, "parameters")) {
         let parameter = resolve(spec, parameter);
-        let same = |other: &&Value| str_of(other, "name") == str_of(parameter, "name") && str_of(other, "in") == str_of(parameter, "in");
+        let same = |other: &&Value| {
+            str_of(other, "name") == str_of(parameter, "name") && str_of(other, "in") == str_of(parameter, "in")
+        };
         parameters.retain(|other| !same(other));
         parameters.push(parameter);
     }
@@ -381,7 +393,8 @@ fn operation(spec: &Value, base: &str, op_path: &str, method: &str, path_item: &
             // Swagger 2 names the body as a parameter.
             "body" => {
                 let consumes = op.get("consumes").or_else(|| spec.get("consumes"));
-                let content_type = consumes.and_then(|c| c.get(0)).and_then(Value::as_str).unwrap_or("application/json");
+                let content_type =
+                    consumes.and_then(|c| c.get(0)).and_then(Value::as_str).unwrap_or("application/json");
                 call.body = body_text(&sample(spec, parameter.get("schema").unwrap_or(&Value::Null), 0), content_type);
                 call.default_header("Content-Type", content_type);
             }
@@ -396,10 +409,12 @@ fn operation(spec: &Value, base: &str, op_path: &str, method: &str, path_item: &
 
     let body = resolve(spec, op.get("requestBody").unwrap_or(&Value::Null));
     if let Some(content) = body.get("content").and_then(Value::as_object) {
-        let chosen = content.iter().find(|(content_type, _)| content_type.contains("json")).or_else(|| content.iter().next());
+        let chosen =
+            content.iter().find(|(content_type, _)| content_type.contains("json")).or_else(|| content.iter().next());
         if let Some((content_type, media)) = chosen {
             let example = present(media, "example").cloned().or_else(|| {
-                let first = media.get("examples").and_then(Value::as_object).and_then(|examples| examples.values().next())?;
+                let first =
+                    media.get("examples").and_then(Value::as_object).and_then(|examples| examples.values().next())?;
                 present(resolve(spec, first), "value").cloned()
             });
             let value = example.unwrap_or_else(|| sample(spec, media.get("schema").unwrap_or(&Value::Null), 0));
@@ -424,7 +439,8 @@ fn parse_openapi(source: &ImportSource) -> Result<Collection, String> {
     if !spec.get("openapi").is_some_and(is_truthy) && !spec.get("swagger").is_some_and(is_truthy) {
         return Err(NOT_OPENAPI.to_string());
     }
-    let title = spec.get("info").and_then(|i| present(i, "title")).map(js_str).unwrap_or_else(|| "Imported".to_string());
+    let title =
+        spec.get("info").and_then(|i| present(i, "title")).map(js_str).unwrap_or_else(|| "Imported".to_string());
     let mut out = Collection { name: title, ..Collection::default() };
     let base = base_url(&spec);
     if base.starts_with("{{baseUrl}}") {
@@ -518,10 +534,16 @@ mod tests {
                     "reqBody": b64("{\"a\":1}"), "resHeaders": {}, "resBody": STANDARD.encode([0xff, 0xfe, 0x00]), "resStatus": 201 }),
         ];
         let har = crate::capture::captured_to_har(&entries).to_string();
-        assert_eq!(har_run(ws.clone(), source(&har, "captured-requests.har"), Strategy::Keep).await.unwrap().imported, 2);
+        assert_eq!(
+            har_run(ws.clone(), source(&har, "captured-requests.har"), Strategy::Keep).await.unwrap().imported,
+            2
+        );
         let all = of_kind(&ws, "requests");
         let get = all.iter().find(|r| r["method"] == "GET").unwrap();
-        assert_eq!((&get["url"], &get["headers"], &get["body"]), (&json!("http://h/a?x=1&y=two"), &json!({ "X-A": "1" }), &json!("")));
+        assert_eq!(
+            (&get["url"], &get["headers"], &get["body"]),
+            (&json!("http://h/a?x=1&y=two"), &json!({ "X-A": "1" }), &json!(""))
+        );
         assert_eq!(get["createdAt"], 1_700_000_000_000_i64);
         let post = all.iter().find(|r| r["method"] == "POST").unwrap();
         assert_eq!((&post["url"], &post["body"]), (&json!("http://h/b"), &json!("{\"a\":1}")));
@@ -692,6 +714,9 @@ mod tests {
         let old = json!({ "schema": "lp-websockets-v1", "wsConnections": [{ "id": "c9", "name": "Old", "url": "ws://y", "headers": {} }] }).to_string();
         assert_eq!(json_run(ws.clone(), source(&old, "w.json"), Strategy::Keep).await.unwrap().imported, 1);
         assert!(read_entity(&ws, "sockets", "c9").is_some());
-        assert_eq!(json_preflight(&ws, &source("{\"schema\":\"x\"}", "r.json")).err().unwrap(), "Error: Not a valid lp-requests-v1 file");
+        assert_eq!(
+            json_preflight(&ws, &source("{\"schema\":\"x\"}", "r.json")).err().unwrap(),
+            "Error: Not a valid lp-requests-v1 file"
+        );
     }
 }

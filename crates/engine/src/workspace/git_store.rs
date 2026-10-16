@@ -380,10 +380,9 @@ pub async fn query_log(opts: &QueryLogOptions) -> (Vec<Value>, usize) {
         .filter(|e| opts.from_ts.filter(|t| *t != 0).is_none_or(|from| ts(e) >= from))
         .filter(|e| opts.to_ts.filter(|t| *t != 0).is_none_or(|to| ts(e) <= to))
         .filter(|e| {
-            opts.search
-                .as_ref()
-                .filter(|s| !s.is_empty())
-                .is_none_or(|s| format!("{}\n{}", text(e, "entityName"), text(e, "message")).to_lowercase().contains(&s.to_lowercase()))
+            opts.search.as_ref().filter(|s| !s.is_empty()).is_none_or(|s| {
+                format!("{}\n{}", text(e, "entityName"), text(e, "message")).to_lowercase().contains(&s.to_lowercase())
+            })
         })
         .collect();
 

@@ -271,9 +271,8 @@ pub fn lock_of(ws_id: &str, kind: &str, id: &str) -> Option<String> {
 /// Every entity of `kind` that is not locked, read from its file. `only` narrows them to the ids it holds.
 pub fn read_all(ws_id: &str, kind: &str, only: Option<&dyn Fn(&str) -> bool>) -> Vec<Value> {
     let (Some(scope), Some(ty)) = (Scope::of_kind(kind), type_of_kind(kind)) else { return Vec::new() };
-    let listed = with_index(ws_id, scope, |conn, dir| {
-        Ok((db::entries_of_type(conn, ty).map_err(db::io)?, dir.to_path_buf()))
-    });
+    let listed =
+        with_index(ws_id, scope, |conn, dir| Ok((db::entries_of_type(conn, ty).map_err(db::io)?, dir.to_path_buf())));
     let Ok((entries, dir)) = listed else { return Vec::new() };
     entries
         .into_iter()
@@ -635,8 +634,11 @@ mod tests {
         assert!(entries(ws, Scope::Mocks).is_empty());
         let dir = ws_dir(ws).join("mocks/Pulled/Deep");
         std::fs::create_dir_all(&dir).unwrap();
-        std::fs::write(dir.join("m1.json"), r#"{ "id": "m1", "name": "Users", "method": "GET", "urlPattern": "/users" }"#)
-            .unwrap();
+        std::fs::write(
+            dir.join("m1.json"),
+            r#"{ "id": "m1", "name": "Users", "method": "GET", "urlPattern": "/users" }"#,
+        )
+        .unwrap();
         assert!(entries(ws, Scope::Mocks).is_empty(), "nothing said the tree changed");
         mark_stale(ws);
         let listed = entries(ws, Scope::Mocks);

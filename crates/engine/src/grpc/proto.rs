@@ -9,10 +9,7 @@ use protox::{
     file::{ChainFileResolver, File, FileResolver, GoogleFileResolver},
 };
 
-use crate::{
-    utils::json::str_of,
-    workspace::fs::read_all_entities,
-};
+use crate::{utils::json::str_of, workspace::fs::read_all_entities};
 
 /// The workspace's saved proto files, as (name, source).
 struct SavedProtos(Vec<(String, String)>);
@@ -45,7 +42,11 @@ pub fn pool_from_saved(workspace_id: &str, proto_file_id: &str) -> Result<Descri
     let saved: Vec<(String, String, String)> = read_all_entities(workspace_id, "protoFiles")
         .iter()
         .map(|entity| {
-            (str_of(entity, "id").to_owned(), str_of(entity, "name").replace('\\', "/"), str_of(entity, "content").to_owned())
+            (
+                str_of(entity, "id").to_owned(),
+                str_of(entity, "name").replace('\\', "/"),
+                str_of(entity, "content").to_owned(),
+            )
         })
         .collect();
     let main = saved

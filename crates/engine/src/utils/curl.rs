@@ -767,7 +767,8 @@ mod tests {
 
     #[test]
     fn the_value_of_a_transfer_option_is_not_the_url() {
-        let request = strict("curl -x http://proxy:8080 -o out.json --max-time 5 -w '%{http_code}' --compressed h.test/a");
+        let request =
+            strict("curl -x http://proxy:8080 -o out.json --max-time 5 -w '%{http_code}' --compressed h.test/a");
         assert_eq!(request.url, "http://h.test/a");
         assert_eq!(request.method, "GET");
         let request = strict("curl --retry 3 localhost:3000/x | jq .");
@@ -804,7 +805,8 @@ mod tests {
 
     #[test]
     fn json_sets_its_headers_and_a_later_header_wins() {
-        let request = strict("curl --json '{\"a\":1}' https://h.test/ -H 'accept: text/plain' -H 'X: 1' -H 'x: 2' -H 'Empty;'");
+        let request =
+            strict("curl --json '{\"a\":1}' https://h.test/ -H 'accept: text/plain' -H 'X: 1' -H 'x: 2' -H 'Empty;'");
         assert_eq!(request.method, "POST");
         assert_eq!(request.body, "{\"a\":1}");
         assert_eq!(request.header("content-type"), Some("application/json"));

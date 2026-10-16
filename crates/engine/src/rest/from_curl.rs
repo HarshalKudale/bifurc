@@ -216,8 +216,9 @@ mod tests {
 
     #[test]
     fn a_plain_call_is_a_rest_request() {
-        let (kind, request) =
-            built("curl -X PUT https://api.test/users/7?full=1 -H 'Host: api.test' -H 'X-A: 1' -d '{\"a\":1}' -H 'Content-Type: application/json'");
+        let (kind, request) = built(
+            "curl -X PUT https://api.test/users/7?full=1 -H 'Host: api.test' -H 'X-A: 1' -d '{\"a\":1}' -H 'Content-Type: application/json'",
+        );
         assert_eq!(kind, "requests");
         assert_eq!(
             request,
@@ -268,7 +269,8 @@ mod tests {
         assert_eq!(request["headers"], json!({ "Authorization": "Bearer t" }));
 
         // A JSON body that merely has a field called `query` is not GraphQL.
-        let (kind, _) = built(r#"curl https://api.test/search -H 'Content-Type: application/json' -d '{"query":"shoes"}'"#);
+        let (kind, _) =
+            built(r#"curl https://api.test/search -H 'Content-Type: application/json' -d '{"query":"shoes"}'"#);
         assert_eq!(kind, "requests");
         let (kind, request) = built("curl https://api.test/graphql --json '{\"query\":\"{ me { id } }\"}'");
         assert_eq!(kind, "graphqlRequests");
@@ -278,7 +280,8 @@ mod tests {
 
     #[test]
     fn an_envelope_or_a_soap_action_is_soap() {
-        let envelope = "<soap:Envelope xmlns:soap=\"http://schemas.xmlsoap.org/soap/envelope/\"><soap:Body/></soap:Envelope>";
+        let envelope =
+            "<soap:Envelope xmlns:soap=\"http://schemas.xmlsoap.org/soap/envelope/\"><soap:Body/></soap:Envelope>";
         let (kind, request) = built(&format!(
             "curl https://svc.test/ws -H 'Content-Type: text/xml; charset=utf-8' -H 'SOAPAction: \"urn:Get\"' -H 'X-A: 1' -d '{envelope}'"
         ));
@@ -314,8 +317,9 @@ mod tests {
 
     #[test]
     fn a_mock_answers_the_call_the_command_makes() {
-        let mock = curl_to_mock("curl -X POST https://api.test/orders?x=1 -H 'Host: api.test' -H 'X-A: 1' -d '{\"a\":1}'")
-            .unwrap();
+        let mock =
+            curl_to_mock("curl -X POST https://api.test/orders?x=1 -H 'Host: api.test' -H 'X-A: 1' -d '{\"a\":1}'")
+                .unwrap();
         assert_eq!(mock["name"], "POST /orders");
         assert_eq!(mock["method"], "POST");
         assert_eq!(mock["urlPattern"], "https://api.test/orders?x=1");

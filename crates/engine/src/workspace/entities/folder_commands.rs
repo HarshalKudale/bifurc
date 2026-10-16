@@ -114,7 +114,8 @@ async fn delete_tree_folder(scope: Scope, params: &Value) -> Result<Value> {
     let subtree: Vec<&tree::Folder> = all.iter().filter(|f| f.id == id || f.path.starts_with(&under)).collect();
     let in_subtree = |folder_id: &str| subtree.iter().any(|f| f.id == folder_id);
     // A locked entity cannot be deleted, so neither can a folder that holds one: nothing is taken out of it.
-    let held = tree::entries(&ws_id, scope).into_iter().filter(|entry| entry.folder_id.as_deref().is_some_and(in_subtree));
+    let held =
+        tree::entries(&ws_id, scope).into_iter().filter(|entry| entry.folder_id.as_deref().is_some_and(in_subtree));
     if let Some(version) = held.filter_map(|entry| entry.lock()).next() {
         return Err(stamp::folder_update_required(&version));
     }
@@ -318,8 +319,8 @@ pub fn register(registry: &mut CommandRegistry) {
             return Ok(json!({ "ok": true, "pending": true }));
         }
         let ws_id = folder_workspace(&folder, &cfg);
-        let crud = crud_kind(conf.fs_kind)
-            .ok_or_else(|| EngineError::engine(format!("Unknown folder kind \"{kind}\".")))?;
+        let crud =
+            crud_kind(conf.fs_kind).ok_or_else(|| EngineError::engine(format!("Unknown folder kind \"{kind}\".")))?;
 
         let live: Vec<Value> = all_folders.iter().filter(|f| !truthy(f, "deleted")).cloned().collect();
         let subtree = folder_subtree(&live, id);
@@ -330,13 +331,18 @@ pub fn register(registry: &mut CommandRegistry) {
         let keep = |folder_id: &str, waiting: &mut Vec<String>| {
             let mut at = Some(folder_id.to_string());
             while let Some(current) = at.take().filter(|f| in_subtree(f) && !waiting.contains(f)) {
-                at = live.iter().find(|f| str_of(f, "id") == current).and_then(|f| opt_str(f, "parentId")).map(str::to_string);
+                at = live
+                    .iter()
+                    .find(|f| str_of(f, "id") == current)
+                    .and_then(|f| opt_str(f, "parentId"))
+                    .map(str::to_string);
                 waiting.push(current);
             }
         };
 
         // A locked entity cannot be deleted, so neither can a folder that holds one: nothing is taken out of it.
-        let held = array_of(&cfg, conf.entity_config_key).iter().filter(|e| opt_str(e, "folderId").is_some_and(in_subtree));
+        let held =
+            array_of(&cfg, conf.entity_config_key).iter().filter(|e| opt_str(e, "folderId").is_some_and(in_subtree));
         if let Some(version) = held.filter(|e| truthy(e, "locked")).find_map(|e| opt_str(e, "requiredVersion")) {
             return Err(stamp::folder_update_required(version));
         }
@@ -354,9 +360,9 @@ pub fn register(registry: &mut CommandRegistry) {
             let folder_id = str_of(folder, "id");
             let dir_name = sanitize_dir_name(str_of(folder, "name"));
             // Two folders of one name share a directory; it goes with the last of them.
-            let shared = live.iter().any(|other| {
-                !in_subtree(str_of(other, "id")) && sanitize_dir_name(str_of(other, "name")) == dir_name
-            });
+            let shared = live
+                .iter()
+                .any(|other| !in_subtree(str_of(other, "id")) && sanitize_dir_name(str_of(other, "name")) == dir_name);
             if !shared {
                 delete_entity_dir(&ws_id, conf.fs_kind, &dir_name)?;
             }
@@ -422,7 +428,8 @@ mod tests {
         assert!(requests.join("Inner1").is_dir());
         assert_eq!(tree::folders(WS, Scope::Requests).len(), 2);
         // A folder of that name in that place is that folder.
-        let same = call(&ctx, "folder.add", json!({ "kind": "request", "name": "Outer", "parentId": null })).await.unwrap();
+        let same =
+            call(&ctx, "folder.add", json!({ "kind": "request", "name": "Outer", "parentId": null })).await.unwrap();
         assert_eq!(same["id"], outer["id"]);
 
         // The folders are every request type's: a REST request and a WebSocket in the same one.
@@ -444,7 +451,8 @@ mod tests {
         assert!(requests.join("Renamed").join(format!("{id}.json")).exists());
         let renamed = tree::folder(WS, Scope::Requests, outer["id"].as_str().unwrap()).unwrap();
         assert_eq!(renamed.name, "Renamed");
-        let taken = call(&ctx, "folder.rename", json!({ "kind": "request", "id": inner["id"], "name": "renamed" })).await;
+        let taken =
+            call(&ctx, "folder.rename", json!({ "kind": "request", "id": inner["id"], "name": "renamed" })).await;
         assert_eq!(taken.unwrap_err().code, crate::protocol::ErrorCode::Conflict);
 
         // Moving a folder into another moves its directory into the other's.
@@ -488,9 +496,11 @@ mod tests {
         assert!(entity_dir(WS, "rules").join("Rules").is_dir());
         assert_eq!(read_index(WS, "rules").folders.len(), 1);
 
-        let outer = call(&ctx, "folder.add", json!({ "kind": "mock", "name": "Users", "parentId": null })).await.unwrap();
-        let inner =
-            call(&ctx, "folder.add", json!({ "kind": "mock", "name": "Admin", "parentId": outer["id"] })).await.unwrap();
+        let outer =
+            call(&ctx, "folder.add", json!({ "kind": "mock", "name": "Users", "parentId": null })).await.unwrap();
+        let inner = call(&ctx, "folder.add", json!({ "kind": "mock", "name": "Admin", "parentId": outer["id"] }))
+            .await
+            .unwrap();
         assert_eq!(inner["parentId"], outer["id"]);
         assert!(entity_dir(WS, "mocks").join("Users").join("Admin").is_dir());
         let cfg = load_config();

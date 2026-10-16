@@ -110,13 +110,18 @@ fn render_tab<V: 'static>(
         .child(div().flex_none().text_xs().text_color(theme.muted_foreground).child(tab.badge))
         .child(div().flex_1().min_w_0().overflow_hidden().whitespace_nowrap().text_ellipsis().child(tab.title))
         .children(tab.dirty.then(|| div().flex_none().text_xs().child("●")))
-        .child(Button::new("close-tab").icon(IconName::Close).ghost().xsmall().tooltip(t("components.entity_bar.close")).on_click(
-            move |event, window, cx| {
-                // The tab under the button would otherwise take the click as a selection.
-                cx.stop_propagation();
-                close(event, window, cx);
-            },
-        ))
+        .child(
+            Button::new("close-tab")
+                .icon(IconName::Close)
+                .ghost()
+                .xsmall()
+                .tooltip(t("components.entity_bar.close"))
+                .on_click(move |event, window, cx| {
+                    // The tab under the button would otherwise take the click as a selection.
+                    cx.stop_propagation();
+                    close(event, window, cx);
+                }),
+        )
         .on_click(emit(&view, on_action, TabAction::Select(ix)))
         .on_mouse_down(MouseButton::Middle, move |_, window, cx| {
             middle_view.update(cx, |this, cx| on_action(this, TabAction::Close(ix), window, cx)).ok();
@@ -204,9 +209,11 @@ pub fn tab_strip<V: Render>(
                         .dropdown_menu(move |menu, _, _| {
                             titles.iter().fold(menu.scrollable(true), |menu, (ix, title)| {
                                 menu.item(
-                                    PopupMenuItem::new(title.clone())
-                                        .checked(active == Some(*ix))
-                                        .on_click(emit(&view, on_action, TabAction::Select(*ix))),
+                                    PopupMenuItem::new(title.clone()).checked(active == Some(*ix)).on_click(emit(
+                                        &view,
+                                        on_action,
+                                        TabAction::Select(*ix),
+                                    )),
                                 )
                             })
                         }),

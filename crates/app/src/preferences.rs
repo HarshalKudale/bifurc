@@ -86,7 +86,10 @@ impl WindowState {
         let rect = Rect { x: self.x, y: self.y, width: self.width.max(min.0), height: self.height.max(min.1) };
         // A window needs somewhere to grab it: its top strip must show on a display, not just a corner of it.
         let strip = Rect { height: rect.height.min(TITLE_STRIP.1), ..rect };
-        displays.iter().any(|d| strip.overlap(d).is_some_and(|(w, h)| w >= TITLE_STRIP.0.min(rect.width) && h >= strip.height)).then_some(rect)
+        displays
+            .iter()
+            .any(|d| strip.overlap(d).is_some_and(|(w, h)| w >= TITLE_STRIP.0.min(rect.width) && h >= strip.height))
+            .then_some(rect)
     }
 }
 
@@ -211,7 +214,8 @@ mod tests {
 
     #[test]
     fn an_older_file_loads_with_the_new_fields_defaulted() {
-        let old = r#"{"theme":"Dark","language":"en","font_size":14.0,"sidebar_collapsed":true,"folder_tree_open":false}"#;
+        let old =
+            r#"{"theme":"Dark","language":"en","font_size":14.0,"sidebar_collapsed":true,"folder_tree_open":false}"#;
         let p: Preferences = serde_json::from_str(old).unwrap();
         assert_eq!(p.theme.as_deref(), Some("Dark"));
         assert!(p.sidebar_collapsed && !p.folder_tree_open);
@@ -281,7 +285,11 @@ mod tests {
     fn center(info: PanelInfo, children: usize) -> DockAreaState {
         let leaf = || PanelState { panel_name: "p".into(), children: vec![], info: PanelInfo::tabs(0) };
         DockAreaState {
-            center: PanelState { panel_name: "StackPanel".into(), children: (0..children).map(|_| leaf()).collect(), info },
+            center: PanelState {
+                panel_name: "StackPanel".into(),
+                children: (0..children).map(|_| leaf()).collect(),
+                info,
+            },
             ..Default::default()
         }
     }

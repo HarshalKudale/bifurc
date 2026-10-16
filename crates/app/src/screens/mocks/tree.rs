@@ -5,9 +5,9 @@
 //! a mock.
 
 use gpui_kit::component::{
+    Sizable as _,
     menu::{PopupMenu, PopupMenuItem},
     switch::Switch,
-    Sizable as _,
 };
 use gpui_kit::{AnyElement, App, Entity, IntoElement as _, WeakEntity};
 
@@ -155,7 +155,10 @@ impl FolderTreeSource for MockSource {
 
     fn new_menu(menu: PopupMenu, folder: Option<String>, tree: &WeakEntity<MockTree>) -> PopupMenu {
         let curl = FolderTreeEvent::Extra(MockExtra::ImportCurl { folder: folder.clone() });
-        menu.item(PopupMenuItem::new(t("mocks.menu.mock")).on_click(emitter(tree, FolderTreeEvent::Extra(MockExtra::NewMock { folder }))))
-            .item(PopupMenuItem::new(t(CURL_TAB_TITLE)).on_click(emitter(tree, curl)))
+        menu.item(
+            PopupMenuItem::new(t("mocks.menu.mock"))
+                .on_click(emitter(tree, FolderTreeEvent::Extra(MockExtra::NewMock { folder }))),
+        )
+        .item(PopupMenuItem::new(t(CURL_TAB_TITLE)).on_click(emitter(tree, curl)))
     }
 }

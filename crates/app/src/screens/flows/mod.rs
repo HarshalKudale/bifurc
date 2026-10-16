@@ -35,9 +35,12 @@ use crate::{
     components::{
         Autosave, EntityAction, EntityBar,
         dialogs::{
-            FOLDER_DELETE_CONSEQUENCE, PromptField, confirm_danger, delete_consequence, needs_update, prompt, resolve_deleted,
+            FOLDER_DELETE_CONSEQUENCE, PromptField, confirm_danger, delete_consequence, needs_update, prompt,
+            resolve_deleted,
         },
-        entity_bar, master_detail::master_detail, page,
+        entity_bar,
+        master_detail::master_detail,
+        page,
     },
     engine::{call, call_in, failure, patch_entity},
     i18n::{t, t_with},
@@ -155,7 +158,8 @@ impl FlowsScreen {
         let flows = &self.model.read(cx).config().flows;
         // Nor is one a newer Bifurc saved kept open: the engine does not read it.
         let usable = |flow: &&crate::model::config::FlowInfo| !flow.deleted && flow.locked.is_none();
-        let still_there = self.selected.as_deref().is_some_and(|id| flows.iter().filter(usable).any(|flow| flow.id == id));
+        let still_there =
+            self.selected.as_deref().is_some_and(|id| flows.iter().filter(usable).any(|flow| flow.id == id));
         if !still_there {
             match flows.iter().find(usable).map(|flow| flow.id.clone()) {
                 Some(id) => self.open(id, window, cx),
@@ -707,7 +711,8 @@ impl FlowsScreen {
             if let Some(message) = failure(&outcome) {
                 return this.report(t("flows.error.duplicate"), message, cx);
             }
-            let copy = outcome.ok().and_then(|answer| answer.pointer("/entity/id").and_then(Value::as_str).map(str::to_owned));
+            let copy =
+                outcome.ok().and_then(|answer| answer.pointer("/entity/id").and_then(Value::as_str).map(str::to_owned));
             if let Some(copy) = copy {
                 this.autosave.cancel();
                 this.save(cx);
@@ -721,7 +726,8 @@ impl FlowsScreen {
             TreeKey::Folder(id) => {
                 let model = self.model.read(cx);
                 let client = model.client().clone();
-                let payload = json!({ "kind": "flow", "id": id, "parentId": folder, "workspaceId": model.workspace_id() });
+                let payload =
+                    json!({ "kind": "flow", "id": id, "parentId": folder, "workspaceId": model.workspace_id() });
                 call(&client, cx, "folder.move", payload, |this, outcome, cx| {
                     if let Some(message) = failure(&outcome) {
                         this.report(t("flows.error.move_folder"), message, cx);
@@ -735,7 +741,9 @@ impl FlowsScreen {
     fn confirm_delete(&mut self, key: TreeKey, window: &mut Window, cx: &mut Context<Self>) {
         let name = self.name_of(&key, cx);
         let (title, consequence) = match &key {
-            TreeKey::Folder(_) => (t_with("flows.confirm.delete_folder_title", &[("name", &name)]), t(FOLDER_DELETE_CONSEQUENCE)),
+            TreeKey::Folder(_) => {
+                (t_with("flows.confirm.delete_folder_title", &[("name", &name)]), t(FOLDER_DELETE_CONSEQUENCE))
+            }
             TreeKey::Item(id) => (
                 t_with("flows.confirm.delete_flow_title", &[("name", &name)]),
                 delete_consequence(self.model.read(cx).git().entity_state(id)),
@@ -768,7 +776,13 @@ impl FlowsScreen {
         );
     }
 
-    fn on_tree_event(&mut self, _: &Entity<FlowTree>, event: &FlowTreeEvent, window: &mut Window, cx: &mut Context<Self>) {
+    fn on_tree_event(
+        &mut self,
+        _: &Entity<FlowTree>,
+        event: &FlowTreeEvent,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
         match event.clone() {
             FlowTreeEvent::Open(TreeKey::Item(id)) => self.select(id, window, cx),
             FlowTreeEvent::Open(TreeKey::Folder(_)) => {}
@@ -865,15 +879,21 @@ impl FlowsScreen {
     fn render_bar(&self, doc: &FlowDoc, cx: &mut Context<Self>) -> impl IntoElement {
         let theme = cx.theme().clone();
         let running = self.is_running() || self.is_load_running();
-        let errors: Vec<String> =
-            self.described.problems.iter().filter(|problem| problem.is_error).map(|problem| {
+        let errors: Vec<String> = self
+            .described
+            .problems
+            .iter()
+            .filter(|problem| problem.is_error)
+            .map(|problem| {
                 let node = problem.node_id.as_deref().and_then(|id| doc.node(id)).map(FlowNode::title);
                 match node {
                     Some(node) => format!("{node}: {}", problem.message),
                     None => problem.message.clone(),
                 }
-            }).collect();
-        let first_problem = self.described.problems.iter().find(|problem| problem.is_error).and_then(|p| p.node_id.clone());
+            })
+            .collect();
+        let first_problem =
+            self.described.problems.iter().find(|problem| problem.is_error).and_then(|p| p.node_id.clone());
         let run = if running {
             Button::new("flow-stop")
                 .small()

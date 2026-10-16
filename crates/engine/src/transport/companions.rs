@@ -24,7 +24,8 @@ pub fn sanitize_client_info(info: &Value) -> Option<Value> {
         .iter()
         .filter_map(|key| {
             let text = info.get(*key)?.as_str()?.trim();
-            (!text.is_empty()).then(|| ((*key).to_string(), json!(text.chars().take(MAX_INFO_CHARS).collect::<String>())))
+            (!text.is_empty())
+                .then(|| ((*key).to_string(), json!(text.chars().take(MAX_INFO_CHARS).collect::<String>())))
         })
         .collect();
     (!kept.is_empty()).then_some(Value::Object(kept))

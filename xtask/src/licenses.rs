@@ -32,15 +32,28 @@ const NAMES: [(&str, &str); 11] = [
     ("0BSD", "BSD Zero Clause License"),
     ("Other", "Other licenses"),
 ];
-const ORDER: [&str; 11] =
-    ["MIT", "Apache-2.0", "BSD-3-Clause", "BSD-2-Clause", "ISC", "Zlib", "Unicode-3.0", "0BSD", "CC0-1.0", "MPL-2.0", "Other"];
+const ORDER: [&str; 11] = [
+    "MIT",
+    "Apache-2.0",
+    "BSD-3-Clause",
+    "BSD-2-Clause",
+    "ISC",
+    "Zlib",
+    "Unicode-3.0",
+    "0BSD",
+    "CC0-1.0",
+    "MPL-2.0",
+    "Other",
+];
 
 const MIT_BODY: &str = "Permission is hereby granted, free of charge, to any person obtaining a copy of this software and associated documentation files (the \"Software\"), to deal in the Software without restriction, including without limitation the rights to use, copy, modify, merge, publish, distribute, sublicense, and/or sell copies of the Software, and to permit persons to whom the Software is furnished to do so, subject to the following conditions:\n\nThe above copyright notice and this permission notice shall be included in all copies or substantial portions of the Software.\n\nTHE SOFTWARE IS PROVIDED \"AS IS\", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY, FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.";
 const BSD3_BODY: &str = "Redistribution and use in source and binary forms, with or without modification, are permitted provided that the following conditions are met:\n\n1. Redistributions of source code must retain the above copyright notice, this list of conditions and the following disclaimer.\n\n2. Redistributions in binary form must reproduce the above copyright notice, this list of conditions and the following disclaimer in the documentation and/or other materials provided with the distribution.\n\n3. Neither the name of the copyright holder nor the names of its contributors may be used to endorse or promote products derived from this software without specific prior written permission.\n\nTHIS SOFTWARE IS PROVIDED BY THE COPYRIGHT HOLDERS AND CONTRIBUTORS \"AS IS\" AND ANY EXPRESS OR IMPLIED WARRANTIES, INCLUDING, BUT NOT LIMITED TO, THE IMPLIED WARRANTIES OF MERCHANTABILITY AND FITNESS FOR A PARTICULAR PURPOSE ARE DISCLAIMED. IN NO EVENT SHALL THE COPYRIGHT HOLDER OR CONTRIBUTORS BE LIABLE FOR ANY DIRECT, INDIRECT, INCIDENTAL, SPECIAL, EXEMPLARY, OR CONSEQUENTIAL DAMAGES (INCLUDING, BUT NOT LIMITED TO, PROCUREMENT OF SUBSTITUTE GOODS OR SERVICES; LOSS OF USE, DATA, OR PROFITS; OR BUSINESS INTERRUPTION) HOWEVER CAUSED AND ON ANY THEORY OF LIABILITY, WHETHER IN CONTRACT, STRICT LIABILITY, OR TORT (INCLUDING NEGLIGENCE OR OTHERWISE) ARISING IN ANY WAY OUT OF THE USE OF THIS SOFTWARE, EVEN IF ADVISED OF THE POSSIBILITY OF SUCH DAMAGE.";
 
 fn note(kind: &str) -> &'static str {
     match kind {
-        "MPL-2.0" => "These libraries are used unmodified. Their source code is available from crates.io and the repositories each one names.",
+        "MPL-2.0" => {
+            "These libraries are used unmodified. Their source code is available from crates.io and the repositories each one names."
+        }
         "Other" => "Libraries whose license is a combination of terms, or a license of its own.",
         _ => "",
     }
@@ -61,7 +74,9 @@ fn classify(text: &str) -> &'static str {
         "Zlib"
     } else if has("redistribution and use in source and binary forms") {
         if has("neither the name") || has("endorse") { "BSD-3-Clause" } else { "BSD-2-Clause" }
-    } else if has("permission to use, copy, modify, and/or distribute") || has("permission to use, copy, modify, and distribute") {
+    } else if has("permission to use, copy, modify, and/or distribute")
+        || has("permission to use, copy, modify, and distribute")
+    {
         "ISC"
     } else if has("cc0") || has("creative commons") {
         "CC0-1.0"
@@ -163,9 +178,12 @@ fn shipped(repo: &Path) -> Result<BTreeMap<(String, String), Value>> {
     }
     let m: Value = serde_json::from_slice(&out.stdout).map_err(|e| format!("cargo metadata output: {e}"))?;
     let id_of = |v: &Value| v["id"].as_str().unwrap_or_default().to_owned();
-    let packages: BTreeMap<String, &Value> = m["packages"].as_array().into_iter().flatten().map(|p| (id_of(p), p)).collect();
-    let nodes: BTreeMap<String, &Value> = m["resolve"]["nodes"].as_array().into_iter().flatten().map(|n| (id_of(n), n)).collect();
-    let roots: BTreeSet<String> = m["workspace_members"].as_array().into_iter().flatten().filter_map(Value::as_str).map(str::to_owned).collect();
+    let packages: BTreeMap<String, &Value> =
+        m["packages"].as_array().into_iter().flatten().map(|p| (id_of(p), p)).collect();
+    let nodes: BTreeMap<String, &Value> =
+        m["resolve"]["nodes"].as_array().into_iter().flatten().map(|n| (id_of(n), n)).collect();
+    let roots: BTreeSet<String> =
+        m["workspace_members"].as_array().into_iter().flatten().filter_map(Value::as_str).map(str::to_owned).collect();
     let (mut seen, mut stack) = (BTreeSet::new(), roots.iter().cloned().collect::<Vec<_>>());
     while let Some(id) = stack.pop() {
         if !seen.insert(id.clone()) {
@@ -182,7 +200,9 @@ fn shipped(repo: &Path) -> Result<BTreeMap<(String, String), Value>> {
         let p = packages.get(id).ok_or(format!("package {id} missing from metadata"))?;
         let name = p["name"].as_str().unwrap_or_default();
         if !name.starts_with("bifurc-") {
-            crates.entry((name.to_owned(), p["version"].as_str().unwrap_or_default().to_owned())).or_insert_with(|| (*p).clone());
+            crates
+                .entry((name.to_owned(), p["version"].as_str().unwrap_or_default().to_owned()))
+                .or_insert_with(|| (*p).clone());
         }
     }
     Ok(crates)
@@ -195,7 +215,10 @@ fn generate(repo: &Path) -> Result<String> {
     let mut per_crate: BTreeMap<&(String, String), Vec<String>> = BTreeMap::new();
     let mut library: BTreeMap<&str, String> = BTreeMap::new(); // whole texts reusable for crates that ship none
     for (key, p) in &crates {
-        let dir = Path::new(p["manifest_path"].as_str().unwrap_or_default()).parent().map(Path::to_path_buf).unwrap_or_default();
+        let dir = Path::new(p["manifest_path"].as_str().unwrap_or_default())
+            .parent()
+            .map(Path::to_path_buf)
+            .unwrap_or_default();
         let mut texts = Vec::new();
         for f in license_files(&dir) {
             let text = read_text(&f);
@@ -218,8 +241,11 @@ fn generate(repo: &Path) -> Result<String> {
         let license = p["license"].as_str().unwrap_or_default();
         let opts = options(license);
         let texts = &per_crate[key];
-        let mut kept: Vec<String> =
-            if opts.is_empty() { texts.clone() } else { texts.iter().filter(|t| opts.iter().any(|o| o == classify(t))).cloned().collect() };
+        let mut kept: Vec<String> = if opts.is_empty() {
+            texts.clone()
+        } else {
+            texts.iter().filter(|t| opts.iter().any(|o| o == classify(t))).cloned().collect()
+        };
         if !opts.is_empty() && !kept.is_empty() {
             // Dual-licensed: keep the one permissive option the crate offers first, not every file it ships.
             let best = kept.iter().min_by_key(|t| rank(classify(t))).unwrap().clone();

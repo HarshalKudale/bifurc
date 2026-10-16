@@ -174,8 +174,15 @@ mod tests {
         let mut answers = engine();
         answers.extend([
             // The engine holds the connection and has an old message.
-            ("socketio.status", connection("connected", Value::Null, json!([
-                {"id": "i1-1", "direction": "received", "type": "event", "event": "old", "data": "[]", "ackId": null}]))),
+            (
+                "socketio.status",
+                connection(
+                    "connected",
+                    Value::Null,
+                    json!([
+                {"id": "i1-1", "direction": "received", "type": "event", "event": "old", "data": "[]", "ackId": null}]),
+                ),
+            ),
             ("socketio.emit", Ok(json!({"ok": true}))),
         ]);
         let argv = ["requests", "send", "i1", "--event", "say", "-d", "[\"hi\"]", "--ack", "--wait", "0"];
@@ -254,8 +261,22 @@ mod tests {
             ("socketio.disconnect", Ok(json!({"ok": true}))),
         ];
         let argv = [
-            "requests", "send", "-t", "socket.io", "--url", "http://x", "--namespace", "/chat", "--path", "/rt",
-            "--auth", "{\"token\":\"t\"}", "-H", "a: 1", "--wait", "30",
+            "requests",
+            "send",
+            "-t",
+            "socket.io",
+            "--url",
+            "http://x",
+            "--namespace",
+            "/chat",
+            "--path",
+            "/rt",
+            "--auth",
+            "{\"token\":\"t\"}",
+            "-H",
+            "a: 1",
+            "--wait",
+            "30",
         ];
         // The connection is over when it is first asked about, so there is nothing to wait 30 seconds for.
         let started = Instant::now();
@@ -278,12 +299,18 @@ mod tests {
             ("socketio.connect", Ok(json!({"ok": true}))),
             ("socketio.disconnect", Ok(json!({"ok": true}))),
         ];
-        let argv = ["requests", "send", "-t", "socketio", "--url", "http://x", "--listen", "message", "--listen", "tick", "--wait", "0"];
+        let argv = [
+            "requests", "send", "-t", "socketio", "--url", "http://x", "--listen", "message", "--listen", "tick",
+            "--wait", "0",
+        ];
         let (_, calls) = run(&argv, answers, |c| requests(c, sub(&argv)));
         assert_eq!(payloads(&calls, "socketio.connect")[0]["listeners"], json!(["message", "tick"]));
 
         let mut answers = engine();
-        answers.extend([("entity.create", Ok(json!({"id": "n1", "entity": {"id": "n1"}}))), ("entity.update", Ok(json!({"ok": true})))]);
+        answers.extend([
+            ("entity.create", Ok(json!({"id": "n1", "entity": {"id": "n1"}}))),
+            ("entity.update", Ok(json!({"ok": true}))),
+        ]);
         let argv = ["requests", "create", "-t", "socketio", "http://x", "--listen", "message"];
         let (_, calls) = run(&argv, answers.clone(), |c| requests(c, sub(&argv)));
         let entity = &payloads(&calls, "entity.create")[0]["entity"];
@@ -298,7 +325,9 @@ mod tests {
         let (out, _) = run(&argv, answers, |c| requests(c, sub(&argv)));
         assert_eq!(
             out.unwrap_err(),
-            CliError::msg("a saved request is sent as it is saved, without --listen; change it with: bifurc requests update")
+            CliError::msg(
+                "a saved request is sent as it is saved, without --listen; change it with: bifurc requests update"
+            )
         );
     }
 
@@ -317,17 +346,25 @@ mod tests {
     #[test]
     fn options_that_do_not_belong_to_the_send_are_refused() {
         for (argv, message) in [
-            (vec!["requests", "send", "i1", "--namespace", "/x"],
-             "a saved request is sent as it is saved, without --namespace; change it with: bifurc requests update"),
+            (
+                vec!["requests", "send", "i1", "--namespace", "/x"],
+                "a saved request is sent as it is saved, without --namespace; change it with: bifurc requests update",
+            ),
             (vec!["requests", "send", "i1", "-d", "[1]"], "--body goes with --event <name>, the event to emit"),
             (vec!["requests", "send", "i1", "--ack"], "--ack goes with --event <name>, the event to emit"),
             (vec!["requests", "send", "i1", "--wait", "soon"], "--wait must be a number of seconds, not \"soon\""),
-            (vec!["requests", "send", "-t", "socketio", "--url", "http://x", "-X", "POST"],
-             "--method is not an option of a socketio request (see: bifurc requests --help)"),
-            (vec!["requests", "send", "-t", "rest", "--url", "http://x", "--event", "say"],
-             "--event is not an option of a rest request (see: bifurc requests --help)"),
-            (vec!["requests", "send", "-t", "sse", "--url", "http://x", "--ack"],
-             "--ack is not an option of a sse request (see: bifurc requests --help)"),
+            (
+                vec!["requests", "send", "-t", "socketio", "--url", "http://x", "-X", "POST"],
+                "--method is not an option of a socketio request (see: bifurc requests --help)",
+            ),
+            (
+                vec!["requests", "send", "-t", "rest", "--url", "http://x", "--event", "say"],
+                "--event is not an option of a rest request (see: bifurc requests --help)",
+            ),
+            (
+                vec!["requests", "send", "-t", "sse", "--url", "http://x", "--ack"],
+                "--ack is not an option of a sse request (see: bifurc requests --help)",
+            ),
         ] {
             let (out, calls) = run(&argv, engine(), |c| requests(c, sub(&argv)));
             assert_eq!(out.unwrap_err(), CliError::msg(message), "{argv:?}");
@@ -338,7 +375,10 @@ mod tests {
     #[test]
     fn create_and_update_build_a_socketio_request() {
         let mut answers = engine();
-        answers.extend([("entity.create", Ok(json!({"id": "n1", "entity": {"id": "n1"}}))), ("entity.update", Ok(json!({"ok": true})))]);
+        answers.extend([
+            ("entity.create", Ok(json!({"id": "n1", "entity": {"id": "n1"}}))),
+            ("entity.update", Ok(json!({"ok": true}))),
+        ]);
         let argv = ["requests", "create", "--type", "socketio", "http://x", "--namespace", "/chat", "-H", "a: 1"];
         let (out, calls) = run(&argv, answers.clone(), |c| requests(c, sub(&argv)));
         assert_eq!(out.unwrap(), "Saved socketio request n1");

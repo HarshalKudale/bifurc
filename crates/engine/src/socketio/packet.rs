@@ -240,8 +240,12 @@ pub fn disconnect_frame(namespace: &str) -> String {
 pub fn event_frame(namespace: &str, event: &str, args: &[Value], ack_id: Option<u64>) -> String {
     let mut data = vec![json!(event)];
     data.extend(args.iter().cloned());
-    let packet =
-        Packet { kind: PacketType::Event, namespace: namespace.to_string(), id: ack_id, data: Some(Value::Array(data)) };
+    let packet = Packet {
+        kind: PacketType::Event,
+        namespace: namespace.to_string(),
+        id: ack_id,
+        data: Some(Value::Array(data)),
+    };
     format!("4{}", encode(&packet))
 }
 
@@ -328,7 +332,11 @@ mod tests {
         );
         assert_eq!(
             read_frame("451-[\"file\",{\"_placeholder\":true,\"num\":0}]", "/"),
-            Incoming::Event { name: "file".into(), args: vec![json!({ "_placeholder": true, "num": 0 })], ack_id: None }
+            Incoming::Event {
+                name: "file".into(),
+                args: vec![json!({ "_placeholder": true, "num": 0 })],
+                ack_id: None
+            }
         );
         assert_eq!(read_frame("433[\"ok\",2]", "/"), Incoming::Ack { id: 3, args: vec![json!("ok"), json!(2)] });
         assert_eq!(read_frame("43/chat,3", "/chat"), Incoming::Ack { id: 3, args: vec![] });

@@ -74,11 +74,8 @@ pub fn match_mock<'a>(mocks: &'a [Value], method: &str, url: &str, env: Option<&
             continue;
         }
         let pattern = resolve_vars(str_of(mock, "urlPattern"), env);
-        let hit = if flag(mock, "useRegex", false) {
-crate::utils::regex::is_match(&pattern, url)
-        } else {
-            url == pattern
-        };
+        let hit =
+            if flag(mock, "useRegex", false) { crate::utils::regex::is_match(&pattern, url) } else { url == pattern };
         if hit {
             return Some(mock);
         }

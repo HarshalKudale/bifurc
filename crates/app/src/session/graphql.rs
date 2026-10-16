@@ -15,8 +15,8 @@ use gpui_kit::component::{
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    AnyElement, App, AppContext as _, Context, Entity, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _,
-    Result, SharedString, StatefulInteractiveElement as _, Styled as _, Task, Window, div,
+    AnyElement, App, AppContext as _, Context, Entity, FontWeight, InteractiveElement as _, IntoElement,
+    ParentElement as _, Result, SharedString, StatefulInteractiveElement as _, Styled as _, Task, Window, div,
 };
 use lsp_types::{CompletionContext, CompletionItem, CompletionItemKind, CompletionResponse, Documentation};
 
@@ -74,7 +74,11 @@ impl SchemaPanel {
             .loading(self.fetching)
             .on_click(cx.listener(|this, _, window, cx| this.fetch_schema(window, cx)));
         let Some(schema) = self.schema() else {
-            return page::empty_with_action(t("session.schema.empty_title"), t("session.schema.empty_description"), fetch);
+            return page::empty_with_action(
+                t("session.schema.empty_title"),
+                t("session.schema.empty_description"),
+                fetch,
+            );
         };
         let filter = self.filter.read(cx).value().trim().to_lowercase();
         let theme = cx.theme().clone();

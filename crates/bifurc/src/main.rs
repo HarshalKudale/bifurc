@@ -73,7 +73,8 @@ mod user_path {
 
     fn rewrite(dir: &Path, present: bool) -> io::Result<()> {
         let dir = dir.to_string_lossy().trim_end_matches('\\').to_owned();
-        let (key, _) = RegKey::predef(HKEY_CURRENT_USER).create_subkey_with_flags("Environment", KEY_READ | KEY_WRITE)?;
+        let (key, _) =
+            RegKey::predef(HKEY_CURRENT_USER).create_subkey_with_flags("Environment", KEY_READ | KEY_WRITE)?;
         let (current, kind) = match key.get_raw_value(VALUE) {
             Ok(raw) if matches!(raw.vtype, REG_SZ | REG_EXPAND_SZ) => (wide_to_string(&raw.bytes), raw.vtype),
             Ok(_) => return Err(io::Error::other("the Path value is not text")),

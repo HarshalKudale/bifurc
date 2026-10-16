@@ -165,7 +165,8 @@ pub fn parse_messages(body: &str, method: &MethodDescriptor) -> Result<Vec<Dynam
 pub fn to_json(message: &DynamicMessage) -> String {
     let options = SerializeOptions::new().skip_default_fields(false);
     let mut out = Vec::new();
-    let mut serializer = serde_json::Serializer::with_formatter(&mut out, serde_json::ser::PrettyFormatter::with_indent(b"  "));
+    let mut serializer =
+        serde_json::Serializer::with_formatter(&mut out, serde_json::ser::PrettyFormatter::with_indent(b"  "));
     match message.serialize_with_options(&mut serializer, &options) {
         Ok(()) => String::from_utf8(out).unwrap_or_default(),
         Err(_) => "{}".to_owned(),
@@ -199,7 +200,8 @@ pub fn to_metadata(pairs: &[(String, String)]) -> Result<MetadataMap, String> {
 }
 
 /// Transport bookkeeping that every response carries and nobody wants to read.
-const TRANSPORT_KEYS: [&str; 5] = ["content-type", "grpc-status", "grpc-message", "grpc-encoding", "grpc-accept-encoding"];
+const TRANSPORT_KEYS: [&str; 5] =
+    ["content-type", "grpc-status", "grpc-message", "grpc-encoding", "grpc-accept-encoding"];
 
 pub fn collect_metadata(into: &mut BTreeMap<String, String>, from: &MetadataMap) {
     for entry in from.iter() {
@@ -230,8 +232,12 @@ pub async fn invoke(
     messages: Vec<DynamicMessage>,
     metadata: MetadataMap,
 ) -> CallOutcome {
-    let mut outcome =
-        CallOutcome { responses: Vec::new(), metadata: BTreeMap::new(), status: Code::Ok, status_message: String::new() };
+    let mut outcome = CallOutcome {
+        responses: Vec::new(),
+        metadata: BTreeMap::new(),
+        status: Code::Ok,
+        status_message: String::new(),
+    };
     let run = run(channel, method, messages, metadata, &mut outcome);
     match tokio::time::timeout(CALL_TIMEOUT, run).await {
         Ok(Ok(())) => {

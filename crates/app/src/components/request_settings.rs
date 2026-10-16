@@ -71,7 +71,8 @@ impl SettingsForm {
             }),
         ];
         for state in [&verify_tls, &follow_redirects] {
-            subscriptions.push(cx.subscribe(state, |_, _, _: &SelectEvent<Vec<&'static str>>, cx| cx.emit(SettingsChanged)));
+            subscriptions
+                .push(cx.subscribe(state, |_, _, _: &SelectEvent<Vec<&'static str>>, cx| cx.emit(SettingsChanged)));
         }
         Self { model, verify_tls, follow_redirects, timeout, _subscriptions: subscriptions }
     }

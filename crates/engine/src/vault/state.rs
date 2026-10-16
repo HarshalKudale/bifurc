@@ -243,7 +243,10 @@ impl Redactor {
 
 /// The value as it appears in a log: itself, base64, percent-encoded and JSON-escaped.
 fn encodings(value: &str) -> Vec<Zeroizing<String>> {
-    use base64::{Engine as _, engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD}};
+    use base64::{
+        Engine as _,
+        engine::general_purpose::{STANDARD, URL_SAFE_NO_PAD},
+    };
     let mut forms = vec![
         value.to_string(),
         STANDARD.encode(value),
@@ -286,7 +289,12 @@ mod tests {
         let mut secrets: Vec<_> = encodings(value).into_iter().map(|v| (v, "{{v.P}}".to_string())).collect();
         secrets.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
         let redactor = Redactor { secrets };
-        let text = format!("a={} b={} c={}", value, STANDARD.encode(value), percent_encoding::utf8_percent_encode(value, percent_encoding::NON_ALPHANUMERIC));
+        let text = format!(
+            "a={} b={} c={}",
+            value,
+            STANDARD.encode(value),
+            percent_encoding::utf8_percent_encode(value, percent_encoding::NON_ALPHANUMERIC)
+        );
         assert_eq!(redactor.text(&text), "a={{v.P}} b={{v.P}} c={{v.P}}");
     }
 

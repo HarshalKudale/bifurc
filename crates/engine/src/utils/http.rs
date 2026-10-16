@@ -323,7 +323,10 @@ mod tests {
         let reset = Error::from(ErrorKind::ConnectionReset);
         assert_eq!(describe_send_error(&reset, None, None), "The connection was closed before a response came.");
         let dns = Error::other("dns error: failed to lookup address information");
-        assert_eq!(describe_send_error(&dns, Some("api.example.test"), None), "The name api.example.test could not be found.");
+        assert_eq!(
+            describe_send_error(&dns, Some("api.example.test"), None),
+            "The name api.example.test could not be found."
+        );
     }
 
     #[test]

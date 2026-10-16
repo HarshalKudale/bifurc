@@ -22,24 +22,25 @@ use gpui_kit::component::{
     tag::Tag,
     v_flex,
 };
+use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AppContext as _, ClipboardItem, Context, Entity, EventEmitter, InteractiveElement as _, IntoElement, MouseButton,
     ParentElement as _, Render, SharedString, StatefulInteractiveElement as _, Styled as _, Subscription,
     UniformListScrollHandle, Window, div, px, uniform_list,
 };
-use gpui_kit::prelude::FluentBuilder as _;
 use serde_json::{Value, json};
 use std::{collections::HashSet, ops::Range};
 
 use crate::{
     app_model::{AppModel, ModelEvent},
-    i18n::{t, t_with},
     components::{
         Syntax,
         binary::{BinaryBody, save_to_file, suggested_file_name},
-        master_detail::list_over_detail, page,
+        master_detail::list_over_detail,
+        page,
     },
     engine::{call, call_in, describe, failure, fetch_artifact},
+    i18n::{t, t_with},
     model::{
         git::date_time_utc,
         http::{pretty_json, status_text},
@@ -309,9 +310,7 @@ impl CaptureScreen {
             (false, false) => t_with("capture.status.captured", &[("total", &total)]),
             (true, false) => t_with("capture.status.captured_shown", &[("total", &total), ("shown", &shown)]),
             (false, true) => t_with("capture.status.captured_paused", &[("total", &total)]),
-            (true, true) => {
-                t_with("capture.status.captured_shown_paused", &[("total", &total), ("shown", &shown)])
-            }
+            (true, true) => t_with("capture.status.captured_shown_paused", &[("total", &total), ("shown", &shown)]),
         }
     }
 
@@ -632,7 +631,11 @@ impl CaptureScreen {
                             .label(label)
                             .selected(picked.as_ref().is_some_and(|picked| picked.id == vault.id))
                     }))
-                    .child(Button::new("capture-import-new-vault").label(t("capture.import.new_vault")).selected(picked.is_none()))
+                    .child(
+                        Button::new("capture-import-new-vault")
+                            .label(t("capture.import.new_vault"))
+                            .selected(picked.is_none()),
+                    )
                     .on_click(move |selected: &Vec<usize>, window, cx| {
                         let id = selected.first().and_then(|ix| vault_ids.get(*ix)).cloned();
                         vault_screen.update(cx, |screen, _| screen.import_vault = id);
@@ -641,10 +644,21 @@ impl CaptureScreen {
                 let vault_form = match &picked {
                     None => Form::new()
                         .child(Field::new().label(t("vaults.name")).child(Input::new(&fields.name).py_1p5()))
-                        .child(Field::new().label(t("vaults.passphrase")).child(Input::new(&fields.passphrase).py_1p5().mask_toggle()))
-                        .child(Field::new().label(t("vaults.repeat_passphrase")).child(Input::new(&fields.repeat).py_1p5().mask_toggle())),
-                    Some(vault) if vault.state == VaultState::Sealed => Form::new()
-                        .child(Field::new().label(t("vaults.passphrase")).child(Input::new(&fields.passphrase).py_1p5().mask_toggle())),
+                        .child(
+                            Field::new()
+                                .label(t("vaults.passphrase"))
+                                .child(Input::new(&fields.passphrase).py_1p5().mask_toggle()),
+                        )
+                        .child(
+                            Field::new()
+                                .label(t("vaults.repeat_passphrase"))
+                                .child(Input::new(&fields.repeat).py_1p5().mask_toggle()),
+                        ),
+                    Some(vault) if vault.state == VaultState::Sealed => Form::new().child(
+                        Field::new()
+                            .label(t("vaults.passphrase"))
+                            .child(Input::new(&fields.passphrase).py_1p5().mask_toggle()),
+                    ),
                     Some(_) => Form::new(),
                 };
 
@@ -660,18 +674,24 @@ impl CaptureScreen {
                                 this.child(
                                     section("capture-import-secrets", t("capture.import.secrets_body"), secret_rows)
                                         .child(destinations)
-                                        .when(secrets_to == SecretsTo::Vault, |this| this.child(picker).child(vault_form)),
+                                        .when(secrets_to == SecretsTo::Vault, |this| {
+                                            this.child(picker).child(vault_form)
+                                        }),
                                 )
                             })
                             .when(!cookies.is_empty(), |this| {
-                                this.child(section("capture-import-cookies", t("capture.import.cookies_body"), cookie_rows).child(
-                                    Checkbox::new("capture-import-jar").label(t("capture.import.jar")).checked(jar).on_change(
-                                        move |checked: &bool, window, cx| {
-                                            jar_screen.update(cx, |screen, _| screen.cookies_to_jar = *checked);
-                                            window.refresh();
-                                        },
-                                    ),
-                                ))
+                                this.child(
+                                    section("capture-import-cookies", t("capture.import.cookies_body"), cookie_rows)
+                                        .child(
+                                            Checkbox::new("capture-import-jar")
+                                                .label(t("capture.import.jar"))
+                                                .checked(jar)
+                                                .on_change(move |checked: &bool, window, cx| {
+                                                    jar_screen.update(cx, |screen, _| screen.cookies_to_jar = *checked);
+                                                    window.refresh();
+                                                }),
+                                        ),
+                                )
                             }),
                     )
                     .footer(
@@ -682,16 +702,19 @@ impl CaptureScreen {
                                     .label(t("components.cancel"))
                                     .on_click(|_, window, cx| window.close_dialog(cx)),
                             )
-                            .child(Button::new("capture-import-save").primary().label(t("capture.import.save")).on_click(
-                                move |_, window, cx| {
-                                    let ids = ids.clone();
-                                    let started = save_screen
-                                        .update(cx, |screen, cx| screen.confirm_import(ids, flow, &fields, window, cx));
-                                    if started {
-                                        window.close_dialog(cx);
-                                    }
-                                },
-                            )),
+                            .child(
+                                Button::new("capture-import-save").primary().label(t("capture.import.save")).on_click(
+                                    move |_, window, cx| {
+                                        let ids = ids.clone();
+                                        let started = save_screen.update(cx, |screen, cx| {
+                                            screen.confirm_import(ids, flow, &fields, window, cx)
+                                        });
+                                        if started {
+                                            window.close_dialog(cx);
+                                        }
+                                    },
+                                ),
+                            ),
                     )
             });
         });
@@ -713,12 +736,17 @@ impl CaptureScreen {
             return true;
         }
         let value = |input: &Entity<InputState>, cx: &Context<Self>| input.read(cx).value().trim().to_owned();
-        let (name, passphrase, repeat) = (value(&fields.name, cx), value(&fields.passphrase, cx), value(&fields.repeat, cx));
+        let (name, passphrase, repeat) =
+            (value(&fields.name, cx), value(&fields.passphrase, cx), value(&fields.repeat, cx));
         let model = self.model.read(cx);
         let (client, workspace_id) = (model.client().clone(), model.workspace_id().to_owned());
-        let vault = self.import_vault.as_ref().and_then(|id| model.vaults().iter().find(|vault| &vault.id == id).cloned());
+        let vault =
+            self.import_vault.as_ref().and_then(|id| model.vaults().iter().find(|vault| &vault.id == id).cloned());
         let refuse = |text: &str, window: &mut Window, cx: &mut Context<Self>| {
-            window.push_notification(Notification::warning(text.to_owned()).title(t("components.dialogs.cant_continue")), cx);
+            window.push_notification(
+                Notification::warning(text.to_owned()).title(t("components.dialogs.cant_continue")),
+                cx,
+            );
             false
         };
         match vault {
@@ -796,7 +824,9 @@ impl CaptureScreen {
             let text = match (result["flowId"].is_string(), count) {
                 (true, _) => t_with("capture.saved_flow", &[("count", &count), ("folder", &folder)]),
                 (false, 1) => t("capture.saved_as_request").to_owned(),
-                (false, _) => t_with("capture.saved_requests_in_folder_other", &[("count", &count), ("folder", &folder)]),
+                (false, _) => {
+                    t_with("capture.saved_requests_in_folder_other", &[("count", &count), ("folder", &folder)])
+                }
             };
             window.push_notification(Notification::success(text), cx);
             if !kept.is_empty() {
@@ -857,15 +887,17 @@ impl CaptureScreen {
         let workspace = model.workspace_id().to_owned();
         let payload = json!({ "ids": ids, "workspaceId": workspace });
         call(&client.clone(), cx, "capture.shareJson", payload, move |this, outcome, cx| match outcome {
-            Ok(artifact) => fetch_artifact(this, &client, cx, &workspace, &artifact, |this, fetched, cx| match fetched {
-                Ok((bytes, name)) => save_to_file(bytes, name, cx, |this, outcome, cx| match outcome {
-                    Ok(path) => this.model.update(cx, |model, cx| {
-                        model.notice(t_with("capture.saved_to", &[("path", &path.display())]), cx)
+            Ok(artifact) => {
+                fetch_artifact(this, &client, cx, &workspace, &artifact, |this, fetched, cx| match fetched {
+                    Ok((bytes, name)) => save_to_file(bytes, name, cx, |this, outcome, cx| match outcome {
+                        Ok(path) => this.model.update(cx, |model, cx| {
+                            model.notice(t_with("capture.saved_to", &[("path", &path.display())]), cx)
+                        }),
+                        Err(message) => this.report(t("capture.error.save_file"), message, cx),
                     }),
-                    Err(message) => this.report(t("capture.error.save_file"), message, cx),
-                }),
-                Err(message) => this.report(t("capture.error.export"), message, cx),
-            }),
+                    Err(message) => this.report(t("capture.error.export"), message, cx),
+                })
+            }
             Err(error) => this.report(t("capture.error.export"), describe(&error), cx),
         });
     }
@@ -1053,9 +1085,9 @@ impl CaptureScreen {
         let Body::Data(binary) = body else { return };
         let file_name = suggested_file_name(&shown.exchange.url, name, content_type);
         save_to_file(binary.bytes().to_vec(), file_name, cx, |this, outcome, cx| match outcome {
-            Ok(path) => this.model.update(cx, |model, cx| {
-                model.notice(t_with("capture.saved_to", &[("path", &path.display())]), cx)
-            }),
+            Ok(path) => this
+                .model
+                .update(cx, |model, cx| model.notice(t_with("capture.saved_to", &[("path", &path.display())]), cx)),
             Err(message) => this.report(t("capture.error.save_file"), message, cx),
         });
     }
@@ -1072,9 +1104,9 @@ impl CaptureScreen {
     fn render_toolbar(&self, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
         let theme = cx.theme().clone();
         let ticked = self.checked.len();
-        let selected_tab = self.type_filter.map_or(0, |kind| {
-            ResourceType::ALL.iter().position(|candidate| *candidate == kind).map_or(0, |ix| ix + 1)
-        });
+        let selected_tab = self
+            .type_filter
+            .map_or(0, |kind| ResourceType::ALL.iter().position(|candidate| *candidate == kind).map_or(0, |ix| ix + 1));
         let types = ResourceType::ALL.iter().fold(
             TabBar::new("capture-types")
                 .segmented()
@@ -1161,16 +1193,12 @@ impl CaptureScreen {
                             .disabled(self.saving)
                             .on_click(cx.listener(|this, _, window, cx| this.save_checked(true, window, cx))),
                     )
-                    .child(
-                        Button::new("capture-uncheck")
-                            .ghost()
-                            .small()
-                            .label(t("capture.clear_selection"))
-                            .on_click(cx.listener(|this, _, _, cx| {
-                                this.checked.clear();
-                                cx.notify();
-                            })),
-                    )
+                    .child(Button::new("capture-uncheck").ghost().small().label(t("capture.clear_selection")).on_click(
+                        cx.listener(|this, _, _, cx| {
+                            this.checked.clear();
+                            cx.notify();
+                        }),
+                    ))
             }))
             .into_any_element()
     }
@@ -1186,11 +1214,7 @@ impl CaptureScreen {
         if self.entries.is_empty() {
             return page::empty(
                 t("capture.empty.no_traffic.title"),
-                if self.paused {
-                    t("capture.empty.no_traffic.paused")
-                } else {
-                    t("capture.empty.no_traffic.body")
-                },
+                if self.paused { t("capture.empty.no_traffic.paused") } else { t("capture.empty.no_traffic.body") },
             );
         }
         if visible.is_empty() {
@@ -1230,14 +1254,16 @@ impl CaptureScreen {
                                                 ))
                                                 .small()
                                                 .checked(this.checked.contains(&entry.id))
-                                                .on_change(cx.listener(move |this, checked: &bool, _, cx| {
-                                                    if *checked {
-                                                        this.checked.insert(toggled.clone());
-                                                    } else {
-                                                        this.checked.remove(&toggled);
-                                                    }
-                                                    cx.notify();
-                                                })),
+                                                .on_change(
+                                                    cx.listener(move |this, checked: &bool, _, cx| {
+                                                        if *checked {
+                                                            this.checked.insert(toggled.clone());
+                                                        } else {
+                                                            this.checked.remove(&toggled);
+                                                        }
+                                                        cx.notify();
+                                                    }),
+                                                ),
                                             )
                                     })
                                     .child(
@@ -1281,17 +1307,12 @@ impl CaptureScreen {
                                         ),
                                     )
                                     .child(
-                                        div()
-                                            .w_20()
-                                            .flex_none()
-                                            .text_right()
-                                            .text_color(theme.muted_foreground)
-                                            .child(
-                                                entry
-                                                    .duration_ms
-                                                    .map(|ms| t_with("capture.duration", &[("ms", &ms)]))
-                                                    .unwrap_or_default(),
-                                            ),
+                                        div().w_20().flex_none().text_right().text_color(theme.muted_foreground).child(
+                                            entry
+                                                .duration_ms
+                                                .map(|ms| t_with("capture.duration", &[("ms", &ms)]))
+                                                .unwrap_or_default(),
+                                        ),
                                     )
                                     .child(
                                         div()
@@ -1454,13 +1475,7 @@ impl CaptureScreen {
             .size_full()
             .child(div().flex_1().min_h_0().child(self.render_body(Side::Response, shown, cx)))
             .children(truncated.then(|| {
-                div()
-                    .flex_none()
-                    .px_4()
-                    .py_2()
-                    .text_xs()
-                    .text_color(muted)
-                    .child(t("capture.response_truncated"))
+                div().flex_none().px_4().py_2().text_xs().text_color(muted).child(t("capture.response_truncated"))
             }))
             .into_any_element()
     }
@@ -1664,10 +1679,7 @@ impl Render for CaptureScreen {
         );
         let detail = self.selected_entry().cloned().map(|entry| self.render_detail(&entry, cx));
         let split = list_over_detail("capture-split", self.render_list(cx), detail);
-        let body = v_flex()
-            .size_full()
-            .child(self.render_toolbar(cx))
-            .child(div().flex_1().min_h_0().child(split));
+        let body = v_flex().size_full().child(self.render_toolbar(cx)).child(div().flex_1().min_h_0().child(split));
         page::screen(header, body, cx)
     }
 }

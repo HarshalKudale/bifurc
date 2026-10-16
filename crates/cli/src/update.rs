@@ -24,17 +24,28 @@ fn describe(status: &Value) -> String {
             if !text(available, "summary").is_empty() {
                 lines.push(format!("  {}", text(available, "summary")));
             }
-            let path: Vec<&str> =
-                available.get("path").and_then(Value::as_array).into_iter().flatten().filter_map(Value::as_str).collect();
+            let path: Vec<&str> = available
+                .get("path")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+                .filter_map(Value::as_str)
+                .collect();
             if path.len() > 1 {
-                lines.push(format!("  This version cannot go there in one step. Update to {} first, then {}.", path[0], path[1..].join(", then ")));
+                lines.push(format!(
+                    "  This version cannot go there in one step. Update to {} first, then {}.",
+                    path[0],
+                    path[1..].join(", then ")
+                ));
             }
             if available.get("critical").is_some_and(truthy) {
                 lines.push("  It fixes a security problem.".to_string());
             }
             let action = status.get("action").unwrap_or(&Value::Null);
             match text(action, "kind") {
-                "store" => lines.push("  The Microsoft Store installs it: open the Store's Downloads page to get it now.".to_string()),
+                "store" => lines.push(
+                    "  The Microsoft Store installs it: open the Store's Downloads page to get it now.".to_string(),
+                ),
                 "command" => lines.push(format!("  Run: {}", text(action, "command"))),
                 _ => lines.push(format!("  Download: {}", text(action, "url"))),
             }

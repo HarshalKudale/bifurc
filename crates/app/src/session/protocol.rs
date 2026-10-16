@@ -16,9 +16,9 @@ use gpui_kit::component::{
     button::{Button, ButtonVariants as _},
     combobox::{Combobox, ComboboxEvent, ComboboxState},
     h_flex,
-    searchable_list::SearchableListItem,
     input::{Editor, InputEvent, InputState},
     notification::Notification,
+    searchable_list::SearchableListItem,
     tab::{Tab, TabBar},
     v_flex,
 };
@@ -28,20 +28,25 @@ use gpui_kit::{
 };
 use serde_json::{Map, Value, json};
 
-use super::{Carry, LoadState, SaveMode, SessionEvent, engine_folder, exchange::{Exchange, HistorySource, Replay}, graphql::SchemaPanel, wsdl::WsdlPanel};
+use super::{
+    Carry, LoadState, SaveMode, SessionEvent, engine_folder,
+    exchange::{Exchange, HistorySource, Replay},
+    graphql::SchemaPanel,
+    wsdl::WsdlPanel,
+};
 use crate::{
-    i18n::{t, t_with},
     app_model::{AppModel, ModelEvent},
     components::{
         Autosave, KeyValueEvent, KeyValueTable, SettingsChanged, SettingsForm, Syntax, VarEditor, page, request_bar,
     },
     engine::{call_in, describe},
+    i18n::{t, t_with},
     model::{
         RequestKind,
-        http::{BodyEncoding, RequestSettings, header_map, header_pairs},
         graphql::Schema,
-        wsdl,
+        http::{BodyEncoding, RequestSettings, header_map, header_pairs},
         snippet::RequestParts,
+        wsdl,
     },
 };
 
@@ -151,7 +156,9 @@ fn defaults_of(kind: RequestKind) -> Map<String, Value> {
             "protocol": "grpc", "requestBody": "{}", "metadata": {}, "useReflection": true, "streamingType": "unary",
         }),
         RequestKind::Soap => json!({ "protocol": "soap", "soapAction": "", "headers": {}, "body": "" }),
-        RequestKind::Rest | RequestKind::WebSocket | RequestKind::Sse | RequestKind::SocketIo | RequestKind::Mcp => json!({}),
+        RequestKind::Rest | RequestKind::WebSocket | RequestKind::Sse | RequestKind::SocketIo | RequestKind::Mcp => {
+            json!({})
+        }
     };
     value.as_object().cloned().unwrap_or_default()
 }
@@ -225,12 +232,11 @@ impl SearchableListItem for MethodItem {
 
     fn render(&self, _: &mut Window, cx: &mut gpui_kit::App) -> impl IntoElement {
         let muted = cx.theme().muted_foreground;
-        h_flex()
-            .w_full()
-            .gap_3()
-            .justify_between()
-            .child(div().min_w_0().child(self.name.clone()))
-            .child(kind_arrows(self.client_streaming, self.server_streaming, muted))
+        h_flex().w_full().gap_3().justify_between().child(div().min_w_0().child(self.name.clone())).child(kind_arrows(
+            self.client_streaming,
+            self.server_streaming,
+            muted,
+        ))
     }
 }
 
@@ -350,8 +356,11 @@ impl ProtocolSession {
     ) -> Self {
         debug_assert!(kind.send_command().is_some(), "{} is not an HTTP-like request type", kind.label());
         let workspace_id = model.read(cx).workspace_id().to_owned();
-        let name =
-            cx.new(|cx| InputState::new(window, cx).placeholder(t("session.rest.name_placeholder")).default_value(default_name(kind)));
+        let name = cx.new(|cx| {
+            InputState::new(window, cx)
+                .placeholder(t("session.rest.name_placeholder"))
+                .default_value(default_name(kind))
+        });
         let exchange = cx.new(|cx| Exchange::new(window, cx));
         let settings = (kind != RequestKind::Grpc).then(|| cx.new(|cx| SettingsForm::new(model.clone(), window, cx)));
 
@@ -361,26 +370,24 @@ impl ProtocolSession {
                 InputEvent::PressEnter { .. } | InputEvent::Blur => this.commit_name(window, cx),
                 InputEvent::Focus => {}
             })];
-        subscriptions.push(cx.subscribe_in(&model, window, |this, _, event: &ModelEvent, window, cx| {
-            match event {
-                ModelEvent::EntityReverted(id) if this.saved_id.as_deref() == Some(id.as_str()) => {
-                    this.reload(window, cx);
-                }
-                ModelEvent::GrpcMessage(payload) if this.is_my_stream(payload) => {
-                    this.exchange.update(cx, |exchange, cx| exchange.live_message(payload, cx));
-                }
-                ModelEvent::GrpcStatus(payload) if this.is_my_stream(payload) => {
-                    if payload.get("status").and_then(Value::as_str) == Some("closed") {
-                        this.live = false;
-                        this.connected = false;
-                    } else if this.live {
-                        this.connected = true;
-                    }
-                    this.exchange.update(cx, |exchange, cx| exchange.live_status(payload, cx));
-                    cx.notify();
-                }
-                _ => {}
+        subscriptions.push(cx.subscribe_in(&model, window, |this, _, event: &ModelEvent, window, cx| match event {
+            ModelEvent::EntityReverted(id) if this.saved_id.as_deref() == Some(id.as_str()) => {
+                this.reload(window, cx);
             }
+            ModelEvent::GrpcMessage(payload) if this.is_my_stream(payload) => {
+                this.exchange.update(cx, |exchange, cx| exchange.live_message(payload, cx));
+            }
+            ModelEvent::GrpcStatus(payload) if this.is_my_stream(payload) => {
+                if payload.get("status").and_then(Value::as_str) == Some("closed") {
+                    this.live = false;
+                    this.connected = false;
+                } else if this.live {
+                    this.connected = true;
+                }
+                this.exchange.update(cx, |exchange, cx| exchange.live_status(payload, cx));
+                cx.notify();
+            }
+            _ => {}
         }));
         if let Some(settings) = &settings {
             subscriptions.push(cx.subscribe(settings, |this, _, _: &SettingsChanged, cx| this.changed(cx)));
@@ -411,7 +418,14 @@ impl ProtocolSession {
                     Control::Text(editor)
                 }
                 FieldKind::Pairs => {
-                    let table = cx.new(|cx| KeyValueTable::new(t("session.protocol.column_name"), t("session.rest.column_value"), window, cx));
+                    let table = cx.new(|cx| {
+                        KeyValueTable::new(
+                            t("session.protocol.column_name"),
+                            t("session.rest.column_value"),
+                            window,
+                            cx,
+                        )
+                    });
                     subscriptions.push(cx.subscribe(&table, |this, _, _: &KeyValueEvent, cx| this.changed(cx)));
                     Control::Pairs(table)
                 }
@@ -435,8 +449,10 @@ impl ProtocolSession {
         let wsdl = (kind == RequestKind::Soap).then(|| WsdlPanel::new(window, cx));
 
         let grpc = (kind == RequestKind::Grpc).then(|| {
-            let service_box = cx.new(|cx| ComboboxState::new(Vec::<String>::new(), vec![], window, cx).searchable(true));
-            let method_box = cx.new(|cx| ComboboxState::new(Vec::<MethodItem>::new(), vec![], window, cx).searchable(true));
+            let service_box =
+                cx.new(|cx| ComboboxState::new(Vec::<String>::new(), vec![], window, cx).searchable(true));
+            let method_box =
+                cx.new(|cx| ComboboxState::new(Vec::<MethodItem>::new(), vec![], window, cx).searchable(true));
             subscriptions.push(cx.subscribe_in(
                 &service_box,
                 window,
@@ -533,10 +549,7 @@ impl ProtocolSession {
         let payload = json!({ "workspaceId": self.workspace_id, "kind": self.kind.entity_kind(), "id": id });
         call_in(&client, window, cx, "entity.load", payload, |this, outcome, window, cx| {
             match outcome.map_err(|e| describe(&e)).and_then(|v| {
-                v.get("entity")
-                    .and_then(Value::as_object)
-                    .cloned()
-                    .ok_or_else(|| t("session.rest.gone").to_owned())
+                v.get("entity").and_then(Value::as_object).cloned().ok_or_else(|| t("session.rest.gone").to_owned())
             }) {
                 Ok(entity) => {
                     this.adopt_entity(entity, window, cx);
@@ -596,11 +609,7 @@ impl ProtocolSession {
 
     pub fn title(&self, cx: &gpui_kit::App) -> SharedString {
         let name = self.name.read(cx).value();
-        if name.is_empty() {
-            t_with("session.protocol.untitled", &[("kind", &self.kind.label())]).into()
-        } else {
-            name
-        }
+        if name.is_empty() { t_with("session.protocol.untitled", &[("kind", &self.kind.label())]).into() } else { name }
     }
 
     pub fn is_dirty(&self, cx: &gpui_kit::App) -> bool {
@@ -726,7 +735,9 @@ impl ProtocolSession {
                     this.connected = this.live;
                     None
                 }
-                Ok(result) => Some(result.get("error").and_then(Value::as_str).unwrap_or(t("session.protocol.call_failed")).to_owned()),
+                Ok(result) => Some(
+                    result.get("error").and_then(Value::as_str).unwrap_or(t("session.protocol.call_failed")).to_owned(),
+                ),
                 Err(error) => Some(describe(&error)),
             };
             if let Some(message) = failure {
@@ -827,7 +838,11 @@ impl ProtocolSession {
                     None
                 }
                 Ok(result) => Some(
-                    result.get("error").and_then(Value::as_str).unwrap_or(t("session.protocol.server_no_answer")).to_owned(),
+                    result
+                        .get("error")
+                        .and_then(Value::as_str)
+                        .unwrap_or(t("session.protocol.server_no_answer"))
+                        .to_owned(),
                 ),
                 Err(error) => Some(describe(&error)),
             };
@@ -1025,8 +1040,22 @@ impl ProtocolSession {
                 h_flex()
                     .gap_3()
                     .items_start()
-                    .child(v_flex().flex_1().min_w_0().gap_1().child(page::section_label(t("session.protocol.service"), cx)).child(service_control))
-                    .child(v_flex().flex_1().min_w_0().gap_1().child(page::section_label(t("session.protocol.method"), cx)).child(method_control)),
+                    .child(
+                        v_flex()
+                            .flex_1()
+                            .min_w_0()
+                            .gap_1()
+                            .child(page::section_label(t("session.protocol.service"), cx))
+                            .child(service_control),
+                    )
+                    .child(
+                        v_flex()
+                            .flex_1()
+                            .min_w_0()
+                            .gap_1()
+                            .child(page::section_label(t("session.protocol.method"), cx))
+                            .child(method_control),
+                    ),
             )
             .children(note)
             .into_any_element()
@@ -1044,8 +1073,11 @@ impl ProtocolSession {
         let url = self.text_of("endpointUrl", cx).unwrap_or_default().replace(['\r', '\n'], "").trim().to_owned();
         if url.is_empty() {
             window.push_notification(
-                Notification::warning(t_with("session.protocol.enter_target_first", &[("target", &self.target_label())]))
-                    .title(t("session.schema.fetch_failed_title")),
+                Notification::warning(t_with(
+                    "session.protocol.enter_target_first",
+                    &[("target", &self.target_label())],
+                ))
+                .title(t("session.schema.fetch_failed_title")),
                 cx,
             );
             return;
@@ -1055,7 +1087,8 @@ impl ProtocolSession {
         let Some(panel) = self.schema.as_mut().filter(|panel| !panel.fetching) else { return };
         panel.fetching = true;
         cx.notify();
-        let unresolved: Vec<String> = std::iter::once(url).chain(headers.iter().map(|(_, value)| value.clone())).collect();
+        let unresolved: Vec<String> =
+            std::iter::once(url).chain(headers.iter().map(|(_, value)| value.clone())).collect();
         let resolve = json!({ "workspaceId": self.workspace_id, "text": unresolved.join(&SEPARATOR.to_string()) });
         let client = self.model.read(cx).client().clone();
         let introspect_client = client.clone();
@@ -1063,7 +1096,10 @@ impl ProtocolSession {
             let resolved = outcome
                 .ok()
                 .and_then(|result| {
-                    result.get("text").and_then(Value::as_str).map(|text| text.split(SEPARATOR).map(str::to_owned).collect::<Vec<_>>())
+                    result
+                        .get("text")
+                        .and_then(Value::as_str)
+                        .map(|text| text.split(SEPARATOR).map(str::to_owned).collect::<Vec<_>>())
                 })
                 .filter(|parts| parts.len() == unresolved.len())
                 .unwrap_or(unresolved);
@@ -1093,7 +1129,10 @@ impl ProtocolSession {
                     panel.fetching = false;
                 }
                 if let Some(message) = failure {
-                    window.push_notification(Notification::error(message).title(t("session.schema.fetch_failed_title")), cx);
+                    window.push_notification(
+                        Notification::error(message).title(t("session.schema.fetch_failed_title")),
+                        cx,
+                    );
                 }
                 cx.notify();
             });
@@ -1108,8 +1147,11 @@ impl ProtocolSession {
             url = self.text_of("endpointUrl", cx).unwrap_or_default().replace(['\r', '\n'], "").trim().to_owned();
             if url.is_empty() {
                 window.push_notification(
-                    Notification::warning(t_with("session.protocol.enter_target_first", &[("target", &self.target_label())]))
-                        .title(t("session.wsdl.fetch_failed_title")),
+                    Notification::warning(t_with(
+                        "session.protocol.enter_target_first",
+                        &[("target", &self.target_label())],
+                    ))
+                    .title(t("session.wsdl.fetch_failed_title")),
                     cx,
                 );
                 return;
@@ -1127,7 +1169,10 @@ impl ProtocolSession {
         let fetch_client = client.clone();
         let resolve = json!({ "workspaceId": self.workspace_id, "text": url });
         call_in(&client, window, cx, "env.resolveText", resolve, move |_, outcome, window, cx| {
-            let resolved = outcome.ok().and_then(|result| result.get("text").and_then(Value::as_str).map(str::to_owned)).unwrap_or(url);
+            let resolved = outcome
+                .ok()
+                .and_then(|result| result.get("text").and_then(Value::as_str).map(str::to_owned))
+                .unwrap_or(url);
             let mut payload = json!({ "url": resolved });
             if let Some(settings) = settings {
                 payload["settings"] = settings;
@@ -1152,7 +1197,10 @@ impl ProtocolSession {
                     panel.fetching = false;
                 }
                 if let Some(message) = failure {
-                    window.push_notification(Notification::error(message).title(t("session.wsdl.fetch_failed_title")), cx);
+                    window.push_notification(
+                        Notification::error(message).title(t("session.wsdl.fetch_failed_title")),
+                        cx,
+                    );
                 }
                 cx.notify();
             });
@@ -1365,8 +1413,11 @@ impl ProtocolSession {
             self.send_after_save = false;
             if mode == SaveMode::Explicit {
                 window.push_notification(
-                    Notification::warning(t_with("session.protocol.enter_target_first", &[("target", &self.target_label())]))
-                        .title(t("session.rest.save_no_url_title")),
+                    Notification::warning(t_with(
+                        "session.protocol.enter_target_first",
+                        &[("target", &self.target_label())],
+                    ))
+                    .title(t("session.rest.save_no_url_title")),
                     cx,
                 );
             }
@@ -1411,8 +1462,7 @@ impl ProtocolSession {
                                 cx.emit(SessionEvent::Saved { id });
                             }
                         }
-                        None => window
-                            .push_notification(Notification::error(t("session.rest.engine_no_saved")), cx),
+                        None => window.push_notification(Notification::error(t("session.rest.engine_no_saved")), cx),
                     }
                     saved.is_some()
                 }
@@ -1463,14 +1513,18 @@ impl ProtocolSession {
             None => {
                 if Self::target_is_empty(&values) {
                     window.push_notification(
-                        Notification::warning(t_with("session.protocol.enter_target_first", &[("target", &self.target_label())]))
-                            .title(t("session.rest.send_no_url_title")),
+                        Notification::warning(t_with(
+                            "session.protocol.enter_target_first",
+                            &[("target", &self.target_label())],
+                        ))
+                        .title(t("session.rest.send_no_url_title")),
                         cx,
                     );
                     return;
                 }
                 let entity = self.edited_entity(&values);
-                let mut payload = json!({ "workspaceId": self.workspace_id, "request": inline_request(self.kind, &entity) });
+                let mut payload =
+                    json!({ "workspaceId": self.workspace_id, "request": inline_request(self.kind, &entity) });
                 // The send is of this saved request's edits, so its response belongs to its history.
                 if let Some(id) = &self.saved_id {
                     payload["entityId"] = json!(id);
@@ -1487,10 +1541,14 @@ impl ProtocolSession {
             match outcome {
                 // A gRPC call that never got an answer (no connection, a bad message) has no status to show.
                 Ok(result) if this.kind == RequestKind::Grpc => {
-                    let unanswered = result.get("ok").and_then(Value::as_bool) == Some(false) && result.get("status").is_none();
+                    let unanswered =
+                        result.get("ok").and_then(Value::as_bool) == Some(false) && result.get("status").is_none();
                     if unanswered {
-                        let message =
-                            result.get("error").and_then(Value::as_str).unwrap_or(t("session.protocol.call_failed")).to_owned();
+                        let message = result
+                            .get("error")
+                            .and_then(Value::as_str)
+                            .unwrap_or(t("session.protocol.call_failed"))
+                            .to_owned();
                         this.exchange.update(cx, |exchange, cx| exchange.fail(message, cx));
                     } else {
                         this.exchange.update(cx, |exchange, cx| exchange.finish_grpc(&result, window, cx));
@@ -1547,7 +1605,9 @@ impl Render for ProtocolSession {
                 Control::Text(editor) => Editor::new(editor.state()).bordered(false).h_full().into_any_element(),
                 Control::Pairs(table) => table.clone().into_any_element(),
             }),
-            None if self.settings.is_some() && section == tabs - 1 => self.settings.clone().map(|form| form.into_any_element()),
+            None if self.settings.is_some() && section == tabs - 1 => {
+                self.settings.clone().map(|form| form.into_any_element())
+            }
             None => extra_view,
         };
         let specs = fields_of(self.kind);
@@ -1653,10 +1713,14 @@ mod tests {
             request,
             json!({ "endpointUrl": "u", "operationName": "", "query": "{ a }", "variables": "", "headers": { "a": "b" } })
         );
-        let grpc = inline_request(RequestKind::Grpc, json!({ "serverAddress": "s", "metadata": {} }).as_object().unwrap());
+        let grpc =
+            inline_request(RequestKind::Grpc, json!({ "serverAddress": "s", "metadata": {} }).as_object().unwrap());
         assert_eq!(grpc["useReflection"], json!(false));
         assert_eq!(grpc["protoFileId"], Value::Null);
         let entity = json!({ "endpointUrl": "u", "settings": { "timeoutMs": 5 } });
-        assert_eq!(inline_request(RequestKind::Soap, entity.as_object().unwrap())["settings"], json!({ "timeoutMs": 5 }));
+        assert_eq!(
+            inline_request(RequestKind::Soap, entity.as_object().unwrap())["settings"],
+            json!({ "timeoutMs": 5 })
+        );
     }
 }

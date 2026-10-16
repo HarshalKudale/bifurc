@@ -164,7 +164,11 @@ pub static CRUD_KINDS: [CrudKind; 13] = [
         is_flat: false,
         has_enabled_state: true,
         validate: Some(|rule, _| {
-            if bool_of(rule, "useRegex", false) { crate::utils::regex::validate("pattern", str_of(rule, "pattern")) } else { Ok(()) }
+            if bool_of(rule, "useRegex", false) {
+                crate::utils::regex::validate("pattern", str_of(rule, "pattern"))
+            } else {
+                Ok(())
+            }
         }),
         on_add_conflict: Some(|cfg, target| disable_shadowed(cfg, "proxyRules", target, rule_signature)),
         name_entry: Some(|r| entry(&[("name", field(r, "name")), ("url", field(r, "pattern"))])),
@@ -297,7 +301,11 @@ pub static CRUD_KINDS: [CrudKind; 13] = [
         is_flat: false,
         has_enabled_state: false,
         validate: Some(|request, _| {
-            required(request, "url", "url is required for MCP requests: the command that starts the server, or its address")
+            required(
+                request,
+                "url",
+                "url is required for MCP requests: the command that starts the server, or its address",
+            )
         }),
         on_add_conflict: None,
         name_entry: Some(|r| {

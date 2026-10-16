@@ -31,8 +31,7 @@ use gpui_kit::{
     FocusHandle, Focusable as _, GlobalElementId, Hsla, InspectorElementId, InteractiveElement as _, IntoElement,
     KeyDownEvent, LayoutId, MouseButton, MouseDownEvent, MouseMoveEvent, ParentElement as _, Pixels, Point, Render,
     ScrollWheelEvent, SharedString, Stateful, StatefulInteractiveElement as _, Styled as _, Subscription, WeakEntity,
-    Window,
-    anchored, canvas, deferred, div, point, px, quad, rems, size,
+    Window, anchored, canvas, deferred, div, point, px, quad, rems, size,
 };
 use serde_json::Value;
 
@@ -43,7 +42,9 @@ use super::{
 use crate::{
     commands::{DuplicateNode, NewRestRequest},
     i18n::{t, t_with},
-    model::flow::{Described, FlowDoc, FlowEdge, FlowNode, InputInfo, NodeInfo, NodeKind, NodeRun, RunView, path_label},
+    model::flow::{
+        Described, FlowDoc, FlowEdge, FlowNode, InputInfo, NodeInfo, NodeKind, NodeRun, RunView, path_label,
+    },
 };
 
 /// How wide a node is, in rems, and what a rem is before the canvas is zoomed.
@@ -87,22 +88,47 @@ pub enum CanvasEvent {
     /// A node was picked, or the empty canvas was.
     Selected(Option<String>),
     /// A node was dragged to a new place.
-    Moved { id: String, x: f32, y: f32 },
+    Moved {
+        id: String,
+        x: f32,
+        y: f32,
+    },
     /// A display node was pulled by its corner to a new size.
-    Resized { id: String, width: f32, height: f32 },
+    Resized {
+        id: String,
+        width: f32,
+        height: f32,
+    },
     /// A port was dragged onto a node: that node runs next.
-    Connect { from: String, port: String, to: String },
+    Connect {
+        from: String,
+        port: String,
+        to: String,
+    },
     /// A port was dragged onto an input of a node: what leaves by the port is wired into it.
-    Wire { from: String, port: String, to: String, input: String },
+    Wire {
+        from: String,
+        port: String,
+        to: String,
+        input: String,
+    },
     /// The part of its source's output a wire takes was chosen.
-    WirePath { edge_id: String, path: Vec<Value> },
+    WirePath {
+        edge_id: String,
+        path: Vec<Value>,
+    },
     /// Remove the connection with this id.
     Disconnect(String),
     Delete(String),
     Duplicate(String),
     /// Add a node of this kind at this place. `link` is the node and the port it runs after, when it was
     /// asked for by drawing a connection to where it goes.
-    Add { kind: NodeKind, x: f32, y: f32, link: Option<(String, String)> },
+    Add {
+        kind: NodeKind,
+        x: f32,
+        y: f32,
+        link: Option<(String, String)>,
+    },
     /// A node as a switch on it left it.
     Edited(Box<FlowNode>),
 }
@@ -408,7 +434,13 @@ impl FlowCanvas {
 
     /// Draw this flow, with what the engine says of it and its run. A node being dragged or resized keeps
     /// the place and the size the pointer has it at.
-    pub fn set_graph(&mut self, mut doc: Option<FlowDoc>, described: Described, run: Option<RunView>, cx: &mut Context<Self>) {
+    pub fn set_graph(
+        &mut self,
+        mut doc: Option<FlowDoc>,
+        described: Described,
+        run: Option<RunView>,
+        cx: &mut Context<Self>,
+    ) {
         if let Gesture::Move { id, .. } | Gesture::Resize { id, .. } = &self.gesture
             && let Some(held) = self.doc.as_ref().and_then(|doc| doc.node(id))
             && let Some(node) = doc.as_mut().and_then(|doc| doc.node_mut(id))
@@ -774,7 +806,9 @@ impl FlowCanvas {
             "listening" => label(t("flows.status.connected"), theme.info, Spinner::new().xsmall().into_any_element()),
             "succeeded" => label(t("flows.status.done"), theme.success, icon(IconName::CircleCheck, theme.success)),
             "failed" => label(t("flows.status.failed"), theme.danger, icon(IconName::CircleX, theme.danger)),
-            "stopped" => label(t("flows.status.stopped"), theme.muted_foreground, icon(IconName::Minus, theme.muted_foreground)),
+            "stopped" => {
+                label(t("flows.status.stopped"), theme.muted_foreground, icon(IconName::Minus, theme.muted_foreground))
+            }
             _ if problem => label(t("flows.status.fix"), theme.warning, icon(IconName::TriangleAlert, theme.warning)),
             _ => div().into_any_element(),
         }
@@ -808,13 +842,18 @@ impl FlowCanvas {
             NodeKind::Stream => {
                 let mut lines = vec![request()];
                 if let Some(run) = run.filter(|run| run.status != "idle") {
-                    let state = if run.status == "listening" { t("flows.status.connected") } else { t("flows.status.disconnected") };
+                    let state = if run.status == "listening" {
+                        t("flows.status.connected")
+                    } else {
+                        t("flows.status.disconnected")
+                    };
                     lines.push(t_with("flows.stream.messages", &[("state", &state), ("count", &run.handed_on)]));
                 }
                 lines
             }
             NodeKind::Mcp => {
-                let what = if node.target.is_empty() { node.call.clone() } else { format!("{} {}", node.call, node.target) };
+                let what =
+                    if node.target.is_empty() { node.call.clone() } else { format!("{} {}", node.call, node.target) };
                 vec![request(), what]
             }
             NodeKind::Condition => node
@@ -822,7 +861,11 @@ impl FlowCanvas {
                 .iter()
                 .map(|branch| {
                     let rules: Vec<String> = branch.rules.iter().map(rule_summary).collect();
-                    let joined = rules.join(if branch.matching == "any" { t("flows.condition.join_any") } else { t("flows.condition.join_all") });
+                    let joined = rules.join(if branch.matching == "any" {
+                        t("flows.condition.join_any")
+                    } else {
+                        t("flows.condition.join_all")
+                    });
                     let name = if branch.name.is_empty() { &branch.id } else { &branch.name };
                     t_with("flows.condition.branch", &[("name", name), ("rules", &joined)])
                 })
@@ -864,7 +907,13 @@ impl FlowCanvas {
         shown.when(node.height > 0.0, |this| this.h(height).max_h(height)).child(note).into_any_element()
     }
 
-    fn render_value(&self, node: &FlowNode, value: &Value, shown_id: ElementId, cx: &mut Context<Self>) -> Stateful<Div> {
+    fn render_value(
+        &self,
+        node: &FlowNode,
+        value: &Value,
+        shown_id: ElementId,
+        cx: &mut Context<Self>,
+    ) -> Stateful<Div> {
         let theme = cx.theme().clone();
         let muted = |text: String| div().px_3().pb_2().text_color(theme.muted_foreground).child(text);
         let rows = value.as_array().filter(|rows| node.format == "table" && !rows.is_empty());
@@ -877,7 +926,8 @@ impl FlowCanvas {
                 let columns: Vec<String> =
                     rows[0].as_object().map(|first| first.keys().take(4).cloned().collect()).unwrap_or_default();
                 let cell = |text: String| div().flex_1().min_w_0().overflow_hidden().text_ellipsis().child(text);
-                let line = |cells: Vec<String>| h_flex().gap_2().px_3().h(rems(1.375)).children(cells.into_iter().map(cell));
+                let line =
+                    |cells: Vec<String>| h_flex().gap_2().px_3().h(rems(1.375)).children(cells.into_iter().map(cell));
                 let body = rows.iter().take(20).map(|row| match columns.is_empty() {
                     true => line(vec![one_line(row)]),
                     false => line(columns.iter().map(|column| one_line(&row[column.as_str()])).collect()),
@@ -898,14 +948,22 @@ impl FlowCanvas {
     }
 
     /// One input of a node: its name, where its value comes from, and the dot a value is wired into.
-    fn render_input(&self, node: &FlowNode, input: &InputInfo, run: Option<&NodeRun>, cx: &mut Context<Self>) -> AnyElement {
+    fn render_input(
+        &self,
+        node: &FlowNode,
+        input: &InputInfo,
+        run: Option<&NodeRun>,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let theme = cx.theme().clone();
         let wire = input.from.as_ref();
         // What it resolved to in the run shown, else what it resolves to as the flow stands.
         let resolved = run.and_then(|run| run.inputs.get(&input.id)).filter(|_| wire.is_none());
         let value = match wire {
             Some(from) if from.path.is_empty() => t_with("flows.input.wired_all", &[("node", &from.node_name)]),
-            Some(from) => t_with("flows.input.wired_path", &[("node", &from.node_name), ("path", &path_label(&from.path))]),
+            Some(from) => {
+                t_with("flows.input.wired_path", &[("node", &from.node_name), ("path", &path_label(&from.path))])
+            }
             None => one_line(resolved.unwrap_or(&input.value)),
         };
         let badge = match input.source.as_str() {
@@ -926,7 +984,13 @@ impl FlowCanvas {
         let typed_here = field.is_some();
         let shown = match field {
             Some(field) => div().flex_1().min_w_0().child(field),
-            None => div().flex_1().min_w_0().overflow_hidden().text_ellipsis().text_color(theme.muted_foreground).child(value),
+            None => div()
+                .flex_1()
+                .min_w_0()
+                .overflow_hidden()
+                .text_ellipsis()
+                .text_color(theme.muted_foreground)
+                .child(value),
         };
         let row = h_flex()
             .id(row_id)
@@ -1011,7 +1075,10 @@ impl FlowCanvas {
                                     .label(t("flows.common.all_of_it"))
                                     .on_click(cx.listener(move |this, _, _, cx| {
                                         this.choosing = None;
-                                        cx.emit(CanvasEvent::WirePath { edge_id: whole_edge.clone(), path: Vec::new() });
+                                        cx.emit(CanvasEvent::WirePath {
+                                            edge_id: whole_edge.clone(),
+                                            path: Vec::new(),
+                                        });
                                     })),
                             ),
                     )
@@ -1025,7 +1092,11 @@ impl FlowCanvas {
         if node.kind != NodeKind::Request || node.request_kind != "requests" {
             return None;
         }
-        let switch = |name: &'static str, label: &'static str, on: bool, set: fn(&mut FlowNode, bool), cx: &mut Context<Self>| {
+        let switch = |name: &'static str,
+                      label: &'static str,
+                      on: bool,
+                      set: fn(&mut FlowNode, bool),
+                      cx: &mut Context<Self>| {
             let node = node.clone();
             Checkbox::new(ElementId::Name(format!("flow-{name}-{}", node.id).into()))
                 .small()
@@ -1044,8 +1115,20 @@ impl FlowCanvas {
                 .py_1()
                 .gap_x_3()
                 .gap_y_1()
-                .child(switch("scripts", t("flows.request.execute_scripts"), node.execute_scripts, |node, on| node.execute_scripts = on, cx))
-                .child(switch("tests", t("flows.request.execute_tests"), node.execute_tests, |node, on| node.execute_tests = on, cx))
+                .child(switch(
+                    "scripts",
+                    t("flows.request.execute_scripts"),
+                    node.execute_scripts,
+                    |node, on| node.execute_scripts = on,
+                    cx,
+                ))
+                .child(switch(
+                    "tests",
+                    t("flows.request.execute_tests"),
+                    node.execute_tests,
+                    |node, on| node.execute_tests = on,
+                    cx,
+                ))
                 .child(switch(
                     "ignore-tests",
                     t("flows.request.ignore_test_errors"),
@@ -1058,7 +1141,13 @@ impl FlowCanvas {
     }
 
     /// The node under a node: what it was handed, what it produced, and its tests, each closed until asked for.
-    fn render_details(&self, node: &FlowNode, info: Option<&NodeInfo>, run: Option<&NodeRun>, cx: &mut Context<Self>) -> AnyElement {
+    fn render_details(
+        &self,
+        node: &FlowNode,
+        info: Option<&NodeInfo>,
+        run: Option<&NodeRun>,
+        cx: &mut Context<Self>,
+    ) -> AnyElement {
         let theme = cx.theme().clone();
         let open = self.details.get(&node.id).copied();
         let tests = run.map(|run| run.tests.as_slice()).unwrap_or(&[]);
@@ -1084,14 +1173,23 @@ impl FlowCanvas {
         } else {
             t_with("flows.details.tests_count", &[("passed", &passed), ("total", &tests.len())])
         };
-        let muted = |text: String| div().px_2().py_1().text_color(theme.muted_foreground).child(text).into_any_element();
+        let muted =
+            |text: String| div().px_2().py_1().text_color(theme.muted_foreground).child(text).into_any_element();
         let heading = |text: String, note: String| {
             h_flex()
                 .px_2()
                 .pt_1()
                 .gap_2()
                 .child(div().flex_none().font_medium().child(text))
-                .child(div().flex_1().min_w_0().overflow_hidden().text_ellipsis().text_color(theme.muted_foreground).child(note))
+                .child(
+                    div()
+                        .flex_1()
+                        .min_w_0()
+                        .overflow_hidden()
+                        .text_ellipsis()
+                        .text_color(theme.muted_foreground)
+                        .child(note),
+                )
                 .into_any_element()
         };
         let mut content: Vec<AnyElement> = Vec::new();
@@ -1099,7 +1197,8 @@ impl FlowCanvas {
             None => {}
             Some(Detail::Input) => {
                 if node.kind.is_run() {
-                    content.push(heading(t("flows.details.handed").to_owned(), t("flows.details.handed_note").to_owned()));
+                    content
+                        .push(heading(t("flows.details.handed").to_owned(), t("flows.details.handed_note").to_owned()));
                     content.push(match run.filter(|run| run.runs > 0) {
                         Some(run) => self.tree(format!("{}|handed", node.id), &run.input, None, cx),
                         None => muted(t("flows.details.not_run").to_owned()),
@@ -1107,7 +1206,9 @@ impl FlowCanvas {
                 }
                 for input in info.map(|info| info.inputs.as_slice()).unwrap_or(&[]) {
                     let source = match (&input.from, input.source.as_str()) {
-                        (Some(from), _) if from.path.is_empty() => t_with("flows.details.wired_from", &[("node", &from.node_name)]),
+                        (Some(from), _) if from.path.is_empty() => {
+                            t_with("flows.details.wired_from", &[("node", &from.node_name)])
+                        }
                         (Some(from), _) => t_with(
                             "flows.details.wired_from_path",
                             &[("node", &from.node_name), ("path", &path_label(&from.path))],
@@ -1131,7 +1232,10 @@ impl FlowCanvas {
             Some(Detail::Output) => {
                 for (port, label) in info.map(|info| info.ports.as_slice()).unwrap_or(&[]) {
                     let left = run.is_some_and(|run| run.port.as_deref() == Some(port.as_str()));
-                    content.push(heading(label.clone(), if left { t("flows.details.left_last").to_owned() } else { String::new() }));
+                    content.push(heading(
+                        label.clone(),
+                        if left { t("flows.details.left_last").to_owned() } else { String::new() },
+                    ));
                     content.push(match self.sample_of(&node.id, port) {
                         Some(value) => self.tree(format!("{}|output|{port}", node.id), &value, None, cx),
                         None => muted(t("flows.details.nothing_left").to_owned()),
@@ -1181,7 +1285,9 @@ impl FlowCanvas {
                     .child(tab(Detail::Output, t("flows.details.output").to_owned(), cx))
                     .child(tab(Detail::Tests, tests_label, cx)),
             )
-            .when(!content.is_empty(), |this| this.child(v_flex().pb_1().border_t_1().border_color(theme.border).children(content)))
+            .when(!content.is_empty(), |this| {
+                this.child(v_flex().pb_1().border_t_1().border_color(theme.border).children(content))
+            })
             .into_any_element()
     }
 
@@ -1231,29 +1337,38 @@ impl FlowCanvas {
             .gap_2()
             .rounded_t(theme.radius)
             .when_some(tint, |this, tint| this.bg(tint))
-            .when(!problems.is_empty(), |this| this.tooltip(move |window, cx| {
-                gpui_kit::component::tooltip::Tooltip::new(problems.clone()).build(window, cx)
-            }))
-            .when(node.kind.is_run(), |this| this.child(self.port(anchor_in(&node.id, ""), 0.75, false, theme.background, cx)))
+            .when(!problems.is_empty(), |this| {
+                this.tooltip(move |window, cx| {
+                    gpui_kit::component::tooltip::Tooltip::new(problems.clone()).build(window, cx)
+                })
+            })
+            .when(node.kind.is_run(), |this| {
+                this.child(self.port(anchor_in(&node.id, ""), 0.75, false, theme.background, cx))
+            })
             .child(Icon::new(kind_icon(node.kind)).small().text_color(theme.muted_foreground).flex_none())
             .child(title)
             .when(run.is_some_and(|run| run.runs > 1), |this| {
                 this.child(
-                    div().flex_none().text_color(theme.muted_foreground).child(format!("×{}", run.map_or(0, |run| run.runs))),
+                    div()
+                        .flex_none()
+                        .text_color(theme.muted_foreground)
+                        .child(format!("×{}", run.map_or(0, |run| run.runs))),
                 )
             })
             .child(Self::render_status(run, problem, cx));
 
-        let lines = self.summary(node, info, run).into_iter().filter(|line| !line.is_empty()).map(|line| {
-            div().px_3().overflow_hidden().text_ellipsis().text_color(theme.muted_foreground).child(line)
-        });
+        let lines =
+            self.summary(node, info, run).into_iter().filter(|line| !line.is_empty()).map(|line| {
+                div().px_3().overflow_hidden().text_ellipsis().text_color(theme.muted_foreground).child(line)
+            });
         let summary = v_flex().gap_1().children(lines);
         let body: Option<AnyElement> = match node.kind {
             NodeKind::Display => Some(self.render_shown(node, run, cx)),
             NodeKind::Sample => Some(self.tree(format!("{}|sample", node.id), &node.value, None, cx)),
             _ => None,
         };
-        let failure = run.and_then(|run| run.error.clone()).map(|error| div().px_3().text_color(theme.danger).child(error));
+        let failure =
+            run.and_then(|run| run.error.clone()).map(|error| div().px_3().text_color(theme.danger).child(error));
         let inputs: Vec<AnyElement> = info
             .map(|info| info.inputs.iter().map(|input| self.render_input(node, input, run, cx)).collect())
             .unwrap_or_default();
@@ -1264,13 +1379,13 @@ impl FlowCanvas {
                 .port(anchor_out(&node.id, port), 0.375, true, theme.primary, cx)
                 .id(ElementId::Name(format!("flow-port-{id}-{port}").into()))
                 .tooltip(move |window, cx| {
-                    gpui_kit::component::tooltip::Tooltip::new(t("flows.port.tooltip"))
-                    .build(window, cx)
+                    gpui_kit::component::tooltip::Tooltip::new(t("flows.port.tooltip")).build(window, cx)
                 })
                 .on_mouse_down(
                     MouseButton::Left,
                     cx.listener(move |this, event: &MouseDownEvent, _, cx| {
-                        this.gesture = Gesture::Connect { from: from.clone(), port: port_id.clone(), to: event.position };
+                        this.gesture =
+                            Gesture::Connect { from: from.clone(), port: port_id.clone(), to: event.position };
                         cx.stop_propagation();
                         cx.notify();
                     }),
@@ -1486,7 +1601,8 @@ impl Render for FlowCanvas {
                 selected: self.selected_edge.as_deref() == Some(edge.id.as_str()),
             })
             .collect();
-        let busy = |run: &RunView| run.nodes.values().any(|node| matches!(node.status.as_str(), "running" | "listening"));
+        let busy =
+            |run: &RunView| run.nodes.values().any(|node| matches!(node.status.as_str(), "running" | "listening"));
         // A connection that is being taken, and a node that is running, are drawn again every frame.
         if draws.iter().any(|draw| draw.moving) || self.run.as_ref().is_some_and(busy) {
             window.request_animation_frame();
@@ -1503,7 +1619,8 @@ impl Render for FlowCanvas {
         let origin = self.viewport.get().origin;
         // The cross that removes the connection the pointer is on, or the one that is picked, at its middle.
         let crossed = self.hover_edge.clone().or_else(|| self.selected_edge.clone()).and_then(|id| {
-            let middle = self.drawn.borrow().iter().find(|line| line.0 == id).map(|(_, from, to)| curve(*from, *to, 0.5))?;
+            let middle =
+                self.drawn.borrow().iter().find(|line| line.0 == id).map(|(_, from, to)| curve(*from, *to, 0.5))?;
             Some(
                 div()
                     .absolute()
@@ -1531,7 +1648,8 @@ impl Render for FlowCanvas {
                 .with_priority(1)
         });
         let clock = self.started.elapsed().as_secs_f32() * DOT_SPEED;
-        let (zoom, viewport, anchors, drawn) = (self.zoom, self.viewport.clone(), self.anchors.clone(), self.drawn.clone());
+        let (zoom, viewport, anchors, drawn) =
+            (self.zoom, self.viewport.clone(), self.anchors.clone(), self.drawn.clone());
         let (ring, primary, quiet) = (theme.ring, theme.primary, theme.muted_foreground.opacity(0.7));
         // The ports note where they are while the nodes are laid out, before anything is painted.
         self.anchors.borrow_mut().clear();
@@ -1575,7 +1693,9 @@ impl Render for FlowCanvas {
         let mut nodes: Vec<FlowNode> = self.doc.as_ref().map(|doc| doc.nodes.clone()).unwrap_or_default();
         // The node that is picked is drawn last, over a node it has grown onto, and one with a view open
         // under it over the ones without.
-        nodes.sort_by_key(|node| (self.selected.as_deref() == Some(node.id.as_str()), self.details.contains_key(&node.id)));
+        nodes.sort_by_key(|node| {
+            (self.selected.as_deref() == Some(node.id.as_str()), self.details.contains_key(&node.id))
+        });
         let nodes: Vec<AnyElement> = nodes.iter().map(|node| self.render_node(node, cx)).collect();
 
         div()
@@ -1591,9 +1711,14 @@ impl Render for FlowCanvas {
                 MouseButton::Left,
                 cx.listener(|this, event: &MouseDownEvent, window, cx| this.pressed(event, window, cx)),
             )
-            .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, window, cx| this.pointer_moved(event, window, cx)))
+            .on_mouse_move(
+                cx.listener(|this, event: &MouseMoveEvent, window, cx| this.pointer_moved(event, window, cx)),
+            )
             .on_mouse_up(MouseButton::Left, cx.listener(|this, _, window, cx| this.finish_gesture(true, window, cx)))
-            .on_mouse_up_out(MouseButton::Left, cx.listener(|this, _, window, cx| this.finish_gesture(false, window, cx)))
+            .on_mouse_up_out(
+                MouseButton::Left,
+                cx.listener(|this, _, window, cx| this.finish_gesture(false, window, cx)),
+            )
             // Ctrl+D, which elsewhere copies the open item, copies the picked node here. A key typed into a field of
             // a node is that field's, so nothing is copied then.
             .on_action(cx.listener(|this, _: &DuplicateNode, window, cx| {

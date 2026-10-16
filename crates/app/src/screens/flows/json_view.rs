@@ -32,7 +32,14 @@ pub fn open_key(scope: &str, path: &[Value]) -> String {
 /// row that was opened or closed. With `pick`, a click on a row chooses the part it holds and its arrow
 /// opens it; without, a click anywhere on the row opens it.
 /// It scrolls once it is 14 rems high; whoever draws it may give it another height.
-pub fn json_tree(scope: &str, value: &Value, open: &HashSet<String>, toggle: Toggle, pick: Option<Pick>, cx: &App) -> Stateful<Div> {
+pub fn json_tree(
+    scope: &str,
+    value: &Value,
+    open: &HashSet<String>,
+    toggle: Toggle,
+    pick: Option<Pick>,
+    cx: &App,
+) -> Stateful<Div> {
     let theme = cx.theme();
     let rows = json_rows(value, &|key| open.contains(&format!("{scope}|{key}")), ROW_LIMIT);
     let tree_id = ElementId::Name(format!("{scope}|tree").into());
@@ -98,15 +105,14 @@ pub fn json_tree(scope: &str, value: &Value, open: &HashSet<String>, toggle: Tog
                 })
             })
     });
-    v_flex()
-        .id(tree_id)
-        .max_h(rems(14.0))
-        .overflow_y_scroll()
-        .py_1()
-        .children(lines)
-        .when(cut_short, |this| {
-            this.child(div().px_2().text_color(theme.muted_foreground).child(t_with("flows.json.more_rows", &[("count", &ROW_LIMIT)])))
-        })
+    v_flex().id(tree_id).max_h(rems(14.0)).overflow_y_scroll().py_1().children(lines).when(cut_short, |this| {
+        this.child(
+            div()
+                .px_2()
+                .text_color(theme.muted_foreground)
+                .child(t_with("flows.json.more_rows", &[("count", &ROW_LIMIT)])),
+        )
+    })
 }
 
 /// Open the row named `key` in `open` if it is closed, close it if it is open.

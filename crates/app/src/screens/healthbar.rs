@@ -28,13 +28,14 @@ use serde_json::{Map, Value, json};
 
 use crate::{
     app_model::{AppModel, ModelEvent},
-    i18n::{t, t_with},
     components::{
         Syntax,
         dialogs::{PromptField, confirm_danger, prompt},
-        master_detail::list_over_detail, page,
+        master_detail::list_over_detail,
+        page,
     },
     engine::{call_in, describe, failure},
+    i18n::{t, t_with},
     model::{http::pretty_json, traffic::clock_utc},
 };
 
@@ -128,7 +129,9 @@ impl HealthBarScreen {
     }
 
     fn report(&mut self, what: &str, message: String, cx: &mut Context<Self>) {
-        self.model.update(cx, |model, cx| model.notice(t_with("healthbar.report", &[("what", &what), ("message", &message)]), cx));
+        self.model.update(cx, |model, cx| {
+            model.notice(t_with("healthbar.report", &[("what", &what), ("message", &message)]), cx)
+        });
     }
 
     fn reload(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -294,7 +297,10 @@ impl HealthBarScreen {
             cx,
             t("healthbar.new_health_check"),
             t("healthbar.create"),
-            vec![PromptField::new(t("healthbar.name"), t("healthbar.name_example")), PromptField::new(t("healthbar.url"), "{{HOST}}/health")],
+            vec![
+                PromptField::new(t("healthbar.name"), t("healthbar.name_example")),
+                PromptField::new(t("healthbar.url"), "{{HOST}}/health"),
+            ],
             |this, values, window, cx| {
                 let id = format!("hb{:x}", now_ms());
                 let service = json!({
@@ -385,14 +391,16 @@ impl HealthBarScreen {
         match outcome {
             None => Tag::secondary().small().child(t("healthbar.not_checked")),
             Some(Outcome::Checking) => Tag::secondary().small().child(t("healthbar.checking")),
-            Some(Outcome::Done { ok: true, status, .. }) => Tag::success().small().child(status.map_or(
-                t("healthbar.state_healthy").to_owned(),
-                |s| t_with("healthbar.state_healthy_status", &[("status", &s)]),
-            )),
-            Some(Outcome::Done { ok: false, status, .. }) => Tag::danger().small().child(status.map_or(
-                t("healthbar.state_failing").to_owned(),
-                |s| t_with("healthbar.state_failing_status", &[("status", &s)]),
-            )),
+            Some(Outcome::Done { ok: true, status, .. }) => {
+                Tag::success().small().child(status.map_or(t("healthbar.state_healthy").to_owned(), |s| {
+                    t_with("healthbar.state_healthy_status", &[("status", &s)])
+                }))
+            }
+            Some(Outcome::Done { ok: false, status, .. }) => {
+                Tag::danger().small().child(status.map_or(t("healthbar.state_failing").to_owned(), |s| {
+                    t_with("healthbar.state_failing_status", &[("status", &s)])
+                }))
+            }
         }
     }
 
@@ -406,12 +414,10 @@ impl HealthBarScreen {
                 let id = text(service, "id");
                 let outcome = self.results.get(&id);
                 let (timing, checked) = match outcome {
-                    Some(Outcome::Done { duration_ms, checked_at, .. }) => {
-                        (
-                            t_with("healthbar.timing", &[("ms", &duration_ms)]),
-                            t_with("healthbar.checked_at", &[("time", &clock_utc(*checked_at))]),
-                        )
-                    }
+                    Some(Outcome::Done { duration_ms, checked_at, .. }) => (
+                        t_with("healthbar.timing", &[("ms", &duration_ms)]),
+                        t_with("healthbar.checked_at", &[("time", &clock_utc(*checked_at))]),
+                    ),
                     _ => (String::new(), String::new()),
                 };
                 let key = |part: &str| gpui_kit::ElementId::Name(format!("health-{part}-{id}").into());
@@ -465,16 +471,22 @@ impl HealthBarScreen {
                                 move |menu, _, _| {
                                     let (edit_view, delete_view) = (menu_view.clone(), menu_view.clone());
                                     let (edit_id, delete_id) = (edit_id.clone(), delete_id.clone());
-                                    menu.item(PopupMenuItem::new(t("healthbar.edit_menu")).on_click(move |_, window, cx| {
-                                        let id = edit_id.clone();
-                                        edit_view.update(cx, |this, cx| this.prompt_edit(id, window, cx)).ok();
-                                    }))
+                                    menu.item(PopupMenuItem::new(t("healthbar.edit_menu")).on_click(
+                                        move |_, window, cx| {
+                                            let id = edit_id.clone();
+                                            edit_view.update(cx, |this, cx| this.prompt_edit(id, window, cx)).ok();
+                                        },
+                                    ))
                                     .separator()
                                     .item(
-                                        PopupMenuItem::new(t("healthbar.delete_menu")).on_click(move |_, window, cx| {
-                                            let id = delete_id.clone();
-                                            delete_view.update(cx, |this, cx| this.confirm_delete(id, window, cx)).ok();
-                                        }),
+                                        PopupMenuItem::new(t("healthbar.delete_menu")).on_click(
+                                            move |_, window, cx| {
+                                                let id = delete_id.clone();
+                                                delete_view
+                                                    .update(cx, |this, cx| this.confirm_delete(id, window, cx))
+                                                    .ok();
+                                            },
+                                        ),
                                     )
                                 },
                             )),

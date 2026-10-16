@@ -1,7 +1,11 @@
 //! gRPC against a real server: a small echo service and a reflection service, both served by tonic on a
 //! loopback port, driven through the commands exactly as a client would.
 
-use std::{pin::Pin, sync::Arc, task::{Context, Poll}};
+use std::{
+    pin::Pin,
+    sync::Arc,
+    task::{Context, Poll},
+};
 
 use futures::{Stream, StreamExt as _};
 use prost_reflect::{DescriptorPool, DynamicMessage, Value as Field};
@@ -202,12 +206,14 @@ async fn every_streaming_kind_runs() {
     assert_eq!(server["responses"].as_array().unwrap().len(), 3);
     assert_eq!(serde_json::from_str::<Value>(server["responses"][2].as_str().unwrap()).unwrap()["n"], 3);
 
-    let client = call("grpc.execute", execute(&address, "Collect", json!([{ "text": "a" }, { "text": "b" }, { "text": "c" }])))
-        .await
-        .unwrap();
+    let client =
+        call("grpc.execute", execute(&address, "Collect", json!([{ "text": "a" }, { "text": "b" }, { "text": "c" }])))
+            .await
+            .unwrap();
     assert_eq!(texts(&client), ["a+b+c"]);
 
-    let bidi = call("grpc.execute", execute(&address, "Chat", json!([{ "text": "x" }, { "text": "y" }]))).await.unwrap();
+    let bidi =
+        call("grpc.execute", execute(&address, "Chat", json!([{ "text": "x" }, { "text": "y" }]))).await.unwrap();
     assert_eq!(texts(&bidi), ["chat x", "chat y"]);
 
     let single = call("grpc.execute", execute(&address, "Chat", json!({ "text": "solo" }))).await.unwrap();
@@ -381,11 +387,16 @@ async fn a_bidirectional_call_stays_open_and_answers_each_message() {
     let root = scratch_data_root();
     save_request(root.ws_id, "chat", &address, "Chat", "{}");
     let events = StreamEvents::watch("s-chat");
-    let open = call("grpc.stream.open", json!({ "workspaceId": root.ws_id, "streamId": "s-chat", "id": "chat" })).await.unwrap();
+    let open = call("grpc.stream.open", json!({ "workspaceId": root.ws_id, "streamId": "s-chat", "id": "chat" }))
+        .await
+        .unwrap();
     assert_eq!(open, json!({ "ok": true, "kind": "bidi" }));
 
     let send = |text: &'static str| {
-        call("grpc.stream.send", json!({ "workspaceId": root.ws_id, "streamId": "s-chat", "data": format!("{{\"text\":\"{text}\"}}") }))
+        call(
+            "grpc.stream.send",
+            json!({ "workspaceId": root.ws_id, "streamId": "s-chat", "data": format!("{{\"text\":\"{text}\"}}") }),
+        )
     };
     assert_eq!(send("one").await.unwrap(), json!({ "ok": true }));
     // The reply arrives while the call is still open: the second message has not been sent yet.
@@ -394,7 +405,9 @@ async fn a_bidirectional_call_stays_open_and_answers_each_message() {
     assert_eq!(send("two").await.unwrap(), json!({ "ok": true }));
     events.until("the second reply", |e| e.messages().iter().any(|(_, t)| t == "chat two")).await;
 
-    let bad = call("grpc.stream.send", json!({ "workspaceId": root.ws_id, "streamId": "s-chat", "data": "{nope" })).await.unwrap();
+    let bad = call("grpc.stream.send", json!({ "workspaceId": root.ws_id, "streamId": "s-chat", "data": "{nope" }))
+        .await
+        .unwrap();
     assert_eq!(bad["ok"], false);
 
     call("grpc.stream.end", json!({ "workspaceId": root.ws_id, "streamId": "s-chat" })).await.unwrap();
@@ -402,7 +415,9 @@ async fn a_bidirectional_call_stays_open_and_answers_each_message() {
     assert_eq!(events.closed().unwrap()["grpcStatus"], 0);
     let sent: Vec<_> = events.messages().into_iter().filter(|(d, _)| d == "sent").map(|(_, t)| t).collect();
     assert_eq!(sent, ["one", "two"]);
-    let gone = call("grpc.stream.send", json!({ "workspaceId": root.ws_id, "streamId": "s-chat", "data": "{}" })).await.unwrap();
+    let gone = call("grpc.stream.send", json!({ "workspaceId": root.ws_id, "streamId": "s-chat", "data": "{}" }))
+        .await
+        .unwrap();
     assert_eq!(gone["ok"], false);
 }
 
@@ -412,12 +427,15 @@ async fn a_client_streaming_call_answers_when_it_is_ended() {
     let root = scratch_data_root();
     save_request(root.ws_id, "collect", &address, "Collect", "{}");
     let events = StreamEvents::watch("s-collect");
-    let open =
-        call("grpc.stream.open", json!({ "workspaceId": root.ws_id, "streamId": "s-collect", "id": "collect" })).await.unwrap();
+    let open = call("grpc.stream.open", json!({ "workspaceId": root.ws_id, "streamId": "s-collect", "id": "collect" }))
+        .await
+        .unwrap();
     assert_eq!(open["kind"], "client");
     for text in ["a", "b", "c"] {
         let data = format!("{{\"text\":\"{text}\"}}");
-        call("grpc.stream.send", json!({ "workspaceId": root.ws_id, "streamId": "s-collect", "data": data })).await.unwrap();
+        call("grpc.stream.send", json!({ "workspaceId": root.ws_id, "streamId": "s-collect", "data": data }))
+            .await
+            .unwrap();
     }
     tokio::time::sleep(std::time::Duration::from_millis(150)).await;
     assert!(events.messages().iter().all(|(d, _)| d == "sent"), "no reply before the end");
@@ -432,11 +450,15 @@ async fn a_server_streaming_call_sends_its_body_and_ends_on_its_own() {
     let root = scratch_data_root();
     save_request(root.ws_id, "count", &address, "Count", "{\"text\": \"c\", \"n\": 3}");
     let events = StreamEvents::watch("s-count");
-    let open = call("grpc.stream.open", json!({ "workspaceId": root.ws_id, "streamId": "s-count", "id": "count" })).await.unwrap();
+    let open = call("grpc.stream.open", json!({ "workspaceId": root.ws_id, "streamId": "s-count", "id": "count" }))
+        .await
+        .unwrap();
     assert_eq!(open["kind"], "server");
     events.until("the call to end", |e| e.closed().is_some()).await;
     assert_eq!(events.messages().iter().filter(|(d, _)| d == "received").count(), 3);
-    let refused = call("grpc.stream.send", json!({ "workspaceId": root.ws_id, "streamId": "s-count", "data": "{}" })).await.unwrap();
+    let refused = call("grpc.stream.send", json!({ "workspaceId": root.ws_id, "streamId": "s-count", "data": "{}" }))
+        .await
+        .unwrap();
     assert_eq!(refused["ok"], false);
 }
 
@@ -446,15 +468,21 @@ async fn a_live_call_can_be_cancelled_and_a_bad_open_is_refused() {
     let root = scratch_data_root();
     save_request(root.ws_id, "chat2", &address, "Chat", "{}");
     let events = StreamEvents::watch("s-cancel");
-    call("grpc.stream.open", json!({ "workspaceId": root.ws_id, "streamId": "s-cancel", "id": "chat2" })).await.unwrap();
+    call("grpc.stream.open", json!({ "workspaceId": root.ws_id, "streamId": "s-cancel", "id": "chat2" }))
+        .await
+        .unwrap();
     call("grpc.stream.cancel", json!({ "workspaceId": root.ws_id, "streamId": "s-cancel" })).await.unwrap();
     events.until("the call to close", |e| e.closed().is_some()).await;
     assert_eq!(events.closed().unwrap()["grpcStatus"], Code::Cancelled as i32);
 
     save_request(root.ws_id, "dead", "127.0.0.1:1", "Chat", "{}");
-    let refused = call("grpc.stream.open", json!({ "workspaceId": root.ws_id, "streamId": "s-dead", "id": "dead" })).await.unwrap();
+    let refused = call("grpc.stream.open", json!({ "workspaceId": root.ws_id, "streamId": "s-dead", "id": "dead" }))
+        .await
+        .unwrap();
     assert_eq!(refused["ok"], false);
-    let missing = call("grpc.stream.open", json!({ "workspaceId": root.ws_id, "streamId": "s-x", "id": "nope" })).await.unwrap_err();
+    let missing = call("grpc.stream.open", json!({ "workspaceId": root.ws_id, "streamId": "s-x", "id": "nope" }))
+        .await
+        .unwrap_err();
     assert_eq!(missing.code, crate::protocol::ErrorCode::NotFound);
 }
 
