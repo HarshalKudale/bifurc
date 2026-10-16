@@ -14,7 +14,7 @@ members = [
     "xtask",
 ]
 # What a plain `cargo build` / `cargo test` at the root covers: everything but the GPUI app, whose build needs a
-# graphics toolchain (and, via build.rs, a nested tray build). Use `--workspace` or `-p bifurc-ui` for it.
+# graphics toolchain. Use `--workspace` or `-p bifurc-ui` for it.
 default-members = [
     "crates/protocol",
     "crates/client",
