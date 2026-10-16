@@ -39,6 +39,7 @@ actions!(
         NewMapping,
         NewProxyRule,
         NewEnvironment,
+        NewFlow,
         NewHealthCheck,
         NewWorkspace,
         RenameWorkspace,
@@ -105,7 +106,7 @@ pub fn bind_keys(cx: &mut App) {
 }
 
 fn keys() -> Vec<KeyBinding> {
-    vec![
+    let mut bindings = vec![
         // The later of two bindings for one action is the one shown beside it, so the plain key comes second.
         KeyBinding::new("secondary-shift-p", OpenCommandPalette, None),
         KeyBinding::new("secondary-k", OpenCommandPalette, None),
@@ -114,6 +115,7 @@ fn keys() -> Vec<KeyBinding> {
         KeyBinding::new("secondary-t", NewRestRequest, IN_SHELL),
         KeyBinding::new("secondary-shift-n", NewWebSocketRequest, IN_SHELL),
         KeyBinding::new("secondary-shift-m", NewMock, IN_SHELL),
+        KeyBinding::new("secondary-shift-g", NewFlow, IN_SHELL),
         KeyBinding::new("secondary-s", SaveRequest, IN_SHELL),
         KeyBinding::new("secondary-d", DuplicateEntity, IN_SHELL),
         // The flow canvas takes Ctrl+D for its selected node: its context is deeper than the shell's, so it wins.
@@ -155,6 +157,41 @@ fn keys() -> Vec<KeyBinding> {
         KeyBinding::new("secondary--", ZoomOut, None),
         KeyBinding::new("secondary-0", ResetZoom, None),
         KeyBinding::new("secondary-q", Quit, None),
+    ];
+    // Alt+1..9 (Cmd+Option+1..9 on macOS) start the kinds of request in the order the empty Requests screen lists
+    // them, 9 being the cURL import. Not Shift+digit: every platform names that key by the character the layout
+    // shifts it to (`@` on a US layout, `"` on a German one), and macOS keeps Cmd+Shift+3/4/5 for screenshots. Not
+    // Ctrl+Alt+digit, which is AltGr+digit and types `{` or `]` on many layouts.
+    let chord = if cfg!(target_os = "macos") { "secondary-alt" } else { "alt" };
+    let mut digit = 0;
+    let mut bind = |action: &dyn Fn(&str, Option<&str>) -> Vec<KeyBinding>| {
+        digit += 1;
+        bindings.extend(action(&format!("{chord}-{digit}"), IN_SHELL));
+    };
+    bind(&|k, c| vec![KeyBinding::new(k, NewRestRequest, c)]);
+    bind(&|k, c| vec![KeyBinding::new(k, NewGraphQlRequest, c)]);
+    bind(&|k, c| vec![KeyBinding::new(k, NewGrpcRequest, c)]);
+    bind(&|k, c| vec![KeyBinding::new(k, NewSoapRequest, c)]);
+    bind(&|k, c| vec![KeyBinding::new(k, NewWebSocketRequest, c)]);
+    bind(&|k, c| vec![KeyBinding::new(k, NewSseRequest, c)]);
+    bind(&|k, c| vec![KeyBinding::new(k, NewSocketIoRequest, c)]);
+    bind(&|k, c| vec![KeyBinding::new(k, NewMcpRequest, c)]);
+    bind(&|k, c| vec![KeyBinding::new(k, ImportCurlRequest, c)]);
+    bindings
+}
+
+/// The actions on Alt+1..9 (Cmd+Option+1..9 on macOS), in the order the empty Requests screen lists what it can start.
+pub fn request_actions() -> [Box<dyn Action>; 9] {
+    [
+        Box::new(NewRestRequest),
+        Box::new(NewGraphQlRequest),
+        Box::new(NewGrpcRequest),
+        Box::new(NewSoapRequest),
+        Box::new(NewWebSocketRequest),
+        Box::new(NewSseRequest),
+        Box::new(NewSocketIoRequest),
+        Box::new(NewMcpRequest),
+        Box::new(ImportCurlRequest),
     ]
 }
 
@@ -206,6 +243,7 @@ pub fn register_actions(cx: &mut App) {
     on_shell::<NewMapping>(cx, |shell, window, cx| shell.prompt_new_mapping(window, cx));
     on_shell::<NewProxyRule>(cx, |shell, window, cx| shell.new_proxy_rule(window, cx));
     on_shell::<NewEnvironment>(cx, |shell, window, cx| shell.prompt_new_environment(window, cx));
+    on_shell::<NewFlow>(cx, |shell, window, cx| shell.prompt_new_flow(window, cx));
     on_shell::<NewHealthCheck>(cx, |shell, window, cx| shell.prompt_new_health_check(window, cx));
     on_shell::<NewWorkspace>(cx, |shell, window, cx| shell.prompt_new_workspace(window, cx));
     on_shell::<RenameWorkspace>(cx, |shell, window, cx| shell.prompt_rename_workspace(window, cx));
@@ -326,6 +364,28 @@ mod tests {
         // A field inside a node is in the canvas too.
         assert!(first_for("ctrl-d", &["Root", "Shell", "FlowCanvas", "Input"]).unwrap().as_any().is::<DuplicateNode>());
         assert!(first_for("ctrl-d", &["Root", "Shell", "FlowEditor"]).unwrap().as_any().is::<DuplicateEntity>());
+    }
+
+    #[test]
+    fn alt_digits_start_requests_in_the_shell_only() {
+        let shell = ["Root", "Shell"];
+        let field = ["Root", "Shell", "RestEditor", "Input"];
+        let dialog = ["Root", "Dialog", "Input"];
+        for (ix, action) in request_actions().iter().enumerate() {
+            let keys = format!("alt-{}", ix + 1);
+            for contexts in [&shell[..], &field[..]] {
+                assert_eq!(first_for(&keys, contexts).unwrap().name(), action.name(), "{keys}");
+            }
+            assert!(first_for(&keys, &dialog).is_none(), "{keys}");
+        }
+        assert!(first_for("ctrl-shift-g", &shell).unwrap().as_any().is::<NewFlow>());
+        assert!(first_for("ctrl-shift-g", &["Root", "Dialog"]).is_none());
+        // The older keys stay.
+        assert!(first_for("ctrl-n", &shell).unwrap().as_any().is::<NewRestRequest>());
+        assert!(first_for("ctrl-t", &shell).unwrap().as_any().is::<NewRestRequest>());
+        assert!(first_for("ctrl-shift-n", &shell).unwrap().as_any().is::<NewWebSocketRequest>());
+        // On the flow canvas Ctrl+N is still NewRestRequest, which the canvas answers itself with its node picker.
+        assert!(first_for("ctrl-n", &["Root", "Shell", "FlowCanvas"]).unwrap().as_any().is::<NewRestRequest>());
     }
 
     #[test]

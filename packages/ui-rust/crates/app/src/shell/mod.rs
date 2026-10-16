@@ -383,6 +383,11 @@ impl Shell {
         self.environments.update(cx, |environments, cx| environments.prompt_new(window, cx));
     }
 
+    pub fn prompt_new_flow(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.show_screen(Screen::Flows, window, cx);
+        self.flows.update(cx, |flows, cx| flows.prompt_new(None, window, cx));
+    }
+
     pub fn prompt_new_health_check(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         self.show_screen(Screen::HealthBar, window, cx);
         self.healthbar.update(cx, |healthbar, cx| healthbar.prompt_new(window, cx));

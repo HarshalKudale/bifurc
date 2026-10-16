@@ -16,7 +16,7 @@ use super::{Screen, Shell};
 use crate::{
     commands::{
         CheckAllHealth, ClearCapture, CloseRequestTab, DeleteEntity, DuplicateEntity, FocusUrl, ImportCurlMock, ImportCurlRequest, NewEnvironment,
-        NewFolder, NewGraphQlRequest, NewGrpcRequest, NewHealthCheck, NewMapping, NewMcpRequest, NewMock, NewMockFolder,
+        NewFlow, NewFolder, NewGraphQlRequest, NewGrpcRequest, NewHealthCheck, NewMapping, NewMcpRequest, NewMock, NewMockFolder,
         NewProxyRule, NewRestRequest, NewSoapRequest, NewSocketIoRequest, NewSseRequest, NewWebSocketRequest,
         NewWorkspace, PublishChanges, RefreshServices, ReloadWorkspace, ReopenClosedTab, RenameEntity, RenameWorkspace, RestartForwardProxy,
         RevertRequest, RunRequest, SaveRequest, ShowAuditLog, ShowCapture, ShowEnvironments, ShowFlows, ShowHealthBar,
@@ -111,6 +111,7 @@ fn command_groups() -> Vec<(&'static str, Vec<CommandRow>)> {
             t("shell.group.workspace"),
             vec![
                 (t("shell.palette.new_environment"), IconName::Plus, Box::new(NewEnvironment)),
+                (t("shell.palette.new_flow"), IconName::Plus, Box::new(NewFlow)),
                 (t("shell.palette.add_workspace"), IconName::Plus, Box::new(NewWorkspace)),
                 (t("shell.palette.rename_workspace"), IconName::File, Box::new(RenameWorkspace)),
                 (t("shell.palette.publish_screen"), IconName::Github, Box::new(PublishChanges)),
