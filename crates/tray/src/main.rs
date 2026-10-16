@@ -151,11 +151,11 @@ mod tray {
         let open = MenuItem::new("Open Bifurc", true, None);
         let restart = MenuItem::new("Restart engine", true, None);
         let quit = MenuItem::new("Quit Bifurc", true, None);
-        let (open_id, restart_id, quit_id) = (open.id(), restart.id(), quit.id());
+        let (open_id, restart_id, quit_id) = (open.id().clone(), restart.id().clone(), quit.id().clone());
         // Right click shows this menu (on macOS a left click does too, as every menu-bar icon does); on Windows
         // a left click is handled as a plain click below, so the two do not collide.
         let menu = Menu::new();
-        menu.append_items(&[&open, &restart, &PredefinedMenuItem::separator(), &quit]);
+        menu.append_items(&[&open, &restart, &PredefinedMenuItem::separator(), &quit]).expect("a fresh menu takes its items");
 
         // Held until the loop ends: dropping the icon takes it out of the notification area.
         let icon = TrayIconBuilder::new()
@@ -171,18 +171,23 @@ mod tray {
         // stall the other, so each gets a reader.
         #[cfg(windows)]
         {
-            use tray_icon::ClickEvent;
-            let click_events = tray_icon::tray_event_receiver().clone();
+            use tray_icon::{MouseButton, MouseButtonState, TrayIconEvent};
+            let click_events = TrayIconEvent::receiver().clone();
             std::thread::spawn(move || {
                 while let Ok(event) = click_events.recv() {
-                    // A right click is the menu's; it is reported here as well, and ignored.
-                    if matches!(event.event, ClickEvent::Left | ClickEvent::Double) {
+                    // A right click is the menu's; it is reported here as well, and ignored. A click is
+                    // reported on press and on release; the release is the one that counts.
+                    if matches!(
+                        event,
+                        TrayIconEvent::Click { button: MouseButton::Left, button_state: MouseButtonState::Up, .. }
+                            | TrayIconEvent::DoubleClick { button: MouseButton::Left, .. }
+                    ) {
                         say("open");
                     }
                 }
             });
         }
-        let menu_events = tray_icon::menu::menu_event_receiver().clone();
+        let menu_events = tray_icon::menu::MenuEvent::receiver().clone();
         std::thread::spawn(move || {
             while let Ok(event) = menu_events.recv() {
                 if event.id == open_id {
@@ -214,7 +219,7 @@ mod tray {
     /// Embedded rather than read from disk, because a path that holds while the helper runs from the
     /// repository stops holding the moment it is packaged. Both failures below are broken-build failures,
     /// not runtime conditions.
-    fn tray_icon_from_png() -> tray_icon::icon::Icon {
+    fn tray_icon_from_png() -> tray_icon::Icon {
         const PNG: &[u8] = include_bytes!("../../../build/tray-icon.png");
 
         let decoded = (|| {
@@ -226,15 +231,16 @@ mod tray {
         })();
 
         let (width, height, rgba) = decoded.expect("the bundled tray icon should decode");
-        tray_icon::icon::Icon::from_rgba(rgba, width, height).expect("the bundled tray icon should be 32-bit RGBA")
+        tray_icon::Icon::from_rgba(rgba, width, height).expect("the bundled tray icon should be 32-bit RGBA")
     }
 
     /// What differs by platform: the loop that delivers the icon's clicks, and how it is ended.
     #[cfg(windows)]
     mod platform {
-        use windows::Win32::Foundation::{HWND, LPARAM, WPARAM};
-        use windows::Win32::System::Threading::GetCurrentThreadId;
-        use windows::Win32::UI::WindowsAndMessaging::{
+        use std::ptr::null_mut;
+
+        use windows_sys::Win32::System::Threading::GetCurrentThreadId;
+        use windows_sys::Win32::UI::WindowsAndMessaging::{
             DispatchMessageW, GetMessageW, MSG, PostThreadMessageW, TranslateMessage, WM_QUIT,
         };
 
@@ -244,16 +250,17 @@ mod tray {
         pub fn stopper() -> impl FnOnce() + Send + 'static {
             let main_thread = unsafe { GetCurrentThreadId() };
             move || unsafe {
-                let _ = PostThreadMessageW(main_thread, WM_QUIT, WPARAM(0), LPARAM(0));
+                PostThreadMessageW(main_thread, WM_QUIT, 0, 0);
             }
         }
 
         /// The icon's clicks arrive as window messages on the thread that created it.
         pub fn pump() {
-            let mut message = MSG::default();
+            let mut message: MSG = unsafe { std::mem::zeroed() };
             unsafe {
-                while GetMessageW(&mut message, HWND(0), 0, 0).as_bool() {
-                    let _ = TranslateMessage(&message);
+                // 0 is WM_QUIT, -1 an error; both end the loop.
+                while GetMessageW(&mut message, null_mut(), 0, 0) > 0 {
+                    TranslateMessage(&message);
                     DispatchMessageW(&message);
                 }
             }
@@ -262,15 +269,17 @@ mod tray {
 
     #[cfg(target_os = "macos")]
     mod platform {
-        use cocoa::appkit::{NSApplication, NSApplicationActivationPolicy};
-        use cocoa::base::nil;
+        use objc2::MainThreadMarker;
+        use objc2_app_kit::{NSApplication, NSApplicationActivationPolicy};
+
+        /// The main thread, which AppKit requires for all of this; `main` runs on it.
+        fn main_thread() -> MainThreadMarker {
+            MainThreadMarker::new().expect("the tray runs on the main thread")
+        }
 
         /// An accessory application: a menu-bar icon, and no Dock icon or menu bar of its own.
         pub fn init() {
-            unsafe {
-                let app = NSApplication::sharedApplication(nil);
-                app.setActivationPolicy_(NSApplicationActivationPolicy::NSApplicationActivationPolicyAccessory);
-            }
+            NSApplication::sharedApplication(main_thread()).setActivationPolicy(NSApplicationActivationPolicy::Accessory);
         }
 
         /// The system takes a status item away when its process ends, so ending the process is the stop.
@@ -280,7 +289,7 @@ mod tray {
 
         /// AppKit's event loop, which delivers the menu's picks. Must run on the main thread.
         pub fn pump() {
-            unsafe { NSApplication::sharedApplication(nil).run() }
+            NSApplication::sharedApplication(main_thread()).run();
         }
     }
 }
