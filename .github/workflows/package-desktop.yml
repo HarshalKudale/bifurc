@@ -48,7 +48,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          cache: false
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -89,7 +91,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          cache: false
 
       - uses: Swatinem/rust-cache@v2
         with:
@@ -130,7 +134,9 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          cache: false
 
       - uses: Swatinem/rust-cache@v2
         with:
