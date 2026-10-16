@@ -15,7 +15,10 @@ use crate::{
         kinds::{to_engine_kind, to_protocol_kind},
     },
     protocol::{EngineError, Result},
-    runtime::{entity_status::emit_entity_status, instances::notify_config_changed},
+    runtime::{
+        entity_status::{emit_entity_status, emit_entity_status_after_change},
+        instances::notify_config_changed,
+    },
     utils::{
         id::{generate_id, now_ms},
         json::{array_mut, array_of, is_truthy, merged, object_mut, opt_str, str_of, truthy},
@@ -213,8 +216,34 @@ fn update_entity_core(kind: &CrudKind, entity: &Value) -> Result<Value> {
     }
 
     notify_config_changed();
-    emit_entity_status(&ws_id);
+    bus().emit(
+        "entity.changed",
+        json!({
+            "wsId": ws_id, "kind": to_protocol_kind(kind.kind), "id": id, "action": "updated",
+            "listing": listing_of(kind.kind, &entity),
+        }),
+    );
+    emit_entity_status_after_change(&ws_id);
     Ok(json!({ "ok": true }))
+}
+
+/// The fields of an entity that `config.get` lists for it, so a client can patch its snapshot from the event.
+fn listing_of(kind: &str, entity: &Value) -> Value {
+    const FIELDS: [&str; 12] = [
+        "id", "name", "folderId", "method", "url", "endpointUrl", "serverAddress", "serviceName", "methodName",
+        "urlPattern", "domain", "target",
+    ];
+    let mut listing = serde_json::Map::new();
+    for field in FIELDS.into_iter().chain(["label"]).chain((kind == "environments").then_some("variables")) {
+        if let Some(value) = entity.get(field) {
+            listing.insert(field.into(), value.clone());
+        }
+    }
+    // A request listing has a method even when the request does not say one.
+    if kind == "requests" && !listing.contains_key("method") {
+        listing.insert("method".into(), json!("GET"));
+    }
+    Value::Object(listing)
 }
 
 async fn delete_entity_core(kind: &CrudKind, id: &str) -> Result<Value> {
@@ -255,7 +284,11 @@ async fn delete_entity_core(kind: &CrudKind, id: &str) -> Result<Value> {
 
     notify_config_changed();
     invalidate_cache(&ws_id);
-    emit_entity_status(&ws_id);
+    bus().emit(
+        "entity.changed",
+        json!({ "wsId": ws_id, "kind": to_protocol_kind(kind.kind), "id": id, "action": "deleted", "pending": pending }),
+    );
+    emit_entity_status_after_change(&ws_id);
     Ok(json!({ "ok": true, "pending": pending }))
 }
 
@@ -476,6 +509,35 @@ mod tests {
         assert!(read_names_index(WS, "requests").get(&id).is_none());
         let gone = call(&ctx, "entity.load", json!({ "workspaceId": WS, "kind": "requests", "id": id })).await.unwrap();
         assert_eq!(gone, json!({ "ok": false }));
+    }
+
+    #[tokio::test]
+    async fn an_update_and_a_delete_announce_what_a_client_needs_to_patch_its_listing() {
+        let _root = scratch_data_root();
+        let ctx = context();
+        let events = Arc::new(Mutex::new(Vec::new()));
+        let sink = events.clone();
+        let listener = bus().on("entity.changed", move |payload| sink.lock().unwrap().push(payload.clone()));
+
+        let entity = json!({ "name": "Login", "method": "POST", "url": "http://a/login", "body": "big" });
+        let created = create(&ctx, "requests", entity).await;
+        let id = created["id"].as_str().unwrap().to_string();
+        let mut changed = created.clone();
+        changed["name"] = json!("Sign in");
+        call(&ctx, "entity.update", json!({ "kind": "requests", "entity": changed })).await.unwrap();
+        call(&ctx, "entity.delete", json!({ "kind": "requests", "id": id })).await.unwrap();
+
+        bus().off(listener);
+        let mine: Vec<Value> = events.lock().unwrap().iter().filter(|e| e["id"] == id.as_str()).cloned().collect();
+        assert_eq!(mine.len(), 3);
+        assert_eq!(mine[1]["action"], "updated");
+        assert_eq!(mine[1]["kind"], "requests");
+        let listing = &mine[1]["listing"];
+        assert_eq!(*listing, json!({
+            "id": id, "name": "Sign in", "folderId": created["folderId"], "method": "POST", "url": "http://a/login",
+        }));
+        assert_eq!(mine[2]["action"], "deleted");
+        assert_eq!(mine[2]["pending"], false);
     }
 
     #[tokio::test]

@@ -5,6 +5,8 @@
 //! the engine's socket events to whichever views care. Everything that changes the workspace is an engine
 //! command; this model then re-reads.
 
+use std::time::Duration;
+
 use bifurc_engine_client::{ClientError, EngineClient, Incoming, reconnect};
 use futures::StreamExt as _;
 use gpui_kit::{AppContext as _, Context, EventEmitter};
@@ -18,9 +20,11 @@ use crate::{
 
 /// Wire names of the engine events the UI listens to.
 ///
-/// `entity.changed` is only sent when a REST request or mock is *created*; an update, a delete, or any other
-/// kind of entity is announced by `sync.entityStatus` alone (the engine sends it after every entity
-/// write). Both therefore mean "re-read the workspace".
+/// `entity.changed` says what happened to one entity: `created`, or `updated` / `deleted` with the fields a
+/// listing shows, which [`ConfigSnapshot::apply_change`] patches in without a fetch. `sync.entityStatus`
+/// follows every write with the git state, and says `configChanged: false` when `entity.changed` already
+/// described the whole change; without that field (an older engine, or a pull, sync or import) it means
+/// "re-read the workspace".
 const EVENTS: [&str; 31] = [
     "event.request.stream",
     "event.flow.progress",
@@ -54,6 +58,9 @@ const EVENTS: [&str; 31] = [
     "event.runner.progress",
     "event.runner.finished",
 ];
+
+/// How long a refresh waits for the rest of a burst of changes.
+const REFRESH_DELAY: Duration = Duration::from_millis(100);
 
 #[derive(Debug, Clone, PartialEq)]
 pub enum Load {
@@ -156,6 +163,10 @@ pub enum SyncScope {
 pub enum ModelEvent {
     /// A new snapshot is in place.
     ConfigChanged,
+    /// One entity's listing in the snapshot was patched from an `entity.changed` event. Nothing appeared or
+    /// vanished except that entity's own entry, so a view that only reacts to the set of things (open tabs,
+    /// validation, reloads) has nothing to do; one that renders the listing re-renders on its own.
+    ConfigPatched,
     /// The active workspace is not the one it was; anything open belongs to the previous one.
     WorkspaceSwitched,
     /// `event.request.stream`: text of a REST response that is still arriving.
@@ -230,6 +241,10 @@ pub struct AppModel {
     load: Load,
     refreshing: bool,
     refresh_again: bool,
+    /// A fetch is waiting out [`REFRESH_DELAY`].
+    refresh_scheduled: bool,
+    git_refreshing: bool,
+    git_again: bool,
     connection_lost: bool,
     /// A publish or sync is in flight.
     publishing: bool,
@@ -252,6 +267,9 @@ impl AppModel {
             load: Load::Loading,
             refreshing: false,
             refresh_again: false,
+            refresh_scheduled: false,
+            git_refreshing: false,
+            git_again: false,
             connection_lost: false,
             publishing: false,
         };
@@ -435,7 +453,25 @@ impl AppModel {
                         window.update(cx, |_, window, _| window.activate_window()).ok();
                     }
                 }
-                "event.entity.changed" | "event.sync.entityStatus" | "event.settings.changed" => self.refresh(cx),
+                "event.entity.changed" => {
+                    if self.config.apply_change(&event.payload) {
+                        // A fetch that is already on its way may carry the state from before this change.
+                        self.refresh_again |= self.refreshing;
+                        cx.emit(ModelEvent::ConfigPatched);
+                        cx.notify();
+                    } else {
+                        self.refresh_soon(cx);
+                    }
+                }
+                "event.sync.entityStatus" => {
+                    let in_front = event.payload.get("wsId").and_then(Value::as_str) == Some(self.workspace_id());
+                    if in_front && event.payload.get("configChanged").and_then(Value::as_bool) == Some(false) {
+                        self.refresh_git(cx);
+                    } else {
+                        self.refresh_soon(cx);
+                    }
+                }
+                "event.settings.changed" => self.refresh_soon(cx),
                 "event.vault.changed" => {
                     self.refresh_vaults(cx);
                     self.refresh_git(cx);
@@ -484,6 +520,23 @@ impl AppModel {
         }
     }
 
+    /// [`refresh`](Self::refresh) in a moment: writes arrive in bursts (autosave, a folder run, an import),
+    /// and everything that arrives within [`REFRESH_DELAY`] is read once.
+    fn refresh_soon(&mut self, cx: &mut Context<Self>) {
+        if std::mem::replace(&mut self.refresh_scheduled, true) {
+            return;
+        }
+        cx.spawn(async move |this, cx| {
+            cx.background_executor().timer(REFRESH_DELAY).await;
+            this.update(cx, |this, cx| {
+                this.refresh_scheduled = false;
+                this.refresh(cx);
+            })
+            .ok();
+        })
+        .detach();
+    }
+
     /// Re-reads the workspace. Changes arrive in bursts (a save is several writes), so a refresh asked for
     /// while one is in flight collapses into a single follow-up.
     pub fn refresh(&mut self, cx: &mut Context<Self>) {
@@ -501,6 +554,10 @@ impl AppModel {
         let previous_workspace = self.config.active_workspace_id.clone();
         match outcome.map_err(|e| describe(&e)).and_then(|value| ConfigSnapshot::from_value(&value)) {
             Ok(config) => {
+                // Vaults belong to the workspace and the proxies to the settings; an entity write moves neither.
+                let rest_changed = self.load != Load::Ready
+                    || previous_workspace != config.active_workspace_id
+                    || self.config.settings != config.settings;
                 self.config = config;
                 self.load = Load::Ready;
                 cx.emit(ModelEvent::ConfigChanged);
@@ -508,8 +565,10 @@ impl AppModel {
                     cx.emit(ModelEvent::WorkspaceSwitched);
                 }
                 self.refresh_git(cx);
-                self.refresh_vaults(cx);
-                self.refresh_proxy(cx);
+                if rest_changed {
+                    self.refresh_vaults(cx);
+                    self.refresh_proxy(cx);
+                }
             }
             Err(message) => {
                 // Keep showing the last good snapshot; only a first load has nothing to fall back on.
@@ -547,21 +606,33 @@ impl AppModel {
     }
 
     /// Re-reads which files differ from the last commit. A failure keeps the previous status: the footer
-    /// would rather be a moment stale than empty.
+    /// would rather be a moment stale than empty. A read asked for while one is in flight collapses into one
+    /// follow-up, and nothing is announced when the answer is what was already shown.
     pub fn refresh_git(&mut self, cx: &mut Context<Self>) {
         if self.workspace_id().is_empty() {
+            return;
+        }
+        if std::mem::replace(&mut self.git_refreshing, true) {
+            self.git_again = true;
             return;
         }
         let client = self.engine.client.clone();
         let workspace_id = self.workspace_id().to_owned();
         let payload = json!({ "workspaceId": workspace_id });
         call(&client, cx, "sync.getEntityStatus", payload, move |this, outcome, cx| {
+            this.git_refreshing = false;
             // An answer for a workspace that is no longer the active one describes the wrong repository.
             if let Ok(value) = outcome
                 && this.workspace_id() == workspace_id
             {
-                this.git = GitStatus::from_value(&value);
-                cx.notify();
+                let git = GitStatus::from_value(&value);
+                if git != this.git {
+                    this.git = git;
+                    cx.notify();
+                }
+            }
+            if std::mem::take(&mut this.git_again) {
+                this.refresh_git(cx);
             }
         });
     }
