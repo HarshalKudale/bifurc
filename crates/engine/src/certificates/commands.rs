@@ -7,7 +7,8 @@ use serde_json::{Value, json};
 use super::manager::{ca_cert_path, ca_dir, ca_key_path, generate_ca, get_cert_status, remove_ca};
 use crate::{
     kernel::CommandRegistry,
-    protocol::Result,
+    protocol::{EngineError, Result},
+    runtime::failed,
     utils::{id::now_ms, json::str_of},
     workspace::blob::{blob_content_path, describe_blob_error, publish_artifact, stat_blob},
 };
@@ -21,7 +22,7 @@ pub fn register(registry: &mut CommandRegistry) {
             .and_then(|generated| generated);
         Ok(match outcome {
             Ok(generated) => json!({ "ok": true, "fingerprint": generated.identity.fingerprint }),
-            Err(error) => json!({ "ok": false, "error": error }),
+            Err(error) => failed(&tls_failure(error)),
         })
     });
 
@@ -41,7 +42,7 @@ pub fn register(registry: &mut CommandRegistry) {
 
 fn export_cert() -> Result<Value> {
     let Ok(content) = std::fs::read_to_string(ca_cert_path()) else {
-        return Ok(json!({ "ok": false, "error": "No CA certificate found." }));
+        return Ok(failed(&EngineError::not_found("No CA certificate found.").keyed("tls.no_ca", json!({}))));
     };
     publish_artifact(&content, "bifurc-ca.pem", "application/x-pem-file", None)
 }
@@ -56,6 +57,15 @@ fn import(blob_id: &str, dest: &Path) -> Value {
     })();
     match copied {
         Ok(()) => json!({ "ok": true }),
-        Err(error) => json!({ "ok": false, "error": error }),
+        Err(error) => failed(&tls_failure(error)),
     }
+}
+
+/// A failed certificate operation: the one sentence of our own, else the raw library or file error under a wrapper.
+fn tls_failure(message: String) -> EngineError {
+    if message.starts_with("The generated CA certificate could not be parsed") {
+        return EngineError::engine(message).keyed("tls.ca_unparsable", json!({}));
+    }
+    let detail = json!({ "detail": message });
+    EngineError::engine(message).keyed("tls.failed", detail)
 }

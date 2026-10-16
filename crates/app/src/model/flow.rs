@@ -522,7 +522,7 @@ impl Described {
                 node_id: text(problem, "nodeId"),
                 edge_id: text(problem, "edgeId"),
                 is_error: problem.get("severity").and_then(Value::as_str) == Some("error"),
-                message: text(problem, "message").unwrap_or_default(),
+                message: crate::engine::text_in(problem, "message").unwrap_or_default(),
             })
             .collect();
         let input = |input: &Value| {
@@ -639,7 +639,7 @@ impl RunView {
             entry.status = text(node, "status").unwrap_or_else(|| "idle".to_owned());
             entry.runs = node.get("runs").and_then(Value::as_u64).unwrap_or(0);
             entry.port = text(node, "port");
-            entry.error = text(node, "error");
+            entry.error = crate::engine::text_in(node, "error");
             entry.duration_ms = node.get("durationMs").and_then(Value::as_u64);
             entry.handed_on = node.get("handedOn").and_then(Value::as_u64).unwrap_or(0);
             if whole {
@@ -676,7 +676,7 @@ impl RunView {
     pub fn from_report(report: &Value) -> Option<Self> {
         let mut run = Self::started(text(report, "runId")?);
         run.status = text(report, "status").unwrap_or_default();
-        run.error = text(report, "error");
+        run.error = crate::engine::text_in(report, "error");
         run.apply_nodes(report, true);
         run.apply_progress(&serde_json::json!({ "edges": report.get("edges") }));
         run.total_tests = report.get("totalTests").and_then(Value::as_u64).unwrap_or(0);

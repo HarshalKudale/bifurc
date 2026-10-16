@@ -6,12 +6,16 @@ use std::{sync::Arc, time::Duration};
 use serde_json::{Map, Value, json};
 
 use super::{
+    error_in,
     model::{Node, PORT_ERROR, PORT_OUT, PORT_SUCCESS},
+    put_error,
     reference::{render, text_of},
     run::{Live, Run, Token, Wired},
+    said,
     streams::Subscription,
 };
 use crate::{
+    protocol::EngineError,
     scripting::execute_flow_script,
     utils::{
         json::{array_of, opt_str, str_of},
@@ -25,16 +29,23 @@ const MCP_CONNECT_TIMEOUT: Duration = Duration::from_secs(30);
 /// The port a node leaves by, and what it hands on.
 pub type Outcome = (String, Arc<Value>);
 
-fn failed(error: impl Into<String>) -> Outcome {
-    (PORT_ERROR.to_string(), Arc::new(json!({ "ok": false, "error": error.into() })))
+/// The output of a node that failed: `{ ok: false, error, errorKey?, errorParams? }`.
+pub(super) fn failure(error: &EngineError) -> Value {
+    let mut output = json!({ "ok": false });
+    put_error(&mut output, error);
+    output
+}
+
+fn failed(error: EngineError) -> Outcome {
+    (PORT_ERROR.to_string(), Arc::new(failure(&error)))
 }
 
 /// `output` leaving by the success port, or by the error port when `error` says why.
-fn outcome(mut output: Value, error: Option<String>) -> Outcome {
+fn outcome(mut output: Value, error: Option<EngineError>) -> Outcome {
     output["ok"] = json!(error.is_none());
     match error {
         Some(error) => {
-            output["error"] = json!(error);
+            put_error(&mut output, &error);
             (PORT_ERROR.to_string(), Arc::new(output))
         }
         None => (PORT_SUCCESS.to_string(), Arc::new(output)),
@@ -48,13 +59,13 @@ fn named<'a>(wired: &'a Wired, prefix: &'a str) -> impl Iterator<Item = (String,
 
 /// The values for the request's `{{variables}}`: what was typed in for the node, its references filled in,
 /// then what is wired, which wins.
-pub fn bindings(run: &Run, node: &Node, token: &Token, wired: &Wired) -> Result<Vec<(String, String)>, String> {
+pub fn bindings(run: &Run, node: &Node, token: &Token, wired: &Wired) -> Result<Vec<(String, String)>, EngineError> {
     let scope = run.scope(token);
     let mut variables: Vec<(String, String)> = node
         .variables
         .iter()
         .map(|pair| Ok((pair.name.clone(), render(&pair.value, &scope)?)))
-        .collect::<Result<_, String>>()?;
+        .collect::<Result<_, EngineError>>()?;
     variables.extend(named(wired, "var:").map(|(name, value)| (name, text_of(&value))));
     Ok(variables)
 }
@@ -78,7 +89,11 @@ pub async fn evaluate(run: &Run, node: &Node, token: &Token, wired: &Wired) -> O
         format!("bc.output = (function (input, vars) {{ return (\n{}\n); }})(bc.input, bc.vars);", node.expression);
     let result = execute_flow_script(&script, data, json!({})).await;
     match opt_str(&result, "error") {
-        Some(error) => failed(format!("The expression failed: {error}")),
+        Some(error) => failed(said(
+            "flow.expression_failed",
+            json!({ "detail": error }),
+            format!("The expression failed: {error}"),
+        )),
         None => (PORT_OUT.to_string(), Arc::new(result["output"].clone())),
     }
 }
@@ -111,11 +126,15 @@ fn http_output(node: &Node, answer: &Value) -> Outcome {
     let failing = tests.iter().filter(|test| test["passed"] != true).count();
     let script_error = ["preScriptError", "postScriptError"].iter().find_map(|key| opt_str(answer, key));
     let error = if let Some(error) = script_error {
-        Some(format!("A script of the request failed: {error}"))
+        Some(said("flow.script_failed", json!({ "detail": error }), format!("A script of the request failed: {error}")))
     } else if node.fail_on_status && !(200..300).contains(&status) {
-        Some(format!("HTTP {status}"))
+        Some(said("flow.http_status", json!({ "status": status }), format!("HTTP {status}")))
     } else if !node.ignore_test_errors && failing > 0 {
-        Some(format!("{failing} of {} tests failed", tests.len()))
+        Some(said(
+            "flow.tests_failed",
+            json!({ "failing": failing, "total": tests.len() }),
+            format!("{failing} of {} tests failed", tests.len()),
+        ))
     } else {
         None
     };
@@ -125,9 +144,13 @@ fn http_output(node: &Node, answer: &Value) -> Outcome {
     outcome(output, error)
 }
 
+/// Why a command's answer says it failed: its own error, else "The call failed".
+fn call_failed_in(answer: &Value) -> EngineError {
+    error_in(answer).unwrap_or_else(|| said("flow.call_failed", json!({}), "The call failed"))
+}
+
 fn grpc_output(node: &Node, answer: &Value) -> Outcome {
-    let error = (answer["ok"] != true && node.fail_on_status)
-        .then(|| opt_str(answer, "error").unwrap_or("The call failed").to_string());
+    let error = (answer["ok"] != true && node.fail_on_status).then(|| call_failed_in(answer));
     let output = json!({
         "status": answer["status"], "statusMessage": answer["statusMessage"], "message": answer["responses"][0],
         "responses": answer["responses"], "metadata": answer["metadata"], "durationMs": answer["durationMs"],
@@ -151,10 +174,16 @@ async fn send_once(run: &Run, node: &Node, token: &Token, wired: &Wired) -> Outc
         "graphqlRequests" => "graphql.send",
         "soapRequests" => "soap.send",
         "grpcRequests" => "grpc.send",
-        other => return failed(format!("A request of the kind \"{other}\" cannot be sent by a flow.")),
+        other => {
+            return failed(said(
+                "flow.request_kind_unsendable",
+                json!({ "kind": other }),
+                format!("A request of the kind \"{other}\" cannot be sent by a flow."),
+            ));
+        }
     };
     match run.invoke(command, payload, variables).await {
-        Err(error) => failed(error.message),
+        Err(error) => failed(error),
         Ok(answer) if command == "grpc.send" => grpc_output(node, &answer),
         Ok(answer) => http_output(node, &answer),
     }
@@ -170,8 +199,18 @@ fn mcp_connection_id(run: &Run, node: &Node) -> String {
     format!("{}:{}", run.live_prefix(), node.request_id)
 }
 
+/// Why an answer says the connection failed: its own error, else "The connection failed".
+pub(super) fn connection_failed_in(answer: &Value) -> EngineError {
+    error_in(answer).unwrap_or_else(|| said("flow.connection_failed", json!({}), "The connection failed"))
+}
+
+/// Why a status event says the server is gone: its own error, else "The server closed the connection".
+fn server_closed_in(status: &Value) -> EngineError {
+    error_in(status).unwrap_or_else(|| said("flow.server_closed", json!({}), "The server closed the connection"))
+}
+
 /// Open the run's connection to the node's server, unless an earlier node already did.
-async fn mcp_connect(run: &Run, node: &Node, variables: &[(String, String)]) -> Result<(), String> {
+async fn mcp_connect(run: &Run, node: &Node, variables: &[(String, String)]) -> Result<(), EngineError> {
     let connection_id = mcp_connection_id(run, node);
     // Held across the connect, so two nodes that reach the same server together open it once.
     let mut connected = run.mcp.lock().await;
@@ -180,26 +219,24 @@ async fn mcp_connect(run: &Run, node: &Node, variables: &[(String, String)]) -> 
     }
     let mut events = Subscription::new(&run.ws_id, "connectionId", &connection_id, &["mcp.status"]);
     let payload = json!({ "workspaceId": run.ws_id, "connectionId": connection_id, "id": node.request_id });
-    let answer = run.invoke("mcp.connect", payload, variables.to_vec()).await.map_err(|error| error.message)?;
+    let answer = run.invoke("mcp.connect", payload, variables.to_vec()).await?;
     if answer["ok"] != true {
-        return Err(opt_str(&answer, "error").unwrap_or("The connection failed").to_string());
+        return Err(connection_failed_in(&answer));
     }
     run.keep(Live { disconnect: "mcp.disconnect", id_field: "connectionId", id: connection_id.clone() });
     let opened = async {
         while let Some((_, payload)) = events.next().await {
             match str_of(&payload, "status") {
                 "connected" => return Ok(()),
-                "error" | "disconnected" => {
-                    return Err(opt_str(&payload, "error").unwrap_or("The server closed the connection").to_string());
-                }
+                "error" | "disconnected" => return Err(server_closed_in(&payload)),
                 _ => {}
             }
         }
-        Err("The connection ended".to_string())
+        Err(said("flow.connection_ended", json!({}), "The connection ended"))
     };
     tokio::time::timeout(MCP_CONNECT_TIMEOUT, opened)
         .await
-        .unwrap_or_else(|_| Err("The MCP server did not answer in time".to_string()))?;
+        .unwrap_or_else(|_| Err(said("flow.mcp_timeout", json!({}), "The MCP server did not answer in time")))?;
     connected.insert(connection_id);
     Ok(())
 }
@@ -230,15 +267,15 @@ async fn call_once(run: &Run, node: &Node, token: &Token, wired: &Wired) -> Outc
         "workspaceId": run.ws_id, "connectionId": connection_id, "type": node.call, "name": target, "arguments": arguments,
     });
     let call_id = match run.invoke("mcp.call", payload, variables).await {
-        Err(error) => return failed(error.message),
-        Ok(answer) if answer["ok"] != true => return failed(opt_str(&answer, "error").unwrap_or("The call failed")),
+        Err(error) => return failed(error),
+        Ok(answer) if answer["ok"] != true => return failed(call_failed_in(&answer)),
         Ok(answer) => str_of(&answer, "callId").to_string(),
     };
     while let Some((event, payload)) = events.next().await {
         if event == "mcp.status" {
             if matches!(str_of(&payload, "status"), "error" | "disconnected") {
                 run.mcp.lock().await.remove(&connection_id);
-                return failed(opt_str(&payload, "error").unwrap_or("The server closed the connection"));
+                return failed(server_closed_in(&payload));
             }
             continue;
         }
@@ -251,10 +288,11 @@ async fn call_once(run: &Run, node: &Node, token: &Token, wired: &Wired) -> Outc
             "text": message["text"], "data": serde_json::from_str::<Value>(raw).unwrap_or_else(|_| json!(raw)),
             "durationMs": message["durationMs"],
         });
-        let error = (message["status"] != "ok").then(|| str_of(message, "text").to_string());
+        // shortcut: the server's own text is shown as it came, in no language of ours.
+        let error = (message["status"] != "ok").then(|| EngineError::engine(str_of(message, "text")));
         return outcome(output, error);
     }
-    failed("The connection ended before the server answered")
+    failed(said("flow.connection_ended_early", json!({}), "The connection ended before the server answered"))
 }
 
 /// Call the node's tool, prompt or resource on its MCP server.
@@ -295,6 +333,10 @@ mod tests {
 
         let (port, output) = http_output(&node(json!({})), &answer(404, json!({})));
         assert_eq!((port.as_str(), &output["error"], &output["ok"]), (PORT_ERROR, &json!("HTTP 404"), &json!(false)));
+        assert_eq!(
+            (&output["errorKey"], &output["errorParams"]),
+            (&json!("flow.http_status"), &json!({ "status": 404 }))
+        );
         assert_eq!(http_output(&node(json!({ "failOnStatus": false })), &answer(404, json!({}))).0, PORT_SUCCESS);
 
         let tests = json!({ "tests": [{ "name": "a", "passed": true }, { "name": "b", "passed": false }] });
@@ -323,7 +365,7 @@ mod tests {
         let tried = std::sync::atomic::AtomicU32::new(0);
         let attempt = || async {
             let count = tried.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
-            if count < 2 { failed("down") } else { outcome(json!({}), None) }
+            if count < 2 { failed(EngineError::engine("down")) } else { outcome(json!({}), None) }
         };
         let patient = node(json!({ "retries": 3, "retryDelayMs": 1000 }));
         assert_eq!(with_retries(&patient, attempt).await.0, PORT_SUCCESS);

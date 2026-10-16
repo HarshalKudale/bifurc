@@ -32,8 +32,9 @@ fn keys_in_source() -> BTreeSet<String> {
     let mut keys = BTreeSet::new();
     for file in files {
         let text = fs::read_to_string(&file).expect("source is readable");
-        for (at, _) in text.match_indices("keyed(") {
-            let rest = text[at + "keyed(".len()..].trim_start();
+        // `said("key", params, message)` (flows) takes the key first too.
+        for (at, opener) in text.match_indices("keyed(").chain(text.match_indices("said(")) {
+            let rest = text[at + opener.len()..].trim_start();
             if let Some(rest) = rest.strip_prefix('"')
                 && let Some(end) = rest.find('"')
             {

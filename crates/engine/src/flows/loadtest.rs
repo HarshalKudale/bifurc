@@ -16,12 +16,15 @@ use tokio::{runtime::Runtime, task::JoinSet};
 
 use super::{
     model::NodeKind,
+    put_error,
     run::{self, Plan, Run},
+    said,
 };
 use crate::{
     cookies,
     kernel::{CommandContext, bus},
-    protocol::{EngineError, Result},
+    protocol::Result,
+    runtime::failed,
     utils::id::{generate_id, now_ms},
 };
 
@@ -179,7 +182,8 @@ impl LoadTest {
             // An instance whose task died never settled.
             for index in std::mem::take(&mut state.live).into_keys() {
                 state.rows[index]["status"] = json!("failed");
-                state.rows[index]["error"] = json!("The instance stopped unexpectedly.");
+                let error = said("flow.instance_stopped", json!({}), "The instance stopped unexpectedly.");
+                put_error(&mut state.rows[index], &error);
                 state.changed.insert(index);
             }
             if state.status == "running" {
@@ -235,7 +239,11 @@ pub fn status(ws_id: &str, flow_id: &str) -> Option<Value> {
 /// Stop a flow's load test: every instance still running ends as `cancelled`.
 pub fn cancel(ws_id: &str, flow_id: &str) -> Value {
     let Some(load) = find(ws_id, flow_id) else {
-        return json!({ "ok": false, "error": format!("The flow \"{flow_id}\" has no load test in workspace \"{ws_id}\".") });
+        return failed(&said(
+            "flow.no_loadtest",
+            json!({ "id": flow_id, "workspace": ws_id }),
+            format!("The flow \"{flow_id}\" has no load test in workspace \"{ws_id}\"."),
+        ));
     };
     let mut state = load.state.lock();
     if state.status == "running" {
@@ -250,9 +258,11 @@ pub fn cancel(ws_id: &str, flow_id: &str) -> Value {
 pub fn start(ctx: &CommandContext, params: &Value) -> Result<Value> {
     let instances = params.get("instances").and_then(Value::as_u64).filter(|n| (1..=MAX_INSTANCES).contains(n));
     let instances = instances.ok_or_else(|| {
-        EngineError::bad_request(format!(
-            "flow.loadtest.start takes `instances`: a whole number from 1 to {MAX_INSTANCES}."
-        ))
+        said(
+            "flow.loadtest_instances",
+            json!({ "max": MAX_INSTANCES }),
+            format!("flow.loadtest.start takes `instances`: a whole number from 1 to {MAX_INSTANCES}."),
+        )
     })? as usize;
     let mut plan: Plan = match run::plan(params)? {
         Ok(plan) => plan,
@@ -260,10 +270,11 @@ pub fn start(ctx: &CommandContext, params: &Value) -> Result<Value> {
     };
     // Instances are users going through an API side by side, which a tool call of an MCP server is not.
     if let Some(node) = plan.flow.nodes.iter().find(|node| node.kind == NodeKind::Mcp) {
-        return Ok(json!({ "ok": false, "error": format!(
-            "A flow with an MCP node runs one instance at a time: \"{}\" calls an MCP server.",
-            node.label()
-        ) }));
+        return Ok(failed(&said(
+            "flow.loadtest_mcp",
+            json!({ "node": node.label() }),
+            format!("A flow with an MCP node runs one instance at a time: \"{}\" calls an MCP server.", node.label()),
+        )));
     }
     // Side by side, the instances would write over each other's variables in the environment's file.
     plan.flow.settings.persist_variables = false;
@@ -272,10 +283,14 @@ pub fn start(ctx: &CommandContext, params: &Value) -> Result<Value> {
         let mut loads = LOADS.lock();
         let key = format!("{}\0{}", plan.ws_id, plan.flow.id);
         if loads.get(&key).is_some_and(|load| load.state.lock().finished_at.is_none()) {
-            return Ok(json!({ "ok": false, "error": format!(
-                "A load test of the flow \"{}\" is already running. Cancel it with flow.loadtest.cancel, or wait for it to finish.",
-                plan.flow.name
-            ) }));
+            return Ok(failed(&said(
+                "flow.loadtest_running",
+                json!({ "name": plan.flow.name }),
+                format!(
+                    "A load test of the flow \"{}\" is already running. Cancel it with flow.loadtest.cancel, or wait for it to finish.",
+                    plan.flow.name
+                ),
+            )));
         }
         let live: HashMap<usize, Arc<Run>> = (0..instances).map(|index| (index, plan.run(ctx, Some(index)))).collect();
         let load = Arc::new(LoadTest {
