@@ -398,6 +398,7 @@ impl AuditScreen {
         cx.notify();
     }
 
+    #[allow(clippy::too_many_arguments)] // one call site per argument; a parameter struct would only move them
     fn filter_menu(
         &self,
         id: &'static str,

@@ -105,10 +105,11 @@ impl Http {
                 };
                 let (kind, mut entity) = request_entity(&call);
                 // A cURL command with data and no type is a form; a file that names no type means none.
-                if self.header("content-type").is_none() && self.parts.is_empty() {
-                    if let Some(headers) = entity.get_mut("headers").and_then(Value::as_object_mut) {
-                        headers.shift_remove("Content-Type");
-                    }
+                if self.header("content-type").is_none()
+                    && self.parts.is_empty()
+                    && let Some(headers) = entity.get_mut("headers").and_then(Value::as_object_mut)
+                {
+                    headers.shift_remove("Content-Type");
                 }
                 (kind, entity)
             }
@@ -179,7 +180,7 @@ pub fn auth_parts(kind: &str, field: &dyn Fn(&str) -> String) -> AuthParts {
         "basic" => {
             let (user, password) = (field("username"), field("password"));
             // A variable cannot be encoded here: it has no value yet.
-            if !(user.is_empty() && password.is_empty()) && !user.contains("{{") && !password.contains("{{") {
+            if (!user.is_empty() || !password.is_empty()) && !user.contains("{{") && !password.contains("{{") {
                 let encoded = STANDARD.encode(format!("{user}:{password}"));
                 out.headers.push(("Authorization".into(), format!("Basic {encoded}")));
             }

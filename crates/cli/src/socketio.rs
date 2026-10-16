@@ -38,10 +38,10 @@ pub fn socketio_exchange(
 ) -> Result<String> {
     let wait = listen_seconds(ctx.args, DEFAULT_WAIT)?;
     let event = ctx.args.flag("event").map(str::to_string);
-    if event.is_none() {
-        if let Some(option) = ["body", "ack"].into_iter().find(|option| ctx.args.has(option)) {
-            return Err(CliError::msg(format!("--{option} goes with --event <name>, the event to emit")));
-        }
+    if event.is_none()
+        && let Some(option) = ["body", "ack"].into_iter().find(|option| ctx.args.has(option))
+    {
+        return Err(CliError::msg(format!("--{option} goes with --event <name>, the event to emit")));
     }
 
     let key = json!({ "workspaceId": workspace, "connectionId": connection_id });
@@ -164,7 +164,7 @@ mod tests {
         assert_eq!(out.unwrap(), "Socket.IO disconnected  http://x  /chat");
         let key = json!({"workspaceId": "w1", "connectionId": "i1"});
         // A saved request is opened by its id: the connect carries nothing of the request.
-        assert_eq!(payloads(&calls, "socketio.connect"), [key.clone()]);
+        assert_eq!(payloads(&calls, "socketio.connect"), std::slice::from_ref(&key));
         assert!(payloads(&calls, "socketio.emit").is_empty());
         assert_eq!(payloads(&calls, "socketio.disconnect"), [key]);
     }

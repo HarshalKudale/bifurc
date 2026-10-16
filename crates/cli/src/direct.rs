@@ -1054,7 +1054,7 @@ mod tests {
                 // An item is looked up in a workspace; a list has to be the last operand.
                 let looked_up = matches!(arg.take, Take::Item(_) | Take::Named(_) | Take::Vault);
                 assert!(!looked_up || row.scope != Scope::Engine, "{name}");
-                assert!(arg.take != Take::List || row.args.iter().filter(|a| a.operand).last() == Some(arg), "{name}");
+                assert!(arg.take != Take::List || row.args.iter().rfind(|a| a.operand) == Some(arg), "{name}");
             }
             assert!(!row.patch || row.args.iter().any(|arg| arg.key == "data"), "{name}");
         }

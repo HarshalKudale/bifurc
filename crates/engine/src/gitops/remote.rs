@@ -174,13 +174,12 @@ pub async fn git_net(ws_id: &str, args: &[&str]) -> Result<String, GitError> {
     // A push or pull the remote refused for its credentials: ask GitHub whether the token is still good.
     if let (Err(e), Some(auth), Some(account)) = (&result, &auth, workspace_account(ws_id)) {
         let text = e.0.to_lowercase();
-        if text.contains("authentication failed")
+        if (text.contains("authentication failed")
             || text.contains("invalid username or password")
-            || text.contains("401")
+            || text.contains("401"))
+            && let Err(error) = github::fetch_user(&auth.token).await
         {
-            if let Err(error) = github::fetch_user(&auth.token).await {
-                flag_if_rejected(&account.id, error);
-            }
+            flag_if_rejected(&account.id, error);
         }
     }
     result

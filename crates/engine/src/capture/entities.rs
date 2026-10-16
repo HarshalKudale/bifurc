@@ -10,7 +10,7 @@ use crate::utils::{content_type::is_binary_content_type, curl::is_skipped_header
 fn is_base64_text(stripped: &str) -> bool {
     let body = stripped.trim_end_matches('=');
     stripped.len() - body.len() <= 2
-        && stripped.len() % 4 == 0
+        && stripped.len().is_multiple_of(4)
         && body.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'+' || b == b'/')
 }
 

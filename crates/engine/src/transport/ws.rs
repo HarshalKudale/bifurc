@@ -129,6 +129,7 @@ async fn refuse_plain_http(mut stream: TcpStream) {
     let _ = stream.shutdown().await;
 }
 
+#[allow(clippy::result_large_err)] // the error type is fixed by tungstenite's handshake callback
 fn check_origin(request: &Request, response: Response) -> std::result::Result<Response, ErrorResponse> {
     let origin = request.headers().get("origin").and_then(|value| value.to_str().ok());
     if is_allowed_origin(origin, DEFAULT_HOST_DOMAIN) {
@@ -221,11 +222,11 @@ where
         }
     }
     session.close();
-    if let Some(message) = ending {
-        if socket.send(message).await.is_ok() {
-            // Let the peer see the close before the connection goes away.
-            let _ = timeout(CLOSE_GRACE, async { while let Some(Ok(_)) = socket.next().await {} }).await;
-        }
+    if let Some(message) = ending
+        && socket.send(message).await.is_ok()
+    {
+        // Let the peer see the close before the connection goes away.
+        let _ = timeout(CLOSE_GRACE, async { while let Some(Ok(_)) = socket.next().await {} }).await;
     }
 }
 

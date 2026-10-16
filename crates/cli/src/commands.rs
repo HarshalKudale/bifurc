@@ -633,7 +633,7 @@ mod tests {
         assert!(calls.is_empty());
 
         let argv = ["status", "now"];
-        let (out, _) = run(&argv, vec![], |c| status(c));
+        let (out, _) = run(&argv, vec![], status);
         assert_eq!(
             out.unwrap_err(),
             CliError::msg("unexpected argument \"now\" for \"status\" (see: bifurc status --help)")
@@ -764,7 +764,7 @@ mod tests {
     #[test]
     fn call_sends_the_payload_and_prints_the_result_as_json() {
         let argv = ["call", "server.status", r#"{"x":1}"#];
-        let (out, calls) = run(&argv, vec![("server.status", Ok(json!({"running": true})))], |c| call(c));
+        let (out, calls) = run(&argv, vec![("server.status", Ok(json!({"running": true})))], call);
         assert_eq!(out.unwrap(), "{\n  \"running\": true\n}");
         assert_eq!(calls, vec![("server.status".to_string(), json!({"x": 1}))]);
     }
@@ -772,23 +772,23 @@ mod tests {
     #[test]
     fn call_defaults_the_payload_and_accepts_it_as_a_flag() {
         let argv = ["call", "server.status"];
-        let (_, calls) = run(&argv, vec![("server.status", Ok(json!({})))], |c| call(c));
+        let (_, calls) = run(&argv, vec![("server.status", Ok(json!({})))], call);
         assert_eq!(calls[0].1, json!({}));
         let argv = ["call", "server.status", "--payload", "[1]"];
-        let (_, calls) = run(&argv, vec![("server.status", Ok(json!({})))], |c| call(c));
+        let (_, calls) = run(&argv, vec![("server.status", Ok(json!({})))], call);
         assert_eq!(calls[0].1, json!([1]));
     }
 
     #[test]
     fn call_validates_before_connecting() {
         let argv = ["call"];
-        let (out, calls) = run(&argv, vec![], |c| call(c));
+        let (out, calls) = run(&argv, vec![], call);
         assert_eq!(out.unwrap_err(), CliError::msg("missing command name (see: bifurc commands)"));
         let argv = ["call", "nope.nope"];
-        let (out, _) = run(&argv, vec![], |c| call(c));
+        let (out, _) = run(&argv, vec![], call);
         assert_eq!(out.unwrap_err(), CliError::msg("unknown command \"nope.nope\" (see: bifurc commands)"));
         let argv = ["call", "server.status", "{bad"];
-        let (out, calls2) = run(&argv, vec![], |c| call(c));
+        let (out, calls2) = run(&argv, vec![], call);
         assert_eq!(out.unwrap_err(), CliError::msg("payload is not valid JSON: {bad"));
         assert!(calls.is_empty() && calls2.is_empty());
     }
@@ -796,7 +796,7 @@ mod tests {
     #[test]
     fn call_passes_engine_errors_through_with_their_code() {
         let argv = ["call", "ws.list"];
-        let (out, _) = run(&argv, vec![], |c| call(c));
+        let (out, _) = run(&argv, vec![], call);
         assert_eq!(out.unwrap_err().line(), "bifurc: UNKNOWN_COMMAND: ws.list");
     }
 
@@ -819,7 +819,7 @@ mod tests {
     fn status_combines_engine_proxy_and_workspace() {
         let argv = ["status"];
         let answers = vec![("server.status", Ok(json!({"running": true, "port": 8080}))), ("config.get", Ok(config()))];
-        let (out, _) = run(&argv, answers, |c| status(c));
+        let (out, _) = run(&argv, answers, status);
         assert_eq!(
             out.unwrap(),
             "engine     pid 5, socket addr, v0.4.0\ndata dir   /d\nproxy      listening on 8080\nworkspace  Default (w1)"
@@ -827,7 +827,7 @@ mod tests {
 
         let argv = ["status", "--json"];
         let answers = vec![("server.status", Ok(json!({"running": false}))), ("config.get", Ok(config()))];
-        let (out, _) = run(&argv, answers, |c| status(c));
+        let (out, _) = run(&argv, answers, status);
         let parsed: Value = serde_json::from_str(&out.unwrap()).unwrap();
         assert_eq!(parsed["engine"]["pid"], 5);
         assert_eq!(parsed["server"], json!({"running": false}));
@@ -837,7 +837,7 @@ mod tests {
     #[test]
     fn engine_errors_stop_a_command() {
         let argv = ["status"];
-        let (out, _) = run(&argv, vec![], |c| status(c));
+        let (out, _) = run(&argv, vec![], status);
         assert_eq!(out.unwrap_err().line(), "bifurc: UNKNOWN_COMMAND: server.status");
     }
 }

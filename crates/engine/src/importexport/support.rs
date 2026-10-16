@@ -154,7 +154,7 @@ pub fn import_folder(
     fs_kind: &str,
     ws_id: &str,
 ) -> Result<(String, String), String> {
-    let stamp = iso_from_ms(now_ms() as i64)?;
+    let stamp = iso_from_ms(now_ms())?;
     let name = format!("import-{}", stamp[..19].replace('T', "_").replace(':', "-"));
     let (id, name) = create_folder(ws_id, fs_kind, &name, None, true).map_err(io_failure)?;
     list_folder(cfg, folders_key, &id, &name, None, ws_id);

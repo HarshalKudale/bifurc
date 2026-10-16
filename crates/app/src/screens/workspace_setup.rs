@@ -125,6 +125,8 @@ fn repo_name_for(workspace_name: &str) -> String {
     if name.is_empty() { "workspace".to_owned() } else { name }
 }
 
+type BackHandler = Rc<dyn Fn(&mut Window, &mut App)>;
+
 pub struct WorkspaceSetup {
     model: Entity<AppModel>,
     purpose: Purpose,
@@ -148,7 +150,7 @@ pub struct WorkspaceSetup {
     busy: bool,
     error: Option<String>,
     /// What "Back" does, where the view is one step of a longer setup.
-    on_back: Option<Rc<dyn Fn(&mut Window, &mut App)>>,
+    on_back: Option<BackHandler>,
     _subscriptions: Vec<Subscription>,
 }
 

@@ -160,14 +160,13 @@ pub fn reconcile(conn: &mut Connection, dir: &Path, scope: Scope) -> std::io::Re
     for file in &files {
         seen.insert(file.id.as_str());
         let folder_id = parent_path(&file.path).and_then(|parent| folder_ids.get(parent)).cloned();
-        if let Some(entry) = known.get(&file.id) {
-            if entry.path == file.path
-                && entry.mtime == file.mtime
-                && entry.size == file.size
-                && entry.folder_id == folder_id
-            {
-                continue;
-            }
+        if let Some(entry) = known.get(&file.id)
+            && entry.path == file.path
+            && entry.mtime == file.mtime
+            && entry.size == file.size
+            && entry.folder_id == folder_id
+        {
+            continue;
         }
         let full = dir.join(&file.path);
         match read_json(&full).filter(Value::is_object) {

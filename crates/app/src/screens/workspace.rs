@@ -836,7 +836,7 @@ impl WorkspaceScreen {
         let collision_write = cx.weak_entity();
         let collision_now = self.collision;
         let collisions: Vec<(SharedString, SharedString)> =
-            COLLISIONS.iter().map(|(id, label)| (SharedString::from(*id), SharedString::from(t(*label)))).collect();
+            COLLISIONS.iter().map(|(id, label)| (SharedString::from(*id), SharedString::from(t(label)))).collect();
 
         let export_group = SettingGroup::new()
             .title(t("workspace.transfer.export_title"))
