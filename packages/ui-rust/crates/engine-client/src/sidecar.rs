@@ -15,58 +15,15 @@ use std::{
     time::{Duration, Instant},
 };
 
-use serde::Deserialize;
-
 use crate::{
     connection::{EngineClient, Hello},
     error::{ClientError, Result},
 };
 
-const RUNTIME_FILE: &str = "runtime.json";
 const START_TIMEOUT: Duration = Duration::from_secs(20);
 const RESTART_TIMEOUT: Duration = Duration::from_secs(30);
 
-/// The contents of `runtime.json`.
-#[derive(Debug, Clone, Deserialize)]
-#[serde(rename_all = "camelCase")]
-pub struct RuntimeInfo {
-    pub pid: u32,
-    pub transport: String,
-    pub address: String,
-    pub data_dir: String,
-    #[serde(default)]
-    pub engine_version: String,
-}
-
-/// The data directory the Electron app, the CLI and the engine all default to
-/// (`platformDefaultDataDir` in `packages/engine/src/workspace/paths.ts`). `BIFURC_DATA_DIR` overrides it, as
-/// it does for the engine.
-pub fn default_data_dir() -> PathBuf {
-    if let Some(dir) = env::var_os("BIFURC_DATA_DIR").filter(|v| !v.is_empty()) {
-        return PathBuf::from(dir);
-    }
-    let home = || env::var_os("HOME").or_else(|| env::var_os("USERPROFILE")).map(PathBuf::from).unwrap_or_default();
-    if cfg!(windows) {
-        let base = env::var_os("LOCALAPPDATA")
-            .filter(|v| !v.is_empty())
-            .map(PathBuf::from)
-            .unwrap_or_else(|| home().join("AppData").join("Local"));
-        base.join("Bifurc")
-    } else if cfg!(target_os = "macos") {
-        home().join("Library").join("Application Support").join("Bifurc")
-    } else {
-        env::var_os("XDG_CONFIG_HOME")
-            .filter(|v| !v.is_empty())
-            .map(PathBuf::from)
-            .unwrap_or_else(|| home().join(".config"))
-            .join("bifurc")
-    }
-}
-
-pub fn read_runtime_info(data_dir: &Path) -> Option<RuntimeInfo> {
-    let text = fs::read_to_string(data_dir.join(RUNTIME_FILE)).ok()?;
-    serde_json::from_str(&text).ok()
-}
+pub use bifurc_client::{RuntimeInfo, default_data_dir, read_runtime_info};
 
 /// The native engine (`bifurc-engine`), which is the engine the UI starts: `BIFURC_ENGINE` if set, then the one
 /// an installed app ships beside its executable, then the newest build in a `target/{release,debug}` above the
@@ -266,30 +223,6 @@ fn log_tail(path: &Path) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn runtime_info_reads_what_the_engine_writes() {
-        let dir = tempfile::tempdir().unwrap();
-        fs::write(
-            dir.path().join(RUNTIME_FILE),
-            r#"{"pid":47820,"transport":"socket","address":"\\\\.\\pipe\\bifurc-a70f","dataDir":"C:\\x","protocolVersion":"1.0.0","engineVersion":"0.4.0","startedAt":1}"#,
-        )
-        .unwrap();
-        let info = read_runtime_info(dir.path()).unwrap();
-        assert_eq!(info.pid, 47820);
-        assert_eq!(info.transport, "socket");
-        assert_eq!(info.address, r"\\.\pipe\bifurc-a70f");
-        assert_eq!(info.engine_version, "0.4.0");
-    }
-
-    #[test]
-    fn a_missing_or_garbled_runtime_file_is_no_engine() {
-        let dir = tempfile::tempdir().unwrap();
-        assert!(read_runtime_info(dir.path()).is_none());
-        fs::write(dir.path().join(RUNTIME_FILE), "not json").unwrap();
-        assert!(read_runtime_info(dir.path()).is_none());
-    }
-
 
     #[test]
     fn an_engine_that_cannot_be_found_says_how_to_point_at_one() {

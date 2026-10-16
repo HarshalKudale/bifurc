@@ -46,3 +46,12 @@ pub enum ClientError {
 }
 
 pub type Result<T, E = ClientError> = std::result::Result<T, E>;
+
+impl From<bifurc_client::frame::FrameError> for ClientError {
+    fn from(err: bifurc_client::frame::FrameError) -> Self {
+        match err {
+            bifurc_client::frame::FrameError::Io(e) => ClientError::Io(e),
+            bifurc_client::frame::FrameError::Protocol(message) => ClientError::Protocol(message),
+        }
+    }
+}
