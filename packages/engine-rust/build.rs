@@ -1,11 +1,9 @@
 //! Bakes the engine's build-time settings into the binary: `BIFURC_GITHUB_CLIENT_ID`, the PostHog project
-//! `BIFURC_POSTHOG_KEY` / `BIFURC_POSTHOG_HOST`, (the console, `BIFURC_CONSOLE_URL`, is shelved). Each comes from the build's environment, else from the
+//! `BIFURC_POSTHOG_KEY` / `BIFURC_POSTHOG_HOST`. Each comes from the build's environment, else from the
 //! untracked `.env` at the repository root, so it is in every binary built here and never in the repository.
 
 use std::{env, fs, path::Path};
 
-// Console shelved (free app): BIFURC_CONSOLE_URL is no longer baked in.
-// const KEYS: [&str; 4] = ["BIFURC_GITHUB_CLIENT_ID", "BIFURC_POSTHOG_KEY", "BIFURC_POSTHOG_HOST", "BIFURC_CONSOLE_URL"];
 const KEYS: [&str; 3] = ["BIFURC_GITHUB_CLIENT_ID", "BIFURC_POSTHOG_KEY", "BIFURC_POSTHOG_HOST"];
 
 /// The value of `key` in a `.env` file: `KEY=value` lines, `#` comments, optional quotes.
