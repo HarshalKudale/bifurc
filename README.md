@@ -30,7 +30,7 @@ cargo dev:engine     # the engine, in this terminal (logs here; Ctrl+C or `cargo
 cargo dev:ui         # the UI; attaches to a running engine, or starts one from target/ if none is
 cargo dev:cli <cmd>  # the `bifurc` CLI, e.g. `cargo dev:cli status`
 cargo dev:mcp        # the `bifurc-mcp` MCP server, on this terminal's stdin and stdout
-cargo xtask package  # installer / Store package / AppImage
+cargo xtask package  # installer / Store package / AppImage / macOS .dmg
 ```
 
 All of them find each other through `<data-dir>/runtime.json`; set `BIFURC_DATA_DIR` to use a scratch directory.

@@ -111,7 +111,7 @@ impl UpdateStatus {
             "deb" => "model.update.channel.deb",
             "appimage" => "model.update.channel.appimage",
             "portable" | "tarball" => "model.update.channel.portable",
-            "installer" => "model.update.channel.installer",
+            "installer" | "dmg" => "model.update.channel.installer",
             _ => "model.update.channel.build",
         })
     }

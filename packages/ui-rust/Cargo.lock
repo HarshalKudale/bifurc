@@ -607,6 +607,7 @@ dependencies = [
 name = "bifurc-tray"
 version = "0.5.0"
 dependencies = [
+ "cocoa 0.24.1",
  "png 0.17.16",
  "tray-icon",
  "windows 0.54.0",
