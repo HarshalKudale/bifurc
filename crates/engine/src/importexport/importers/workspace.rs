@@ -248,7 +248,9 @@ pub fn zip_preflight(source: &Path) -> PreflightOutcome {
 fn archived_workspace_name(source: &Path) -> Option<String> {
     let mut archive = zip::ZipArchive::new(File::open(source).ok()?).ok()?;
     let index = (0..archive.len()).find(|&i| {
-        archive.by_index(i).is_ok_and(|f| f.name() == "workspace.json" || f.name().ends_with("/workspace.json"))
+        archive
+            .by_index(i)
+            .is_ok_and(|f| f.name().is_ok_and(|name| name == "workspace.json" || name.ends_with("/workspace.json")))
     })?;
     let mut text = String::new();
     archive.by_index(index).ok()?.read_to_string(&mut text).ok()?;
@@ -262,7 +264,8 @@ fn extract(source: &Path, dest: &Path) -> Result<usize, String> {
     let mut count = 0;
     for i in 0..archive.len() {
         let mut entry = archive.by_index(i).map_err(io_failure)?;
-        let name = entry.name().to_string();
+        // A name that can't be decoded is skipped, like one that would land outside `dest`.
+        let Ok(name) = entry.name().map(|name| name.to_string()) else { continue };
         if name.starts_with(".git/") || name == ".git" || entry.is_dir() {
             continue;
         }
