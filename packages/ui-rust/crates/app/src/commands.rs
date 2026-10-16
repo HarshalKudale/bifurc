@@ -125,7 +125,7 @@ fn keys() -> Vec<KeyBinding> {
         KeyBinding::new("secondary-b", ToggleSidebar, None),
         KeyBinding::new("secondary-shift-b", ToggleInspector, None),
         KeyBinding::new("secondary-shift-e", ToggleFolderTree, None),
-        // The sidebar's screens from the top, 1 to 9 then 0. Config, Audit log and Settings have no key.
+        // The sidebar's screens from the top, 1 to 9. Vaults, Config, Audit log and Settings have no key: Ctrl+0 is zoom reset.
         KeyBinding::new("secondary-1", ShowServices, None),
         KeyBinding::new("secondary-2", ShowHealthBar, None),
         KeyBinding::new("secondary-3", ShowMappings, None),
@@ -135,16 +135,14 @@ fn keys() -> Vec<KeyBinding> {
         KeyBinding::new("secondary-7", ShowMocks, None),
         KeyBinding::new("secondary-8", ShowFlows, None),
         KeyBinding::new("secondary-9", ShowEnvironments, None),
-        KeyBinding::new("secondary-0", ShowVaults, None),
         KeyBinding::new("secondary-,", ShowSettings, None),
         KeyBinding::new("f5", ReloadWorkspace, None),
-        // Zoom steps through the interface sizes Settings offers. Reset is not Ctrl+0, which opens Vaults.
+        // Zoom steps through the interface sizes Settings offers. Not Ctrl+Shift+0 for reset: Windows keeps that
+        // for switching input languages.
         KeyBinding::new("secondary-=", ZoomIn, None),
         KeyBinding::new("secondary-+", ZoomIn, None),
         KeyBinding::new("secondary--", ZoomOut, None),
-        // Shift+0 arrives as `)` on some layouts and as `shift-0` on others.
-        KeyBinding::new("secondary-)", ResetZoom, None),
-        KeyBinding::new("secondary-shift-0", ResetZoom, None),
+        KeyBinding::new("secondary-0", ResetZoom, None),
         KeyBinding::new("secondary-q", Quit, None),
     ]
 }
