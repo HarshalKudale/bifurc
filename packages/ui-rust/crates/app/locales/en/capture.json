@@ -76,5 +76,18 @@
   "save_as_request": "Save as request",
   "save_as_mock": "Save as mock",
   "remove_tooltip": "Remove from the list",
-  "close_detail_tooltip": "Close the detail"
+  "close_detail_tooltip": "Close the detail",
+  "create_flow": "Create flow",
+  "create_flow_tooltip": "Save the ticked exchanges as requests and chain them into a flow, in the order they were captured. Tick two or more.",
+  "saved_flow": "Saved {count} requests to “{folder}” and built a flow from them.",
+  "import.title": "Credentials and cookies found",
+  "import.secrets_body": "These values look like credentials. Choose where they go: sealed in a vault, which only opens with its passphrase; into variables of the selected environment, which are synced with the workspace; or left written in the requests.",
+  "import.cookies_body": "These requests carried cookies. The cookie jar is never synced, and a request gets its cookies from it when it is sent.",
+  "import.jar": "Move them into the cookie jar",
+  "import.save": "Save",
+  "import.vault": "Vault",
+  "import.environment": "Environment",
+  "import.keep": "Keep in requests",
+  "import.new_vault": "New vault",
+  "import.kept": "Too short for a vault, left in the requests: {names}"
 }
