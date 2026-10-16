@@ -100,7 +100,12 @@ impl Parser {
         }
         let data = self.data.join("\n");
         self.data.clear();
-        Some(SseEvent { event: event.filter(|name| !name.is_empty()).unwrap_or_else(|| "message".to_owned()), data, id: self.id.clone(), retry })
+        Some(SseEvent {
+            event: event.filter(|name| !name.is_empty()).unwrap_or_else(|| "message".to_owned()),
+            data,
+            id: self.id.clone(),
+            retry,
+        })
     }
 }
 
@@ -134,7 +139,10 @@ mod tests {
     #[test]
     fn event_id_and_retry_are_read() {
         let events = parse("event: tick\nid: 7\nretry: 1500\ndata: x\n\n");
-        assert_eq!(events[0], SseEvent { event: "tick".into(), data: "x".into(), id: Some("7".into()), retry: Some(1500) });
+        assert_eq!(
+            events[0],
+            SseEvent { event: "tick".into(), data: "x".into(), id: Some("7".into()), retry: Some(1500) }
+        );
     }
 
     #[test]

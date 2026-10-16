@@ -13,8 +13,8 @@ use gpui_kit::component::{
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    AnyElement, App, AppContext as _, Context, Entity, FontWeight, InteractiveElement as _, IntoElement, ParentElement as _,
-    SharedString, StatefulInteractiveElement as _, Styled as _, Window, div,
+    AnyElement, App, AppContext as _, Context, Entity, FontWeight, InteractiveElement as _, IntoElement,
+    ParentElement as _, SharedString, StatefulInteractiveElement as _, Styled as _, Window, div,
 };
 
 use super::protocol::ProtocolSession;
@@ -62,7 +62,9 @@ impl WsdlPanel {
             .on_click(cx.listener(|this, _, window, cx| this.fetch_wsdl(window, cx)));
         let body = match &self.operations {
             None => page::empty(t("session.wsdl.empty_title"), t("session.wsdl.empty_description")),
-            Some(operations) if operations.is_empty() => page::empty(t("session.wsdl.none_title"), t("session.wsdl.none_description")),
+            Some(operations) if operations.is_empty() => {
+                page::empty(t("session.wsdl.none_title"), t("session.wsdl.none_description"))
+            }
             Some(operations) => v_flex()
                 .px_3()
                 .pb_3()

@@ -490,9 +490,12 @@ async fn a_rule_script_can_inject_a_secret_that_the_log_shows_unresolved() {
         let (vaults, ctx) = (vaults.clone(), CommandContext::internal(vaults.clone()));
         async move { vaults.invoke(action, payload, ctx).await.unwrap() }
     };
-    let created = call("vault.create", json!({ "workspaceId": "ws1", "name": "keys", "passphrase": "correct horse battery" })).await;
+    let created =
+        call("vault.create", json!({ "workspaceId": "ws1", "name": "keys", "passphrase": "correct horse battery" }))
+            .await;
     let id = created["id"].as_str().unwrap().to_string();
-    call("vault.setSecret", json!({ "workspaceId": "ws1", "id": id, "name": "TOKEN", "value": "s3cret-token-value" })).await;
+    call("vault.setSecret", json!({ "workspaceId": "ws1", "id": id, "name": "TOKEN", "value": "s3cret-token-value" }))
+        .await;
 
     let (target, seen) = canned_upstream(http_ok("content-type: text/plain\r\n", "echo: s3cret-token-value")).await;
     put(

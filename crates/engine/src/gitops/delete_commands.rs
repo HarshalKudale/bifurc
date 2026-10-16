@@ -19,11 +19,11 @@ use crate::{
     },
     workspace::{
         accounts::commit_identity,
+        deletions::sharing_kinds,
         deletions::{
             folder_subtree, forget_deleted, is_git_tracked, pending_entity, pending_folders, prune_pending_folders,
             record_path, restore_folder_chain,
         },
-        deletions::sharing_kinds,
         fs::{
             ALL_ENTITY_KINDS, FLAT_ENTITY_KINDS, SKIP_DIRS, add_pending_deletion, find_entity_file,
             get_pending_deletions, pending_folders_key, read_index, read_names_index, remove_pending_deletion,
@@ -246,7 +246,8 @@ fn store_kind_of_folder(params: &Value) -> Result<&'static str> {
 
 pub fn register(registry: &mut CommandRegistry) {
     registry.register("entity.confirmDelete", |params, _| async move {
-        let (ws_id, kind, id) = (active_workspace(&params), to_engine_kind(str_of(&params, "kind")), str_of(&params, "id"));
+        let (ws_id, kind, id) =
+            (active_workspace(&params), to_engine_kind(str_of(&params, "kind")), str_of(&params, "id"));
         let record = deleted_entity(&ws_id, kind, id)?;
         let name = opt_str(&record, "name").filter(|name| !name.is_empty()).unwrap_or(id);
         let message = format!("delete {} {name}\n\n{}", singular_kind(kind), audit_body(&ws_id, id));
@@ -254,7 +255,8 @@ pub fn register(registry: &mut CommandRegistry) {
     });
 
     registry.register("entity.revertDelete", |params, _| async move {
-        let (ws_id, kind, id) = (active_workspace(&params), to_engine_kind(str_of(&params, "kind")), str_of(&params, "id"));
+        let (ws_id, kind, id) =
+            (active_workspace(&params), to_engine_kind(str_of(&params, "kind")), str_of(&params, "id"));
         let record = deleted_entity(&ws_id, kind, id)?;
         Ok(revert(&ws_id, &[(kind.to_string(), record)]).await)
     });

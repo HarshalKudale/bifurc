@@ -408,7 +408,10 @@ async fn a_node_says_whether_its_requests_scripts_and_tests_run() {
     let report = run("lenient").await;
     assert_eq!(report["status"], "succeeded", "{report}");
     let sent = echoed(&report, "user");
-    assert_eq!((&sent["headers"]["authorization"], &sent["headers"]["x-seen"]), (&json!("Bearer from-post"), &json!("pre")));
+    assert_eq!(
+        (&sent["headers"]["authorization"], &sent["headers"]["x-seen"]),
+        (&json!("Bearer from-post"), &json!("pre"))
+    );
     assert_eq!((&report["totalTests"], &report["failedTests"]), (&json!(1), &json!(1)));
 
     store.flow("untested", flow(json!({ "executeTests": false })));
@@ -465,7 +468,10 @@ async fn a_wire_carries_a_part_of_an_output_into_an_input() {
     assert_eq!(report["status"], "succeeded", "{report}");
     let sent = echoed(&report, "user");
     assert_eq!(sent["path"], "/users/7", "what is wired wins over what was typed");
-    assert_eq!((&sent["headers"]["authorization"], &sent["headers"]["x-stage"]), (&json!("Bearer t-1"), &json!("staging")));
+    assert_eq!(
+        (&sent["headers"]["authorization"], &sent["headers"]["x-stage"]),
+        (&json!("Bearer t-1"), &json!("staging"))
+    );
     assert_eq!(node(&report, "user")["inputs"], json!({ "var:id": 7, "var:token": "t-1", "var:stage": "staging" }));
     assert_eq!(node(&report, "user")["runs"], 1, "wires carry values: only the connection runs the node");
     assert_eq!((taken(&report, "login>user.var:id"), taken(&report, "stage>user.var:stage")), (1, 1));
@@ -473,10 +479,7 @@ async fn a_wire_carries_a_part_of_an_output_into_an_input() {
     store.flow("missing", flow(vec![wire("login", "success", "user", "var:id", json!(["body", "nope"]))]));
     let report = run("missing").await;
     assert_eq!(report["status"], "failed");
-    assert_eq!(
-        report["error"],
-        "user: \"id\" is wired to body.nope of \"login\", which has no value in this run."
-    );
+    assert_eq!(report["error"], "user: \"id\" is wired to body.nope of \"login\", which has no value in this run.");
 }
 
 #[tokio::test]
@@ -688,7 +691,10 @@ async fn a_stream_hands_on_every_message_until_it_ends() {
         }),
     );
     let report = run("first").await;
-    assert_eq!((&node(&report, "events")["port"], &echoed(&report, "item")["path"]), (&json!("success"), &json!("/items/1")));
+    assert_eq!(
+        (&node(&report, "events")["port"], &echoed(&report, "item")["path"]),
+        (&json!("success"), &json!("/items/1"))
+    );
 
     store.stream("s-refused", "http://127.0.0.1:1/events".to_string());
     store.flow(
@@ -787,14 +793,23 @@ async fn a_load_test_runs_a_flow_many_times_at_once_and_counts_how_each_ended() 
     // An instance reports to the load test, never as a run of its own.
     let runs = Arc::new(Mutex::new(0));
     let sink = runs.clone();
-    let listener = bus().on_any(move |event, _| *sink.lock() += usize::from(matches!(event, "flow.progress" | "flow.finished")));
+    let listener =
+        bus().on_any(move |event, _| *sink.lock() += usize::from(matches!(event, "flow.progress" | "flow.finished")));
 
     let report = load_test("steady", 40, None).await;
     assert_eq!(report["status"], "finished", "{report}");
-    assert_eq!((&report["instances"], &report["passed"], &report["failed"], &report["running"]), (&json!(40), &json!(40), &json!(0), &json!(0)));
+    assert_eq!(
+        (&report["instances"], &report["passed"], &report["failed"], &report["running"]),
+        (&json!(40), &json!(40), &json!(0), &json!(0))
+    );
     let rows = array_of(&report, "rows");
     assert_eq!(rows.len(), 40);
-    assert!(rows.iter().enumerate().all(|(index, row)| row["index"] == index && row["status"] == "succeeded" && row["at"] == "Second"), "{report}");
+    assert!(
+        rows.iter()
+            .enumerate()
+            .all(|(index, row)| row["index"] == index && row["status"] == "succeeded" && row["at"] == "Second"),
+        "{report}"
+    );
     assert!(report["p99Ms"].is_u64() && report["perSecond"].as_f64().unwrap() > 0.0, "{report}");
     let second = array_of(&report, "nodes").iter().find(|node| node["id"] == "second").expect("the node's times");
     assert_eq!((&second["runs"], &second["failed"], &second["name"]), (&json!(40), &json!(0), &json!("Second")));
@@ -809,7 +824,10 @@ async fn a_load_test_runs_a_flow_many_times_at_once_and_counts_how_each_ended() 
 
     let report = load_test("slow", 5, Some(Duration::from_millis(150))).await;
     assert_eq!((&report["status"], &report["failed"]), (&json!("cancelled"), &json!(5)), "{report}");
-    assert!(array_of(&report, "rows").iter().all(|row| row["status"] == "cancelled" && row["at"] == "wait"), "{report}");
+    assert!(
+        array_of(&report, "rows").iter().all(|row| row["status"] == "cancelled" && row["at"] == "wait"),
+        "{report}"
+    );
 
     bus().off(listener);
     assert_eq!(*runs.lock(), 0);

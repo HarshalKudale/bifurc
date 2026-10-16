@@ -89,7 +89,14 @@ fn action(channel: Channel, available: &Value) -> Value {
 }
 
 /// The reply of `update.status` and the payload of `event.update.changed`, from what `update.json` holds.
-fn status_from(stored: &Value, current: &str, channel: Channel, enabled: bool, checking: bool, error: Option<String>) -> Value {
+fn status_from(
+    stored: &Value,
+    current: &str,
+    channel: Channel,
+    enabled: bool,
+    checking: bool,
+    error: Option<String>,
+) -> Value {
     let manifest = stored.get("manifest").unwrap_or(&Value::Null);
     let mut available = manifest::plan(manifest, current, channel);
     if let Some(update) = available.as_object_mut() {
@@ -175,7 +182,10 @@ async fn check_at(urls: Vec<String>) -> Value {
     bus().emit("update.changed", status());
     let outcome = fetch(urls).await;
     if let Ok(manifest) = &outcome {
-        let _ = write_json_pretty(&cache_path(), &merged(&stored(), &json!({ "checkedAt": now_ms(), "manifest": manifest })));
+        let _ = write_json_pretty(
+            &cache_path(),
+            &merged(&stored(), &json!({ "checkedAt": now_ms(), "manifest": manifest })),
+        );
     }
     {
         let mut state = STATE.lock();
@@ -271,7 +281,10 @@ mod tests {
     #[test]
     fn each_channel_is_told_its_own_way_to_update() {
         let stored = stored_with(None, false);
-        assert_eq!(status_of(&stored, "0.5.0", Channel::Store)["action"], json!({ "kind": "store", "url": STORE_UPDATES_URL }));
+        assert_eq!(
+            status_of(&stored, "0.5.0", Channel::Store)["action"],
+            json!({ "kind": "store", "url": STORE_UPDATES_URL })
+        );
         assert_eq!(
             status_of(&stored, "0.5.0", Channel::Scoop)["action"],
             json!({ "kind": "command", "command": "scoop update bifurc" })

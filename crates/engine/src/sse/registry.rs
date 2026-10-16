@@ -153,7 +153,13 @@ fn live_count(workspace_id: &str) -> usize {
 
 /// The request a connect makes: the url, header values and body resolved against the environment, the
 /// `Accept` and `Cache-Control` an event stream needs unless the caller set them.
-fn prepare(url: &str, method: &str, headers: Option<&Value>, body: Option<&str>, env: Option<&Value>) -> Result<Prepared, String> {
+fn prepare(
+    url: &str,
+    method: &str,
+    headers: Option<&Value>,
+    body: Option<&str>,
+    env: Option<&Value>,
+) -> Result<Prepared, String> {
     let url = url::Url::parse(&resolve_vars(url.trim(), env)).map_err(|_| "Invalid URL".to_string())?;
     if !matches!(url.scheme(), "http" | "https") || url.host_str().is_none_or(str::is_empty) {
         return Err("Invalid URL: an SSE request needs an http:// or https:// address.".to_string());
@@ -351,7 +357,12 @@ async fn run(key: String, generation: u64, prepared: Prepared, mut stop: Unbound
     crate::cookies::collect(url.as_str(), response.headers());
     if !status.is_success() {
         let reason = status.canonical_reason().unwrap_or("");
-        return record_end(&key, generation, Some(status.as_u16()), Some(format!("HTTP {} {reason}", status.as_u16()).trim().to_owned()));
+        return record_end(
+            &key,
+            generation,
+            Some(status.as_u16()),
+            Some(format!("HTTP {} {reason}", status.as_u16()).trim().to_owned()),
+        );
     }
     if !record_open(&key, generation, status.as_u16()) {
         return;

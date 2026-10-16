@@ -81,7 +81,14 @@ pub fn type_of(scope: Scope, entity: &Value) -> &'static str {
 
 /// What the index keeps of `entity`, and the lower-case text a search looks through. Of an entity a newer
 /// engine wrote that is its name alone: what its other fields mean is not this engine's to say.
-pub fn describe(scope: Scope, id: &str, entity: &Value, folder_id: Option<String>, path: String, file: &Path) -> (Entry, String) {
+pub fn describe(
+    scope: Scope,
+    id: &str,
+    entity: &Value,
+    folder_id: Option<String>,
+    path: String,
+    file: &Path,
+) -> (Entry, String) {
     let ty = type_of(scope, entity);
     let kind = scope.kind_of_type(ty).unwrap_or(scope.dir());
     let details = match stamp::lock_of(entity) {
@@ -154,7 +161,11 @@ pub fn reconcile(conn: &mut Connection, dir: &Path, scope: Scope) -> std::io::Re
         seen.insert(file.id.as_str());
         let folder_id = parent_path(&file.path).and_then(|parent| folder_ids.get(parent)).cloned();
         if let Some(entry) = known.get(&file.id) {
-            if entry.path == file.path && entry.mtime == file.mtime && entry.size == file.size && entry.folder_id == folder_id {
+            if entry.path == file.path
+                && entry.mtime == file.mtime
+                && entry.size == file.size
+                && entry.folder_id == folder_id
+            {
                 continue;
             }
         }

@@ -52,7 +52,8 @@ mod tests {
 
     #[test]
     fn matches_like_a_fresh_compile_and_an_invalid_pattern_matches_nothing() {
-        for (pattern, text) in [(r"^http://a\.test/y/\d+$","http://a.test/y/12"), ("^a$", "ab"), ("(", "("), ("", "x")] {
+        for (pattern, text) in [(r"^http://a\.test/y/\d+$", "http://a.test/y/12"), ("^a$", "ab"), ("(", "("), ("", "x")]
+        {
             let fresh = Regex::new(pattern).is_ok_and(|re| re.find(text).is_some());
             // Twice: the second answer comes from the cache.
             assert_eq!((is_match(pattern, text), is_match(pattern, text)), (fresh, fresh), "{pattern}");

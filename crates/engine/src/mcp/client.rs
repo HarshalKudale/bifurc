@@ -224,7 +224,9 @@ fn describe_start(error: &ClientInitializeError, program: bool) -> String {
             // The first line, without the page a web server answered with.
             let cause = cause.lines().next().unwrap_or_default();
             let cause = cause.split(": <").next().unwrap_or_default().trim().trim_end_matches('.');
-            if cause == REFUSED_NO_ADDRESS.trim_end_matches('.') || cause == NAME_NOT_FOUND_NO_HOST.trim_end_matches('.') {
+            if cause == REFUSED_NO_ADDRESS.trim_end_matches('.')
+                || cause == NAME_NOT_FOUND_NO_HOST.trim_end_matches('.')
+            {
                 return format!("{cause}.");
             }
             format!("{cause}. Is this an MCP server?")
@@ -297,9 +299,13 @@ pub async fn call(
     match result {
         Ok(Ok(result)) => Ok(result),
         Ok(Err(error)) => Err(failed(error.to_string())),
-        Err(ServiceError::McpError(error)) => Err(serde_json::to_value(&error).unwrap_or_else(|_| failed(error.to_string()))),
+        Err(ServiceError::McpError(error)) => {
+            Err(serde_json::to_value(&error).unwrap_or_else(|_| failed(error.to_string())))
+        }
         Err(ServiceError::TransportSend(error)) => Err(failed(root_cause(error.error.as_ref()))),
-        Err(ServiceError::TransportClosed) => Err(failed("The connection ended before the server answered.".to_string())),
+        Err(ServiceError::TransportClosed) => {
+            Err(failed("The connection ended before the server answered.".to_string()))
+        }
         Err(other) => Err(failed(other.to_string())),
     }
 }

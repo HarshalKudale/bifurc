@@ -66,12 +66,14 @@ fn install_linux(file: &Path) -> Result<String, String> {
         .find(|(target, _)| Path::new(target).parent().is_some_and(Path::is_dir))
         .ok_or_else(|| t_with("model.trust.no_store", &[("file", &file.display())]))?;
     // The stores belong to root on every distribution, so polkit asks for the password.
-    run(Command::new("pkexec").args(["sh", "-c", &linux_script(target, rebuild), "sh"]).arg(file)).map_err(|error| {
-        t_with(
-            "model.trust.failed_with_instructions",
-            &[("error", &error), ("instructions", &linux_instructions(file, target, rebuild))],
-        )
-    })?;
+    run(Command::new("pkexec").args(["sh", "-c", &linux_script(target, rebuild), "sh"]).arg(file)).map_err(
+        |error| {
+            t_with(
+                "model.trust.failed_with_instructions",
+                &[("error", &error), ("instructions", &linux_instructions(file, target, rebuild))],
+            )
+        },
+    )?;
     Ok(t("model.trust.installed_linux").to_owned())
 }
 

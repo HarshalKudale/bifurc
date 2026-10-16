@@ -123,6 +123,9 @@ impl FolderTreeSource for FlowSource {
     }
 
     fn new_menu(menu: PopupMenu, folder: Option<String>, tree: &WeakEntity<FlowTree>) -> PopupMenu {
-        menu.item(PopupMenuItem::new(t("flows.menu.new_flow")).on_click(emitter(tree, FolderTreeEvent::Extra(FlowExtra::NewFlow { folder }))))
+        menu.item(
+            PopupMenuItem::new(t("flows.menu.new_flow"))
+                .on_click(emitter(tree, FolderTreeEvent::Extra(FlowExtra::NewFlow { folder }))),
+        )
     }
 }

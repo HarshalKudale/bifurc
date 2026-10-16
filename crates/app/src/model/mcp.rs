@@ -488,14 +488,20 @@ mod tests {
         assert_eq!(of("interval").input(), ArgumentInput::Choice);
         assert_eq!(of("interval").choices, ["day", "week"]);
         assert_eq!(of("interval").default.as_deref(), Some("day"));
-        assert_eq!((of("level").input(), of("level").choices.clone()), (ArgumentInput::Choice, vec!["1".to_owned(), "2".to_owned()]));
+        assert_eq!(
+            (of("level").input(), of("level").choices.clone()),
+            (ArgumentInput::Choice, vec!["1".to_owned(), "2".to_owned()])
+        );
         assert_eq!(of("mode").choices, ["fast", "safe"]);
         assert_eq!((of("loud").input(), of("loud").default.as_deref()), (ArgumentInput::Flag, Some("false")));
         assert_eq!((of("maybe").input(), of("maybe").kind.as_str()), (ArgumentInput::Flag, "boolean"));
         assert_eq!((of("filter").input(), of("tags").input()), (ArgumentInput::Json, ArgumentInput::Json));
         assert_eq!((of("count").input(), of("note").input()), (ArgumentInput::Text, ArgumentInput::Text));
         // One alternative takes any whole number, so it is not a choice; its alternatives have no one type.
-        assert_eq!((of("open").input(), of("open").kind.as_str(), of("open").choices.len()), (ArgumentInput::Text, "", 0));
+        assert_eq!(
+            (of("open").input(), of("open").kind.as_str(), of("open").choices.len()),
+            (ArgumentInput::Text, "", 0)
+        );
     }
 
     #[test]
@@ -532,7 +538,10 @@ mod tests {
         view.apply_message_event(&json!({"message": line("c-1", "tool", "ok")}));
         assert_eq!((view.lines.len(), view.waiting()), (1, 0));
         let answered = &view.lines[0];
-        assert_eq!((answered.status, answered.note().as_deref(), answered.shown().as_str()), (CallStatus::Ok, Some("12 ms"), "hi"));
+        assert_eq!(
+            (answered.status, answered.note().as_deref(), answered.shown().as_str()),
+            (CallStatus::Ok, Some("12 ms"), "hi")
+        );
 
         view.apply_message_event(&json!({"message": line("c-2", "tool", "error")}));
         assert_eq!(view.lines[1].note().as_deref(), Some("failed · 12 ms"));
@@ -548,8 +557,13 @@ mod tests {
         assert_eq!((notice.kind.label(), notice.note()), ("notice", None));
         assert_eq!(notice.summary(), "notifications/message {\"level\":\"info\"}");
         let said = parsed(json!({"id": "c-2", "type": "stderr", "name": "", "status": "ok", "data": "starting"}));
-        assert_eq!((said.kind, said.summary().as_str(), said.shown().as_str()), (LineKind::Stderr, "starting", "starting"));
-        let read = parsed(json!({"id": "c-3", "type": "resource", "name": "mem://a", "arguments": "", "status": "ok", "text": "alpha"}));
+        assert_eq!(
+            (said.kind, said.summary().as_str(), said.shown().as_str()),
+            (LineKind::Stderr, "starting", "starting")
+        );
+        let read = parsed(
+            json!({"id": "c-3", "type": "resource", "name": "mem://a", "arguments": "", "status": "ok", "text": "alpha"}),
+        );
         assert_eq!(read.summary(), "mem://a");
         let bare = parsed(json!({"id": "c-4", "type": "tool", "name": "now", "arguments": "{}", "status": "ok"}));
         assert_eq!((bare.summary().as_str(), bare.note().as_deref()), ("now", Some("ok")));

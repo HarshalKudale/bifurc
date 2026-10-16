@@ -148,7 +148,9 @@ pub fn folder_choices(folders: &[FolderRow]) -> Vec<(String, String)> {
 pub enum Moved<'a> {
     Folder(&'a str),
     /// An entity, and the folder it is in now.
-    Item { folder: Option<&'a str> },
+    Item {
+        folder: Option<&'a str>,
+    },
 }
 
 /// Whether `moved` can be put in the folder `target`, or at the top level with `None`. `folders` are the

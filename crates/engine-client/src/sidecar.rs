@@ -39,7 +39,8 @@ pub fn locate_engine_binary() -> Option<PathBuf> {
     {
         return Some(packaged);
     }
-    let starts: Vec<PathBuf> = exe.iter().filter_map(|e| e.parent()).map(Path::to_path_buf).chain(env::current_dir().ok()).collect();
+    let starts: Vec<PathBuf> =
+        exe.iter().filter_map(|e| e.parent()).map(Path::to_path_buf).chain(env::current_dir().ok()).collect();
     for dir in starts.iter().flat_map(|start| start.ancestors()) {
         let newest = ["release", "debug"]
             .iter()
@@ -67,12 +68,7 @@ pub struct SidecarConfig {
 
 impl Default for SidecarConfig {
     fn default() -> Self {
-        Self {
-            data_dir: default_data_dir(),
-            engine_binary: locate_engine_binary(),
-            tray: None,
-            ui: None,
-        }
+        Self { data_dir: default_data_dir(), engine_binary: locate_engine_binary(), tray: None, ui: None }
     }
 }
 
@@ -170,7 +166,12 @@ fn start(config: &SidecarConfig, client_version: &str) -> Result<(EngineClient, 
         match read_runtime_info(&config.data_dir) {
             None => {}
             Some(info) if info.pid != child.id() || info.transport != "socket" => {
-                seen = format!("runtime.json names pid {} over {}, the engine started here is pid {}", info.pid, info.transport, child.id());
+                seen = format!(
+                    "runtime.json names pid {} over {}, the engine started here is pid {}",
+                    info.pid,
+                    info.transport,
+                    child.id()
+                );
             }
             Some(info) => match EngineClient::connect_attempts(&info.address, client_version, 1) {
                 Ok((client, hello)) => {

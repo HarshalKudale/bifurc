@@ -5,7 +5,10 @@
 //! message. So a live call is a task, named by the caller (`streamId`, as a socket is named by `socketId`), that
 //! reports through `grpc.stream.message` / `grpc.stream.status` events and is fed by the other commands.
 
-use std::{collections::{BTreeMap, HashMap}, sync::LazyLock};
+use std::{
+    collections::{BTreeMap, HashMap},
+    sync::LazyLock,
+};
 
 use parking_lot::Mutex;
 use prost_reflect::{DynamicMessage, MessageDescriptor, MethodDescriptor};
@@ -100,7 +103,8 @@ async fn open(ws_id: &str, stream_id: &str, request: &Value) -> Result<&'static 
     let method = super::find_method(request, Some(&channel)).await?;
     let client_streaming = method.is_client_streaming();
     // A method that takes one message starts with it; one that streams from the client starts empty.
-    let initial = if client_streaming { Vec::new() } else { call::parse_messages(str_of(request, "requestBody"), &method)? };
+    let initial =
+        if client_streaming { Vec::new() } else { call::parse_messages(str_of(request, "requestBody"), &method)? };
     let metadata = call::to_metadata(&string_map(request, "metadata"))?;
 
     let (tx, commands) = unbounded_channel();
@@ -158,7 +162,9 @@ async fn drive(
     let outbound = futures::stream::unfold(out_rx, |mut rx| async move { rx.recv().await.map(|m| (m, rx)) });
 
     let path = format!("/{}/{}", method.parent_service().full_name(), method.name());
-    let Ok(path) = path.parse() else { return (Code::InvalidArgument, format!("\"{path}\" is not a valid method path."), collected) };
+    let Ok(path) = path.parse() else {
+        return (Code::InvalidArgument, format!("\"{path}\" is not a valid method path."), collected);
+    };
     let mut request = Request::new(outbound);
     *request.metadata_mut() = metadata;
     let mut grpc = Grpc::new(channel);
@@ -245,7 +251,9 @@ pub fn register(registry: &mut CommandRegistry) {
                 DynamicMessage::deserialize(entry.input.clone(), value)
                     .map_err(|e| format!("The message does not match {}: {e}", entry.input.full_name()))
             });
-        Ok(ok_or_error(message.and_then(|m| entry.tx.send(Command::Send(m)).map_err(|_| "That call has ended.".into()))))
+        Ok(ok_or_error(
+            message.and_then(|m| entry.tx.send(Command::Send(m)).map_err(|_| "That call has ended.".into())),
+        ))
     });
 
     for (action, command) in [("grpc.stream.end", false), ("grpc.stream.cancel", true)] {

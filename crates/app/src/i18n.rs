@@ -114,7 +114,9 @@ pub fn t(key: &str) -> &'static str {
 
 /// The text for `key` with each `{name}` replaced by its value.
 pub fn t_with(key: &str, values: &[(&str, &dyn Display)]) -> String {
-    values.iter().fold(t(key).to_owned(), |text, (name, value)| text.replace(&format!("{{{name}}}"), &value.to_string()))
+    values
+        .iter()
+        .fold(t(key).to_owned(), |text, (name, value)| text.replace(&format!("{{{name}}}"), &value.to_string()))
 }
 
 #[cfg(test)]
@@ -155,7 +157,9 @@ mod tests {
                 let segments: Vec<&str> = piece.split('.').collect();
                 let is_key = segments.len() >= 3
                     && areas.contains(&segments[0])
-                    && segments.iter().all(|s| !s.is_empty() && s.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_'));
+                    && segments.iter().all(|s| {
+                        !s.is_empty() && s.chars().all(|c| c.is_ascii_lowercase() || c.is_ascii_digit() || c == '_')
+                    });
                 if is_key && !bundles()[0].contains_key(piece) {
                     missing.push(format!("{} in {}", piece, file.display()));
                 }

@@ -37,7 +37,8 @@ fn export_create(params: &Value) -> Value {
         Ok(file) => file,
         Err(error) => return failure(error),
     };
-    match publish_artifact_checked(&content, requested_name.unwrap_or(suggested_name), "application/json", Some(ws_id)) {
+    match publish_artifact_checked(&content, requested_name.unwrap_or(suggested_name), "application/json", Some(ws_id))
+    {
         Ok(artifact) => artifact,
         Err(err) => failure(describe_blob_error(&err)),
     }
@@ -262,7 +263,15 @@ mod tests {
             let ws = root.ws_id;
             let (registry, ctx) = engine();
             let bytes = std::fs::read(&file).unwrap();
-            let staged = put_blob(&name, "application/octet-stream", bytes.len() as i64, &STANDARD.encode(&bytes), now_ms(), Some(ws)).unwrap();
+            let staged = put_blob(
+                &name,
+                "application/octet-stream",
+                bytes.len() as i64,
+                &STANDARD.encode(&bytes),
+                now_ms(),
+                Some(ws),
+            )
+            .unwrap();
             let payload = json!({ "kind": kind, "format": format, "workspaceId": ws, "blobId": staged["blobId"] });
             let pre = registry.invoke("import.preflight", payload.clone(), ctx.clone()).await.unwrap();
             let done = registry.invoke("import.commit", payload, ctx.clone()).await.unwrap();
@@ -284,7 +293,11 @@ mod tests {
             let folders = crate::workspace::tree::folders(ws, crate::workspace::tree::Scope::Requests).len();
             let variables = crate::workspace::fs::read_entity(ws, "environments", "__global__")
                 .map_or(0, |global| crate::utils::json::array_of(&global, "variables").len());
-            println!("{name}: preflight={} done={done} [{}] folders={folders} variables={variables}", pre["itemCount"], counts.join(" "));
+            println!(
+                "{name}: preflight={} done={done} [{}] folders={folders} variables={variables}",
+                pre["itemCount"],
+                counts.join(" ")
+            );
             if pre["ok"] != true || done["ok"] != true || pre["itemCount"] != done["imported"] {
                 failed.push(format!("{name}: preflight {pre}, commit {done}"));
             }
@@ -297,7 +310,9 @@ mod tests {
         let root = scratch_data_root();
         let ws = root.ws_id;
         let (registry, ctx) = engine();
-        for (kind, format) in [("requests", "requests-postman"), ("workspace", "workspace-zip"), ("mocks", "mocks-wiremock")] {
+        for (kind, format) in
+            [("requests", "requests-postman"), ("workspace", "workspace-zip"), ("mocks", "mocks-wiremock")]
+        {
             let out = registry
                 .invoke("export.create", json!({ "kind": kind, "format": format, "workspaceId": ws }), ctx.clone())
                 .await

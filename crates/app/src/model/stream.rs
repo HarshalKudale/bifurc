@@ -208,7 +208,8 @@ mod tests {
 
     #[test]
     fn an_event_seen_in_the_snapshot_and_again_as_an_event_is_kept_once() {
-        let mut view = StreamView::from_status(&json!({"status": "connected", "messages": [message("s-1", "message")]}));
+        let mut view =
+            StreamView::from_status(&json!({"status": "connected", "messages": [message("s-1", "message")]}));
         view.apply_message_event(&json!({"message": message("s-1", "message")}));
         view.apply_message_event(&json!({"message": message("s-2", "message")}));
         assert_eq!(view.messages.len(), 2);

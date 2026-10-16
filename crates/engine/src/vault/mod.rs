@@ -16,7 +16,9 @@ use std::sync::Mutex;
 
 use serde_json::{Value, json};
 
-pub use state::{Redactor, redact_text, redact_value, references_in, resolve_allowed, resolve_reference, resolve_value_allowed};
+pub use state::{
+    Redactor, redact_text, redact_value, references_in, resolve_allowed, resolve_reference, resolve_value_allowed,
+};
 use store::VaultFile;
 
 use crate::{
@@ -89,7 +91,8 @@ fn verify(ws_id: &str, vault: &VaultFile, passphrase: &str) -> Result<crypto::Ke
 }
 
 fn check_name_free(ws_id: &str, name: &str, except_id: Option<&str>) -> Result<()> {
-    let taken = store::list(ws_id).into_iter().any(|v| v.name.eq_ignore_ascii_case(name) && Some(v.id.as_str()) != except_id);
+    let taken =
+        store::list(ws_id).into_iter().any(|v| v.name.eq_ignore_ascii_case(name) && Some(v.id.as_str()) != except_id);
     if taken { Err(EngineError::conflict(format!("A vault named \"{name}\" already exists."))) } else { Ok(()) }
 }
 

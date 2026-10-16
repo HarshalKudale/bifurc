@@ -19,20 +19,22 @@ use gpui_kit::component::{
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    AppContext as _, Context, Entity, IntoElement, ParentElement as _, Render, SharedString,
-    Styled as _, Subscription, Window, div,
+    AppContext as _, Context, Entity, IntoElement, ParentElement as _, Render, SharedString, Styled as _, Subscription,
+    Window, div,
 };
 use serde_json::{Map, Value, json};
 
 use crate::{
     app_model::{AppModel, Deleted, ModelEvent},
-    i18n::{t, t_with},
     components::{
         Autosave, EntityAction, EntityBar, KeyValueEvent, KeyValueTable,
         dialogs::{PromptField, confirm_danger, delete_consequence, needs_update, prompt, resolve_deleted},
-        entity_bar, master_detail::{list_rows, master_detail}, page,
+        entity_bar,
+        master_detail::{list_rows, master_detail},
+        page,
     },
     engine::{call, failure, patch_entity},
+    i18n::{t, t_with},
     model::config::EnvironmentInfo,
     session::SaveMode,
     shell::ActiveTarget,
@@ -57,7 +59,8 @@ pub struct EnvironmentsScreen {
 impl EnvironmentsScreen {
     pub fn new(model: Entity<AppModel>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let name = cx.new(|cx| InputState::new(window, cx).placeholder(t("environments.name_placeholder")));
-        let variables = cx.new(|cx| KeyValueTable::new(t("environments.variable"), t("environments.value"), window, cx));
+        let variables =
+            cx.new(|cx| KeyValueTable::new(t("environments.variable"), t("environments.value"), window, cx));
         let subscriptions = vec![
             cx.observe_in(&model, window, |this, _, window, cx| this.follow_model(false, window, cx)),
             cx.subscribe_in(&model, window, |this, _, event: &ModelEvent, window, cx| match event {
@@ -235,7 +238,9 @@ impl EnvironmentsScreen {
     }
 
     fn report(&mut self, what: &str, message: String, cx: &mut Context<Self>) {
-        self.model.update(cx, |model, cx| model.notice(t_with("environments.report", &[("what", &what), ("message", &message)]), cx));
+        self.model.update(cx, |model, cx| {
+            model.notice(t_with("environments.report", &[("what", &what), ("message", &message)]), cx)
+        });
     }
 
     /// What the footer of the detail pane asks for. There is no draft here, so Save has nothing to do.
@@ -388,41 +393,45 @@ impl EnvironmentsScreen {
         let mut environments: Vec<&EnvironmentInfo> = config.environments.iter().collect();
         environments.sort_by_key(|e| (!e.is_global(), e.name.to_lowercase()));
 
-        list_rows("environment-list")
-            .children(environments.into_iter().map(|environment| {
-                let id = environment.id.clone();
-                let is_active = active.as_deref() == Some(environment.id.as_str());
-                ListItem::new(gpui_kit::ElementId::Name(format!("environment-{}", environment.id).into()))
-                    .selected(self.selected.as_deref() == Some(environment.id.as_str()))
-                    .px_2()
-                    .py_1()
-                    .text_sm()
-                    .child(
-                        h_flex()
-                            .gap_2()
-                            .child(
+        list_rows("environment-list").children(environments.into_iter().map(|environment| {
+            let id = environment.id.clone();
+            let is_active = active.as_deref() == Some(environment.id.as_str());
+            ListItem::new(gpui_kit::ElementId::Name(format!("environment-{}", environment.id).into()))
+                .selected(self.selected.as_deref() == Some(environment.id.as_str()))
+                .px_2()
+                .py_1()
+                .text_sm()
+                .child(
+                    h_flex()
+                        .gap_2()
+                        .child(
+                            div()
+                                .flex_1()
+                                .min_w_0()
+                                .overflow_hidden()
+                                .text_ellipsis()
+                                .when(environment.deleted, |this| {
+                                    this.line_through().text_color(theme.muted_foreground)
+                                })
+                                .when(environment.locked.is_some(), |this| this.text_color(theme.muted_foreground))
+                                .child(environment.name.clone()),
+                        )
+                        // Saved by a newer Bifurc: the sign for an update. Opening it says which version.
+                        .when(environment.locked.is_some(), |this| {
+                            this.child(Icon::new(IconName::ArrowUp).small().text_color(theme.muted_foreground))
+                        })
+                        .when(environment.is_global(), |this| {
+                            this.child(
                                 div()
-                                    .flex_1()
-                                    .min_w_0()
-                                    .overflow_hidden()
-                                    .text_ellipsis()
-                                    .when(environment.deleted, |this| {
-                                        this.line_through().text_color(theme.muted_foreground)
-                                    })
-                                    .when(environment.locked.is_some(), |this| this.text_color(theme.muted_foreground))
-                                    .child(environment.name.clone()),
+                                    .text_xs()
+                                    .text_color(theme.muted_foreground)
+                                    .child(t("environments.always_applied")),
                             )
-                            // Saved by a newer Bifurc: the sign for an update. Opening it says which version.
-                            .when(environment.locked.is_some(), |this| {
-                                this.child(Icon::new(IconName::ArrowUp).small().text_color(theme.muted_foreground))
-                            })
-                            .when(environment.is_global(), |this| {
-                                this.child(div().text_xs().text_color(theme.muted_foreground).child(t("environments.always_applied")))
-                            })
-                            .when(is_active, |this| this.child(Tag::secondary().small().child(t("environments.active")))),
-                    )
-                    .on_click(cx.listener(move |this, _, window, cx| this.select(id.clone(), window, cx)))
-            }))
+                        })
+                        .when(is_active, |this| this.child(Tag::secondary().small().child(t("environments.active")))),
+                )
+                .on_click(cx.listener(move |this, _, window, cx| this.select(id.clone(), window, cx)))
+        }))
     }
 
     fn render_detail(&self, cx: &mut Context<Self>) -> gpui_kit::AnyElement {

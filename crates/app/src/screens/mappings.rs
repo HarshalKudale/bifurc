@@ -12,11 +12,11 @@ use gpui_kit::component::{
     switch::Switch,
     v_flex,
 };
+use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AppContext as _, ClipboardItem, Context, Entity, InteractiveElement as _, IntoElement, ParentElement as _, Render,
     StatefulInteractiveElement as _, Styled as _, Subscription, Window, div,
 };
-use gpui_kit::prelude::FluentBuilder as _;
 use serde_json::{Map, json};
 
 use crate::{
@@ -170,7 +170,13 @@ impl MappingsScreen {
         );
     }
 
-    fn render_row(&self, mapping: &MappingInfo, scheme: &str, port: u16, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
+    fn render_row(
+        &self,
+        mapping: &MappingInfo,
+        scheme: &str,
+        port: u16,
+        cx: &mut Context<Self>,
+    ) -> gpui_kit::AnyElement {
         let theme = cx.theme().clone();
         let state = self.model.read(cx).git().entity_state(&mapping.id);
         let path = self.model.read(cx).git().entity_path(&mapping.id).map(str::to_owned);
@@ -236,7 +242,10 @@ impl MappingsScreen {
             })
             .child(Icon::new(IconName::ArrowRight).small().text_color(theme.muted_foreground))
             .child(if locked.is_some() {
-                div().flex_1().child(Icon::new(IconName::ArrowUp).small().text_color(theme.muted_foreground)).into_any_element()
+                div()
+                    .flex_1()
+                    .child(Icon::new(IconName::ArrowUp).small().text_color(theme.muted_foreground))
+                    .into_any_element()
             } else if deleted {
                 // A deleted mapping has no target to show: what can be done with it goes here.
                 let (revert_model, confirm_model) = (deleted_model.clone(), deleted_model);
@@ -245,18 +254,22 @@ impl MappingsScreen {
                     .flex_1()
                     .min_w_0()
                     .gap_2()
-                    .child(Button::new(key("revert-delete")).small().label(t("mappings.button.revert_delete")).on_click(
-                        move |_, _, cx| {
-                            let target = Deleted::Entity { kind: "mappings", id: revert_id.clone() };
-                            revert_model.update(cx, |model, cx| model.revert_delete(target, cx));
-                        },
-                    ))
-                    .child(Button::new(key("confirm-delete")).small().label(t("mappings.button.confirm_delete")).on_click(
-                        move |_, _, cx| {
-                            let target = Deleted::Entity { kind: "mappings", id: confirm_id.clone() };
-                            confirm_model.update(cx, |model, cx| model.confirm_delete(target, cx));
-                        },
-                    ))
+                    .child(
+                        Button::new(key("revert-delete")).small().label(t("mappings.button.revert_delete")).on_click(
+                            move |_, _, cx| {
+                                let target = Deleted::Entity { kind: "mappings", id: revert_id.clone() };
+                                revert_model.update(cx, |model, cx| model.revert_delete(target, cx));
+                            },
+                        ),
+                    )
+                    .child(
+                        Button::new(key("confirm-delete")).small().label(t("mappings.button.confirm_delete")).on_click(
+                            move |_, _, cx| {
+                                let target = Deleted::Entity { kind: "mappings", id: confirm_id.clone() };
+                                confirm_model.update(cx, |model, cx| model.confirm_delete(target, cx));
+                            },
+                        ),
+                    )
                     .into_any_element()
             } else {
                 div()
@@ -280,45 +293,45 @@ impl MappingsScreen {
             })
             .child(div().w_24().flex_none().text_xs().text_color(theme.muted_foreground).child(state_label))
             .child(div().w_8().flex_none().children((!deleted && locked.is_none()).then(|| {
-                Button::new(key("actions")).icon(IconName::Ellipsis).ghost().small().dropdown_menu(
-                    move |menu, _, _| {
-                        let (edit_view, delete_view) = (this.clone(), this.clone());
-                        let (sync_view, revert_view) = (this.clone(), this.clone());
-                        let (sync_path, revert_path) = (path.clone(), path.clone());
-                        let revert_name = delete.domain.clone();
-                        let (edit, delete, url) = (edit.clone(), delete.clone(), url.clone());
-                        menu.item(PopupMenuItem::new(t("mappings.menu.edit")).on_click(move |_, window, cx| {
-                            let mapping = edit.clone();
-                            edit_view.update(cx, |this, cx| this.prompt_edit(mapping, window, cx)).ok();
-                        }))
-                        .item(PopupMenuItem::new(t("mappings.menu.copy_address")).on_click(move |_, _, cx| {
-                            cx.write_to_clipboard(ClipboardItem::new_string(url.clone()));
-                        }))
-                        .separator()
-                        .item(PopupMenuItem::new(t("mappings.button.sync")).disabled(!changed || busy).on_click(move |_, _, cx| {
+                Button::new(key("actions")).icon(IconName::Ellipsis).ghost().small().dropdown_menu(move |menu, _, _| {
+                    let (edit_view, delete_view) = (this.clone(), this.clone());
+                    let (sync_view, revert_view) = (this.clone(), this.clone());
+                    let (sync_path, revert_path) = (path.clone(), path.clone());
+                    let revert_name = delete.domain.clone();
+                    let (edit, delete, url) = (edit.clone(), delete.clone(), url.clone());
+                    menu.item(PopupMenuItem::new(t("mappings.menu.edit")).on_click(move |_, window, cx| {
+                        let mapping = edit.clone();
+                        edit_view.update(cx, |this, cx| this.prompt_edit(mapping, window, cx)).ok();
+                    }))
+                    .item(PopupMenuItem::new(t("mappings.menu.copy_address")).on_click(move |_, _, cx| {
+                        cx.write_to_clipboard(ClipboardItem::new_string(url.clone()));
+                    }))
+                    .separator()
+                    .item(PopupMenuItem::new(t("mappings.button.sync")).disabled(!changed || busy).on_click(
+                        move |_, _, cx| {
                             if let Some(path) = sync_path.clone() {
                                 sync_view.update(cx, |this, cx| this.sync_paths(vec![path], cx)).ok();
                             }
-                        }))
-                        .item(PopupMenuItem::new(t("mappings.menu.revert")).disabled(!changed || busy).on_click(
-                            move |_, window, cx| {
-                                if let Some(path) = revert_path.clone() {
-                                    let title = t_with("mappings.confirm.revert.title_named", &[("name", &revert_name)]);
-                                    revert_view
-                                        .update(cx, |this, cx| this.confirm_revert(vec![path], title, window, cx))
-                                        .ok();
-                                }
-                            },
-                        ))
-                        .separator()
-                        .item(PopupMenuItem::new(t("mappings.menu.delete")).on_click(
-                            move |_, window, cx| {
-                                let mapping = delete.clone();
-                                delete_view.update(cx, |this, cx| this.confirm_delete(mapping, window, cx)).ok();
-                            },
-                        ))
-                    },
-                )
+                        },
+                    ))
+                    .item(PopupMenuItem::new(t("mappings.menu.revert")).disabled(!changed || busy).on_click(
+                        move |_, window, cx| {
+                            if let Some(path) = revert_path.clone() {
+                                let title = t_with("mappings.confirm.revert.title_named", &[("name", &revert_name)]);
+                                revert_view
+                                    .update(cx, |this, cx| this.confirm_revert(vec![path], title, window, cx))
+                                    .ok();
+                            }
+                        },
+                    ))
+                    .separator()
+                    .item(PopupMenuItem::new(t("mappings.menu.delete")).on_click(
+                        move |_, window, cx| {
+                            let mapping = delete.clone();
+                            delete_view.update(cx, |this, cx| this.confirm_delete(mapping, window, cx)).ok();
+                        },
+                    ))
+                })
             })))
             .into_any_element()
     }

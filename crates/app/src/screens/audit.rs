@@ -128,10 +128,7 @@ pub(crate) fn now_ms() -> i64 {
 
 /// `1–100 of 230`.
 fn page_label(offset: usize, shown: usize, total: usize) -> String {
-    t_with(
-        "audit.footer.page_label",
-        &[("from", &(offset + 1)), ("to", &(offset + shown)), ("total", &total)],
-    )
+    t_with("audit.footer.page_label", &[("from", &(offset + 1)), ("to", &(offset + shown)), ("total", &total)])
 }
 
 fn entity_label(entity: &str) -> &'static str {
@@ -488,14 +485,13 @@ impl AuditScreen {
 
     fn render_detail(&self, entry: &Entry, cx: &Context<Self>) -> AnyElement {
         let theme = cx.theme().clone();
-        let header = div()
-            .text_xs()
-            .text_color(theme.muted_foreground)
-            .font_family(theme.mono_font_family.clone())
-            .child(t_with(
-                "audit.commit_line",
-                &[("commit", &entry.commit), ("actor", &entry.actor), ("time", &absolute_time(entry.ts))],
-            ));
+        let header =
+            div().text_xs().text_color(theme.muted_foreground).font_family(theme.mono_font_family.clone()).child(
+                t_with(
+                    "audit.commit_line",
+                    &[("commit", &entry.commit), ("actor", &entry.actor), ("time", &absolute_time(entry.ts))],
+                ),
+            );
         let body = CommitDiffs::render(&self.diffs, &entry.commit, cx);
         v_flex()
             .w_full()
@@ -647,12 +643,14 @@ impl Render for AuditScreen {
             .child(export_button("audit-export-json", "json", "JSON", cx))
             .child(export_button("audit-export-csv", "csv", "CSV", cx))
             .child(
-                Button::new("audit-refresh").small().icon(IconName::RefreshCw).tooltip(t("audit.page.reload_tooltip")).on_click(
-                    cx.listener(|this, _, _, cx| {
+                Button::new("audit-refresh")
+                    .small()
+                    .icon(IconName::RefreshCw)
+                    .tooltip(t("audit.page.reload_tooltip"))
+                    .on_click(cx.listener(|this, _, _, cx| {
                         let offset = this.offset;
                         this.reload(offset, cx);
-                    }),
-                ),
+                    })),
             );
         let subtitle = if self.total == 1 {
             t_with("audit.page.subtitle_one", &[("count", &self.total)])

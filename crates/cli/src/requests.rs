@@ -165,7 +165,10 @@ fn types_of(args: &ParsedArgs) -> Result<Vec<&'static RequestType>> {
 fn check_options(ty: &RequestType, args: &ParsedArgs, extra: &[&str]) -> Result<()> {
     let describing = describing_options();
     let foreign = args.names().into_iter().find(|name| {
-        describing.contains(name) && !COMMON_OPTIONS.contains(name) && !ty.options.contains(name) && !extra.contains(name)
+        describing.contains(name)
+            && !COMMON_OPTIONS.contains(name)
+            && !ty.options.contains(name)
+            && !extra.contains(name)
     });
     match foreign {
         Some(option) => Err(CliError::msg(format!(
@@ -204,7 +207,11 @@ fn row(ty: &RequestType, entity: &Value) -> Value {
 }
 
 /// Every saved request of `types`, each with its type.
-fn saved(ctx: &mut Context, workspace: &str, types: &[&'static RequestType]) -> Result<Vec<(&'static RequestType, Value)>> {
+fn saved(
+    ctx: &mut Context,
+    workspace: &str,
+    types: &[&'static RequestType],
+) -> Result<Vec<(&'static RequestType, Value)>> {
     let mut all = Vec::new();
     for ty in types {
         all.extend(list_entities(ctx, workspace, ty.kind)?.into_iter().map(|entity| (*ty, entity)));
@@ -234,7 +241,9 @@ fn blank(ty: &RequestType) -> Value {
             "name": "", "protocol": "grpc", "serverAddress": "", "serviceName": "", "methodName": "",
             "requestBody": "{}", "metadata": {}, "protoFileId": null, "useReflection": true, "streamingType": "unary",
         }),
-        "soap" => json!({ "name": "", "protocol": "soap", "endpointUrl": "", "soapAction": "", "headers": {}, "body": "" }),
+        "soap" => {
+            json!({ "name": "", "protocol": "soap", "endpointUrl": "", "soapAction": "", "headers": {}, "body": "" })
+        }
         "sse" => json!({ "name": "", "url": "", "method": "GET", "headers": {}, "body": "" }),
         "socketio" => json!({ "name": "", "url": "", "headers": {}, "path": "", "namespace": "", "auth": "" }),
         "mcp" => json!({ "name": "", "transport": "", "url": "", "headers": {} }),
@@ -274,7 +283,8 @@ fn apply_options(ty: &RequestType, entity: &mut Value, args: &ParsedArgs) -> Res
     }
     let headers = header_flags(args)?;
     if !headers.is_empty() {
-        let mut map: Map<String, Value> = entity.get(ty.headers_key).and_then(Value::as_object).cloned().unwrap_or_default();
+        let mut map: Map<String, Value> =
+            entity.get(ty.headers_key).and_then(Value::as_object).cloned().unwrap_or_default();
         merge_headers(&mut map, &headers);
         set(entity, ty.headers_key, Value::Object(map));
     }
@@ -460,7 +470,11 @@ fn socket_exchange(ctx: &mut Context, workspace: &str, socket_id: &str, target: 
     let key = json!({ "workspaceId": workspace, "socketId": socket_id });
     let before = ctx.request("ws.status", key.clone())?;
     let held = before.get("status").and_then(Value::as_str) == Some("connected");
-    let seen: Vec<Value> = before.get("messages").and_then(Value::as_array).into_iter().flatten()
+    let seen: Vec<Value> = before
+        .get("messages")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
         .filter_map(|message| message.get("id").cloned())
         .collect();
     if !held {
@@ -473,7 +487,8 @@ fn socket_exchange(ctx: &mut Context, workspace: &str, socket_id: &str, target: 
         let started = Instant::now();
         loop {
             let status = ctx.request("ws.status", key.clone())?;
-            if status.get("status").and_then(Value::as_str) != Some("connecting") || started.elapsed() > CONNECT_TIMEOUT {
+            if status.get("status").and_then(Value::as_str) != Some("connecting") || started.elapsed() > CONNECT_TIMEOUT
+            {
                 break;
             }
             std::thread::sleep(Duration::from_millis(100));
@@ -481,7 +496,8 @@ fn socket_exchange(ctx: &mut Context, workspace: &str, socket_id: &str, target: 
     }
     let mut failure = None;
     if let Some(message) = ctx.args.flag("body") {
-        let answer = ctx.request("ws.send", json!({ "workspaceId": workspace, "socketId": socket_id, "data": message }))?;
+        let answer =
+            ctx.request("ws.send", json!({ "workspaceId": workspace, "socketId": socket_id, "data": message }))?;
         failure = refused(answer).err();
     }
     if failure.is_none() && wait > 0.0 {
@@ -537,11 +553,13 @@ pub fn requests(ctx: &mut Context, sub: Option<&str>) -> Result<String> {
                     }
                     let built = ctx.request("curl.buildRequest", json!({ "curl": curl }))?;
                     let kind = js_template(built.get("kind"));
-                    let ty = TYPES
-                        .iter()
-                        .find(|ty| ty.kind == kind)
-                        .ok_or_else(|| CliError::msg(format!("the engine built a request of an unknown kind \"{kind}\"")))?;
-                    if args.flag("type").is_some_and(|wanted| type_named(wanted).is_ok_and(|wanted| wanted.name != ty.name)) {
+                    let ty = TYPES.iter().find(|ty| ty.kind == kind).ok_or_else(|| {
+                        CliError::msg(format!("the engine built a request of an unknown kind \"{kind}\""))
+                    })?;
+                    if args
+                        .flag("type")
+                        .is_some_and(|wanted| type_named(wanted).is_ok_and(|wanted| wanted.name != ty.name))
+                    {
                         return Err(CliError::msg(format!("the cURL command describes a {} request", ty.name)));
                     }
                     check_options(ty, args, &[])?;
@@ -600,9 +618,10 @@ pub fn requests(ctx: &mut Context, sub: Option<&str>) -> Result<String> {
                     let workspace = workspace_id(ctx)?;
                     let (ty, entity) = find(ctx, &workspace, wanted)?;
                     let exchange = exchange_options(ty);
-                    let given = args.names().into_iter().find(|name| {
-                        *name != "type" && describing.contains(name) && !exchange.contains(name)
-                    });
+                    let given = args
+                        .names()
+                        .into_iter()
+                        .find(|name| *name != "type" && describing.contains(name) && !exchange.contains(name));
                     if let Some(option) = given {
                         return Err(CliError::msg(format!(
                             "a saved request is sent as it is saved, without --{option}; change it with: bifurc requests update"
@@ -615,16 +634,16 @@ pub fn requests(ctx: &mut Context, sub: Option<&str>) -> Result<String> {
                             sent(ctx, ty, response)
                         }
                         None if ty.name == "sse" => crate::stream::stream_exchange(ctx, &workspace, &id, None),
-                        None if ty.name == "socketio" => {
-                            crate::socketio::socketio_exchange(ctx, &workspace, &id, None)
-                        }
+                        None if ty.name == "socketio" => crate::socketio::socketio_exchange(ctx, &workspace, &id, None),
                         None if ty.name == "mcp" => crate::mcp::mcp_exchange(ctx, &workspace, &id, None),
                         None => socket_exchange(ctx, &workspace, &id, None),
                     }
                 }
                 None => {
                     if args.flag("url").is_none() {
-                        return Err(CliError::msg("missing request id or name, or --url for a request that is not saved"));
+                        return Err(CliError::msg(
+                            "missing request id or name, or --url for a request that is not saved",
+                        ));
                     }
                     let ty = type_named(args.flag("type").unwrap_or("rest"))?;
                     let exchange = exchange_options(ty);
@@ -676,7 +695,8 @@ pub fn requests(ctx: &mut Context, sub: Option<&str>) -> Result<String> {
             ctx.accept(&[], 1)?;
             let address = need(args.positional(2), "gRPC server address, e.g. localhost:50051")?;
             let workspace = workspace_id(ctx)?;
-            let response = ctx.request("grpc.reflect", json!({ "serverAddress": address, "workspaceId": workspace }))?;
+            let response =
+                ctx.request("grpc.reflect", json!({ "serverAddress": address, "workspaceId": workspace }))?;
             if response.get("ok").and_then(Value::as_bool) == Some(false) {
                 let error = response.get("error").and_then(Value::as_str).unwrap_or("the server did not answer");
                 return Err(if ctx.json { CliError::Failed(json(&response)) } else { CliError::msg(error) });
@@ -712,22 +732,40 @@ mod tests {
         vec![
             ("config.get", Ok(config())),
             ("entity.list:requests", listing(json!([rest()]))),
-            ("entity.list:graphqlRequests", listing(json!([
+            (
+                "entity.list:graphqlRequests",
+                listing(json!([
                 {"id": "q1", "name": "Viewer", "endpointUrl": "http://x/graphql", "operationName": "Viewer",
-                 "query": "{ viewer { id } }", "variables": "", "headers": {}}]))),
+                 "query": "{ viewer { id } }", "variables": "", "headers": {}}])),
+            ),
             ("entity.list:grpcRequests", listing(json!([grpc()]))),
-            ("entity.list:soapRequests", listing(json!([
+            (
+                "entity.list:soapRequests",
+                listing(json!([
                 {"id": "s1", "name": "Add", "endpointUrl": "http://x/soap", "soapAction": "urn:Add", "headers": {},
-                 "body": "<a/>"}]))),
-            ("entity.list:wsConnections", listing(json!([
-                {"id": "k1", "name": "Feed", "url": "ws://x/feed", "headers": {}}]))),
-            ("entity.list:sseRequests", listing(json!([
-                {"id": "e1", "name": "Events", "url": "http://x/events", "method": "GET", "headers": {}, "body": ""}]))),
-            ("entity.list:socketioRequests", listing(json!([
+                 "body": "<a/>"}])),
+            ),
+            (
+                "entity.list:wsConnections",
+                listing(json!([
+                {"id": "k1", "name": "Feed", "url": "ws://x/feed", "headers": {}}])),
+            ),
+            (
+                "entity.list:sseRequests",
+                listing(json!([
+                {"id": "e1", "name": "Events", "url": "http://x/events", "method": "GET", "headers": {}, "body": ""}])),
+            ),
+            (
+                "entity.list:socketioRequests",
+                listing(json!([
                 {"id": "i1", "name": "Chat", "url": "http://x", "namespace": "/chat", "path": "", "auth": "",
-                 "headers": {}}]))),
-            ("entity.list:mcpRequests", listing(json!([
-                {"id": "m1", "name": "Tools", "transport": "stdio", "url": "npx my-server", "headers": {}}]))),
+                 "headers": {}}])),
+            ),
+            (
+                "entity.list:mcpRequests",
+                listing(json!([
+                {"id": "m1", "name": "Tools", "transport": "stdio", "url": "npx my-server", "headers": {}}])),
+            ),
             ("entity.create", Ok(json!({"id": "n1", "entity": {"id": "n1"}}))),
             ("entity.update", Ok(json!({"ok": true}))),
         ]
@@ -767,14 +805,23 @@ mod tests {
         let (out, calls) = run(&argv, saved_requests(), |c| requests(c, sub(&argv)));
         assert_eq!(
             out.unwrap_err(),
-            CliError::msg("unknown request type \"carrier-pigeon\": one of rest, graphql, grpc, soap, websocket, sse, socketio, mcp")
+            CliError::msg(
+                "unknown request type \"carrier-pigeon\": one of rest, graphql, grpc, soap, websocket, sse, socketio, mcp"
+            )
         );
         assert!(calls.is_empty());
     }
 
     #[test]
     fn show_finds_a_request_of_any_type_by_id_or_name() {
-        for (wanted, ty) in [("r1", "rest"), ("hello", "grpc"), ("Feed", "websocket"), ("events", "sse"), ("chat", "socketio"), ("tools", "mcp")] {
+        for (wanted, ty) in [
+            ("r1", "rest"),
+            ("hello", "grpc"),
+            ("Feed", "websocket"),
+            ("events", "sse"),
+            ("chat", "socketio"),
+            ("tools", "mcp"),
+        ] {
             let argv = ["requests", "show", wanted];
             let (out, _) = run(&argv, saved_requests(), |c| requests(c, sub(&argv)));
             assert_eq!(serde_json::from_str::<Value>(&out.unwrap()).unwrap()["type"], ty, "{wanted}");
@@ -822,8 +869,18 @@ mod tests {
     #[test]
     fn create_builds_each_other_type() {
         let argv = [
-            "requests", "create", "--type", "grpc", "--url", "localhost:50051", "--method", "/pkg.Greeter/SayHello",
-            "-d", "{\"name\":\"a\"}", "-H", "x-k: v",
+            "requests",
+            "create",
+            "--type",
+            "grpc",
+            "--url",
+            "localhost:50051",
+            "--method",
+            "/pkg.Greeter/SayHello",
+            "-d",
+            "{\"name\":\"a\"}",
+            "-H",
+            "x-k: v",
         ];
         let (out, calls) = run(&argv, saved_requests(), |c| requests(c, sub(&argv)));
         assert_eq!(out.unwrap(), "Saved grpc request n1");
@@ -841,8 +898,18 @@ mod tests {
         assert_eq!((&entity["protoFileId"], &entity["useReflection"]), (&json!("p1"), &json!(false)));
 
         let argv = [
-            "requests", "create", "--type", "graphql", "--url", "http://x/graphql", "--query", "query Me { me { id } }",
-            "--variables", "{\"a\":1}", "--operation", "Me",
+            "requests",
+            "create",
+            "--type",
+            "graphql",
+            "--url",
+            "http://x/graphql",
+            "--query",
+            "query Me { me { id } }",
+            "--variables",
+            "{\"a\":1}",
+            "--operation",
+            "Me",
         ];
         let (_, calls) = run(&argv, saved_requests(), |c| requests(c, sub(&argv)));
         assert_eq!(
@@ -852,7 +919,8 @@ mod tests {
                 "query": "query Me { me { id } }", "variables": "{\"a\":1}", "operationName": "Me"}})
         );
 
-        let argv = ["requests", "create", "--type", "soap", "--url", "http://x/soap", "--action", "urn:Add", "-d", "<a/>"];
+        let argv =
+            ["requests", "create", "--type", "soap", "--url", "http://x/soap", "--action", "urn:Add", "-d", "<a/>"];
         let (_, calls) = run(&argv, saved_requests(), |c| requests(c, sub(&argv)));
         assert_eq!(
             payloads(&calls, "entity.create")[0],
@@ -876,20 +944,55 @@ mod tests {
         for (argv, message) in [
             (vec!["requests", "create"], "missing --url"),
             (vec!["requests", "create", "-t", "grpc", "--url", "h:1"], "missing --method <package.Service/Method>"),
-            (vec!["requests", "create", "-t", "grpc", "--url", "h:1", "--method", "NoSlash"],
-             "the gRPC method is \"package.Service/Method\""),
-            (vec!["requests", "create", "-t", "grpc", "--url", "h:1", "--method", "S/M", "--proto", "p", "--reflection"],
-             "--proto and --reflection cannot both be given"),
+            (
+                vec!["requests", "create", "-t", "grpc", "--url", "h:1", "--method", "NoSlash"],
+                "the gRPC method is \"package.Service/Method\"",
+            ),
+            (
+                vec![
+                    "requests",
+                    "create",
+                    "-t",
+                    "grpc",
+                    "--url",
+                    "h:1",
+                    "--method",
+                    "S/M",
+                    "--proto",
+                    "p",
+                    "--reflection",
+                ],
+                "--proto and --reflection cannot both be given",
+            ),
             (vec!["requests", "create", "-t", "graphql", "--url", "http://x"], "missing --query or --query-file"),
-            (vec!["requests", "create", "-t", "graphql", "--url", "http://x", "--query", "{a}", "--variables", "{oops"],
-             "--variables is not valid JSON: {oops"),
-            (vec!["requests", "create", "--url", "http://x", "--query", "{a}"],
-             "--query is not an option of a rest request (see: bifurc requests --help)"),
-            (vec!["requests", "create", "-t", "ws", "--url", "ws://x", "-d", "hi"],
-             "--body is not an option of a websocket request (see: bifurc requests --help)"),
+            (
+                vec![
+                    "requests",
+                    "create",
+                    "-t",
+                    "graphql",
+                    "--url",
+                    "http://x",
+                    "--query",
+                    "{a}",
+                    "--variables",
+                    "{oops",
+                ],
+                "--variables is not valid JSON: {oops",
+            ),
+            (
+                vec!["requests", "create", "--url", "http://x", "--query", "{a}"],
+                "--query is not an option of a rest request (see: bifurc requests --help)",
+            ),
+            (
+                vec!["requests", "create", "-t", "ws", "--url", "ws://x", "-d", "hi"],
+                "--body is not an option of a websocket request (see: bifurc requests --help)",
+            ),
             (vec!["requests", "create", "--url", "u", "-H", "nocolon"], "header \"nocolon\" must be \"name: value\""),
-            (vec!["requests", "create", "--url", "u", "--pre-script", "x"],
-             "unknown option --pre-script for \"requests create\" (see: bifurc requests --help)"),
+            (
+                vec!["requests", "create", "--url", "u", "--pre-script", "x"],
+                "unknown option --pre-script for \"requests create\" (see: bifurc requests --help)",
+            ),
         ] {
             let (out, calls) = run(&argv, saved_requests(), |c| requests(c, sub(&argv)));
             assert_eq!(out.unwrap_err(), CliError::msg(message), "{argv:?}");
@@ -968,7 +1071,9 @@ mod tests {
         let (out, _) = run(&argv, saved_requests(), |c| requests(c, sub(&argv)));
         assert_eq!(
             out.unwrap_err(),
-            CliError::msg("nothing to change: give at least one option of a grpc request (see: bifurc requests --help)")
+            CliError::msg(
+                "nothing to change: give at least one option of a grpc request (see: bifurc requests --help)"
+            )
         );
     }
 
@@ -1005,7 +1110,9 @@ mod tests {
         let (out, calls) = run(&argv, saved_requests(), |c| requests(c, sub(&argv)));
         assert_eq!(
             out.unwrap_err(),
-            CliError::msg("a saved request is sent as it is saved, without --method; change it with: bifurc requests update")
+            CliError::msg(
+                "a saved request is sent as it is saved, without --method; change it with: bifurc requests update"
+            )
         );
         assert!(payloads(&calls, "request.send").is_empty());
     }
@@ -1026,17 +1133,32 @@ mod tests {
     #[test]
     fn send_inline_of_the_other_types_sends_what_their_command_takes() {
         let argv = [
-            "requests", "send", "-t", "grpc", "--url", "localhost:50051", "--method", "pkg.Svc/Do", "-d", "{\"a\":1}",
-            "-H", "x-k: v", "-w", "w1",
+            "requests",
+            "send",
+            "-t",
+            "grpc",
+            "--url",
+            "localhost:50051",
+            "--method",
+            "pkg.Svc/Do",
+            "-d",
+            "{\"a\":1}",
+            "-H",
+            "x-k: v",
+            "-w",
+            "w1",
         ];
         let reply = json!({"ok": true, "status": 0, "durationMs": 3, "metadata": {"m": "1"}, "responses": ["{}"]});
         let (out, calls) = run(&argv, vec![("grpc.send", Ok(reply))], |c| requests(c, sub(&argv)));
         assert_eq!(out.unwrap(), "gRPC OK  (3 ms)\nm: 1\n\n{}");
         assert_eq!(
             calls[0],
-            ("grpc.send".to_string(), json!({"workspaceId": "w1", "request": {
+            (
+                "grpc.send".to_string(),
+                json!({"workspaceId": "w1", "request": {
                 "serverAddress": "localhost:50051", "serviceName": "pkg.Svc", "methodName": "Do",
-                "requestBody": "{\"a\":1}", "metadata": {"x-k": "v"}, "protoFileId": null, "useReflection": true}}))
+                "requestBody": "{\"a\":1}", "metadata": {"x-k": "v"}, "protoFileId": null, "useReflection": true}})
+            )
         );
 
         let argv = ["requests", "send", "-t", "graphql", "--url", "http://x/g", "--query", "{a}", "-w", "w1"];
@@ -1048,7 +1170,8 @@ mod tests {
                 "endpointUrl": "http://x/g", "headers": {}, "query": "{a}", "variables": "", "operationName": ""}})
         );
 
-        let argv = ["requests", "send", "-t", "soap", "--url", "http://x/s", "--action", "urn:A", "-d", "<a/>", "-w", "w1"];
+        let argv =
+            ["requests", "send", "-t", "soap", "--url", "http://x/s", "--action", "urn:A", "-d", "<a/>", "-w", "w1"];
         let (_, calls) = run(&argv, vec![("soap.send", Ok(reply))], |c| requests(c, sub(&argv)));
         assert_eq!(
             calls[0].1,

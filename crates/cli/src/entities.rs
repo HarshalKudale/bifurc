@@ -120,7 +120,14 @@ fn create(ctx: &mut Context, kind: &Kind, workspace: &str, entity: Value) -> Res
 
 /// Write a changed item back. `changed` is whether an option changed anything; `options` names them for the
 /// error when none did.
-fn update(ctx: &mut Context, kind: &Kind, workspace: &str, mut entity: Value, changed: bool, options: &str) -> Result<String> {
+fn update(
+    ctx: &mut Context,
+    kind: &Kind,
+    workspace: &str,
+    mut entity: Value,
+    changed: bool,
+    options: &str,
+) -> Result<String> {
     if !changed {
         return Err(CliError::msg(format!("nothing to change: give at least one of {options}")));
     }
@@ -234,7 +241,9 @@ pub fn rules(ctx: &mut Context, sub: Option<&str>) -> Result<String> {
             ctx.accept(&["mapping", "target", "name", "regex", "disabled"], 1)?;
             let pattern = need(args.positional(2), "pattern, e.g. api.example.com/v1")?;
             if args.flag("mapping").is_none() && args.flag("target").is_none() {
-                return Err(CliError::msg("missing where to send what matches: --mapping <id|domain> or --target <url>"));
+                return Err(CliError::msg(
+                    "missing where to send what matches: --mapping <id|domain> or --target <url>",
+                ));
             }
             let workspace = workspace_id(ctx)?;
             let mut rule = json!({
@@ -263,7 +272,14 @@ pub fn rules(ctx: &mut Context, sub: Option<&str>) -> Result<String> {
                 changed = true;
             }
             changed |= set_rule_target(ctx, &workspace, &mut rule)?;
-            update(ctx, &RULES, &workspace, rule, changed, "--pattern, --regex, --no-regex, --mapping, --target, --name")
+            update(
+                ctx,
+                &RULES,
+                &workspace,
+                rule,
+                changed,
+                "--pattern, --regex, --no-regex, --mapping, --target, --name",
+            )
         }
         "enable" => set_enabled(ctx, &RULES, true),
         "disable" => set_enabled(ctx, &RULES, false),
@@ -312,7 +328,8 @@ fn apply_mock_options(mock: &mut Value, args: &ParsedArgs) -> Result<bool> {
 
     let mut changed = set_text(mock, "name", args, "name");
     if let Some(method) = args.flag("method") {
-        mock["method"] = json!(if method.eq_ignore_ascii_case("any") { "*".to_string() } else { method.to_uppercase() });
+        mock["method"] =
+            json!(if method.eq_ignore_ascii_case("any") { "*".to_string() } else { method.to_uppercase() });
         changed = true;
     }
     if let Some(regex) = regex {
@@ -345,7 +362,8 @@ fn apply_mock_options(mock: &mut Value, args: &ParsedArgs) -> Result<bool> {
         mock["responseHeaders"] = Value::Object(response_headers);
         // The names of the headers the mock sets. The type of the body is not one of them: it is always the
         // mock's own when the mock replaces the body.
-        let mut mocked: Vec<Value> = mock.get("mockedResponseHeaders").and_then(Value::as_array).cloned().unwrap_or_default();
+        let mut mocked: Vec<Value> =
+            mock.get("mockedResponseHeaders").and_then(Value::as_array).cloned().unwrap_or_default();
         for (name, value) in &headers {
             mocked.retain(|other| !other.as_str().is_some_and(|other| other.eq_ignore_ascii_case(name)));
             if !value.is_empty() && !name.eq_ignore_ascii_case("content-type") {
@@ -388,7 +406,9 @@ pub fn mocks(ctx: &mut Context, sub: Option<&str>) -> Result<String> {
             let pattern = args.positional(2).or(args.flag("url"));
             let mut mock = match (args.flag("curl"), pattern) {
                 (Some(_), Some(_)) => {
-                    return Err(CliError::msg("--curl already says what the mock answers to; leave out the URL pattern"));
+                    return Err(CliError::msg(
+                        "--curl already says what the mock answers to; leave out the URL pattern",
+                    ));
                 }
                 (Some(curl), None) => {
                     let built = ctx.request("curl.buildMock", json!({ "curl": curl }))?;
@@ -399,7 +419,8 @@ pub fn mocks(ctx: &mut Context, sub: Option<&str>) -> Result<String> {
             apply_mock_options(&mut mock, args)?;
             default_content_type(&mut mock);
             if mock.get("name").and_then(Value::as_str).unwrap_or_default().is_empty() {
-                mock["name"] = json!(format!("{} {}", js_template(mock.get("method")), js_template(mock.get("urlPattern"))));
+                mock["name"] =
+                    json!(format!("{} {}", js_template(mock.get("method")), js_template(mock.get("urlPattern"))));
             }
             mock["enabled"] = json!(!args.has("disabled"));
             let workspace = workspace_id(ctx)?;
@@ -490,7 +511,8 @@ mod tests {
     #[test]
     fn mappings_create_appends_localhost_and_lowercases() {
         let argv = ["mappings", "create", "API", "127.0.0.1:3000", "--label", "My API"];
-        let answers = vec![("config.get", Ok(config())), ("entity.create", Ok(json!({"id": "m9", "entity": {"id": "m9"}})))];
+        let answers =
+            vec![("config.get", Ok(config())), ("entity.create", Ok(json!({"id": "m9", "entity": {"id": "m9"}})))];
         let (out, calls) = run(&argv, answers, |c| mappings(c, sub(&argv)));
         assert_eq!(out.unwrap(), "Mapped http://api.localhost → 127.0.0.1:3000  (id m9)");
         assert_eq!(
@@ -503,9 +525,13 @@ mod tests {
     #[test]
     fn mappings_create_keeps_a_full_domain_can_start_disabled_and_prints_the_entity_as_json() {
         let argv = ["mappings", "add", "Api.LOCALHOST", "t", "-w", "w2", "--disabled", "--json"];
-        let answers = vec![("entity.create", Ok(json!({"id": "n1", "entity": {"id": "n1", "domain": "api.localhost"}})))];
+        let answers =
+            vec![("entity.create", Ok(json!({"id": "n1", "entity": {"id": "n1", "domain": "api.localhost"}})))];
         let (out, calls) = run(&argv, answers, |c| mappings(c, sub(&argv)));
-        assert_eq!(serde_json::from_str::<Value>(&out.unwrap()).unwrap(), json!({"id": "n1", "domain": "api.localhost"}));
+        assert_eq!(
+            serde_json::from_str::<Value>(&out.unwrap()).unwrap(),
+            json!({"id": "n1", "domain": "api.localhost"})
+        );
         assert_eq!(calls[0].1["workspaceId"], "w2");
         assert_eq!(calls[0].1["entity"]["label"], "");
         assert_eq!(calls[0].1["entity"]["enabled"], false);
@@ -698,8 +724,19 @@ mod tests {
     #[test]
     fn mocks_create_is_the_whole_response() {
         let argv = [
-            "mocks", "create", "https://api.test/users", "-X", "post", "--status", "201", "-d", "{\"id\":1}",
-            "-H", "X-Trace: abc", "--delay", "250",
+            "mocks",
+            "create",
+            "https://api.test/users",
+            "-X",
+            "post",
+            "--status",
+            "201",
+            "-d",
+            "{\"id\":1}",
+            "-H",
+            "X-Trace: abc",
+            "--delay",
+            "250",
         ];
         let (out, calls) = run(&argv, one_mock(), |c| mocks(c, sub(&argv)));
         assert_eq!(out.unwrap(), "Saved mock k9");
@@ -732,7 +769,10 @@ mod tests {
     fn mocks_create_keeps_a_given_content_type_and_calls_plain_text_plain() {
         let argv = ["mocks", "create", "/a", "-d", "hello"];
         let (_, calls) = run(&argv, one_mock(), |c| mocks(c, sub(&argv)));
-        assert_eq!(payloads(&calls, "entity.create")[0]["entity"]["responseHeaders"], json!({"Content-Type": "text/plain"}));
+        assert_eq!(
+            payloads(&calls, "entity.create")[0]["entity"]["responseHeaders"],
+            json!({"Content-Type": "text/plain"})
+        );
 
         let argv = ["mocks", "create", "/a", "-d", "<a/>", "-H", "content-type: text/xml"];
         let (_, calls) = run(&argv, one_mock(), |c| mocks(c, sub(&argv)));
@@ -770,7 +810,10 @@ mod tests {
         for (argv, message) in [
             (vec!["mocks", "create", "/a", "--status", "99"], "--status must be a status from 100 to 599, not \"99\""),
             (vec!["mocks", "create", "/a", "--status", "ok"], "--status must be a status from 100 to 599, not \"ok\""),
-            (vec!["mocks", "create", "/a", "--delay", "-1"], "--delay must be a whole number of milliseconds, not \"-1\""),
+            (
+                vec!["mocks", "create", "/a", "--delay", "-1"],
+                "--delay must be a whole number of milliseconds, not \"-1\"",
+            ),
             (vec!["mocks", "create"], "missing URL pattern, e.g. https://api.example.com/users"),
         ] {
             let (out, calls) = run(&argv, one_mock(), |c| mocks(c, sub(&argv)));
@@ -782,7 +825,17 @@ mod tests {
     #[test]
     fn mocks_update_changes_what_is_given_and_keeps_the_rest() {
         let argv = [
-            "mocks", "update", "users", "--status", "500", "-H", "x-old:", "-H", "X-New: 2", "--url", "https://api.test/v2",
+            "mocks",
+            "update",
+            "users",
+            "--status",
+            "500",
+            "-H",
+            "x-old:",
+            "-H",
+            "X-New: 2",
+            "--url",
+            "https://api.test/v2",
         ];
         let (out, calls) = run(&argv, one_mock(), |c| mocks(c, sub(&argv)));
         assert_eq!(out.unwrap(), "Updated mock k1");

@@ -215,8 +215,7 @@ mod tests {
         }
         bus().off(listener);
 
-        let status =
-            registry.invoke("runner.status", json!({ "workspaceId": WS, "folderId": f1 }), ctx).await.unwrap();
+        let status = registry.invoke("runner.status", json!({ "workspaceId": WS, "folderId": f1 }), ctx).await.unwrap();
         assert_eq!(status["running"], false);
         assert_eq!(status["completed"], 2);
         let names: Vec<&str> = status["results"].as_array().unwrap().iter().map(|r| str_of(r, "requestName")).collect();

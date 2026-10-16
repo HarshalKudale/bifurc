@@ -147,7 +147,7 @@ impl<S: Read + Write> Session<S> {
 #[cfg(windows)]
 pub type Stream = std::fs::File;
 #[cfg(unix)]
-pub type Stream =std::os::unix::net::UnixStream;
+pub type Stream = std::os::unix::net::UnixStream;
 
 /// `ERROR_PIPE_BUSY`: the pipe server has no free instance for this client right now.
 #[cfg(windows)]

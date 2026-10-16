@@ -25,14 +25,15 @@ use gpui_kit::{
 use serde_json::{Map, Value, json};
 
 use super::{
-    Carry, LoadState, SaveMode, SessionEvent, engine_folder,
+    Carry, LoadState, SaveMode, SessionEvent,
     connection::{ConnectionEvent, SocketConnection},
+    engine_folder,
 };
 use crate::{
-    i18n::{t, t_with},
     app_model::{AppModel, ModelEvent},
     components::{Autosave, KeyValueEvent, KeyValueTable, Syntax, VarEditor, page, request_bar},
     engine::{call, call_in, describe},
+    i18n::{t, t_with},
     model::{
         RequestKind,
         http::{header_map, header_pairs},
@@ -105,7 +106,8 @@ impl WsSession {
         let socket_id = saved_id.clone().unwrap_or_else(|| format!("draft-{}", cx.entity_id().as_u64()));
         let name = cx.new(|cx| InputState::new(window, cx).placeholder(t("session.websocket.name_placeholder")));
         let url = VarEditor::line("wss://example.test/socket", window, cx);
-        let headers = cx.new(|cx| KeyValueTable::new(t("session.rest.column_header"), t("session.rest.column_value"), window, cx));
+        let headers = cx
+            .new(|cx| KeyValueTable::new(t("session.rest.column_header"), t("session.rest.column_value"), window, cx));
         let message = VarEditor::code(Syntax::Json, t("session.websocket.message_placeholder"), window, cx);
         let connection = cx.new(|cx| SocketConnection::new(window, cx));
 
@@ -203,10 +205,7 @@ impl WsSession {
             // The connection's status is asked for once, when the tab opens; a re-read does not change it.
             let opening = this.load == LoadState::Loading;
             match outcome.map_err(|e| describe(&e)).and_then(|v| {
-                v.get("entity")
-                    .and_then(Value::as_object)
-                    .cloned()
-                    .ok_or_else(|| t("session.rest.gone").to_owned())
+                v.get("entity").and_then(Value::as_object).cloned().ok_or_else(|| t("session.rest.gone").to_owned())
             }) {
                 Ok(entity) => {
                     this.adopt_entity(entity, window, cx);
@@ -458,8 +457,7 @@ impl WsSession {
                             cx.emit(SessionEvent::Saved { id });
                         }
                     }
-                    None => window
-                        .push_notification(Notification::error(t("session.rest.engine_no_saved")), cx),
+                    None => window.push_notification(Notification::error(t("session.rest.engine_no_saved")), cx),
                 },
                 Ok(_) => {
                     this.entity = this.edited_entity(&fields);
@@ -488,7 +486,8 @@ impl WsSession {
         let fields = self.fields(cx);
         if fields.url.is_empty() {
             window.push_notification(
-                Notification::warning(t("session.connection.connect_no_url")).title(t("session.connection.connect_no_url_title")),
+                Notification::warning(t("session.connection.connect_no_url"))
+                    .title(t("session.connection.connect_no_url_title")),
                 cx,
             );
             return;
@@ -519,7 +518,8 @@ impl WsSession {
                 Err(error) => Some(describe(&error)),
             };
             if let Some(message) = failure {
-                window.push_notification(Notification::error(message).title(t("session.connection.connect_failed")), cx);
+                window
+                    .push_notification(Notification::error(message).title(t("session.connection.connect_failed")), cx);
             }
         });
     }
@@ -529,7 +529,10 @@ impl WsSession {
         let payload = json!({ "workspaceId": self.workspace_id, "socketId": self.socket_id });
         call(&client, cx, "ws.disconnect", payload, |_, outcome, cx| {
             if let Err(error) = outcome {
-                cx.emit(SessionEvent::Notice(t_with("session.connection.disconnect_failed", &[("error", &describe(&error))])));
+                cx.emit(SessionEvent::Notice(t_with(
+                    "session.connection.disconnect_failed",
+                    &[("error", &describe(&error))],
+                )));
             }
         });
     }
@@ -550,14 +553,21 @@ impl WsSession {
         let payload = json!({ "workspaceId": self.workspace_id, "socketId": self.socket_id, "data": text });
         call_in(&client, window, cx, "ws.send", payload, |_this, outcome, window, cx| {
             let failure = match outcome {
-                Ok(result) if result.get("ok").and_then(Value::as_bool) == Some(false) => {
-                    Some(result.get("error").and_then(Value::as_str).unwrap_or(t("session.websocket.send_failed")).to_owned())
-                }
+                Ok(result) if result.get("ok").and_then(Value::as_bool) == Some(false) => Some(
+                    result
+                        .get("error")
+                        .and_then(Value::as_str)
+                        .unwrap_or(t("session.websocket.send_failed"))
+                        .to_owned(),
+                ),
                 Ok(_) => None,
                 Err(error) => Some(describe(&error)),
             };
             if let Some(message) = failure {
-                window.push_notification(Notification::error(message).title(t("session.websocket.send_failed_title")), cx);
+                window.push_notification(
+                    Notification::error(message).title(t("session.websocket.send_failed_title")),
+                    cx,
+                );
             }
         });
     }

@@ -28,11 +28,7 @@ use crate::{
         stdio::run_stdio_server,
         ws::{WsServer, create_ws_server},
     },
-    utils::{
-        id::now_ms,
-        json::str_of,
-        net::DEFAULT_HOST_DOMAIN,
-    },
+    utils::{id::now_ms, json::str_of, net::DEFAULT_HOST_DOMAIN},
     workspace::{
         fs::{init_workspace_dir, ws_dir},
         git_store::{check_git_installed, init_workspace_repo},

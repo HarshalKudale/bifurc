@@ -12,7 +12,8 @@ use super::{
     deletions::pending_folders,
     fs::{
         EntityStub, auto_sync_fs_directories, bootstrap_names_index, default_global_environment,
-        ensure_global_environment, get_pending_deletions, load_enabled_set, read_all_entities, read_entity, read_entity_stubs, read_locked, read_names_index, write_entity, write_flat_entity,
+        ensure_global_environment, get_pending_deletions, load_enabled_set, read_all_entities, read_entity,
+        read_entity_stubs, read_locked, read_names_index, write_entity, write_flat_entity,
     },
     settings::{DEFAULT_COMPANION_PORT, DEFAULT_FORWARD_PROXY_PORT, load_settings, save_settings},
     tree::{self, Scope},
@@ -154,7 +155,8 @@ pub fn load_config() -> Value {
     if !environments.iter().any(|e| str_of(e, "id") == GLOBAL_ENV_ID)
         && !locked_environments.iter().any(|(id, ..)| id == GLOBAL_ENV_ID)
     {
-        let global = ensure_global_environment(ws_id).ok().flatten().unwrap_or_else(|| default_global_environment(ws_id));
+        let global =
+            ensure_global_environment(ws_id).ok().flatten().unwrap_or_else(|| default_global_environment(ws_id));
         environments.insert(0, global);
     }
 
@@ -259,7 +261,13 @@ pub fn load_config() -> Value {
     }));
     all_mocks.extend(pending(ws_id, "mocks", &mocks, |p| {
         let name = p.get("name").cloned().unwrap_or(Value::Null);
-        mock_stub(str_of(p, "id"), opt_str(p, "folderId"), name, opt_str(p, "method").unwrap_or("GET"), str_of(p, "url"))
+        mock_stub(
+            str_of(p, "id"),
+            opt_str(p, "folderId"),
+            name,
+            opt_str(p, "method").unwrap_or("GET"),
+            str_of(p, "url"),
+        )
     }));
 
     let mut all_environments: Vec<Value> = environments.iter().map(|e| with_workspace(e, ws_id)).collect();
@@ -350,18 +358,13 @@ pub fn load_config() -> Value {
             "streamingType": "unary", "createdAt": 0,
         }),
     );
-    let sse_requests = listed(
-        "sseRequests",
-        &["url", "method"],
-        json!({ "headers": {}, "body": "", "createdAt": 0 }),
-    );
+    let sse_requests = listed("sseRequests", &["url", "method"], json!({ "headers": {}, "body": "", "createdAt": 0 }));
     let socketio_requests = listed(
         "socketioRequests",
         &["url", "namespace"],
         json!({ "headers": {}, "path": "", "auth": "", "createdAt": 0 }),
     );
-    let mcp_requests =
-        listed("mcpRequests", &["url", "transport"], json!({ "headers": {}, "createdAt": 0 }));
+    let mcp_requests = listed("mcpRequests", &["url", "transport"], json!({ "headers": {}, "createdAt": 0 }));
     let soap_requests =
         listed("soapRequests", &["endpointUrl", "soapAction"], json!({ "headers": {}, "body": "", "createdAt": 0 }));
 

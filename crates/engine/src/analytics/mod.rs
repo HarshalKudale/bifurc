@@ -101,9 +101,7 @@ fn route(routing: &Routing) -> Route {
 
 fn read_routing() -> Routing {
     let settings = load_settings();
-    Routing {
-        anonymous: !env_opted_out() && settings.telemetry_enabled(),
-    }
+    Routing { anonymous: !env_opted_out() && settings.telemetry_enabled() }
 }
 
 #[derive(Default)]
@@ -184,7 +182,8 @@ fn mark_install_reported() {
 fn install_id() -> String {
     let path = analytics_path();
     let stored = read_json(&path);
-    if let Some(id) = stored.as_ref().and_then(|v| v.get("installId")).and_then(Value::as_str).filter(|id| !id.is_empty())
+    if let Some(id) =
+        stored.as_ref().and_then(|v| v.get("installId")).and_then(Value::as_str).filter(|id| !id.is_empty())
     {
         return id.to_string();
     }
@@ -397,8 +396,11 @@ pub fn failed(what: &'static str) {
 /// only the newest [`KEPT_CRASHES`] files. A report is looked at once, whether or not it may be sent.
 fn collect_crashes() {
     let Ok(dir) = std::fs::read_dir(data_dir().join(bifurc_protocol::crash::DIR)) else { return };
-    let mut files: Vec<std::path::PathBuf> =
-        dir.flatten().map(|entry| entry.path()).filter(|path| path.extension().is_some_and(|ext| ext == "json")).collect();
+    let mut files: Vec<std::path::PathBuf> = dir
+        .flatten()
+        .map(|entry| entry.path())
+        .filter(|path| path.extension().is_some_and(|ext| ext == "json"))
+        .collect();
     // A file's name begins with when it was written.
     files.sort();
     let kept = files.split_off(files.len().saturating_sub(KEPT_CRASHES));
@@ -502,8 +504,7 @@ mod tests {
 
     #[test]
     fn a_later_save_replaces_the_one_still_waiting() {
-        let item =
-            |key: Option<&str>, n: u32| Queued { replaces: key.map(str::to_string), event: json!(n) };
+        let item = |key: Option<&str>, n: u32| Queued { replaces: key.map(str::to_string), event: json!(n) };
         let mut queue = Vec::new();
         enqueue(&mut queue, item(Some("mocks/a"), 1));
         enqueue(&mut queue, item(None, 2));
@@ -528,7 +529,8 @@ mod tests {
         }
         crate::workspace::settings::save_settings(&stored).unwrap();
         let mut state = STATE.lock();
-        state.target = Some(Target { key: "key".into(), host: "http://localhost".into(), install_id: Some("install-1".into()) });
+        state.target =
+            Some(Target { key: "key".into(), host: "http://localhost".into(), install_id: Some("install-1".into()) });
         state.queue.clear();
         state.routing = None;
         root
@@ -566,7 +568,10 @@ mod tests {
         assert!(sent[0]["properties"].get("workspace_id").is_none());
         // Making a workspace names the new one, known only from the answer.
         let added = sent_by("workspace.add", json!({ "name": "n" }), Ok(&json!({ "id": "fresh", "name": "n" })));
-        assert_eq!((added[0]["event"].as_str(), added[0]["properties"]["workspace_id"].as_str()), (Some("workspace created"), Some("fresh")));
+        assert_eq!(
+            (added[0]["event"].as_str(), added[0]["properties"]["workspace_id"].as_str()),
+            (Some("workspace created"), Some("fresh"))
+        );
         let imported = sent_by(
             "workspace.import",
             json!({ "accountId": "a", "repo": "octo/team" }),
@@ -574,7 +579,11 @@ mod tests {
         );
         assert_eq!(imported[0]["properties"]["workspace_id"], "brought");
         // An import that brought nothing has no workspace to name.
-        let refused = sent_by("workspace.import", json!({ "accountId": "a", "repo": "octo/x" }), Ok(&json!({ "ok": false, "error": "no" })));
+        let refused = sent_by(
+            "workspace.import",
+            json!({ "accountId": "a", "repo": "octo/x" }),
+            Ok(&json!({ "ok": false, "error": "no" })),
+        );
         assert!(refused.iter().all(|sent| sent["properties"].get("workspace_id").is_none()));
         // What is no command's and no workspace's stays as it was.
         failed("listener_bind");

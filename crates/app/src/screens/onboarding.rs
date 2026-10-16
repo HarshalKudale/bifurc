@@ -357,11 +357,7 @@ impl Onboarding {
                 this.servers_failed_on = this.permission_asked_on;
                 this.error = Some(t_with(
                     "onboarding.problem.low_ports_refused",
-                    &[
-                        ("problem", &problem),
-                        ("reserved", &FIRST_UNRESERVED_PORT),
-                        ("why", &why.trim_end_matches('.')),
-                    ],
+                    &[("problem", &problem), ("reserved", &FIRST_UNRESERVED_PORT), ("why", &why.trim_end_matches('.'))],
                 ));
                 cx.notify();
             }
@@ -568,21 +564,13 @@ impl Onboarding {
     fn render_overview(&self, cx: &mut Context<Self>) -> AnyElement {
         let theme = cx.theme().clone();
         let parts: [(IconName, &str, &str); 6] = [
-            (
-                IconName::Globe,
-                t("onboarding.overview.requests.title"),
-                t("onboarding.overview.requests.description"),
-            ),
+            (IconName::Globe, t("onboarding.overview.requests.title"), t("onboarding.overview.requests.description")),
             (
                 IconName::GalleryVerticalEnd,
                 t("onboarding.overview.mocks.title"),
                 t("onboarding.overview.mocks.description"),
             ),
-            (
-                IconName::Replace,
-                t("onboarding.overview.mappings.title"),
-                t("onboarding.overview.mappings.description"),
-            ),
+            (IconName::Replace, t("onboarding.overview.mappings.title"), t("onboarding.overview.mappings.description")),
             (
                 IconName::Network,
                 t("onboarding.overview.proxy_rules.title"),
@@ -654,7 +642,11 @@ impl Onboarding {
                 let menu = menu.scrollable(true).max_h(rems(20.).to_pixels(window.rem_size()));
                 themes.iter().fold(menu, |menu, (name, is_dark)| {
                     // Most themes say which they are in their name; the rest get it appended.
-                    let mode = t(if *is_dark { "onboarding.preferences.theme.dark" } else { "onboarding.preferences.theme.light" });
+                    let mode = t(if *is_dark {
+                        "onboarding.preferences.theme.dark"
+                    } else {
+                        "onboarding.preferences.theme.light"
+                    });
                     let label: SharedString =
                         if name.contains(&mode) { name.clone() } else { format!("{name} ({mode})").into() };
                     let name = name.clone();
@@ -685,8 +677,18 @@ impl Onboarding {
             );
 
         Self::group(cx)
-            .child(Self::row(t("onboarding.preferences.theme.title"), t("onboarding.preferences.theme.description"), theme_menu, cx))
-            .child(Self::row(t("onboarding.preferences.size.title"), t("onboarding.preferences.size.description"), size_menu, cx))
+            .child(Self::row(
+                t("onboarding.preferences.theme.title"),
+                t("onboarding.preferences.theme.description"),
+                theme_menu,
+                cx,
+            ))
+            .child(Self::row(
+                t("onboarding.preferences.size.title"),
+                t("onboarding.preferences.size.description"),
+                size_menu,
+                cx,
+            ))
             .into_any_element()
     }
 
@@ -826,11 +828,7 @@ impl Onboarding {
                     "reverse-port-note",
                     t_with(
                         "onboarding.reverse.port_note",
-                        &[
-                            ("port", &port),
-                            ("address", &mapping_address(port)),
-                            ("plain", &mapping_address(HTTP_PORT)),
-                        ],
+                        &[("port", &port), ("address", &mapping_address(port)), ("plain", &mapping_address(HTTP_PORT))],
                     ),
                 )
                 .title(t_with("onboarding.reverse.port_names_need", &[("port", &port)]))
@@ -906,7 +904,9 @@ impl Onboarding {
     fn render_actions(&self, stage: Stage, cx: &mut Context<Self>) -> AnyElement {
         let label = t(match stage {
             Stage::Terms | Stage::Privacy => "onboarding.action.accept",
-            Stage::Proxies if self.servers_failed_on.is_some() && self.servers_failed_on == self.typed_port_pair(cx) => {
+            Stage::Proxies
+                if self.servers_failed_on.is_some() && self.servers_failed_on == self.typed_port_pair(cx) =>
+            {
                 "onboarding.action.continue_anyway"
             }
             Stage::Proxies if self.has_workspace(cx) => "onboarding.action.finish",

@@ -295,10 +295,8 @@ mod tests {
             tokio::time::sleep(Duration::from_millis(20)).await;
             Instant::now()
         });
-        let (a, b) = tokio::join!(
-            execute_flow_script(spin, data(), json!({})),
-            execute_flow_script(spin, data(), json!({}))
-        );
+        let (a, b) =
+            tokio::join!(execute_flow_script(spin, data(), json!({})), execute_flow_script(spin, data(), json!({})));
         assert_eq!((a["output"]["ok"].clone(), b["output"]["ok"].clone()), (json!(1), json!(1)));
         // The timer fired long before the 300ms scripts finished: they did not occupy the async workers.
         assert!(ticker.await.unwrap().duration_since(start) < Duration::from_millis(250));

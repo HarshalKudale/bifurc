@@ -119,7 +119,8 @@ pub fn plan(manifest: &Value, current: &str, channel: Channel) -> Value {
         .package_key()
         .and_then(|key| opt_str(next_raw.get("packages")?.get(key)?, "url").and_then(trusted).map(str::to_string));
     // A security release anywhere on the way makes the whole update one that should not wait.
-    let critical = known.iter().any(|r| r.version > current && r.version <= *target && bool_of(r.raw, "critical", false));
+    let critical =
+        known.iter().any(|r| r.version > current && r.version <= *target && bool_of(r.raw, "critical", false));
     json!({
         "version": text(*target),
         "date": opt_str(target_raw, "date"),

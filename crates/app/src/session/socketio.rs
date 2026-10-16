@@ -14,6 +14,7 @@
 //! Connecting a saved, unedited request sends only its id (`socketio.connect {workspaceId, connectionId}`); a
 //! draft or an edited request sends the target it holds. The engine resolves environment variables either way.
 
+use bifurc_engine_client::ClientError;
 use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, Sizable as _, WindowExt as _,
     alert::Alert,
@@ -29,7 +30,6 @@ use gpui_kit::{
     AppContext as _, Context, Entity, EventEmitter, IntoElement, ParentElement as _, Render, SharedString, Styled as _,
     Subscription, Window, div,
 };
-use bifurc_engine_client::ClientError;
 use serde_json::{Map, Value, json};
 
 use super::{
@@ -37,10 +37,10 @@ use super::{
     socketio_connection::{SocketIoConnection, SocketIoEvent},
 };
 use crate::{
-    i18n::{t, t_with},
     app_model::{AppModel, ModelEvent},
     components::{Autosave, KeyValueEvent, KeyValueTable, Syntax, VarEditor, page, request_bar},
     engine::{call, call_in, describe},
+    i18n::{t, t_with},
     model::{
         RequestKind,
         http::{header_map, header_pairs},
@@ -145,10 +145,13 @@ impl SocketIoSession {
         let connection_id = saved_id.clone().unwrap_or_else(|| format!("draft-{}", cx.entity_id().as_u64()));
         let name = cx.new(|cx| InputState::new(window, cx).placeholder(t("session.rest.name_placeholder")));
         let url = VarEditor::line("https://example.test", window, cx);
-        let headers = cx.new(|cx| KeyValueTable::new(t("session.rest.column_header"), t("session.rest.column_value"), window, cx));
+        let headers = cx
+            .new(|cx| KeyValueTable::new(t("session.rest.column_header"), t("session.rest.column_value"), window, cx));
         let namespace = VarEditor::line(t("session.socketio.namespace_placeholder"), window, cx);
         let path = VarEditor::line("/socket.io", window, cx);
-        let listeners = cx.new(|cx| KeyValueTable::new(t("session.socketio.column_event"), t("session.socketio.column_description"), window, cx));
+        let listeners = cx.new(|cx| {
+            KeyValueTable::new(t("session.socketio.column_event"), t("session.socketio.column_description"), window, cx)
+        });
         let auth = VarEditor::code(Syntax::Json, t("session.socketio.auth_placeholder"), window, cx);
         let event = VarEditor::line(t("session.socketio.event_placeholder"), window, cx);
         let args = VarEditor::code(Syntax::Json, t("session.socketio.args_placeholder"), window, cx);
@@ -162,15 +165,13 @@ impl SocketIoSession {
         }));
         // Enter in any of the one-row fields connects, as it does in the address.
         for field in [&url, &namespace, &path] {
-            subscriptions.push(cx.subscribe_in(
-                field.state(),
-                window,
-                |this, _, event: &InputEvent, window, cx| match event {
+            subscriptions.push(cx.subscribe_in(field.state(), window, |this, _, event: &InputEvent, window, cx| {
+                match event {
                     InputEvent::Change => this.changed(cx),
                     InputEvent::PressEnter { .. } => this.connect(window, cx),
                     _ => {}
-                },
-            ));
+                }
+            }));
         }
         // Enter in the event's name sends it.
         subscriptions.push(cx.subscribe_in(
@@ -282,10 +283,7 @@ impl SocketIoSession {
             // The connection's status is asked for once, when the tab opens; a re-read does not change it.
             let opening = this.load == LoadState::Loading;
             match outcome.map_err(|e| describe(&e)).and_then(|v| {
-                v.get("entity")
-                    .and_then(Value::as_object)
-                    .cloned()
-                    .ok_or_else(|| t("session.rest.gone").to_owned())
+                v.get("entity").and_then(Value::as_object).cloned().ok_or_else(|| t("session.rest.gone").to_owned())
             }) {
                 Ok(entity) => {
                     this.adopt_entity(entity, window, cx);
@@ -511,7 +509,10 @@ impl SocketIoSession {
             let client = self.model.read(cx).client().clone();
             call(&client, cx, "socketio.listen", payload, |_, outcome, cx| {
                 if let Some(message) = refusal(outcome, t("session.socketio.listeners_not_changed")) {
-                    cx.emit(SessionEvent::Notice(t_with("session.socketio.listeners_failed", &[("message", &message)])));
+                    cx.emit(SessionEvent::Notice(t_with(
+                        "session.socketio.listeners_failed",
+                        &[("message", &message)],
+                    )));
                 }
             });
         }
@@ -609,8 +610,7 @@ impl SocketIoSession {
                             cx.emit(SessionEvent::Saved { id });
                         }
                     }
-                    None => window
-                        .push_notification(Notification::error(t("session.rest.engine_no_saved")), cx),
+                    None => window.push_notification(Notification::error(t("session.rest.engine_no_saved")), cx),
                 },
                 Ok(_) => {
                     this.entity = this.edited_entity(&fields);
@@ -639,7 +639,8 @@ impl SocketIoSession {
         let fields = self.fields(cx);
         if fields.url.is_empty() {
             window.push_notification(
-                Notification::warning(t("session.connection.connect_no_url")).title(t("session.connection.connect_no_url_title")),
+                Notification::warning(t("session.connection.connect_no_url"))
+                    .title(t("session.connection.connect_no_url_title")),
                 cx,
             );
             return;
@@ -671,7 +672,8 @@ impl SocketIoSession {
         let client = self.model.read(cx).client().clone();
         call_in(&client, window, cx, "socketio.connect", payload, move |_this, outcome, window, cx| {
             if let Some(message) = refusal(outcome, t("session.websocket.open_failed")) {
-                window.push_notification(Notification::error(message).title(t("session.connection.connect_failed")), cx);
+                window
+                    .push_notification(Notification::error(message).title(t("session.connection.connect_failed")), cx);
             }
         });
     }
@@ -681,7 +683,10 @@ impl SocketIoSession {
         let payload = json!({ "workspaceId": self.workspace_id, "connectionId": self.connection_id });
         call(&client, cx, "socketio.disconnect", payload, |_, outcome, cx| {
             if let Err(error) = outcome {
-                cx.emit(SessionEvent::Notice(t_with("session.connection.disconnect_failed", &[("error", &describe(&error))])));
+                cx.emit(SessionEvent::Notice(t_with(
+                    "session.connection.disconnect_failed",
+                    &[("error", &describe(&error))],
+                )));
             }
         });
     }
@@ -704,7 +709,8 @@ impl SocketIoSession {
         });
         call_in(&client, window, cx, "socketio.emit", payload, |_this, outcome, window, cx| {
             if let Some(message) = refusal(outcome, t("session.socketio.send_failed")) {
-                window.push_notification(Notification::error(message).title(t("session.socketio.send_failed_title")), cx);
+                window
+                    .push_notification(Notification::error(message).title(t("session.socketio.send_failed_title")), cx);
             }
         });
     }
@@ -741,18 +747,8 @@ impl SocketIoSession {
         v_flex()
             .p_3()
             .gap_4()
-            .child(field(
-                t("session.socketio.namespace"),
-                t("session.socketio.namespace_hint"),
-                &self.namespace,
-                cx,
-            ))
-            .child(field(
-                t("session.socketio.path"),
-                t("session.socketio.path_hint"),
-                &self.path,
-                cx,
-            ))
+            .child(field(t("session.socketio.namespace"), t("session.socketio.namespace_hint"), &self.namespace, cx))
+            .child(field(t("session.socketio.path"), t("session.socketio.path_hint"), &self.path, cx))
             .into_any_element()
     }
 }

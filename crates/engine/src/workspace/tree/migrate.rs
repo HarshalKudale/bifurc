@@ -128,10 +128,13 @@ mod tests {
         let root = scratch_data_root();
         let ws = ws_dir(root.ws_id);
         let write = |path: &str, value: Value| write_json_pretty(&ws.join(path), &value).unwrap();
-        write("requests/index.json", json!({ "folders": [
+        write(
+            "requests/index.json",
+            json!({ "folders": [
             { "id": "f1", "name": "Users", "parentId": null },
             { "id": "f2", "name": "Admin", "parentId": "f1" },
-        ], "order": [] }));
+        ], "order": [] }),
+        );
         write("requests/names.json", json!({}));
         write("requests/Users/r1.json", json!({ "id": "r1", "name": "List", "method": "GET", "url": "/users" }));
         write("requests/Admin/r2.json", json!({ "id": "r2", "name": "Ban", "method": "POST", "url": "/ban" }));

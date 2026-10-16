@@ -35,7 +35,9 @@ fn local(qualified: &str) -> &str {
 }
 
 fn is(node: &Node, namespaces: &[&str], name: &str) -> bool {
-    node.is_element() && node.tag_name().name() == name && node.tag_name().namespace().is_some_and(|ns| namespaces.contains(&ns))
+    node.is_element()
+        && node.tag_name().name() == name
+        && node.tag_name().namespace().is_some_and(|ns| namespaces.contains(&ns))
 }
 
 fn child<'a>(node: Node<'a, 'a>, namespace: &str, name: &str) -> Option<Node<'a, 'a>> {
@@ -70,7 +72,8 @@ pub fn parse(text: &str) -> Result<Vec<Operation>, String> {
         let endpoint = address_of(binding.attribute("name").unwrap_or_default());
         for operation in binding.children().filter(|n| is(n, &[WSDL], "operation")) {
             let Some(name) = operation.attribute("name") else { continue };
-            let action = child(operation, version, "operation").and_then(|o| o.attribute("soapAction")).unwrap_or_default();
+            let action =
+                child(operation, version, "operation").and_then(|o| o.attribute("soapAction")).unwrap_or_default();
             operations.push(Operation {
                 name: name.to_owned(),
                 action: action.to_owned(),

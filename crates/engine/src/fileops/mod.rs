@@ -122,7 +122,9 @@ mod tests {
     #[tokio::test]
     async fn share_json_publishes_a_har_of_the_named_exchanges() {
         let _root = scratch_data_root();
-        crate::capture::record_capture(&json!({ "id": "e1", "workspaceId": "wsx", "ts": 0, "method": "GET", "url": "http://h/a?x=1" }));
+        crate::capture::record_capture(
+            &json!({ "id": "e1", "workspaceId": "wsx", "ts": 0, "method": "GET", "url": "http://h/a?x=1" }),
+        );
         let mut registry = CommandRegistry::new();
         register(&mut registry);
         let registry = Arc::new(registry);
