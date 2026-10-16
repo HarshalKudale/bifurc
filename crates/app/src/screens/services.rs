@@ -13,7 +13,7 @@ use gpui_kit::component::{
 };
 use gpui_kit::{
     AppContext as _, Context, Entity, InteractiveElement as _, IntoElement, ParentElement as _, Render, Styled as _,
-    Subscription, UniformListScrollHandle, Window, div, uniform_list,
+    Subscription, TestSupportExt as _, UniformListScrollHandle, Window, div, uniform_list,
 };
 use serde_json::{Value, json};
 use std::ops::Range;
@@ -209,6 +209,7 @@ impl ServicesScreen {
                         // line up with the header when every row spans the list.
                         h_flex()
                             .id(("service", usize::from(port)))
+                            .test_support()
                             .w_full()
                             .gap_3()
                             .px_4()

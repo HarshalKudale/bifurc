@@ -33,6 +33,24 @@ impl EngineSession {
         Self { client, hello, info: sidecar.info, data_dir: sidecar.data_dir, started_here }
     }
 
+    /// A session over `client` for tests: nothing is spawned and no engine process is involved.
+    #[cfg(test)]
+    pub fn for_test(client: EngineClient) -> Self {
+        let hello = serde_json::from_value(serde_json::json!({
+            "protocolVersion": "1.0", "engineVersion": "0.0.0-test", "sessionId": "test",
+        }))
+        .expect("a hello");
+        let info = RuntimeInfo {
+            pid: 0,
+            transport: "socket".into(),
+            address: String::new(),
+            data_dir: String::new(),
+            engine_version: "0.0.0-test".into(),
+            raw: Value::Null,
+        };
+        Self { client, hello, info, data_dir: PathBuf::new(), started_here: false }
+    }
+
     /// `true` when this UI started the engine rather than joining one that was already running, for example
     /// the one `bifurc engine start` launched for the CLI.
     pub fn started_here(&self) -> bool {

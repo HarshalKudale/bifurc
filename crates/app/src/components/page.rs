@@ -10,7 +10,10 @@ use gpui_kit::component::{
     spinner::Spinner,
     v_flex,
 };
-use gpui_kit::{AnyElement, App, Div, IntoElement, ParentElement as _, SharedString, Styled as _, div};
+use gpui_kit::{
+    AnyElement, App, Div, InteractiveElement as _, IntoElement, ParentElement as _, SharedString, Styled as _,
+    TestSupportExt as _, div,
+};
 
 /// The band at the top of a screen: what the screen is, one line about it, and its actions on the trailing
 /// edge.
@@ -46,7 +49,16 @@ pub fn screen(header: impl IntoElement, body: impl IntoElement, cx: &App) -> Div
 
 /// Centers a placeholder in whatever region it stands in for.
 fn centered(content: impl IntoElement) -> AnyElement {
-    div().size_full().flex().items_center().justify_center().child(content).into_any_element()
+    // Observable by UI tests (inert in a normal build): every screen's empty state is found by this id.
+    div()
+        .id("empty-state")
+        .test_support()
+        .size_full()
+        .flex()
+        .items_center()
+        .justify_center()
+        .child(content)
+        .into_any_element()
 }
 
 pub fn empty(title: impl Into<SharedString>, description: impl Into<SharedString>) -> AnyElement {

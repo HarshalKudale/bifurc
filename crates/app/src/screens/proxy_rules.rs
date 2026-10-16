@@ -719,7 +719,7 @@ impl ProxyRulesScreen {
             )
             .child(
                 div().flex_1().min_w_0().child(match self.target {
-                    Target::External => Input::new(&self.external).small().into_any_element(),
+                    Target::External => Input::new(&self.external).id("rule-external").small().into_any_element(),
                     Target::Mapping => Button::new("rule-mapping")
                         .small()
                         .outline()
@@ -807,7 +807,12 @@ impl ProxyRulesScreen {
                                 h_flex()
                                     .gap_3()
                                     .child(label(t("proxy_rules.label.matches")))
-                                    .child(div().flex_1().min_w_0().child(Input::new(&self.pattern).small()))
+                                    .child(
+                                        div()
+                                            .flex_1()
+                                            .min_w_0()
+                                            .child(Input::new(&self.pattern).id("rule-pattern").small()),
+                                    )
                                     .child(
                                         Checkbox::new("rule-regex")
                                             .checked(self.use_regex)
