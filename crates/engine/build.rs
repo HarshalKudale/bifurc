@@ -1,6 +1,7 @@
 //! Bakes the engine's build-time settings into the binary: `BIFURC_GITHUB_CLIENT_ID`, the PostHog project
 //! `BIFURC_POSTHOG_KEY` / `BIFURC_POSTHOG_HOST`. Each comes from the build's environment, else from the
 //! untracked `.env` at the repository root, so it is in every binary built here and never in the repository.
+//! On Windows it also compiles the app icon into `bifurc-engine.exe`, for Task Manager and Explorer.
 
 use std::{env, fs, path::Path};
 
@@ -36,4 +37,21 @@ fn main() {
             println!("cargo:rustc-env={key}={value}");
         }
     }
+    #[cfg(windows)]
+    if let Err(problem) = embed_icon() {
+        println!("cargo:warning=the engine icon was not embedded, so Task Manager shows a blank one: {problem}");
+    }
+}
+
+/// Compiles the app icon into the engine executable as icon resource 1, which is the icon Task Manager and
+/// Explorer show for it.
+#[cfg(windows)]
+fn embed_icon() -> Result<(), String> {
+    let icon = Path::new(env!("CARGO_MANIFEST_DIR")).join("../../build/icon.ico");
+    println!("cargo:rerun-if-changed={}", icon.display());
+    let mut resource = winresource::WindowsResource::new();
+    resource.set_icon_with_id(&icon.to_string_lossy(), "1");
+    resource.set("ProductName", "Bifurc");
+    resource.set("FileDescription", "Bifurc Engine");
+    resource.compile().map_err(|error| error.to_string())
 }

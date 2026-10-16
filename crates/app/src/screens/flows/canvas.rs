@@ -1016,13 +1016,23 @@ impl FlowCanvas {
             )
             .when_some(edge_id.clone(), |this, edge_id| {
                 let (open_id, remove_id) = (edge_id.clone(), edge_id);
+                // GPUI's own tooltip, not the button's: the kit's still shows if the button is gone before its
+                // delay is up, and stays.
                 this.child(
-                    Button::new(ElementId::Name(format!("flow-unwire-{remove_id}").into()))
-                        .xsmall()
-                        .ghost()
-                        .icon(IconName::Close)
-                        .tooltip(t("flows.input.remove_wire"))
-                        .on_click(cx.listener(move |_, _, _, cx| cx.emit(CanvasEvent::Disconnect(remove_id.clone())))),
+                    div()
+                        .id(ElementId::Name(format!("flow-unwire-tip-{remove_id}").into()))
+                        .tooltip(|window, cx| {
+                            gpui_kit::component::tooltip::Tooltip::new(t("flows.input.remove_wire")).build(window, cx)
+                        })
+                        .child(
+                            Button::new(ElementId::Name(format!("flow-unwire-{remove_id}").into()))
+                                .xsmall()
+                                .ghost()
+                                .icon(IconName::Close)
+                                .on_click(
+                                    cx.listener(move |_, _, _, cx| cx.emit(CanvasEvent::Disconnect(remove_id.clone()))),
+                                ),
+                        ),
                 )
                 .on_click(cx.listener(move |this, _, _, cx| {
                     this.choosing = (this.choosing.as_deref() != Some(open_id.as_str())).then(|| open_id.clone());
@@ -1625,24 +1635,25 @@ impl Render for FlowCanvas {
                 self.drawn.borrow().iter().find(|line| line.0 == id).map(|(_, from, to)| curve(*from, *to, 0.5))?;
             Some(
                 div()
+                    .id("flow-edge-remove-tip")
                     .absolute()
                     .left(px(middle.0 - f32::from(origin.x) - 10.0))
                     .top(px(middle.1 - f32::from(origin.y) - 10.0))
                     .rounded_full()
                     .bg(theme.popover)
+                    // GPUI's own tooltip, not the button's: the kit's still shows if the cross is gone before its
+                    // delay is up, and stays.
+                    .tooltip(|window, cx| {
+                        gpui_kit::component::tooltip::Tooltip::new(t("flows.edge.remove")).build(window, cx)
+                    })
                     .on_mouse_down(MouseButton::Left, |_, _, cx| cx.stop_propagation())
-                    .child(
-                        Button::new("flow-edge-remove")
-                            .xsmall()
-                            .outline()
-                            .icon(IconName::Close)
-                            .tooltip(t("flows.edge.remove"))
-                            .on_click(cx.listener(move |this, _, _, cx| {
-                                (this.hover_edge, this.selected_edge) = (None, None);
-                                cx.emit(CanvasEvent::Disconnect(id.clone()));
-                                cx.notify();
-                            })),
-                    ),
+                    .child(Button::new("flow-edge-remove").xsmall().outline().icon(IconName::Close).on_click(
+                        cx.listener(move |this, _, _, cx| {
+                            (this.hover_edge, this.selected_edge) = (None, None);
+                            cx.emit(CanvasEvent::Disconnect(id.clone()));
+                            cx.notify();
+                        }),
+                    )),
             )
         });
         let picker = self.picker.as_ref().map(|picker| {
