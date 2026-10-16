@@ -5,32 +5,31 @@
 //! to be edited. The tree comes from the model's snapshot; an open mock is a [`MockEditor`].
 
 mod editor;
+mod tree;
 
-use std::{collections::HashSet, rc::Rc};
+use std::rc::Rc;
 
 use gpui_kit::component::{
-    ActiveTheme as _, Icon, IconName, Selectable as _, Sizable as _, VirtualListScrollHandle,
+    ActiveTheme as _, IconName, Selectable as _, Sizable as _, VirtualListScrollHandle,
     button::{Button, ButtonVariants as _},
     dock::{DockArea, DockLayout, DockSkin, panel_handle},
     h_flex,
-    input::{Input, InputEvent, InputState},
-    list::ListItem,
     menu::{DropdownMenu as _, PopupMenu, PopupMenuItem},
     resizable::{h_resizable, resizable_panel},
-    switch::Switch,
-    tree::{TreeEntry, TreeEvent, TreeItem, TreeState, tree},
     v_flex,
 };
-use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyView, App, AppContext as _, Context, Entity, IntoElement, ParentElement as _, Render, ScrollStrategy,
-    SharedString, Styled as _, Subscription, WeakEntity, Window, div, px, rems,
+    Styled as _, Subscription, WeakEntity, Window, div, px,
 };
 use serde_json::{Map, Value, json};
 
-use self::editor::{MockEditor, MockEvent};
+use self::{
+    editor::{MockEditor, MockEvent},
+    tree::{MockExtra, MockTree, MockTreeEvent, deleted_target, is_deleted, locked_to},
+};
 use crate::{
-    app_model::{AppModel, Deleted, Load, ModelEvent},
+    app_model::{AppModel, Load, ModelEvent},
     components::{
         CURL_TAB_BADGE, CURL_TAB_TITLE, ClosedTabs, CurlImport, CurlImportEvent, CurlTarget, EntityAction,
         EntityBar, FolderPicker, StripTab, TabAction, TabStrip,
@@ -38,14 +37,11 @@ use crate::{
             FOLDER_DELETE_CONSEQUENCE, PromptField, confirm_danger, delete_consequence, needs_update, prompt,
             resolve_deleted,
         },
-        entity_bar, page, tab_strip, tree_drag,
+        entity_bar, page, tab_strip,
     },
     engine::{call, call_in, failure, patch_entity},
     i18n::{t, t_with},
-    model::{
-        git::FileState,
-        tree::{FolderRow, ItemRow, Moved, TreeKey, TreeNode, build_tree, can_move, folder_path},
-    },
+    model::tree::{TreeKey, folder_path},
     panels::host::{HostPanel, PartView, remember_pane_size},
     preferences::Preferences,
     session::SaveMode,
@@ -80,13 +76,7 @@ impl OpenTab {
 
 pub struct MocksScreen {
     model: Entity<AppModel>,
-    filter: Entity<InputState>,
-    tree: Entity<TreeState>,
-    /// Folders the user has opened, by tree key, so a rebuild does not collapse them.
-    expanded: HashSet<String>,
-    selected: Option<String>,
-    /// The tree row being dragged, while a drag is on.
-    dragging: Option<TreeKey>,
+    tree: Entity<MockTree>,
     tabs: Vec<OpenTab>,
     active: Option<usize>,
     tab_scroll: VirtualListScrollHandle,
@@ -102,8 +92,7 @@ pub struct MocksScreen {
 
 impl MocksScreen {
     pub fn new(model: Entity<AppModel>, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        let filter = cx.new(|cx| InputState::new(window, cx).placeholder(t("mocks.filter.placeholder")));
-        let tree = cx.new(|cx| TreeState::new(cx));
+        let tree = cx.new(|cx| MockTree::new(model.clone(), window, cx));
         let (dock, skin) = DockSkin::dock_area("mocks-dock", Some(1), window, cx);
         let rule_panel =
             cx.new(|cx| {
@@ -146,31 +135,11 @@ impl MocksScreen {
                 }
                 _ => {}
             }),
-            cx.observe(&model, |this, _, cx| {
-                this.rebuild(cx);
-                cx.notify();
-            }),
-            cx.subscribe(&filter, |this, _, event: &InputEvent, cx| {
-                if matches!(event, InputEvent::Change) {
-                    this.rebuild(cx);
-                }
-            }),
-            cx.subscribe(&tree, |this, _, event: &TreeEvent, _| match event {
-                TreeEvent::Expanded(id) => {
-                    this.expanded.insert(id.to_string());
-                }
-                TreeEvent::Collapsed(id) => {
-                    this.expanded.remove(id.as_str());
-                }
-            }),
+            cx.subscribe_in(&tree, window, Self::on_tree_event),
         ];
-        let mut this = Self {
+        let this = Self {
             model,
-            filter,
             tree,
-            expanded: HashSet::new(),
-            selected: None,
-            dragging: None,
             tabs: Vec::new(),
             active: None,
             tab_scroll: VirtualListScrollHandle::new(),
@@ -182,46 +151,7 @@ impl MocksScreen {
             closed: ClosedTabs::new(),
             _subscriptions: subscriptions,
         };
-        this.rebuild(cx);
         this
-    }
-
-    fn to_item(&self, node: &TreeNode, force_open: bool) -> TreeItem {
-        let open = force_open || self.expanded.contains(&node.key);
-        TreeItem::new(node.key.clone(), node.label.clone())
-            .expanded(open)
-            .children(node.children.iter().map(|child| self.to_item(child, force_open)))
-    }
-
-    fn rebuild(&mut self, cx: &mut Context<Self>) {
-        let filter = self.filter.read(cx).value().to_string();
-        let config = self.model.read(cx).config();
-        // Deleted folders stay in the tree, so a deleted mock shows inside its deleted folder.
-        let folders: Vec<FolderRow> = config
-            .mock_folders
-            .iter()
-            .map(|f| FolderRow { id: &f.id, name: &f.name, parent_id: f.parent_id.as_deref() })
-            .collect();
-        let items: Vec<ItemRow> = config
-            .mocks
-            .iter()
-            .map(|m| ItemRow {
-                id: &m.id,
-                label: if m.name.is_empty() { m.url_pattern.clone() } else { m.name.clone() },
-                folder_id: m.folder_id.as_deref(),
-                detail: &m.url_pattern,
-            })
-            .collect();
-        let nodes = build_tree(&folders, &items, &filter);
-        let filtering = !filter.trim().is_empty();
-        let tree_items: Vec<TreeItem> = nodes.iter().map(|node| self.to_item(node, filtering)).collect();
-        let selected: Option<SharedString> = self.selected.clone().map(Into::into);
-        self.tree.update(cx, |tree, cx| {
-            tree.set_items(tree_items, cx);
-            if let Some(ix) = selected.as_ref().and_then(|id| tree.index_of(id)) {
-                tree.set_selected_index(Some(ix), cx);
-            }
-        });
     }
 
     pub fn active_editor(&self) -> Option<&Entity<MockEditor>> {
@@ -280,6 +210,9 @@ impl MocksScreen {
         };
         self.rule_panel.update(cx, |panel, cx| panel.set_view(rule, cx));
         self.response_panel.update(cx, |panel, cx| panel.set_view(response, cx));
+        // The tree follows the tab in front.
+        let open = self.active_editor().and_then(|editor| editor.read(cx).saved_id().map(str::to_owned));
+        self.tree.update(cx, |tree, cx| tree.reveal(open.map(TreeKey::Item).as_ref(), cx));
         cx.notify();
     }
 
@@ -351,7 +284,9 @@ impl MocksScreen {
                 if let Some(tab) = this.tabs.iter_mut().find(|tab| tab.editor == editor) {
                     tab.key = TabKey::Saved(id.clone());
                 }
-                this.selected = Some(TreeKey::Item(id.clone()).encode());
+                if this.active_editor() == Some(&editor) {
+                    this.tree.update(cx, |tree, cx| tree.reveal(Some(&TreeKey::Item(id.clone())), cx));
+                }
             }
             cx.notify();
         });
@@ -509,7 +444,6 @@ impl MocksScreen {
             let Some(copy) = copy else { return };
             // The copy is in the engine but not yet in this window's snapshot, which the tree is built from.
             this.model.update(cx, |model, cx| model.refresh(cx));
-            this.selected = Some(TreeKey::Item(copy.clone()).encode());
             this.open_mock(&copy, window, cx);
         });
     }
@@ -701,28 +635,9 @@ impl MocksScreen {
         );
     }
 
-    /// A tree row was picked up. Pressing a folder row opened or closed it before the press turned into a
-    /// drag: it is put back as it was.
-    fn drag_started(&mut self, key: TreeKey, cx: &mut Context<Self>) {
-        if matches!(key, TreeKey::Folder(_)) {
-            let id = key.encode();
-            if !self.expanded.remove(&id) {
-                self.expanded.insert(id);
-            }
-            self.rebuild(cx);
-        }
-        self.dragging = Some(key);
-        cx.notify();
-    }
-
-    /// A row was dropped on a folder, or on the top level: it is put there. The folder is opened, so the
-    /// row is seen landing. A mock that is open is moved by its own next write, so the tab and the file
+    /// A row was dropped on a folder, or on the top level: it is put there. A mock that is open is moved by its own next write, so the tab and the file
     /// cannot disagree about where it is.
     fn move_node(&mut self, key: TreeKey, folder: Option<String>, cx: &mut Context<Self>) {
-        self.dragging = None;
-        if let Some(id) = &folder {
-            self.expanded.insert(TreeKey::Folder(id.clone()).encode());
-        }
         let model = self.model.read(cx);
         let client = model.client().clone();
         let workspace_id = model.workspace_id().to_owned();
@@ -747,6 +662,27 @@ impl MocksScreen {
                     }
                 });
             }
+        }
+    }
+
+    fn on_tree_event(&mut self, _: &Entity<MockTree>, event: &MockTreeEvent, window: &mut Window, cx: &mut Context<Self>) {
+        match event.clone() {
+            MockTreeEvent::Open(TreeKey::Item(id)) => self.open_mock(&id, window, cx),
+            MockTreeEvent::Open(TreeKey::Folder(_)) => {}
+            MockTreeEvent::Extra(MockExtra::NewMock { folder }) => self.new_mock(folder, window, cx),
+            MockTreeEvent::Extra(MockExtra::ImportCurl { folder }) => self.import_curl(folder, window, cx),
+            MockTreeEvent::NewFolder { parent } => self.prompt_new_folder(parent, window, cx),
+            MockTreeEvent::Rename(key) => self.prompt_rename(key, window, cx),
+            MockTreeEvent::Duplicate(TreeKey::Item(id)) => self.duplicate(id, window, cx),
+            MockTreeEvent::Duplicate(TreeKey::Folder(_)) => {}
+            MockTreeEvent::Delete(key) => self.confirm_delete(key, window, cx),
+            MockTreeEvent::RevertDelete(key) => {
+                self.model.update(cx, |model, cx| model.revert_delete(deleted_target(&key), cx));
+            }
+            MockTreeEvent::ConfirmDelete(key) => {
+                self.model.update(cx, |model, cx| model.confirm_delete(deleted_target(&key), cx));
+            }
+            MockTreeEvent::Move { key, folder } => self.move_node(key, folder, cx),
         }
     }
 
@@ -779,62 +715,6 @@ impl MocksScreen {
                 });
             },
         );
-    }
-
-    fn render_tree(&self, cx: &mut Context<Self>) -> impl IntoElement {
-        let this = cx.weak_entity();
-        let (row_view, menu_view, new_view) = (this.clone(), this.clone(), this.clone());
-        let model = self.model.clone();
-        let menu_model = self.model.clone();
-        let config = self.model.read(cx).config();
-        let has_mocks = !config.mocks.is_empty() || !config.mock_folders.is_empty();
-        let filtering = !self.filter.read(cx).value().trim().is_empty();
-        // A folder that is in a folder can be dragged out to the top level.
-        let top_level =
-            self.dragging.as_ref().filter(|dragged| accepts(self.model.read(cx), dragged, None)).map(|_| {
-                let (drop_model, drop_view) = (self.model.clone(), this.clone());
-                tree_drag::top_level_target(
-                    "mock-tree-top-level",
-                    move |dragged: &TreeKey, cx| accepts(drop_model.read(cx), dragged, None),
-                    move |dragged: &TreeKey, _, cx| {
-                        let key = dragged.clone();
-                        drop_view.update(cx, |this, cx| this.move_node(key, None, cx)).ok();
-                    },
-                    cx,
-                )
-            });
-
-        let body = if !has_mocks {
-            page::empty(t("mocks.tree.empty_title"), t("mocks.tree.empty_body"))
-        } else if filtering && self.tree.read(cx).entry(0).is_none() {
-            page::empty(t("mocks.tree.no_matches_title"), t("mocks.tree.no_matches_body"))
-        } else {
-            tree(&self.tree, move |ix, entry, selected, _, cx| render_row(ix, entry, selected, &model, &row_view, cx))
-                .context_menu(move |_, entry, menu, _, cx| context_menu(entry, menu, &menu_view, &menu_model, cx))
-                .into_any_element()
-        };
-        v_flex()
-            .size_full()
-            .bg(cx.theme().sidebar)
-            .child(
-                h_flex()
-                    .flex_none()
-                    .gap_1()
-                    .p_2()
-                    .child(div().flex_1().min_w_0().child(
-                        Input::new(&self.filter).small().prefix(Icon::new(IconName::Search).small()).cleanable(true),
-                    ))
-                    .child(
-                        Button::new("mock-tree-new")
-                            .icon(IconName::Plus)
-                            .ghost()
-                            .small()
-                            .tooltip(t("mocks.tree.new_tooltip"))
-                            .dropdown_menu(move |menu, _, _| new_menu(menu, &new_view, None)),
-                    ),
-            )
-            .child(div().flex_1().min_h_0().child(body))
-            .children(top_level)
     }
 
     fn render_tab_strip(&self, tree_open: bool, window: &Window, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
@@ -893,259 +773,9 @@ fn new_tab_menu(menu: PopupMenu, view: &WeakEntity<MocksScreen>) -> PopupMenu {
         )
 }
 
-fn new_menu(menu: PopupMenu, view: &WeakEntity<MocksScreen>, folder: Option<String>) -> PopupMenu {
-    let (parent, curl_folder) = (folder.clone(), folder.clone());
-    menu.item(
-        PopupMenuItem::new(t("mocks.menu.mock"))
-            .on_click(act(view, move |this, window, cx| this.new_mock(folder.clone(), window, cx))),
-    )
-    .item(
-        PopupMenuItem::new(t(CURL_TAB_TITLE))
-            .on_click(act(view, move |this, window, cx| this.import_curl(curl_folder.clone(), window, cx))),
-    )
-    .item(
-        PopupMenuItem::new(t("mocks.menu.folder"))
-            .on_click(act(view, move |this, window, cx| this.prompt_new_folder(parent.clone(), window, cx))),
-    )
-}
-
-/// How the model names a deleted mock or folder.
-fn deleted_target(key: &TreeKey) -> Deleted {
-    match key {
-        TreeKey::Folder(id) => Deleted::Folder { kind: "mock", id: id.clone() },
-        TreeKey::Item(id) => Deleted::Entity { kind: "mocks", id: id.clone() },
-    }
-}
-
-/// Whether the mock or folder is deleted here, with the deletion not confirmed or reverted yet.
-fn is_deleted(model: &AppModel, key: &TreeKey) -> bool {
-    let config = model.config();
-    match key {
-        TreeKey::Folder(id) => config.mock_folders.iter().any(|f| f.id == *id && f.deleted),
-        TreeKey::Item(id) => config.mock(id).is_some_and(|m| m.deleted),
-    }
-}
-
-/// The version of Bifurc the mock needs, when a newer one than this last saved it. A folder is never locked:
-/// it is a directory, and moving or renaming it changes nothing in it.
-fn locked_to(model: &AppModel, key: &TreeKey) -> Option<String> {
-    match key {
-        TreeKey::Folder(_) => None,
-        TreeKey::Item(id) => model.config().mock(id).and_then(|m| m.locked.clone()),
-    }
-}
-
-/// The folder a drop on this row goes to: the folder itself, or the folder the mock is in.
-fn drop_folder(model: &AppModel, key: &TreeKey) -> Option<String> {
-    match key {
-        TreeKey::Folder(id) => Some(id.clone()),
-        TreeKey::Item(id) => model.config().mock(id).and_then(|m| m.folder_id.clone()),
-    }
-}
-
-/// Whether the dragged mock or folder can be put in `folder`, or at the top level with `None`.
-fn accepts(model: &AppModel, dragged: &TreeKey, folder: Option<&str>) -> bool {
-    let config = model.config();
-    let moved = match dragged {
-        TreeKey::Folder(id) => Moved::Folder(id),
-        TreeKey::Item(id) => match config.mock(id) {
-            Some(mock) => Moved::Item { folder: mock.folder_id.as_deref() },
-            None => return false,
-        },
-    };
-    can_move(&config.mock_folder_rows(), moved, folder)
-}
-
-fn context_menu(
-    entry: &TreeEntry,
-    menu: PopupMenu,
-    view: &WeakEntity<MocksScreen>,
-    model: &Entity<AppModel>,
-    cx: &App,
-) -> PopupMenu {
-    let Some(key) = TreeKey::parse(entry.item().id.as_str()) else { return menu };
-    // What is deleted can only be brought back or deleted for good.
-    if is_deleted(model.read(cx), &key) {
-        let (revert_model, confirm_model) = (model.clone(), model.clone());
-        let (revert, confirm) = (deleted_target(&key), deleted_target(&key));
-        return menu
-            .item(PopupMenuItem::new(t("mocks.menu.revert_delete")).on_click(move |_, _, cx| {
-                revert_model.update(cx, |model, cx| model.revert_delete(revert.clone(), cx));
-            }))
-            .item(PopupMenuItem::new(t("mocks.menu.confirm_delete")).on_click(move |_, _, cx| {
-                confirm_model.update(cx, |model, cx| model.confirm_delete(confirm.clone(), cx));
-            }));
-    }
-    // What a newer Bifurc saved can only be asked about: opening it says which version it needs.
-    if let (TreeKey::Item(id), Some(_)) = (&key, locked_to(model.read(cx), &key)) {
-        let id = id.clone();
-        return menu.item(
-            PopupMenuItem::new(t("mocks.menu.update_required"))
-                .on_click(act(view, move |this, window, cx| this.open_mock(&id, window, cx))),
-        );
-    }
-    let (rename, delete) = (key.clone(), key.clone());
-    let menu = match &key {
-        TreeKey::Item(id) => {
-            let (open, copy) = (id.clone(), id.clone());
-            menu.item(
-                PopupMenuItem::new(t("mocks.menu.open"))
-                    .on_click(act(view, move |this, window, cx| this.open_mock(&open, window, cx))),
-            )
-            .item(
-                PopupMenuItem::new(t("mocks.menu.duplicate"))
-                    .on_click(act(view, move |this, window, cx| this.duplicate(copy.clone(), window, cx))),
-            )
-        }
-        TreeKey::Folder(id) => {
-            let (mock_parent, folder_parent) = (id.clone(), id.clone());
-            menu.item(
-                PopupMenuItem::new(t("mocks.menu.new_mock_here"))
-                    .on_click(act(view, move |this, window, cx| this.new_mock(Some(mock_parent.clone()), window, cx))),
-            )
-            .item(PopupMenuItem::new(t("mocks.menu.new_folder_here")).on_click(act(view, move |this, window, cx| {
-                this.prompt_new_folder(Some(folder_parent.clone()), window, cx)
-            })))
-        }
-    };
-    menu.separator()
-        .item(
-            PopupMenuItem::new(t("mocks.menu.rename"))
-                .on_click(act(view, move |this, window, cx| this.prompt_rename(rename.clone(), window, cx))),
-        )
-        .item(
-            PopupMenuItem::new(t("mocks.menu.delete"))
-                .on_click(act(view, move |this, window, cx| this.confirm_delete(delete.clone(), window, cx))),
-        )
-}
-
-fn render_row(
-    ix: usize,
-    entry: &TreeEntry,
-    selected: bool,
-    model: &Entity<AppModel>,
-    view: &WeakEntity<MocksScreen>,
-    cx: &mut App,
-) -> ListItem {
-    let theme = cx.theme().clone();
-    let key = TreeKey::parse(entry.item().id.as_str());
-    let label = entry.item().label.clone();
-    let deleted = key.as_ref().is_some_and(|key| is_deleted(model.read(cx), key));
-    let locked = key.as_ref().is_some_and(|key| locked_to(model.read(cx), key).is_some());
-    let mut pending = false;
-    let mut toggle: Option<gpui_kit::AnyElement> = None;
-    let lead: gpui_kit::AnyElement = match &key {
-        Some(TreeKey::Folder(_)) => {
-            Icon::new(if entry.is_expanded() { IconName::FolderOpen } else { IconName::Folder })
-                .small()
-                .text_color(theme.muted_foreground)
-                .into_any_element()
-        }
-        // Saved by a newer Bifurc: the sign for an update stands where its method would, and it has no switch.
-        // It answers nothing until this one is updated.
-        Some(TreeKey::Item(_)) if locked => div()
-            .w_12()
-            .flex_none()
-            .child(Icon::new(IconName::ArrowUp).small().text_color(theme.muted_foreground))
-            .into_any_element(),
-        Some(TreeKey::Item(id)) => {
-            let app_model = model.read(cx);
-            pending = app_model.git().entity_state(id).is_some_and(|state| state != FileState::Clean);
-            let mock = app_model.config().mock(id);
-            let method = mock.map(|m| if m.method == "*" { "ANY".to_owned() } else { m.method.clone() });
-            let enabled = mock.is_some_and(|m| m.enabled);
-            let (toggle_model, toggle_id) = (model.clone(), id.clone());
-            // A deleted mock has no switch: it answers nothing until it is reverted.
-            toggle = (!mock.is_some_and(|m| m.deleted)).then(|| {
-                Switch::new(gpui_kit::ElementId::Name(format!("mock-enabled-{id}").into()))
-                    .checked(enabled)
-                    .small()
-                    .on_change(move |checked: &bool, _, cx| {
-                        // Turning a mock on or off is not opening it.
-                        cx.stop_propagation();
-                        let checked = *checked;
-                        toggle_model.update(cx, |m, cx| m.set_enabled("mocks", &toggle_id, checked, cx));
-                    })
-                    .into_any_element()
-            });
-            div()
-                .w_12()
-                .flex_none()
-                .text_xs()
-                .text_color(theme.muted_foreground)
-                .child(method.unwrap_or_default())
-                .into_any_element()
-        }
-        None => div().into_any_element(),
-    };
-
-    let open = match &key {
-        Some(TreeKey::Item(id)) => Some(id.clone()),
-        _ => None,
-    };
-    let folder = key.as_ref().and_then(|key| drop_folder(model.read(cx), key));
-    let (drag_view, drop_view, drop_model) = (view.clone(), view.clone(), model.clone());
-    let view = view.clone();
-    let row = ListItem::new(ix)
-        .selected(selected)
-        .pl(rems(0.5 + entry.depth() as f32 * 1.0))
-        .py_1()
-        .text_sm()
-        .child(
-            h_flex()
-                .gap_2()
-                .items_center()
-                .child(lead)
-                // Deleted, and waiting to be confirmed or reverted: still listed, struck through.
-                .child(
-                    div()
-                        .flex_1()
-                        .min_w_0()
-                        .overflow_hidden()
-                        .text_ellipsis()
-                        .when(deleted, |this| this.line_through().text_color(theme.muted_foreground))
-                        .when(locked, |this| this.text_color(theme.muted_foreground))
-                        .child(label.clone()),
-                )
-                .children(pending.then(|| div().flex_none().text_xs().text_color(theme.warning).child("●")))
-                .children(toggle.map(|toggle| div().flex_none().pr_2().child(toggle))),
-        )
-        .on_click(move |_, window, cx| {
-            if let Some(id) = open.clone() {
-                view.update(cx, |this, cx| this.open_mock(&id, window, cx)).ok();
-            }
-        });
-    // A row dropped on a mock goes to the folder that mock is in.
-    let row = match folder {
-        Some(folder) => {
-            let target = folder.clone();
-            tree_drag::drop_target(
-                row,
-                move |dragged: &TreeKey, cx| accepts(drop_model.read(cx), dragged, Some(&target)),
-                move |dragged: &TreeKey, _, cx| {
-                    let (key, folder) = (dragged.clone(), Some(folder.clone()));
-                    drop_view.update(cx, |this, cx| this.move_node(key, folder, cx)).ok();
-                },
-            )
-        }
-        None => row,
-    };
-    // What is deleted stays where it is until it is reverted, and what is locked until Bifurc is updated.
-    match key.filter(|_| !deleted && !locked) {
-        Some(key) => tree_drag::draggable(row, key, label, move |key: &TreeKey, cx| {
-            let key = key.clone();
-            drag_view.update(cx, |this, cx| this.drag_started(key, cx)).ok();
-        }),
-        None => row,
-    }
-}
-
 impl Render for MocksScreen {
     fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let tree_open = Preferences::global(cx).folder_tree_open;
-        if !cx.has_active_drag() {
-            self.dragging = None;
-        }
         let curl = self.active_curl().cloned();
         let body = if self.tabs.is_empty() {
             page::empty_with_action(
@@ -1201,7 +831,7 @@ impl Render for MocksScreen {
                     .visible(tree_open)
                     .size(px(260.))
                     .size_range(px(180.)..px(520.))
-                    .child(self.render_tree(cx)),
+                    .child(self.tree.clone()),
             )
             .child(resizable_panel().child(main))
     }
