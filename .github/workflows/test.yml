@@ -14,7 +14,7 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
       - name: Test the protocol, engine and CLI
-        run: cargo test --workspace
+        run: cargo test
 
   ui:
     runs-on: ubuntu-22.04
@@ -22,12 +22,10 @@ jobs:
       - uses: actions/checkout@v4
       - uses: dtolnay/rust-toolchain@stable
       - uses: Swatinem/rust-cache@v2
-        with:
-          workspaces: packages/ui-rust
       - name: Install GPUI's build dependencies
         run: |
           sudo apt-get update
           sudo apt-get install -y build-essential clang cmake pkg-config libasound2-dev libfontconfig-dev \
             libwayland-dev libx11-xcb-dev libxkbcommon-x11-dev libssl-dev libzstd-dev libvulkan1
       - name: Test the UI
-        run: cargo test --workspace --manifest-path packages/ui-rust/Cargo.toml
+        run: cargo test -p bifurc-ui -p bifurc-engine-client -p bifurc-tray -p bifurc-launcher

@@ -1,6 +1,6 @@
 # ===== Bifurc — Rust engine, CLI, MCP server and desktop app =====
 # The companion browser extension (`bifurc-extension`) and the website (`bifurc-studio`) are separate
-# repositories with their own .gitignore files. `packages/ui-rust` has its own for its target dir.
+# repositories with their own .gitignore files.
 
 # ===== Build outputs =====
 /target
