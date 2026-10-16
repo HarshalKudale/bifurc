@@ -144,6 +144,10 @@ impl Shell {
         let handle = ShellHandle(cx.weak_entity());
         cx.set_global(handle);
 
+        // The keys that act on the open tab are scoped to the `Shell` context, which needs focus inside it.
+        let focus_handle = cx.focus_handle();
+        focus_handle.focus(window, cx);
+
         Self {
             model,
             screen: Screen::Requests,
@@ -165,7 +169,7 @@ impl Shell {
             right_open: false,
             palette,
             finder,
-            focus_handle: cx.focus_handle(),
+            focus_handle,
             _subscriptions: subscriptions,
         }
     }
