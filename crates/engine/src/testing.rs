@@ -44,7 +44,7 @@ pub fn enable_https(root: &ScratchRoot) -> std::sync::Arc<rustls::ClientConfig> 
 
     let pem = std::fs::read(&generated.cert_path).expect("the CA certificate is readable");
     let mut roots = rustls::RootCertStore::empty();
-    for cert in rustls_pemfile::certs(&mut pem.as_slice()) {
+    for cert in <rustls::pki_types::CertificateDer<'_> as rustls::pki_types::pem::PemObject>::pem_slice_iter(&pem) {
         roots.add(cert.expect("a certificate")).expect("a usable root");
     }
     let provider = Arc::new(rustls::crypto::ring::default_provider());
