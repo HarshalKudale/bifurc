@@ -168,10 +168,11 @@ pub fn register(registry: &mut CommandRegistry) {
                     body: serde_json::to_vec_pretty(&v["responses"]).unwrap_or_default(),
                     duration_ms: v["durationMs"].as_u64().unwrap_or(0),
                     error: opt_str(v, "error").map(str::to_string),
+                    error_key: v["errorKey"].as_str().zip(v.get("errorParams")).map(|(k, p)| (k.to_owned(), p.clone())),
                     method,
                     url: address,
                 },
-                Err(e) => response_history::failed(e.message.clone(), method, address),
+                Err(e) => response_history::failed(e, method, address),
             };
             response_history::record(ws_id, id, capture);
         }

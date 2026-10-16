@@ -91,7 +91,8 @@ pub fn register(registry: &mut CommandRegistry) {
             if let Some(version) = opt_str(&loaded, "requiredVersion").filter(|_| truthy(&loaded, "locked")) {
                 return Err(stamp::update_required(version));
             }
-            return Err(EngineError::not_found(format!("No {kind} entity \"{id}\" in workspace \"{ws_id}\".")));
+            return Err(EngineError::not_found(format!("No {kind} entity \"{id}\" in workspace \"{ws_id}\"."))
+                .keyed("entity.not_found", json!({ "kind": kind, "id": id, "workspace": ws_id })));
         };
         if let Some(object) = copy.as_object_mut() {
             for key in ["id", "createdAt", "updatedAt"] {
@@ -117,7 +118,8 @@ pub fn register(registry: &mut CommandRegistry) {
             Some(entity) if !entity.is_null() => Ok(json!({ "entity": entity })),
             _ => {
                 let reason = created.get("error").and_then(Value::as_str).unwrap_or("create failed");
-                Err(EngineError::conflict(format!("Could not duplicate {kind} entity \"{id}\": {reason}.")))
+                Err(EngineError::conflict(format!("Could not duplicate {kind} entity \"{id}\": {reason}."))
+                    .keyed("entity.duplicate_failed", json!({ "kind": kind, "id": id, "reason": reason })))
             }
         }
     });

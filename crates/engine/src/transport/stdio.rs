@@ -56,7 +56,10 @@ fn success(id: &str, data: Value) -> Value {
 
 /// The `events` of a subscribe / unsubscribe payload.
 fn event_names(payload: &Value, what: &str) -> Result<Vec<String>, EngineError> {
-    let invalid = || EngineError::bad_request(format!("Invalid {what} payload: events must be an array of strings"));
+    let invalid = || {
+        EngineError::bad_request(format!("Invalid {what} payload: events must be an array of strings"))
+            .keyed("transport.events_invalid", json!({ "what": what }))
+    };
     let events = payload.get("events").and_then(Value::as_array).ok_or_else(invalid)?;
     events.iter().map(|e| e.as_str().map(str::to_string).ok_or_else(invalid)).collect()
 }
@@ -124,7 +127,8 @@ impl Connection {
         if let Some(unknown) = events.iter().find(|wire| !protocol::is_wire_event(wire)) {
             return Err(EngineError::unsupported(format!(
                 "This transport cannot deliver \"{unknown}\". It is either not a known event or not yet on the wire."
-            )));
+            ))
+            .keyed("transport.event_unsupported", json!({ "wire": unknown })));
         }
         let mut attached = self.attached.lock();
         for wire in &events {

@@ -46,9 +46,14 @@ struct FolderConfig {
 fn folder_config(kind: &str) -> Result<FolderConfig> {
     let (config_key, entity_config_key, fs_kind) = match kind {
         "rule" => ("ruleFolders", "proxyRules", "rules"),
-        other => return Err(EngineError::engine(format!("Unknown folder kind \"{other}\"."))),
+        other => return Err(unknown_folder_kind(other)),
     };
     Ok(FolderConfig { config_key, entity_config_key, fs_kind })
+}
+
+fn unknown_folder_kind(kind: &str) -> EngineError {
+    EngineError::engine(format!("Unknown folder kind \"{kind}\"."))
+        .keyed("folder.kind_unknown", json!({ "kind": kind }))
 }
 
 /// The tree a folder kind's folders are directories of.
@@ -67,12 +72,14 @@ fn workspace_of(params: &Value) -> String {
 
 /// Why a tree would not do what was asked of a folder, as a client is told it.
 fn tree_error(err: std::io::Error) -> EngineError {
-    match err.kind() {
+    let detail = err.to_string();
+    let error = match err.kind() {
         std::io::ErrorKind::AlreadyExists => EngineError::conflict(err.to_string()),
         std::io::ErrorKind::NotFound => EngineError::not_found(err.to_string()),
         std::io::ErrorKind::InvalidInput => EngineError::bad_request(err.to_string()),
-        _ => err.into(),
-    }
+        _ => return err.into(),
+    };
+    error.keyed("folder.failed", json!({ "detail": detail }))
 }
 
 /// Tell clients that files of the workspace are somewhere else now.
@@ -319,8 +326,7 @@ pub fn register(registry: &mut CommandRegistry) {
             return Ok(json!({ "ok": true, "pending": true }));
         }
         let ws_id = folder_workspace(&folder, &cfg);
-        let crud =
-            crud_kind(conf.fs_kind).ok_or_else(|| EngineError::engine(format!("Unknown folder kind \"{kind}\".")))?;
+        let crud = crud_kind(conf.fs_kind).ok_or_else(|| unknown_folder_kind(kind))?;
 
         let live: Vec<Value> = all_folders.iter().filter(|f| !truthy(f, "deleted")).cloned().collect();
         let subtree = folder_subtree(&live, id);

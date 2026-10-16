@@ -61,7 +61,7 @@ pub async fn track_untracked_workspaces() -> Vec<String> {
 
 /// Commit everything in the workspace that is new or modified, an entity at a time, then push. A `message`
 /// is the subject of every one of those commits. Returns
-/// `{ ok, initialized, total, synced, pushed, pendingDeletions, failed: [{ path, error }], error? }`.
+/// `{ ok, initialized, total, synced, pushed, pendingDeletions, failed: [{ path, error, errorKey?, errorParams? }], error? }`.
 pub async fn sync_workspace(ws_id: &str, message: Option<String>) -> Value {
     let _guard = workspace_lock(ws_id).lock_owned().await;
     let result = match sync_locked(ws_id, message).await {
@@ -124,8 +124,21 @@ async fn sync_locked(ws_id: &str, message: Option<String>) -> Result<Value, GitE
         let opts = PublishOptions { ws_id: ws_id.to_string(), paths: vec![path.clone()], message: message.clone() };
         match commit_paths(&opts).await {
             Ok(result) if result.get("ok") == Some(&Value::Bool(true)) => synced += 1,
-            Ok(result) => failed.push(json!({ "path": path, "error": str_of(&result, "error") })),
-            Err(e) => failed.push(json!({ "path": path, "error": e.0 })),
+            Ok(result) => {
+                let mut item = json!({ "path": path, "error": str_of(&result, "error") });
+                for field in ["errorKey", "errorParams"] {
+                    if let Some(value) = result.get(field) {
+                        item[field] = value.clone();
+                    }
+                }
+                failed.push(item);
+            }
+            Err(e) => {
+                let error = EngineError::from(e);
+                let mut item = json!({ "path": path });
+                crate::kernel::streams::put_error(item.as_object_mut().expect("an object"), Some(&error));
+                failed.push(item);
+            }
         }
     }
 

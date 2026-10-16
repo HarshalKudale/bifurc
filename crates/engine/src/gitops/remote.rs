@@ -52,10 +52,7 @@ use crate::{
     },
 };
 
-/// A refusal whose text is not keyed yet.
-fn refused(message: impl Into<String>) -> Value {
-    crate::runtime::failed(&crate::protocol::EngineError::engine(message))
-}
+use crate::protocol::EngineError;
 
 /// The `reason` of an import refused because the repository is another account's, which only happens with
 /// team sync off.
@@ -63,24 +60,34 @@ pub const NOT_OWNER: &str = "notOwner";
 
 /// Why an import was refused: what the user is told, and a word for the refusals a client can tell apart.
 struct Refusal {
-    message: String,
+    error: EngineError,
     reason: Option<&'static str>,
 }
 
-impl From<String> for Refusal {
-    fn from(message: String) -> Self {
-        Refusal { message, reason: None }
+impl<E: Into<EngineError>> From<E> for Refusal {
+    fn from(error: E) -> Self {
+        Refusal { error: error.into(), reason: None }
     }
 }
 
 /// The account and its token, once GitHub has said the token is that account's: what this device has stored
 /// about who signed in is not taken on trust.
-async fn signed_in(account_id: &str) -> Result<(Account, String), String> {
-    let account = find_account(account_id).ok_or("That account is not signed in on this device.")?;
-    let token = account.token.clone().ok_or_else(|| format!("Sign in to GitHub as {} again first.", account.login))?;
-    let user = github::fetch_user(&token).await.map_err(|e| flag_if_rejected(account_id, e))?;
+async fn signed_in(account_id: &str) -> Result<(Account, String), EngineError> {
+    let account = find_account(account_id).ok_or_else(|| {
+        EngineError::engine("That account is not signed in on this device.")
+            .keyed("workspace.account_not_signed_in", json!({}))
+    })?;
+    let token = account.token.clone().ok_or_else(|| {
+        EngineError::engine(format!("Sign in to GitHub as {} again first.", account.login))
+            .keyed("account.sign_in_again", json!({ "login": account.login }))
+    })?;
+    let user = github::fetch_user(&token).await.map_err(|e| github::failure(flag_if_rejected(account_id, e)))?;
     if user.id != account.user_id {
-        return Err(format!("This sign-in is not @{0}'s. Sign in to GitHub as {0} again.", account.login));
+        return Err(EngineError::engine(format!(
+            "This sign-in is not @{0}'s. Sign in to GitHub as {0} again.",
+            account.login
+        ))
+        .keyed("account.sign_in_mismatch", json!({ "login": account.login })));
     }
     Ok((account, token))
 }
@@ -373,7 +380,7 @@ pub fn remove_workspaces(ids: &[String]) -> std::io::Result<()> {
 }
 
 /// Make `workspace.json` say the directory is a workspace, in a commit of its own when it did not yet.
-async fn mark_as_workspace(ws_id: &str, name: &str) -> Result<(), String> {
+async fn mark_as_workspace(ws_id: &str, name: &str) -> Result<(), EngineError> {
     let path = ws_dir(ws_id).join(WORKSPACE_FILE);
     let mut info = read_json(&path).filter(Value::is_object).unwrap_or_else(|| json!({ "createdAt": now_ms() }));
     if info.get("kind").and_then(Value::as_str) == Some(WORKSPACE_KIND) && str_of(&info, "id") == ws_id {
@@ -385,7 +392,7 @@ async fn mark_as_workspace(ws_id: &str, name: &str) -> Result<(), String> {
     if str_of(&info, "name").is_empty() {
         info["name"] = json!(name);
     }
-    write_json_pretty(&path, &info).map_err(|e| e.to_string())?;
+    write_json_pretty(&path, &info)?;
     commit_mutation(CommitMutation {
         action: "update",
         entity: "workspace",
@@ -398,17 +405,17 @@ async fn mark_as_workspace(ws_id: &str, name: &str) -> Result<(), String> {
     })
     .await
     .map(|_| ())
-    .map_err(|e| e.to_string())
+    .map_err(EngineError::from)
 }
 
 /// Commit the Global environment the engine made by itself when it never was, so the first push carries
 /// what every device would otherwise make again. One the user has put variables in is theirs to sync.
-async fn commit_default_global_environment(ws_id: &str) -> Result<(), String> {
-    let tracked = git(ws_id, &["ls-files", "--", GLOBAL_ENV_PATH]).await.map_err(|e| e.to_string())?;
+async fn commit_default_global_environment(ws_id: &str) -> Result<(), EngineError> {
+    let tracked = git(ws_id, &["ls-files", "--", GLOBAL_ENV_PATH]).await?;
     if !tracked.trim().is_empty() {
         return Ok(());
     }
-    ensure_global_environment(ws_id).map_err(|e| e.to_string())?;
+    ensure_global_environment(ws_id)?;
     let global = read_json(&ws_dir(ws_id).join(GLOBAL_ENV_PATH));
     let untouched =
         global.as_ref().and_then(|env| env.get("variables")).and_then(Value::as_array).is_none_or(Vec::is_empty);
@@ -427,7 +434,7 @@ async fn commit_default_global_environment(ws_id: &str) -> Result<(), String> {
     })
     .await
     .map(|_| ())
-    .map_err(|e| e.to_string())
+    .map_err(EngineError::from)
 }
 
 /// Bring a workspace that lives in a repository the account owns, or with team sync one it was given access
@@ -438,7 +445,7 @@ pub async fn import_workspace(account_id: &str, repo_name: &str) -> Value {
     match import(account_id, repo_name).await {
         Ok(workspace) => json!({ "ok": true, "workspace": workspace }),
         Err(refusal) => {
-            let mut result = refused(refusal.message);
+            let mut result = crate::runtime::failed(&refusal.error);
             if let Some(reason) = refusal.reason {
                 result["reason"] = json!(reason);
             }
@@ -449,42 +456,48 @@ pub async fn import_workspace(account_id: &str, repo_name: &str) -> Value {
 
 async fn import(account_id: &str, repo_name: &str) -> Result<Value, Refusal> {
     if !check_git_installed().await {
-        return Err("Git is not installed, so a remote workspace cannot be imported.".to_string().into());
+        return Err(EngineError::engine("Git is not installed, so a remote workspace cannot be imported.")
+            .keyed("workspace.import_no_git", json!({}))
+            .into());
     }
     let (account, token) = signed_in(account_id).await?;
-    let repo = github::get_repo(&token, repo_name).await?;
+    let repo = github::get_repo(&token, repo_name).await.map_err(github::failure)?;
     // What the account may do with it goes with the workspace: someone who may only read has it read-only.
     let access = Access::of(&repo, account.user_id);
     if access != Access::Owner && !team_sync() {
-        return Err(Refusal {
-            message: format!(
-                "{} belongs to {}, not @{}. A workspace can only be imported by the account that owns it.",
-                repo.full_name,
-                named(&repo.owner_login),
-                account.login
-            ),
-            reason: Some(NOT_OWNER),
-        });
+        let owner = named(&repo.owner_login);
+        let error = EngineError::engine(format!(
+            "{} belongs to {owner}, not @{}. A workspace can only be imported by the account that owns it.",
+            repo.full_name, account.login
+        ))
+        .keyed("workspace.import_not_owner", json!({ "repo": repo.full_name, "owner": owner, "login": account.login }));
+        return Err(Refusal { error, reason: Some(NOT_OWNER) });
     }
     if workspace_for_repo(&repo.full_name).is_some() {
-        return Err(format!("{} is already a workspace on this device.", repo.full_name).into());
+        return Err(EngineError::engine(format!("{} is already a workspace on this device.", repo.full_name))
+            .keyed("workspace.import_exists", json!({ "repo": repo.full_name }))
+            .into());
     }
     //     };
     // Asked before anything is cloned: a repository that is not a workspace never reaches this device.
-    let not_a_workspace = || format!("{} is not a Bifurc workspace: it has no workspace.json of one.", repo.full_name);
-    let listed = github::read_json_file(&token, &repo.full_name, WORKSPACE_FILE).await?;
+    let not_a_workspace = || {
+        EngineError::engine(format!("{} is not a Bifurc workspace: it has no workspace.json of one.", repo.full_name))
+            .keyed("workspace.import_not_a_workspace", json!({ "repo": repo.full_name }))
+    };
+    let listed = github::read_json_file(&token, &repo.full_name, WORKSPACE_FILE).await.map_err(github::failure)?;
     let Some((id, _)) = listed.as_ref().and_then(workspace_identity).filter(|(id, _)| is_plain_id(id)) else {
         return Err(not_a_workspace().into());
     };
     if let Some(existing) = load_settings().workspace(&id) {
-        return Err(format!(
-            "A workspace with this id is already on this device (\"{}\"). A remote workspace never replaces a local one.",
-            str_of(existing, "name")
-        )
+        let name = str_of(existing, "name");
+        return Err(EngineError::engine(format!(
+            "A workspace with this id is already on this device (\"{name}\"). A remote workspace never replaces a local one."
+        ))
+        .keyed("workspace.import_id_taken", json!({ "name": name }))
         .into());
     }
 
-    std::fs::create_dir_all(data_root()).map_err(|e| e.to_string())?;
+    std::fs::create_dir_all(data_root())?;
     let temp = TempDir(data_root().join(format!(".import-{}", generate_id())));
     let target = temp.0.to_string_lossy().into_owned();
     let auth = auth_for(&repo.clone_url, &token);
@@ -494,7 +507,10 @@ async fn import(account_id: &str, repo_name: &str) -> Result<Value, Refusal> {
         auth.as_ref(),
     )
     .await
-    .map_err(|e| format!("Couldn't clone {}: {e}", repo.full_name))?;
+    .map_err(|e| {
+        EngineError::engine(format!("Couldn't clone {}: {e}", repo.full_name))
+            .keyed("workspace.clone_failed", json!({ "repo": repo.full_name, "detail": e.0 }))
+    })?;
 
     // What landed is what counts: it has to be the workspace the repository said it was.
     let info = read_json(&temp.0.join(WORKSPACE_FILE));
@@ -506,10 +522,16 @@ async fn import(account_id: &str, repo_name: &str) -> Result<Value, Refusal> {
     let mut settings = load_settings();
     let dir = ws_dir(&id);
     if dir.exists() {
-        set_aside(&dir, &id).map_err(|e| format!("Couldn't make room for the workspace: {e}"))?;
+        set_aside(&dir, &id).map_err(|e| {
+            EngineError::engine(format!("Couldn't make room for the workspace: {e}"))
+                .keyed("workspace.import_room_failed", json!({ "detail": e.to_string() }))
+        })?;
     }
-    std::fs::rename(&temp.0, &dir).map_err(|e| format!("Couldn't move the workspace into place: {e}"))?;
-    init_workspace_dir(&id, &name).map_err(|e| e.to_string())?;
+    std::fs::rename(&temp.0, &dir).map_err(|e| {
+        EngineError::engine(format!("Couldn't move the workspace into place: {e}"))
+            .keyed("workspace.import_move_failed", json!({ "detail": e.to_string() }))
+    })?;
+    init_workspace_dir(&id, &name)?;
 
     let workspace = json!({
         "id": id, "name": name, "activeEnvironmentId": null, "accountId": account.id,
@@ -518,8 +540,8 @@ async fn import(account_id: &str, repo_name: &str) -> Result<Value, Refusal> {
     });
     settings.workspaces_mut().push(workspace.clone());
     settings.set("activeWorkspaceId", json!(id));
-    save_settings(&settings).map_err(|e| e.to_string())?;
-    apply_commit_identity(&id).await.map_err(|e| e.to_string())?;
+    save_settings(&settings)?;
+    apply_commit_identity(&id).await?;
     Ok(workspace)
 }
 
@@ -529,57 +551,77 @@ pub async fn publish_workspace(ws_id: &str, account_id: &str, repo_name: &str, p
     let _guard = workspace_lock(ws_id).lock_owned().await;
     match publish(ws_id, account_id, repo_name, private).await {
         Ok(repo) => json!({ "ok": true, "repo": repo.public() }),
-        Err(message) => refused(message),
+        Err(error) => crate::runtime::failed(&error),
     }
 }
 
-async fn publish(ws_id: &str, account_id: &str, repo_name: &str, private: bool) -> Result<Repo, String> {
+async fn publish(ws_id: &str, account_id: &str, repo_name: &str, private: bool) -> Result<Repo, EngineError> {
     let settings = load_settings();
-    let Some(workspace) = settings.workspace(ws_id).cloned() else { return Err("No such workspace.".to_string()) };
+    let Some(workspace) = settings.workspace(ws_id).cloned() else {
+        return Err(EngineError::engine("No such workspace.").keyed("sync.no_workspace", json!({})));
+    };
     if get_sync_config(ws_id).is_some() {
-        return Err("This workspace already has a remote repository. It cannot be changed.".to_string());
+        return Err(EngineError::engine("This workspace already has a remote repository. It cannot be changed.")
+            .keyed("workspace.publish_has_remote", json!({})));
     }
     if !check_git_installed().await {
-        return Err("Git is not installed, so this workspace cannot be published. Install Git first.".to_string());
+        return Err(EngineError::engine(
+            "Git is not installed, so this workspace cannot be published. Install Git first.",
+        )
+        .keyed("workspace.publish_no_git", json!({})));
     }
     // One that was made while git was missing becomes a repository now.
-    init_workspace_repo(ws_id).await.map_err(|e| format!("Couldn't make this workspace a git repository: {e}"))?;
+    init_workspace_repo(ws_id).await.map_err(|e| {
+        EngineError::engine(format!("Couldn't make this workspace a git repository: {e}"))
+            .keyed("workspace.publish_not_a_repo", json!({ "detail": e.to_string() }))
+    })?;
     let bound = str_of(&workspace, "accountId");
     if !bound.is_empty() && bound != account_id {
-        return Err(
-            "This workspace belongs to another account. Publish it with the account it was created with.".to_string()
-        );
+        return Err(EngineError::engine(
+            "This workspace belongs to another account. Publish it with the account it was created with.",
+        )
+        .keyed("workspace.publish_other_account", json!({})));
     }
     let (account, token) = signed_in(account_id).await?;
     let dir = ws_dir(ws_id);
     let repo_name = repo_name.trim();
     if repo_name.is_empty() || repo_name.starts_with('-') {
-        return Err("Give the repository a name.".to_string());
+        return Err(
+            EngineError::engine("Give the repository a name.").keyed("workspace.publish_name_required", json!({}))
+        );
     }
 
     // Always a repository made for this workspace: an existing one is never pushed into.
     let name = str_of(&workspace, "name").to_string();
-    let repo = github::create_repo(&token, repo_name, private, &format!("Bifurc workspace: {name}")).await?;
+    let repo = github::create_repo(&token, repo_name, private, &format!("Bifurc workspace: {name}"))
+        .await
+        .map_err(github::failure)?;
 
     // From here the remote is assigned, whatever the push does: a failed push is retried by a sync.
     let mut settings = load_settings();
     if let Some(workspace) = settings.workspace_mut(ws_id) {
         workspace["accountId"] = json!(account.id);
     }
-    save_settings(&settings).map_err(|e| e.to_string())?;
+    save_settings(&settings)?;
     save_sync_config(ws_id, Some(sync_config_for(&repo, Access::Owner)));
-    apply_commit_identity(ws_id).await.map_err(|e| e.to_string())?;
+    apply_commit_identity(ws_id).await?;
     // What is pushed says it is a workspace, so the repository can be told from any other on import.
     mark_as_workspace(ws_id, &name).await?;
     commit_default_global_environment(ws_id).await?;
 
     let _ = git(ws_id, &["remote", "remove", "origin"]).await;
-    git(ws_id, &["remote", "add", "origin", &repo.clone_url]).await.map_err(|e| e.to_string())?;
+    git(ws_id, &["remote", "add", "origin", &repo.clone_url]).await?;
     let _ = git_in(&dir, &["branch", "-M", &repo.default_branch]).await;
     let auth = auth_for(&repo.clone_url, &token);
     git_net_in(&dir, &["push", "--set-upstream", "origin", &format!("HEAD:{}", repo.default_branch)], auth.as_ref())
         .await
-        .map_err(|e| format!("{} was created, but the first push failed: {e}. Sync to try again.", repo.full_name))?;
+        .map_err(|e| {
+            EngineError::engine(format!(
+                "{} was created, but the first push failed: {e}. Sync to try again.",
+                repo.full_name
+            ))
+            .keyed("workspace.publish_push_failed", json!({ "repo": repo.full_name, "detail": e.0 }))
+        })?;
     save_sync_meta(ws_id, Some(sync_meta_value(Some(now_ms()), None, None)));
     github::mark_as_workspace(&token, &repo.full_name).await;
     Ok(repo)

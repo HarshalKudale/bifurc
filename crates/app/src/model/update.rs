@@ -91,7 +91,7 @@ impl UpdateStatus {
             channel: text(value, "channel").unwrap_or_default(),
             checking: flag(value, "checking"),
             checked: value.get("checkedAt").is_some_and(|at| !at.is_null()),
-            error: text(value, "error"),
+            error: crate::engine::text_in(value, "error"),
             unsupported: flag(value, "unsupported"),
             available,
             action,

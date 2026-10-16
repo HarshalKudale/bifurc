@@ -40,7 +40,7 @@ pub fn parse(result: &Value) -> Vec<HistoryEntry> {
             body: text(entry, "body").unwrap_or_default(),
             base64: entry.get("encoding").and_then(Value::as_str) == Some("base64"),
             truncated: entry.get("truncated").and_then(Value::as_bool).unwrap_or(false),
-            error: text(entry, "error"),
+            error: crate::engine::text_in(entry, "error"),
         })
         .collect()
 }
@@ -100,6 +100,19 @@ mod tests {
         assert!(all[1].is_unanswered() && !all[0].is_unanswered());
         assert!(all[2].base64 && all[2].truncated);
         assert!(parse(&json!({})).is_empty());
+    }
+
+    #[test]
+    fn an_error_without_a_key_is_shown_as_stored_and_one_with_a_key_is_translated() {
+        let parsed = parse(&json!({ "entries": [
+            { "at": 1, "status": 0, "error": "refused" },
+            { "at": 2, "status": 0, "error": "Nothing is listening at localhost:1. Is the server running?",
+              "errorKey": "request.send.refused", "errorParams": { "host": "localhost", "port": "1" } },
+            { "at": 3, "status": 0, "error": "unknown to this build", "errorKey": "no.such.key", "errorParams": {} },
+        ] }));
+        assert_eq!(parsed[0].error.as_deref(), Some("refused"));
+        assert!(parsed[1].error.as_deref().is_some_and(|text| text.contains("localhost")));
+        assert_eq!(parsed[2].error.as_deref(), Some("unknown to this build"));
     }
 
     #[test]

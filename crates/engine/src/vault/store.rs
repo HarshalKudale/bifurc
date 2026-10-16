@@ -56,7 +56,8 @@ fn check_identifier(what: &str, name: &str) -> Result<()> {
         return Err(EngineError::bad_request(format!(
             "A {what} name must start with a letter or underscore and use only letters, digits and underscores \
              (at most {MAX_NAME_LEN}), so that it works in {{{{vault.secret}}}} and as an environment variable."
-        )));
+        ))
+        .keyed("vault.identifier_invalid", json!({ "what": what, "max": MAX_NAME_LEN })));
     }
     Ok(())
 }
@@ -107,7 +108,7 @@ pub fn list(ws_id: &str) -> Vec<VaultFile> {
 
 pub fn get(ws_id: &str, id: &str) -> Result<VaultFile> {
     if id.is_empty() || !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
-        return Err(EngineError::bad_request("Not a vault id."));
+        return Err(EngineError::bad_request("Not a vault id.").keyed("vault.id_invalid", json!({})));
     }
     read_json(&file_path(ws_id, id)).and_then(|value| serde_json::from_value(value).ok()).ok_or_else(|| {
         EngineError::not_found(format!("No vault \"{id}\".")).keyed("vault.not_found", json!({ "id": id }))
@@ -119,16 +120,22 @@ pub fn find_by_name(ws_id: &str, name: &str) -> Option<VaultFile> {
 }
 
 pub fn save(ws_id: &str, vault: &VaultFile) -> Result<()> {
-    let value = serde_json::to_value(vault).map_err(|e| EngineError::engine(e.to_string()))?;
-    write_json_pretty(&file_path(ws_id, &vault.id), &value).map_err(|e| EngineError::engine(e.to_string()))
+    let value = serde_json::to_value(vault).map_err(io_failed)?;
+    write_json_pretty(&file_path(ws_id, &vault.id), &value).map_err(io_failed)
 }
 
 pub fn delete(ws_id: &str, id: &str) -> Result<()> {
     match std::fs::remove_file(file_path(ws_id, id)) {
         Ok(()) => Ok(()),
         Err(e) if e.kind() == std::io::ErrorKind::NotFound => Ok(()),
-        Err(e) => Err(EngineError::engine(e.to_string())),
+        Err(e) => Err(io_failed(e)),
     }
+}
+
+/// A vault file that could not be written or removed, under its wrapper key with the raw text as `{detail}`.
+fn io_failed(e: impl std::fmt::Display) -> EngineError {
+    let detail = e.to_string();
+    EngineError::engine(detail.clone()).keyed("vault.io_failed", json!({ "detail": detail }))
 }
 
 impl VaultFile {
@@ -183,7 +190,8 @@ impl VaultFile {
     pub fn rekey(&mut self, old: &Key, new_passphrase: &str) -> Result<Key> {
         let values = self.read_all(old);
         if values.len() != self.secrets.len() {
-            return Err(EngineError::engine("Some secrets in this vault do not open with its key; not re-encrypting."));
+            return Err(EngineError::engine("Some secrets in this vault do not open with its key; not re-encrypting.")
+                .keyed("vault.rekey_unreadable", json!({})));
         }
         let kdf = Kdf::new();
         let key = kdf.derive(new_passphrase)?;
