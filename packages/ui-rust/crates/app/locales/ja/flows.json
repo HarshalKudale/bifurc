@@ -83,6 +83,7 @@
   "menu.new_folder_here": "ここに新しいフォルダー…",
   "menu.rename": "名前を変更…",
   "menu.delete": "削除…",
+  "menu.update_required": "更新が必要です…",
   "menu.revert_delete": "削除を取り消す",
   "menu.confirm_delete": "削除を確定",
 
