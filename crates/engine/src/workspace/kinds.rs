@@ -37,7 +37,11 @@ pub struct CrudKind {
 pub const SIMPLE_KINDS: [&str; 3] = ["graphqlSchemas", "wsdls", "protoFiles"];
 
 fn required(entity: &Value, field: &str, message: &str) -> Result<()> {
-    if str_of(entity, field).trim().is_empty() { Err(EngineError::engine(message)) } else { Ok(()) }
+    if str_of(entity, field).trim().is_empty() {
+        Err(EngineError::engine(message).keyed("validation.required", json!({ "field": field })))
+    } else {
+        Ok(())
+    }
 }
 
 fn field(entity: &Value, key: &str) -> Value {
@@ -77,8 +81,9 @@ fn mock_signature(mock: &Value) -> String {
     format!("{}|{}|{}", str_of(mock, "method").to_uppercase(), str_of(mock, "urlPattern"), str_of(mock, "capturedBody"))
 }
 
-fn mapping_error(field: &str, message: String) -> EngineError {
+fn mapping_error(field: &str, key: &str, message: String, params: Value) -> EngineError {
     EngineError::with_details(ErrorCode::BadRequest, message, json!({ "field": field }))
+        .keyed(&format!("mapping.{key}"), params)
 }
 
 fn is_dns_label(label: &str) -> bool {
@@ -107,28 +112,42 @@ pub fn validate_mapping(mapping: &Value, siblings: &[Value]) -> Result<()> {
     let raw_domain = str_of(mapping, "domain");
     let domain = raw_domain.trim().to_lowercase();
     if domain.is_empty() || domain == ".localhost" {
-        return Err(mapping_error("domain", "A domain is required.".into()));
+        return Err(mapping_error("domain", "domain_required", "A domain is required.".into(), json!({})));
     }
     let Some(labels) = domain.strip_suffix(".localhost") else {
-        return Err(mapping_error("domain", format!("\"{raw_domain}\" is not a .localhost domain.")));
+        return Err(mapping_error(
+            "domain",
+            "domain_not_localhost",
+            format!("\"{raw_domain}\" is not a .localhost domain."),
+            json!({ "domain": raw_domain }),
+        ));
     };
     if !labels.split('.').all(is_dns_label) {
         return Err(mapping_error(
             "domain",
+            "domain_invalid",
             format!("\"{raw_domain}\" is not a valid domain: use letters, digits and hyphens."),
+            json!({ "domain": raw_domain }),
         ));
     }
     if siblings.iter().any(|other| str_of(other, "domain").trim().to_lowercase() == domain) {
-        return Err(mapping_error("domain", format!("{domain} is already mapped.")));
+        return Err(mapping_error(
+            "domain",
+            "domain_taken",
+            format!("{domain} is already mapped."),
+            json!({ "domain": domain }),
+        ));
     }
     let target = str_of(mapping, "target").trim();
     if target.is_empty() {
-        return Err(mapping_error("target", "A target is required.".into()));
+        return Err(mapping_error("target", "target_required", "A target is required.".into(), json!({})));
     }
     if !is_dialable_target(target) {
         return Err(mapping_error(
             "target",
+            "target_invalid",
             format!("\"{}\" is not a target: use host:port or an http(s):// URL.", str_of(mapping, "target")),
+            json!({ "target": str_of(mapping, "target") }),
         ));
     }
     Ok(())

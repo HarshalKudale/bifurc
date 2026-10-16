@@ -714,7 +714,8 @@ mod tests {
         .await
         .unwrap_err();
         assert_eq!(bad.code, ErrorCode::BadRequest);
-        assert_eq!(bad.details, Some(json!({ "field": "domain" })));
+        let details = bad.details.unwrap();
+        assert_eq!((&details["field"], &details["key"]), (&json!("domain"), &json!("mapping.domain_not_localhost")));
 
         let good = json!({ "domain": "app.localhost", "target": "localhost:3000" });
         let created = call(&ctx, "entity.create", json!({ "kind": "mappings", "entity": good })).await.unwrap();
@@ -724,7 +725,7 @@ mod tests {
         assert_eq!(enabled("mappings"), vec![id.clone()]);
 
         let dup = call(&ctx, "entity.create", json!({ "kind": "mappings", "entity": good })).await.unwrap_err();
-        assert_eq!(dup.details, Some(json!({ "field": "domain" })));
+        assert_eq!(dup.details.unwrap()["key"], "mapping.domain_taken");
 
         let loaded =
             call(&ctx, "entity.load", json!({ "workspaceId": WS, "kind": "mappings", "id": id })).await.unwrap();

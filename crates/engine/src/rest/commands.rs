@@ -29,11 +29,12 @@ pub fn register(registry: &mut CommandRegistry) {
         )
         .await
         .map_err(|message| match message {
-            message if http::is_timeout(&message) => EngineError::new(ErrorCode::Timeout, message),
+            message if http::is_timeout(&message) => http::send_error(ErrorCode::Timeout, message),
             message if message == CANCELLED => {
                 EngineError::with_details(ErrorCode::EngineError, message, json!({ "cancelled": true }))
+                    .keyed("request.send.cancelled", json!({}))
             }
-            message => EngineError::engine(message),
+            message => http::send_error(ErrorCode::EngineError, message),
         })?;
         Ok(json!({ "status": response.status, "headers": response.headers, "body": response.body }))
     });
@@ -131,5 +132,7 @@ mod tests {
         let err = call(&registry, "request.replay", bad).await.unwrap_err();
         assert_eq!(err.code, ErrorCode::EngineError);
         assert_eq!(err.message, "Invalid URL");
+        let wire = err.to_rpc();
+        assert_eq!(wire["details"], json!({ "key": "request.send.invalid_url", "params": {} }));
     }
 }

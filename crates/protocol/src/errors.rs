@@ -119,6 +119,20 @@ impl EngineError {
         Self::new(ErrorCode::EngineError, message)
     }
 
+    /// Names this error for a client that translates it: `details.key` is a stable dotted key
+    /// (`request.send.refused`) and `details.params` the values its sentence needs. `message` stays the English
+    /// text for logs, the CLI and MCP, and a client that does not know the key shows it.
+    pub fn keyed(mut self, key: &str, params: Value) -> Self {
+        let mut details = match self.details.take() {
+            Some(Value::Object(map)) => map,
+            _ => serde_json::Map::new(),
+        };
+        details.insert("key".into(), Value::String(key.into()));
+        details.insert("params".into(), params);
+        self.details = Some(Value::Object(details));
+        self
+    }
+
     /// The `error` member of a failed response frame.
     pub fn to_rpc(&self) -> Value {
         serde_json::to_value(RpcError::new(self.code, self.message.clone(), self.details.clone()))
@@ -176,6 +190,19 @@ mod tests {
     fn only_transient_codes_retry() {
         let retryable: Vec<_> = ErrorCode::ALL.into_iter().filter(|c| c.retryable()).map(ErrorCode::as_str).collect();
         assert_eq!(retryable, ["UPSTREAM_FAILED", "TIMEOUT", "ENGINE_ERROR"]);
+    }
+
+    #[test]
+    fn a_keyed_error_carries_key_and_params_beside_its_message_and_other_details() {
+        let wire = EngineError::with_details(ErrorCode::BadRequest, "No.", json!({ "field": "url" }))
+            .keyed("validation.required", json!({ "field": "url" }))
+            .to_rpc();
+        assert_eq!(wire["message"], "No.");
+        assert_eq!(
+            wire["details"],
+            json!({ "field": "url", "key": "validation.required", "params": { "field": "url" } })
+        );
+        assert_eq!(EngineError::engine("x").keyed("a.b", json!({})).to_rpc()["details"]["key"], "a.b");
     }
 
     #[test]
