@@ -10,13 +10,16 @@ use serde_json::{Value, json};
 use tokio::sync::mpsc::{UnboundedReceiver, unbounded_channel};
 
 use super::{
+    error_in,
     model::{Node, PORT_CLOSED, PORT_ERROR, PORT_MESSAGE, PORT_SUCCESS},
-    nodes::bindings,
+    nodes::{bindings, connection_failed_in, failure},
     reference::{render, text_of},
     run::{Live, Run, Token, Wired, fire, forward},
+    said,
 };
 use crate::{
     kernel::{ListenerId, bus},
+    protocol::EngineError,
     utils::json::{opt_str, str_of},
 };
 
@@ -96,7 +99,7 @@ fn live_id(run: &Run, node: &Node) -> String {
 }
 
 /// Send the node's message over its open connection, if it has one to send and the type takes one.
-async fn send(run: &Run, node: &Node, token: &Token, wired: &Wired) -> Result<(), String> {
+async fn send(run: &Run, node: &Node, token: &Token, wired: &Wired) -> Result<(), EngineError> {
     let scope = run.scope(token);
     // What is wired into the message wins over what was typed for it.
     let text = match wired.iter().find(|(input, _)| input == "message") {
@@ -114,11 +117,11 @@ async fn send(run: &Run, node: &Node, token: &Token, wired: &Wired) -> Result<()
         "grpcRequests" => ("grpc.stream.send", json!({ "workspaceId": run.ws_id, "streamId": id, "data": text })),
         _ => return Ok(()),
     };
-    let answer = run.invoke(command, payload, Vec::new()).await.map_err(|error| error.message)?;
+    let answer = run.invoke(command, payload, Vec::new()).await?;
     if answer["ok"] == true {
         Ok(())
     } else {
-        Err(opt_str(&answer, "error").unwrap_or("The message was not sent").to_string())
+        Err(error_in(&answer).unwrap_or_else(|| said("flow.message_not_sent", json!({}), "The message was not sent")))
     }
 }
 
@@ -140,8 +143,8 @@ fn closed(reason: &str, messages: u64) -> End {
     End { port: PORT_CLOSED, output: json!({ "ok": true, "reason": reason, "messages": messages }) }
 }
 
-fn broken(error: impl Into<String>) -> End {
-    End { port: PORT_ERROR, output: json!({ "ok": false, "error": error.into() }) }
+fn broken(error: EngineError) -> End {
+    End { port: PORT_ERROR, output: failure(&error) }
 }
 
 /// Connect and listen until the stream ends. Each message is handed on before the next one is read; with
@@ -156,10 +159,8 @@ async fn receive(run: &Arc<Run>, node: &Node, token: &Token, wired: &Wired, kind
     let mut payload = json!({ "workspaceId": run.ws_id, "id": node.request_id });
     payload[kind.id_field] = json!(id);
     match run.invoke(kind.connect, payload, variables).await {
-        Err(error) => return broken(error.message),
-        Ok(answer) if answer["ok"] != true => {
-            return broken(opt_str(&answer, "error").unwrap_or("The connection failed"));
-        }
+        Err(error) => return broken(error),
+        Ok(answer) if answer["ok"] != true => return broken(connection_failed_in(&answer)),
         Ok(_) => {}
     }
     run.keep(Live { disconnect: kind.disconnect, id_field: kind.id_field, id: id.clone() });
@@ -188,16 +189,20 @@ async fn receive(run: &Arc<Run>, node: &Node, token: &Token, wired: &Wired, kind
                         return broken(error);
                     }
                 }
-                "error" => return broken(opt_str(&payload, "error").unwrap_or("The connection failed")),
+                "error" => return broken(connection_failed_in(&payload)),
                 "disconnected" => return closed("closed", received),
                 // A gRPC call ends with its status: anything but OK is a failure.
                 "closed" => {
                     return match payload["grpcStatus"].as_i64().unwrap_or(0) {
                         0 => closed("closed", received),
-                        code => broken(format!(
-                            "The call ended with status {code}: {}",
-                            opt_str(&payload, "statusMessage").unwrap_or("no message")
-                        )),
+                        code => {
+                            let message = opt_str(&payload, "statusMessage").unwrap_or("no message");
+                            broken(said(
+                                "flow.grpc_ended",
+                                json!({ "code": code, "message": message }),
+                                format!("The call ended with status {code}: {message}"),
+                            ))
+                        }
                     };
                 }
                 _ => {}
@@ -221,9 +226,13 @@ async fn receive(run: &Arc<Run>, node: &Node, token: &Token, wired: &Wired, kind
             return closed("limit", received);
         }
         if events.waiting() > MAX_BACKLOG {
-            run.fail(format!(
-                "{}: more than {MAX_BACKLOG} messages are waiting for the nodes after it. They arrive faster than the flow handles them.",
-                node.label()
+            run.fail(said(
+                "flow.backlog",
+                json!({ "node": node.label(), "max": MAX_BACKLOG }),
+                format!(
+                    "{}: more than {MAX_BACKLOG} messages are waiting for the nodes after it. They arrive faster than the flow handles them.",
+                    node.label()
+                ),
             ));
             return closed("overrun", received);
         }
@@ -235,9 +244,12 @@ async fn receive(run: &Arc<Run>, node: &Node, token: &Token, wired: &Wired, kind
 /// over a streaming request: it connects, answers with the first message and disconnects.
 pub async fn listen(run: &Arc<Run>, node: &Node, token: &Token, wired: &Wired, started: Instant, once: bool) {
     let Some(kind) = kind_of(&node.request_kind) else {
-        let error = format!("A request of the kind \"{}\" cannot be listened to by a flow.", node.request_kind);
-        return fire(run, node, PORT_ERROR, Arc::new(json!({ "ok": false, "error": error })), token, started.elapsed())
-            .await;
+        let error = said(
+            "flow.request_kind_unlistenable",
+            json!({ "kind": node.request_kind }),
+            format!("A request of the kind \"{}\" cannot be listened to by a flow.", node.request_kind),
+        );
+        return fire(run, node, PORT_ERROR, Arc::new(failure(&error)), token, started.elapsed()).await;
     };
     if !run.listening.lock().insert(node.id.clone()) {
         run.waiting(node);
@@ -248,7 +260,7 @@ pub async fn listen(run: &Arc<Run>, node: &Node, token: &Token, wired: &Wired, s
     }
     let mut end = receive(run, node, token, wired, &kind, once).await;
     if once && end.port == PORT_CLOSED {
-        end = broken("The connection closed before a message arrived.");
+        end = broken(said("flow.closed_before_message", json!({}), "The connection closed before a message arrived."));
     }
     run.listening.lock().remove(&node.id);
     let mut payload = json!({ "workspaceId": run.ws_id });

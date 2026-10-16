@@ -11,7 +11,9 @@ use std::{
 };
 
 use regress::Regex;
-use serde_json::Value;
+use serde_json::{Value, json};
+
+use crate::protocol::EngineError;
 
 /// What a node's references are resolved against.
 pub struct Scope<'a> {
@@ -130,12 +132,18 @@ pub fn text_of(value: &Value) -> String {
 
 /// `template` with each reference replaced by what it names. A reference the run does not hold is an error
 /// that names it: sending an empty value in its place would hide the mistake.
-pub fn render(template: &str, scope: &Scope) -> Result<String, String> {
+pub fn render(template: &str, scope: &Scope) -> Result<String, EngineError> {
     let mut out = String::with_capacity(template.len());
     let mut last = 0;
     for found in pattern().find_iter(template) {
         let path = found.group(1).map(|range| &template[range]).unwrap_or_default();
-        let value = lookup(path, scope).ok_or_else(|| format!("{{{{{path}}}}} has no value in this run."))?;
+        let value = lookup(path, scope).ok_or_else(|| {
+            super::said(
+                "flow.reference_empty",
+                json!({ "reference": format!("{{{{{path}}}}}") }),
+                format!("{{{{{path}}}}} has no value in this run."),
+            )
+        })?;
         out.push_str(&template[last..found.start()]);
         out.push_str(&text_of(&value));
         last = found.end();
@@ -194,7 +202,8 @@ mod tests {
         assert_eq!(render("{{input.n}}/{{input.list}}/{{host}}", &scope).unwrap(), "3/[1,2]/{{host}}");
         assert_eq!(render("plain", &scope).unwrap(), "plain");
         let error = render("{{nodes.login.body}}", &scope).unwrap_err();
-        assert!(error.contains("{{nodes.login.body}}"), "{error}");
+        assert!(error.message.contains("{{nodes.login.body}}"), "{}", error.message);
+        assert_eq!(error.key(), Some("flow.reference_empty"));
         assert_eq!(references("{{input.a}} {{host}} {{nodes.x.b[0]}}"), ["input.a", "nodes.x.b[0]"]);
     }
 }

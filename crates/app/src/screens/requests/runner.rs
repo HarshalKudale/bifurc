@@ -170,7 +170,7 @@ impl RowResult {
             status: value.get("status").and_then(Value::as_u64).and_then(|s| u16::try_from(s).ok()),
             duration_ms: value.get("responseTime").and_then(Value::as_f64).map_or(0, |ms| ms.max(0.) as u64),
             errors: [
-                text("error"),
+                crate::engine::text_in(value, "error"),
                 text("preScriptError").map(|e| t_with("requests.runner.pre_script_error", &[("error", &e)])),
                 text("postScriptError").map(|e| t_with("requests.runner.post_script_error", &[("error", &e)])),
             ]

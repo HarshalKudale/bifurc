@@ -8,7 +8,7 @@ use std::path::PathBuf;
 
 use bifurc_engine_client::{ClientError, EngineClient, EngineError, Hello, RuntimeInfo, Sidecar, SidecarConfig};
 use gpui_kit::{AppContext as _, AsyncApp, Context, Global, Window};
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use crate::i18n::{has, t, t_with};
 
@@ -104,6 +104,13 @@ pub fn error_text(value: &Value) -> Option<String> {
         .zip(value.get("errorParams").and_then(Value::as_object))
         .and_then(|(key, params)| translate(key, params));
     translated.or_else(|| value.get("error").and_then(Value::as_str).map(str::to_owned))
+}
+
+/// The engine's sentence in `value[field]` (`error`, or `message` of a flow problem) in the user's language,
+/// translated by the `errorKey` / `errorParams` beside it when this build knows the key. `None` when empty.
+pub fn text_in(value: &Value, field: &str) -> Option<String> {
+    let shaped = json!({ "error": value.get(field), "errorKey": value.get("errorKey"), "errorParams": value.get("errorParams") });
+    error_text(&shaped).filter(|text| !text.is_empty())
 }
 
 /// Short text for a failed call, as the UI shows it.
