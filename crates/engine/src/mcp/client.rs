@@ -26,15 +26,15 @@ use rmcp::{
     },
 };
 use serde::Serialize;
-use serde_json::{Map, Value};
+use serde_json::{Map, Value, json};
 use tokio::{
     io::{AsyncBufReadExt, BufReader},
     sync::mpsc::UnboundedSender,
 };
 
 use super::arguments::{CallKind, Catalog};
-use crate::rest::direct_http::client as http_client;
 use crate::utils::http::{NAME_NOT_FOUND_NO_HOST, REFUSED_NO_ADDRESS};
+use crate::{protocol::EngineError, rest::direct_http::client as http_client};
 
 /// What reaches a connection's task besides the answers to what it asked.
 pub enum Heard {
@@ -148,7 +148,7 @@ fn shell_command(command: &str) -> CommandWrap {
 }
 
 /// Open the connection and shake hands. Fails with a sentence for the user.
-pub async fn connect(prepared: Prepared, heard: UnboundedSender<Heard>) -> Result<Client, String> {
+pub async fn connect(prepared: Prepared, heard: UnboundedSender<Heard>) -> Result<Client, EngineError> {
     let handler = Handler { heard: heard.clone() };
     match prepared {
         Prepared::Stdio { command, env } => {
@@ -160,10 +160,11 @@ pub async fn connect(prepared: Prepared, heard: UnboundedSender<Heard>) -> Resul
                 cmd.current_dir(home);
             }
             cmd.envs(env.iter().map(|(name, value)| (name.as_str(), value.as_str())));
-            let (transport, stderr) = TokioChildProcess::builder(wrapped)
-                .stderr(Stdio::piped())
-                .spawn()
-                .map_err(|error| format!("Cannot start the server: {error}"))?;
+            let (transport, stderr) =
+                TokioChildProcess::builder(wrapped).stderr(Stdio::piped()).spawn().map_err(|error| {
+                    EngineError::upstream(format!("Cannot start the server: {error}"))
+                        .keyed("mcp.cannot_start", json!({ "detail": error.to_string() }))
+                })?;
             if let Some(stderr) = stderr {
                 tokio::spawn(async move {
                     let mut lines = BufReader::new(stderr).lines();
@@ -179,7 +180,8 @@ pub async fn connect(prepared: Prepared, heard: UnboundedSender<Heard>) -> Resul
         }
         Prepared::Http { url, headers } => {
             let config = StreamableHttpClientTransportConfig::with_uri(url.as_str()).custom_headers(headers);
-            let transport = StreamableHttpClientTransport::with_client(http_client()?.clone(), config);
+            let transport =
+                StreamableHttpClientTransport::with_client(http_client().map_err(|e| failure(&e))?.clone(), config);
             handler.serve(transport).await.map_err(|error| describe_start(&error, false))
         }
     }
@@ -207,18 +209,24 @@ fn root_cause(error: &(dyn std::error::Error + 'static)) -> String {
 }
 
 /// Why a connection did not open, for the user. `program` says the server is one the engine started.
-fn describe_start(error: &ClientInitializeError, program: bool) -> String {
+fn describe_start(error: &ClientInitializeError, program: bool) -> EngineError {
     if error.is_authorization_required() {
-        return "The server wants credentials. Add them as a header, such as Authorization.".to_string();
+        return EngineError::new(
+            crate::protocol::ErrorCode::Unauthorized,
+            "The server wants credentials. Add them as a header, such as Authorization.",
+        )
+        .keyed("mcp.credentials_required", json!({}));
     }
     match error {
         ClientInitializeError::ConnectionClosed(_) if program => {
-            "The program ended before the MCP handshake finished".to_string()
+            EngineError::upstream("The program ended before the MCP handshake finished")
+                .keyed("mcp.program_ended", json!({}))
         }
         ClientInitializeError::ConnectionClosed(_) => {
-            "The server closed the connection before the MCP handshake finished".to_string()
+            EngineError::upstream("The server closed the connection before the MCP handshake finished")
+                .keyed("mcp.closed_before_handshake", json!({}))
         }
-        ClientInitializeError::JsonRpcError(error) => error.message.to_string(),
+        ClientInitializeError::JsonRpcError(error) => failure(&error.message),
         ClientInitializeError::TransportError { error, .. } => {
             let cause = root_cause(error.error.as_ref());
             // The first line, without the page a web server answered with.
@@ -227,12 +235,22 @@ fn describe_start(error: &ClientInitializeError, program: bool) -> String {
             if cause == REFUSED_NO_ADDRESS.trim_end_matches('.')
                 || cause == NAME_NOT_FOUND_NO_HOST.trim_end_matches('.')
             {
-                return format!("{cause}.");
+                return failure(&format!("{cause}."));
             }
-            format!("{cause}. Is this an MCP server?")
+            not_a_server(cause)
         }
-        other => format!("{}. Is this an MCP server?", other.to_string().trim_end_matches('.')),
+        other => not_a_server(other.to_string().trim_end_matches('.')),
     }
+}
+
+/// A fault with the library's or the server's own text.
+fn failure(detail: &str) -> EngineError {
+    EngineError::upstream(detail).keyed("mcp.failed", json!({ "detail": detail }))
+}
+
+fn not_a_server(cause: &str) -> EngineError {
+    EngineError::upstream(format!("{cause}. Is this an MCP server?"))
+        .keyed("mcp.not_a_server", json!({ "cause": cause }))
 }
 
 /// Whether the server said in the handshake that it has this list.

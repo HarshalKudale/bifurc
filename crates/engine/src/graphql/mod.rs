@@ -8,10 +8,10 @@ use serde_json::{Map, Value, json};
 use crate::{
     env::{load_merged_environment, resolve_headers, resolve_vars},
     kernel::CommandRegistry,
-    protocol::EngineError,
+    protocol::{EngineError, ErrorCode},
     rest::direct_http::{exchange_with, header_pairs},
     utils::{
-        http::RequestSettings,
+        http::{RequestSettings, send_failure},
         json::{opt_str, str_of},
     },
     workspace::{config::load_entity, response_history},
@@ -38,6 +38,11 @@ const INTROSPECTION_QUERY: &str = r#"
       fragment InputValue on __InputValue { name description type { ...TypeRef } defaultValue }
       fragment TypeRef on __Type { kind name ofType { kind name ofType { kind name ofType { kind name ofType { kind name ofType { kind name ofType { kind name ofType { kind name } } } } } } } }
     "#;
+
+/// A failed exchange as an engine error; the message is the transport's raw text.
+fn failure(message: String) -> EngineError {
+    send_failure(ErrorCode::EngineError, "graphql.failed", message)
+}
 
 /// The JSON POST headers followed by the caller's, which win on a name clash.
 fn post_headers(headers: &Value) -> Vec<(String, String)> {
@@ -68,7 +73,7 @@ pub fn register(registry: &mut CommandRegistry) {
         let settings = RequestSettings::resolve(params.get("settings"));
         Ok(match exchange_with("POST", str_of(&params, "url"), &headers, Some(&body), &settings).await {
             Ok(response) => json!({ "ok": true, "sdl": response.body }),
-            Err(error) => json!({ "ok": false, "error": error }),
+            Err(error) => crate::runtime::failed(&failure(error)),
         })
     });
 
@@ -78,9 +83,8 @@ pub fn register(registry: &mut CommandRegistry) {
         let headers = post_headers(params.get("headers").unwrap_or(&Value::Null));
         let start = Instant::now();
         let settings = RequestSettings::resolve(params.get("settings"));
-        let response = exchange_with("POST", str_of(&params, "url"), &headers, Some(&body), &settings)
-            .await
-            .map_err(EngineError::engine)?;
+        let response =
+            exchange_with("POST", str_of(&params, "url"), &headers, Some(&body), &settings).await.map_err(failure)?;
         Ok(json!({
             "status": response.status,
             "headers": response.headers,
@@ -94,6 +98,10 @@ pub fn register(registry: &mut CommandRegistry) {
         let stored = match opt_str(&params, "id") {
             Some(id) => load_entity(ws_id, "graphqlRequests", id).ok_or_else(|| {
                 EngineError::not_found(format!("No saved graphqlRequests entity \"{id}\" in workspace \"{ws_id}\"."))
+                    .keyed(
+                        "request.saved_not_found",
+                        json!({ "kind": "graphqlRequests", "id": id, "workspace": ws_id }),
+                    )
             })?,
             None => params.get("request").cloned().unwrap_or(Value::Null),
         };
@@ -174,7 +182,10 @@ mod tests {
         let ok = call("graphql.introspect", json!({ "url": format!("{base}/g"), "headers": {} })).await.unwrap();
         assert_eq!(ok, json!({ "ok": true, "sdl": "{\"data\":1}" }));
         let failed = call("graphql.introspect", json!({ "url": "nope", "headers": {} })).await.unwrap();
-        assert_eq!(failed, json!({ "ok": false, "error": "Invalid URL" }));
+        assert_eq!(
+            failed,
+            json!({ "ok": false, "error": "Invalid URL", "errorKey": "request.send.invalid_url", "errorParams": {} })
+        );
     }
 
     #[tokio::test]

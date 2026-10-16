@@ -15,7 +15,7 @@ use crate::{
 fn ok_result(result: OkResult) -> Result<Value> {
     Ok(match result {
         Ok(()) => json!({ "ok": true }),
-        Err(error) => json!({ "ok": false, "error": error }),
+        Err(error) => crate::runtime::failed(&error),
     })
 }
 
@@ -42,14 +42,16 @@ fn resolve_target(params: &Value) -> Result<Target> {
     if ["method", "headers", "body"].iter().any(|field| params.get(*field).is_some()) {
         return Err(EngineError::bad_request(
             "sse.connect takes `method`, `headers` and `body` only together with `url`; a saved request supplies its own.",
-        ));
+        )
+        .keyed("sse.headers_need_url", json!({})));
     }
     let workspace_id = str_of(params, "workspaceId");
     let id = opt_str(params, "id").unwrap_or_else(|| str_of(params, "streamId"));
     let Some(saved) = load_entity(workspace_id, "sseRequests", id) else {
         return Err(EngineError::not_found(format!(
             "No saved sseRequests entity \"{id}\" in workspace \"{workspace_id}\". Pass `url` to connect a draft."
-        )));
+        ))
+        .keyed("sse.saved_not_found", json!({ "id": id, "workspace": workspace_id })));
     };
     Ok(Target {
         url: str_of(&saved, "url").to_string(),

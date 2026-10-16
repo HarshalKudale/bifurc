@@ -16,7 +16,7 @@ use crate::{
 fn ok_result(result: OkResult) -> Result<Value> {
     Ok(match result {
         Ok(()) => json!({ "ok": true }),
-        Err(error) => json!({ "ok": false, "error": error }),
+        Err(error) => crate::runtime::failed(&error),
     })
 }
 
@@ -45,7 +45,8 @@ fn resolve_target(params: &Value) -> Result<Value> {
         return Err(EngineError::bad_request(
             "socketio.connect takes `headers`, `path`, `namespace`, `auth` and `listeners` only together with `url`; \
              a saved request supplies its own.",
-        ));
+        )
+        .keyed("socketio.headers_need_url", json!({})));
     }
     let workspace_id = str_of(params, "workspaceId");
     let id = opt_str(params, "id").unwrap_or_else(|| str_of(params, "connectionId"));
@@ -53,6 +54,7 @@ fn resolve_target(params: &Value) -> Result<Value> {
         EngineError::not_found(format!(
             "No saved socketioRequests entity \"{id}\" in workspace \"{workspace_id}\". Pass `url` to connect a draft."
         ))
+        .keyed("socketio.saved_not_found", json!({ "id": id, "workspace": workspace_id }))
     })
 }
 
@@ -413,7 +415,10 @@ mod tests {
         assert!(!listed["connections"].as_array().unwrap().iter().any(|c| c["connectionId"] == "main"));
         assert_eq!(status("main").await["messages"].as_array().unwrap().len(), 3);
         assert_eq!(disconnect("main").await, json!({ "ok": true }));
-        assert_eq!(emit("main", "echo", "").await, json!({ "ok": false, "error": "Not connected" }));
+        assert_eq!(
+            emit("main", "echo", "").await,
+            json!({ "ok": false, "error": "Not connected", "errorKey": "stream.not_connected", "errorParams": {} })
+        );
     }
 
     #[tokio::test]
@@ -762,10 +767,16 @@ mod tests {
     async fn an_emit_needs_an_open_connection_and_an_event_name() {
         let _root = scratch_data_root();
         let server = Server::start().await;
-        assert_eq!(emit("ghost", "echo", "").await, json!({ "ok": false, "error": "Not connected" }));
+        assert_eq!(
+            emit("ghost", "echo", "").await,
+            json!({ "ok": false, "error": "Not connected", "errorKey": "stream.not_connected", "errorParams": {} })
+        );
         connect("named", &server.url).await;
         wait_status("named", "connected").await;
-        assert_eq!(emit("named", "  ", "").await, json!({ "ok": false, "error": "An event name is required." }));
+        assert_eq!(
+            emit("named", "  ", "").await,
+            json!({ "ok": false, "error": "An event name is required.", "errorKey": "socketio.event_name_required", "errorParams": {} })
+        );
         disconnect("named").await;
         wait_status("named", "disconnected").await;
     }
@@ -829,7 +840,7 @@ mod tests {
     async fn unknown_ids_and_the_connection_limit() {
         let _root = scratch_data_root();
         assert_eq!(status("ghost").await, Value::Null);
-        let expected = json!({ "ok": false, "error": "No connection \"ghost\" in workspace \"ws1\"." });
+        let expected = json!({ "ok": false, "error": "No connection \"ghost\" in workspace \"ws1\".", "errorKey": "socketio.not_found", "errorParams": { "id": "ghost", "workspace": "ws1" } });
         assert_eq!(disconnect("ghost").await, expected);
         assert_eq!(
             call("socketio.clearMessages", json!({ "workspaceId": WS, "connectionId": "ghost" })).await,
