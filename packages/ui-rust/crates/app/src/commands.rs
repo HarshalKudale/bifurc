@@ -13,7 +13,9 @@ use gpui_kit::{Action, App, Context, Global, KeyBinding, WeakEntity, Window, act
 use crate::{
     components::EntityAction,
     model::RequestKind,
+    preferences::Preferences,
     shell::{Screen, Shell},
+    theme,
 };
 
 actions!(
@@ -76,6 +78,9 @@ actions!(
         ShowAuditLog,
         ShowSettings,
         ReloadWorkspace,
+        ZoomIn,
+        ZoomOut,
+        ResetZoom,
         Quit,
     ]
 );
@@ -133,6 +138,13 @@ fn keys() -> Vec<KeyBinding> {
         KeyBinding::new("secondary-0", ShowVaults, None),
         KeyBinding::new("secondary-,", ShowSettings, None),
         KeyBinding::new("f5", ReloadWorkspace, None),
+        // Zoom steps through the interface sizes Settings offers. Reset is not Ctrl+0, which opens Vaults.
+        KeyBinding::new("secondary-=", ZoomIn, None),
+        KeyBinding::new("secondary-+", ZoomIn, None),
+        KeyBinding::new("secondary--", ZoomOut, None),
+        // Shift+0 arrives as `)` on some layouts and as `shift-0` on others.
+        KeyBinding::new("secondary-)", ResetZoom, None),
+        KeyBinding::new("secondary-shift-0", ResetZoom, None),
         KeyBinding::new("secondary-q", Quit, None),
     ]
 }
@@ -223,9 +235,25 @@ pub fn register_actions(cx: &mut App) {
     show::<ShowAuditLog>(cx, Screen::AuditLog);
     show::<ShowSettings>(cx, Screen::Settings);
     on_shell::<ReloadWorkspace>(cx, |shell, _, cx| shell.reload(cx));
+    cx.on_action(|_: &ZoomIn, cx: &mut App| set_zoom(zoomed(Preferences::global(cx).font_size, 1), cx));
+    cx.on_action(|_: &ZoomOut, cx: &mut App| set_zoom(zoomed(Preferences::global(cx).font_size, -1), cx));
+    cx.on_action(|_: &ResetZoom, cx: &mut App| set_zoom(theme::DEFAULT_FONT_SIZE, cx));
     cx.on_action(|_: &Quit, cx: &mut App| {
         cx.quit();
     });
+}
+
+/// The interface size one step from `current` in Settings' list, staying at either end.
+fn zoomed(current: f32, step: isize) -> f32 {
+    let sizes = theme::FONT_SIZES;
+    let at = sizes.iter().position(|size| *size == current).unwrap_or(0) as isize;
+    sizes[(at + step).clamp(0, sizes.len() as isize - 1) as usize]
+}
+
+fn set_zoom(size: f32, cx: &mut App) {
+    theme::set_font_size(size, cx);
+    Preferences::update(cx, |p| p.font_size = size);
+    cx.refresh_windows();
 }
 
 #[cfg(test)]
@@ -262,6 +290,15 @@ mod tests {
         assert!(first_for("ctrl-enter", &dialog).unwrap().as_any().is::<InputEnter>());
         // Palette and finder stay reachable from anywhere.
         assert!(first_for("ctrl-k", &dialog).unwrap().as_any().is::<OpenCommandPalette>());
+    }
+
+    #[test]
+    fn zoom_steps_through_the_settings_sizes_and_stops_at_the_ends() {
+        assert_eq!(zoomed(16., 1), 17.);
+        assert_eq!(zoomed(18., 1), 20.);
+        assert_eq!(zoomed(20., 1), 20.);
+        assert_eq!(zoomed(16., -1), 16.);
+        assert_eq!(zoomed(20., -1), 18.);
     }
 
     #[test]
