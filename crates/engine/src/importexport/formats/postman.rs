@@ -18,7 +18,7 @@ use crate::{
             AuthParts, Collection, Draft, Http, auth_parts, form_encoded, grpc_draft, header_record,
             with_path_variables, with_query,
         },
-        support::{FolderSpec, js_str, js_trim, parse_any, parse_json, present, text_or, thrown},
+        support::{FolderSpec, js_str, js_trim, parse_any, parse_json, parse_yaml, present, text_or, thrown},
         types::ImportSource,
     },
     utils::{
@@ -484,7 +484,7 @@ fn parse_v3_zip(bytes: &[u8]) -> Result<Collection, String> {
         if entry.read_to_string(&mut text).is_err() {
             continue;
         }
-        let Ok(file) = serde_yaml_ng::from_str::<Value>(&text) else { continue };
+        let Ok(file) = parse_yaml(&text) else { continue };
         let (dir, name) = path.rsplit_once('/').unwrap_or(("", &path));
         if is_definition {
             definitions.insert(dir.trim_end_matches(".resources").trim_end_matches('/').to_string(), file);
