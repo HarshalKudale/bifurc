@@ -18,7 +18,7 @@ use crate::{
         CheckAllHealth, ClearCapture, CloseRequestTab, DeleteEntity, ImportCurlMock, ImportCurlRequest, NewEnvironment,
         NewFolder, NewGraphQlRequest, NewGrpcRequest, NewHealthCheck, NewMapping, NewMcpRequest, NewMock, NewMockFolder,
         NewProxyRule, NewRestRequest, NewSoapRequest, NewSocketIoRequest, NewSseRequest, NewWebSocketRequest,
-        NewWorkspace, PublishChanges, RefreshServices, ReloadWorkspace, RenameWorkspace, RestartForwardProxy,
+        NewWorkspace, PublishChanges, RefreshServices, ReloadWorkspace, ReopenClosedTab, RenameWorkspace, RestartForwardProxy,
         RevertRequest, RunRequest, SaveRequest, ShowAuditLog, ShowCapture, ShowEnvironments, ShowFlows, ShowHealthBar,
         ShowMappings, ShowMocks, ShowProxyRules, ShowRequests, ShowServices, ShowSettings, ShowVaults, ShowWorkspaceConfig,
         SyncEntity, SyncWorkspace, ToggleCapturePaused, ToggleFolderTree, ToggleForwardProxy, ToggleInspector,
@@ -101,6 +101,7 @@ fn command_groups() -> Vec<(&'static str, Vec<CommandRow>)> {
                 (t("shell.palette.revert_item"), IconName::Undo, Box::new(RevertRequest)),
                 (t("shell.palette.delete_item"), IconName::Delete, Box::new(DeleteEntity)),
                 (t("shell.palette.close_tab"), IconName::Close, Box::new(CloseRequestTab)),
+                (t("shell.palette.reopen_tab"), IconName::Undo, Box::new(ReopenClosedTab)),
             ],
         ),
         (
