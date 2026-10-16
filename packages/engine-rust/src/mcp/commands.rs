@@ -660,7 +660,7 @@ mod tests {
         };
         connect("refused", &format!("http://127.0.0.1:{port}/mcp")).await;
         let failed = wait_status("refused", "error").await;
-        assert!(failed["error"].as_str().unwrap().contains("ECONNREFUSED"), "{failed}");
+        assert!(failed["error"].as_str().unwrap().contains("Nothing is listening at"), "{failed}");
         assert_eq!(failed["openedAt"], Value::Null);
 
         for (connection_id, transport, url, expected) in [
