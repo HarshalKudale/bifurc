@@ -32,7 +32,7 @@
 //! ```text
 //! bifurc-ui[.exe]      the interface
 //! bifurc-engine[.exe]  the engine
-//! bifurc-tray[.exe]    the engine's tray icon (Windows) or menu-bar icon (macOS)
+//! bifurc-tray[.exe]    the engine's tray icon (Windows), menu-bar icon (macOS) or StatusNotifierItem (Linux)
 //! bin/bifurc[.exe]     the `bifurc` command — the only folder that goes on PATH; runs resources/bifurc-cli
 //! resources/bifurc-mcp[.exe]  the MCP server (`packages/mcp-rust`), started by `bifurc --mcp`; not on PATH
 //! resources/bifurc-cli[.exe]   the CLI (`packages/cli-rust`)
@@ -501,10 +501,8 @@ fn stage(ctx: &Ctx) -> Result<PathBuf> {
     });
     empty_dir(&dir)?;
     copy_file(&cargo_output(ctx, &format!("bifurc-ui{EXE}"), false)?, &dir.join(format!("bifurc-ui{EXE}")))?;
-    if WINDOWS || MACOS {
-        copy_file(&cargo_output(ctx, &format!("bifurc-tray{EXE}"), false)?, &dir.join(format!("bifurc-tray{EXE}")))?;
-        make_executable(&dir.join(format!("bifurc-tray{EXE}")))?;
-    }
+    copy_file(&cargo_output(ctx, &format!("bifurc-tray{EXE}"), false)?, &dir.join(format!("bifurc-tray{EXE}")))?;
+    make_executable(&dir.join(format!("bifurc-tray{EXE}")))?;
     // The launcher (ui workspace) is `bin/bifurc`; the CLI it runs (repository workspace) and the engine are the others.
     copy_file(&cargo_output(ctx, &format!("bifurc{EXE}"), false)?, &dir.join("bin").join(format!("bifurc{EXE}")))?;
     copy_file(&cargo_output(ctx, &format!("bifurc{EXE}"), true)?, &dir.join("resources").join(format!("bifurc-cli{EXE}")))?;
