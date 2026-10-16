@@ -8,7 +8,6 @@ use reqwest::{
     Client, Method, Response,
     header::{HeaderMap, HeaderName, HeaderValue},
 };
-use serde_json::Value;
 use tokio::io::{AsyncWrite, AsyncWriteExt};
 
 use crate::{
@@ -18,9 +17,9 @@ use crate::{
     utils::{
         decompress::{decompress_body, strip_content_encoding},
         http::{ClientOptions, client as http_client, is_hop_by_hop, root_message},
-        json::str_of,
         send_html::html_response,
     },
+    workspace::models::ProxyRule,
 };
 
 /// The buffered answer of the real server (what mocks merge with).
@@ -285,10 +284,6 @@ pub async fn passthrough_to_upstream_https<W: AsyncWrite + Unpin>(
     forward_streaming(out, method, &format!("https://{hostname}:{port}{path}"), &label, headers, body, log_id).await
 }
 
-fn has_script(rule: Option<&Value>, key: &str) -> bool {
-    rule.is_some_and(|rule| !str_of(rule, key).trim().is_empty())
-}
-
 /// Fetch the whole answer of a rule's target, running the rule's request script before and its response
 /// script after (a script that fails leaves the message as it was). `target` is `host:port`, or a URL, in which
 /// case the URL's own path is requested instead of `path`.
@@ -298,13 +293,12 @@ pub async fn fetch_upstream_response(
     path: &str,
     req_headers: &Headers,
     req_body: &[u8],
-    rule: Option<&Value>,
+    rule: Option<&ProxyRule>,
     ws_id: &str,
 ) -> Result<BufferedProxyResponse, String> {
     let (mut headers, mut body) = (req_headers.clone(), req_body.to_vec());
-    if has_script(rule, "requestScript") {
-        let scripted =
-            super::handler::run_request_script(rule.unwrap_or(&Value::Null), ws_id, req_headers, req_body).await;
+    if let Some(rule) = rule.filter(|r| !r.request_script.trim().is_empty()) {
+        let scripted = super::handler::run_request_script(rule, ws_id, req_headers, req_body).await;
         (headers, body) = (scripted.headers, scripted.body);
     }
 
@@ -337,17 +331,17 @@ pub async fn fetch_upstream_response(
     let decompressed = decompress_body(&raw, &encoding);
     let decompressed_headers = if encoding.is_empty() { raw_headers } else { strip_content_encoding(&raw_headers) };
 
-    if !has_script(rule, "responseScript") {
+    let Some(rule) = rule.filter(|r| !r.response_script.trim().is_empty()) else {
         return Ok(UpstreamResponse {
             status,
             headers: decompressed_headers,
             body: decompressed,
             duration_ms: elapsed_ms(t0),
         });
-    }
-    let script = str_of(rule.unwrap_or(&Value::Null), "responseScript");
+    };
     let scripted =
-        execute_response_script(script, &decompressed_headers, &String::from_utf8_lossy(&decompressed)).await;
+        execute_response_script(&rule.response_script, &decompressed_headers, &String::from_utf8_lossy(&decompressed))
+            .await;
     let failed = scripted.error.is_some();
     Ok(UpstreamResponse {
         status,

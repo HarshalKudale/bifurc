@@ -32,10 +32,10 @@ use crate::{
     utils::{
         cache_policy::strip_cache_headers,
         id::{mk_id, now_ms},
-        json::{array_of, str_of, truthy},
+        json::str_of,
         net::hostname_of,
     },
-    workspace::{dispatch::active_env, settings::load_settings},
+    workspace::{models::Routing, settings::load_settings},
 };
 
 /// The routing config of the workspace the edge serves, or `None` when this engine does not serve it.
@@ -173,9 +173,9 @@ async fn route<W: AsyncRead + AsyncWrite + Unpin>(
     };
     base.workspace_id = Some(str_of(&cfg, "activeWorkspaceId").to_string());
 
-    let env = active_env(&cfg);
-    let mapping =
-        array_of(&cfg, "mappings").iter().find(|m| truthy(m, "enabled") && str_of(m, "domain").to_lowercase() == host);
+    let routing = Routing::from_cfg(&cfg);
+    let env = routing.env.as_ref();
+    let mapping = routing.mappings.iter().find(|m| m.enabled && m.domain == host);
     let is_localhost_domain = host.ends_with(".localhost");
 
     if mapping.is_none() && !is_localhost_domain {
@@ -184,14 +184,14 @@ async fn route<W: AsyncRead + AsyncWrite + Unpin>(
     }
 
     // Mocks written for a name's `http://` address keep applying once the name is served over HTTPS.
-    let mocks = array_of(&cfg, "mocks");
+    let mocks = &routing.mocks;
     let http_url = format!("http://{host_header}{req_path}");
-    let matched = match_mock(mocks, method, &url, env.as_ref())
-        .or_else(|| if shared.is_secure() { match_mock(mocks, method, &http_url, env.as_ref()) } else { None });
+    let matched = match_mock(mocks, method, &url, env)
+        .or_else(|| if shared.is_secure() { match_mock(mocks, method, &http_url, env) } else { None });
     if let Some(mock) = matched {
-        let mock_target = Some(format!("mock:{}", str_of(mock, "id")));
+        let mock_target = Some(format!("mock:{}", mock.id));
         if is_fully_mocked(mock) {
-            let resolved = resolve_mock_only_response(mock, env.as_ref());
+            let resolved = resolve_mock_only_response(mock, env);
             emit_log(&crate::proxy::finished_entry(
                 &base,
                 resolved.status,
@@ -202,7 +202,7 @@ async fn route<W: AsyncRead + AsyncWrite + Unpin>(
                 log_body(&resolved.body),
             ));
             let _ = if is_streaming_mock(mock) {
-                serve_mock(out, mock, env.as_ref()).await
+                serve_mock(out, mock, env).await
             } else {
                 serve_resolved_response(out, &resolved).await
             };
@@ -222,12 +222,12 @@ async fn route<W: AsyncRead + AsyncWrite + Unpin>(
             emit_log(&error_entry(&base, 502, now_ms() - t0));
             return;
         };
-        let target = str_of(mapping, "target");
+        let target = mapping.target.as_deref().unwrap_or("");
         let upstream: Result<UpstreamResponse, String> =
             crate::proxy::fetch_upstream_response(method, target, req_path, &headers, body, None, "").await;
         match upstream {
             Ok(upstream) => {
-                let merged = merge_mock_with_upstream(mock, &upstream, env.as_ref());
+                let merged = merge_mock_with_upstream(mock, &upstream, env);
                 emit_log(&crate::proxy::finished_entry(
                     &base,
                     merged.status,
@@ -254,7 +254,7 @@ async fn route<W: AsyncRead + AsyncWrite + Unpin>(
 
     match mapping {
         Some(mapping) => {
-            let target = str_of(mapping, "target");
+            let target = mapping.target.as_deref().unwrap_or("");
             let via = if is_localhost_domain { "rfc6761" } else { "mapping" };
             let outcome = proxy_to_upstream(out, method, target, req_path, &headers, body, Some(&base.id)).await;
             if let Some(outcome) = outcome {

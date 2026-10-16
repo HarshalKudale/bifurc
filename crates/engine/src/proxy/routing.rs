@@ -1,7 +1,6 @@
 //! The forward proxy's routing: a request meets the mocks first, then the proxy rules; anything neither
 //! claims is left for the caller to pass through.
 
-use serde_json::Value;
 use tokio::io::AsyncWrite;
 
 use super::{
@@ -16,16 +15,15 @@ use crate::{
     },
     utils::{
         id::now_ms,
-        json::{array_of, str_of},
         replay::{decode_base64_lenient, replay_request},
     },
+    workspace::models::Routing,
 };
 
 /// A request as the routing sees it.
 pub struct Exchange<'a> {
-    /// The dispatch config: mocks, mappings and rules, already narrowed to what is switched on.
-    pub cfg: &'a Value,
-    pub env: Option<&'a Value>,
+    /// The mocks, mappings and rules, already narrowed to what is switched on, and the environment.
+    pub routing: &'a Routing,
     pub method: &'a str,
     pub url: &'a str,
     /// What a rule's pattern is matched against.
@@ -95,17 +93,16 @@ const RULE_WITHOUT_TARGET: &str = "<h1>502 Bad Gateway</h1><p>Proxy rule matched
 /// Route one request. `true` when a mock or a rule took it (and the response was written to `out`); `false`
 /// when nothing matched and the caller should pass it through.
 pub async fn handle_proxy_routing<W: AsyncWrite + Unpin>(out: &mut W, ex: &Exchange<'_>) -> bool {
-    let mocks = array_of(ex.cfg, "mocks");
-    let rules = array_of(ex.cfg, "proxyRules");
-    let mappings = array_of(ex.cfg, "mappings");
-    let rule = match_proxy_rule(rules, ex.rule_match_target, mappings);
+    let routing = ex.routing;
+    let env = routing.env.as_ref();
+    let rule = match_proxy_rule(&routing.rules, ex.rule_match_target, &routing.mappings);
     let rule_target = rule.target.clone().filter(|t| !t.is_empty());
 
     // Mocks come first.
-    if let Some(mock) = match_mock(mocks, ex.method, ex.url, ex.env) {
-        let mock_target = Some(format!("mock:{}", str_of(mock, "id")));
+    if let Some(mock) = match_mock(&routing.mocks, ex.method, ex.url, env) {
+        let mock_target = Some(format!("mock:{}", mock.id));
         if is_fully_mocked(mock) {
-            let resolved = resolve_mock_only_response(mock, ex.env);
+            let resolved = resolve_mock_only_response(mock, env);
             emit_log(&finished_entry(
                 ex.base,
                 resolved.status,
@@ -116,7 +113,7 @@ pub async fn handle_proxy_routing<W: AsyncWrite + Unpin>(out: &mut W, ex: &Excha
                 log_body(&resolved.body),
             ));
             let _ = if is_streaming_mock(mock) {
-                serve_mock(out, mock, ex.env).await
+                serve_mock(out, mock, env).await
             } else {
                 serve_resolved_response(out, &resolved).await
             };
@@ -137,7 +134,7 @@ pub async fn handle_proxy_routing<W: AsyncWrite + Unpin>(out: &mut W, ex: &Excha
                     ex.headers,
                     ex.body,
                     Some(matched_rule),
-                    str_of(ex.cfg, "activeWorkspaceId"),
+                    &routing.workspace_id,
                 )
                 .await
             }
@@ -152,7 +149,7 @@ pub async fn handle_proxy_routing<W: AsyncWrite + Unpin>(out: &mut W, ex: &Excha
         };
         match upstream {
             Ok(upstream) => {
-                let merged = merge_mock_with_upstream(mock, &upstream, ex.env);
+                let merged = merge_mock_with_upstream(mock, &upstream, env);
                 emit_log(&finished_entry(
                     ex.base,
                     merged.status,
@@ -186,8 +183,7 @@ pub async fn handle_proxy_routing<W: AsyncWrite + Unpin>(out: &mut W, ex: &Excha
         emit_log(&error_entry(ex.base, 502, now_ms() - ex.t0));
         return true;
     };
-    let has_scripts = !str_of(matched_rule, "requestScript").trim().is_empty()
-        || !str_of(matched_rule, "responseScript").trim().is_empty();
+    let has_scripts = !matched_rule.request_script.trim().is_empty() || !matched_rule.response_script.trim().is_empty();
     let outcome = if has_scripts {
         proxy_with_scripts(
             out,
@@ -197,7 +193,7 @@ pub async fn handle_proxy_routing<W: AsyncWrite + Unpin>(out: &mut W, ex: &Excha
             ex.headers,
             ex.body,
             matched_rule,
-            str_of(ex.cfg, "activeWorkspaceId"),
+            &routing.workspace_id,
         )
         .await
     } else {
