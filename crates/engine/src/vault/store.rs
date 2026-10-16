@@ -5,7 +5,7 @@
 use std::path::PathBuf;
 
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use super::crypto::{Kdf, Key, Sealed, open, seal};
 use crate::{
@@ -64,7 +64,8 @@ fn check_identifier(what: &str, name: &str) -> Result<()> {
 pub fn check_vault_name(name: &str) -> Result<()> {
     check_identifier("vault", name)?;
     if RESERVED_NAMES.contains(&name.to_ascii_lowercase().as_str()) {
-        return Err(EngineError::bad_request(format!("\"{name}\" is reserved; choose another vault name.")));
+        return Err(EngineError::bad_request(format!("\"{name}\" is reserved; choose another vault name."))
+            .keyed("vault.name_reserved", json!({ "name": name })));
     }
     Ok(())
 }
@@ -77,7 +78,8 @@ pub fn check_passphrase(passphrase: &str) -> Result<()> {
     if passphrase.chars().count() < MIN_PASSPHRASE_LEN {
         return Err(EngineError::bad_request(format!(
             "The passphrase must be at least {MIN_PASSPHRASE_LEN} characters."
-        )));
+        ))
+        .keyed("vault.passphrase_short", json!({ "min": MIN_PASSPHRASE_LEN })));
     }
     Ok(())
 }
@@ -107,9 +109,9 @@ pub fn get(ws_id: &str, id: &str) -> Result<VaultFile> {
     if id.is_empty() || !id.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
         return Err(EngineError::bad_request("Not a vault id."));
     }
-    read_json(&file_path(ws_id, id))
-        .and_then(|value| serde_json::from_value(value).ok())
-        .ok_or_else(|| EngineError::not_found(format!("No vault \"{id}\".")))
+    read_json(&file_path(ws_id, id)).and_then(|value| serde_json::from_value(value).ok()).ok_or_else(|| {
+        EngineError::not_found(format!("No vault \"{id}\".")).keyed("vault.not_found", json!({ "id": id }))
+    })
 }
 
 pub fn find_by_name(ws_id: &str, name: &str) -> Option<VaultFile> {
@@ -143,7 +145,8 @@ impl VaultFile {
         let key = self.kdf.derive(passphrase)?;
         match open(&key, &aad(&self.id, "check"), &self.check) {
             Some(text) if text.as_slice() == CHECK_TEXT => Ok(key),
-            _ => Err(EngineError::new(crate::protocol::ErrorCode::Forbidden, "Wrong passphrase.")),
+            _ => Err(EngineError::new(crate::protocol::ErrorCode::Forbidden, "Wrong passphrase.")
+                .keyed("vault.wrong_passphrase", json!({}))),
         }
     }
 

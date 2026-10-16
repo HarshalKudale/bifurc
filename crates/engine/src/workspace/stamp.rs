@@ -95,6 +95,7 @@ pub fn update_required(version: &str) -> EngineError {
         ),
         json!({ "reason": UPDATE_REQUIRED, "requiredVersion": version, "engineVersion": ENGINE_VERSION }),
     )
+    .keyed("entity.update_required", json!({ "version": version, "current": ENGINE_VERSION }))
 }
 
 /// The error for deleting a folder that holds an entity locked to `version`.
@@ -106,6 +107,7 @@ pub fn folder_update_required(version: &str) -> EngineError {
         ),
         json!({ "reason": UPDATE_REQUIRED, "requiredVersion": version, "engineVersion": ENGINE_VERSION }),
     )
+    .keyed("folder.update_required", json!({ "version": version, "current": ENGINE_VERSION }))
 }
 
 /// `update_required` for the functions that answer with an `io::Error`.
