@@ -16,12 +16,13 @@ use gpui_kit::{
     AppContext as _, ClipboardItem, Context, Entity, InteractiveElement as _, IntoElement, ParentElement as _, Render,
     StatefulInteractiveElement as _, Styled as _, Subscription, Window, div,
 };
+use gpui_kit::prelude::FluentBuilder as _;
 use serde_json::{Map, json};
 
 use crate::{
     app_model::{AppModel, Deleted},
     components::{
-        dialogs::{PromptField, confirm_danger, delete_consequence, prompt},
+        dialogs::{PromptField, confirm_danger, delete_consequence, needs_update, prompt},
         page,
     },
     engine::{call, failure, patch_entity},
@@ -182,6 +183,8 @@ impl MappingsScreen {
         };
         let changed = !state_label.is_empty();
         let deleted = mapping.deleted;
+        // Saved by a newer Bifurc: listed, with the sign for an update; it has no switch and no menu.
+        let locked = mapping.locked.clone();
         let model = self.model.clone();
         let deleted_model = self.model.clone();
         let toggle_id = mapping.id.clone();
@@ -204,7 +207,11 @@ impl MappingsScreen {
             .text_sm()
             .border_b_1()
             .border_color(theme.border)
-            .child(div().w_12().flex_none().children((!deleted).then(|| {
+            .when_some(locked.clone(), |row, version| {
+                let name = mapping.domain.clone();
+                row.on_click(move |_, window, cx| needs_update(name.clone(), version.clone(), window, cx))
+            })
+            .child(div().w_12().flex_none().children((!deleted && locked.is_none()).then(|| {
                 Switch::new(key("enabled")).checked(mapping.enabled).small().on_change(move |checked: &bool, _, cx| {
                     let checked = *checked;
                     model.update(cx, |m, cx| m.set_enabled("mappings", &toggle_id, checked, cx));
@@ -219,10 +226,18 @@ impl MappingsScreen {
                     .font_family(theme.mono_font_family.clone())
                     .child(mapping.domain.clone());
                 // Deleted, and waiting to be confirmed or reverted: still listed, struck through.
-                if deleted { domain.line_through().text_color(theme.muted_foreground) } else { domain }
+                if deleted {
+                    domain.line_through().text_color(theme.muted_foreground)
+                } else if locked.is_some() {
+                    domain.text_color(theme.muted_foreground)
+                } else {
+                    domain
+                }
             })
             .child(Icon::new(IconName::ArrowRight).small().text_color(theme.muted_foreground))
-            .child(if deleted {
+            .child(if locked.is_some() {
+                div().flex_1().child(Icon::new(IconName::ArrowUp).small().text_color(theme.muted_foreground)).into_any_element()
+            } else if deleted {
                 // A deleted mapping has no target to show: what can be done with it goes here.
                 let (revert_model, confirm_model) = (deleted_model.clone(), deleted_model);
                 let (revert_id, confirm_id) = (mapping.id.clone(), mapping.id.clone());
@@ -264,7 +279,7 @@ impl MappingsScreen {
                 if deleted { label.line_through() } else { label }
             })
             .child(div().w_24().flex_none().text_xs().text_color(theme.muted_foreground).child(state_label))
-            .child(div().w_8().flex_none().children((!deleted).then(|| {
+            .child(div().w_8().flex_none().children((!deleted && locked.is_none()).then(|| {
                 Button::new(key("actions")).icon(IconName::Ellipsis).ghost().small().dropdown_menu(
                     move |menu, _, _| {
                         let (edit_view, delete_view) = (this.clone(), this.clone());

@@ -62,6 +62,15 @@ pub fn is_deleted(model: &AppModel, key: &TreeKey) -> bool {
     }
 }
 
+/// The version of Bifurc the flow needs, when a newer one than this last saved it. A folder is never locked:
+/// it is a directory, and moving or renaming it changes nothing in it.
+fn locked_to(model: &AppModel, key: &TreeKey) -> Option<String> {
+    match key {
+        TreeKey::Folder(_) => None,
+        TreeKey::Item(id) => model.config().flows.iter().find(|f| f.id == *id).and_then(|f| f.locked.clone()),
+    }
+}
+
 fn folder_of(model: &AppModel, id: &str) -> Option<String> {
     model.config().flows.iter().find(|f| f.id == id).and_then(|f| f.folder_id.clone())
 }
@@ -234,6 +243,12 @@ fn context_menu(
                 confirm_model.update(cx, |model, cx| model.confirm_delete(confirm.clone(), cx));
             }));
     }
+    // What a newer Bifurc saved can only be asked about: opening it says which version it needs.
+    if let (TreeKey::Item(id), Some(_)) = (&key, locked_to(model.read(cx), &key)) {
+        return menu.item(
+            PopupMenuItem::new(t("flows.menu.update_required")).on_click(emitter(tree, FlowTreeEvent::Open(id.clone()))),
+        );
+    }
     let menu = match &key {
         TreeKey::Item(id) => menu
             .item(PopupMenuItem::new(t("flows.common.open")).on_click(emitter(tree, FlowTreeEvent::Open(id.clone()))))
@@ -265,6 +280,7 @@ fn render_row(
     let key = TreeKey::parse(entry.item().id.as_str());
     let label = entry.item().label.clone();
     let deleted = key.as_ref().is_some_and(|key| is_deleted(model.read(cx), key));
+    let locked = key.as_ref().is_some_and(|key| locked_to(model.read(cx), key).is_some());
     let icon = match &key {
         Some(TreeKey::Folder(_)) if entry.is_expanded() => IconName::FolderOpen,
         Some(TreeKey::Folder(_)) => IconName::Folder,
@@ -306,8 +322,11 @@ fn render_row(
                         .overflow_hidden()
                         .text_ellipsis()
                         .when(deleted, |this| this.line_through().text_color(theme.muted_foreground))
+                        .when(locked, |this| this.text_color(theme.muted_foreground))
                         .child(label.clone()),
                 )
+                // Saved by a newer Bifurc: the sign for an update. Opening it says which version.
+                .children(locked.then(|| Icon::new(IconName::ArrowUp).small().text_color(theme.muted_foreground)))
                 .children(pending.then(|| div().flex_none().pr_2().text_xs().text_color(theme.warning).child("●"))),
         )
         .on_click(move |_, _, cx| {
@@ -329,8 +348,8 @@ fn render_row(
         }
         None => row,
     };
-    // What is deleted stays where it is until it is reverted.
-    match key.filter(|_| !deleted) {
+    // What is deleted stays where it is until it is reverted, and what is locked until Bifurc is updated.
+    match key.filter(|_| !deleted && !locked) {
         Some(key) => tree_drag::draggable(row, key, label, move |key: &TreeKey, cx| {
             let key = key.clone();
             drag_tree.update(cx, |this, cx| this.drag_started(key, cx)).ok();

@@ -849,11 +849,9 @@ mod tests {
         let stream = create(&ctx, "sseRequests", json!({ "name": "Feed", "url": "http://a/feed" })).await;
         let made_mock = create(&ctx, "mocks", mock("/a")).await;
         let rule = create(&ctx, "proxyRules", json!({ "name": "R", "pattern": "/x" })).await;
-        let mapping = create(&ctx, "mappings", json!({ "domain": "app.localhost", "target": "localhost:3000" })).await;
         for (kind, entity) in [("requests", &request), ("sseRequests", &stream), ("mocks", &made_mock), ("rules", &rule)] {
             assert_eq!(stamp_of(kind, str_of(entity, "id")), crate::ENGINE_VERSION, "{kind}");
         }
-        assert_eq!(stamp_of("mappings", str_of(&mapping, "id")), Value::Null, "a mapping carries no stamp");
 
         // What a client sends as the stamp is not what is written.
         let mut forged = request.clone();
@@ -861,6 +859,96 @@ mod tests {
         forged["name"] = json!("Pong");
         call(&ctx, "entity.update", json!({ "kind": "requests", "entity": forged })).await.unwrap();
         assert_eq!(stamp_of("requests", str_of(&request, "id")), crate::ENGINE_VERSION);
+    }
+
+    /// A flow, a mapping and an environment, as `entity.create` takes them.
+    fn flow_mapping_environment() -> [(&'static str, &'static str, Value); 3] {
+        [
+            ("flows", "flows", json!({ "name": "F", "nodes": [], "edges": [] })),
+            ("mappings", "mappings", json!({ "domain": "app.localhost", "target": "localhost:3000" })),
+            ("environments", "environments", json!({ "name": "Dev", "variables": [] })),
+        ]
+    }
+
+    #[tokio::test]
+    async fn flows_mappings_and_environments_are_stamped_and_keep_an_unchanged_stamp() {
+        let _root = scratch_data_root();
+        let ctx = context();
+        for (kind, store, entity) in flow_mapping_environment() {
+            let id = str_of(&create(&ctx, kind, entity).await, "id").to_string();
+            assert_eq!(stamp_of(store, &id), crate::ENGINE_VERSION, "{kind}");
+
+            // Saved as it is, and saved with everything else when the snapshot is: an earlier stamp stays.
+            let file = find_entity_file(WS, store, &id).unwrap();
+            let mut earlier = read_json(&file).unwrap();
+            earlier[stamp::VERSION_FIELD] = json!("0.0.1");
+            write_json_pretty(&file, &earlier).unwrap();
+            let loaded = call(&ctx, "entity.load", json!({ "workspaceId": WS, "kind": kind, "id": id })).await.unwrap();
+            call(&ctx, "entity.update", json!({ "kind": kind, "entity": loaded["entity"] })).await.unwrap();
+            save_config(&load_config()).unwrap();
+            assert_eq!(stamp_of(store, &id), "0.0.1", "{kind}: nothing changed");
+        }
+    }
+
+    #[tokio::test]
+    async fn a_flow_mapping_or_environment_a_newer_engine_wrote_is_listed_and_left_alone() {
+        let _root = scratch_data_root();
+        let ctx = context();
+        for (kind, store, entity) in flow_mapping_environment() {
+            let entity = create(&ctx, kind, entity).await;
+            let id = str_of(&entity, "id").to_string();
+            let file = written_by(store, &id, Some("999.0.0"));
+            let before = std::fs::read(&file).unwrap();
+
+            let cfg = load_config();
+            let listed = array_of(&cfg, kind).iter().find(|e| str_of(e, "id") == id).cloned().expect("it is listed");
+            assert_eq!(listed["locked"], true, "{kind}");
+            assert_eq!(listed["requiredVersion"], "999.0.0", "{kind}");
+            assert!(listed.get("somethingNewer").is_none(), "{kind}");
+            assert_eq!(array_of(&cfg, kind).iter().filter(|e| str_of(e, "id") == id).count(), 1, "{kind}");
+            assert!(read_all_entities(WS, store).iter().all(|e| str_of(e, "id") != id), "{kind}: nothing reads it");
+
+            let load = json!({ "workspaceId": WS, "kind": kind, "id": id });
+            assert_eq!(
+                call(&ctx, "entity.load", load.clone()).await.unwrap(),
+                json!({ "ok": false, "locked": true, "requiredVersion": "999.0.0" }),
+                "{kind}"
+            );
+            let mut changed = entity.clone();
+            changed["name"] = json!("Mine now");
+            for result in [
+                call(&ctx, "entity.update", json!({ "kind": kind, "entity": changed })).await,
+                call(&ctx, "entity.delete", json!({ "kind": kind, "id": id })).await,
+            ] {
+                assert_eq!(update_required(result), "999.0.0", "{kind}");
+            }
+            let stored = if store == "flows" {
+                write_entity(WS, store, &id, &entity, None)
+            } else {
+                crate::workspace::fs::write_flat_entity(WS, store, &id, &entity)
+            };
+            assert!(stored.is_err(), "{kind}: the store itself refuses");
+            save_config(&load_config()).unwrap();
+            assert_eq!(std::fs::read(&file).unwrap(), before, "{kind}: its file is as the newer engine left it");
+        }
+    }
+
+    #[tokio::test]
+    async fn the_global_environment_stays_when_a_newer_engine_wrote_it() {
+        let _root = scratch_data_root();
+        let _ctx = context();
+        let _ = load_config();
+        let file = find_entity_file(WS, "environments", crate::workspace::config::GLOBAL_ENV_ID).unwrap();
+        let mut global = read_json(&file).unwrap();
+        global[stamp::VERSION_FIELD] = json!("999.0.0");
+        write_json_pretty(&file, &global).unwrap();
+        let before = std::fs::read(&file).unwrap();
+        let cfg = load_config();
+        let is_global = |e: &&Value| str_of(e, "id") == crate::workspace::config::GLOBAL_ENV_ID;
+        let listed: Vec<_> = array_of(&cfg, "environments").iter().filter(is_global).collect();
+        assert_eq!((listed.len(), listed[0]["locked"].clone()), (1, json!(true)));
+        save_config(&cfg).unwrap();
+        assert_eq!(std::fs::read(&file).unwrap(), before);
     }
 
     #[tokio::test]

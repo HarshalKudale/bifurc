@@ -38,7 +38,7 @@ use crate::{
         id::{generate_id, now_ms},
         json::{array_of, is_truthy, opt_str, str_of},
     },
-    workspace::config::load_entity,
+    workspace::{config::load_entity, fs::entity_lock},
 };
 
 /// How long a run may take when neither the flow nor the caller says.
@@ -705,8 +705,10 @@ pub(super) struct Plan {
 /// Read what a run was asked for. The inner `Err` is the answer to a flow that cannot run as asked.
 pub(super) fn plan(params: &Value) -> Result<std::result::Result<Plan, Value>> {
     let (ws_id, flow_id) = (str_of(params, "workspaceId"), str_of(params, "id"));
-    let entity = load_entity(ws_id, "flows", flow_id)
-        .ok_or_else(|| EngineError::not_found(format!("No saved flow \"{flow_id}\" in workspace \"{ws_id}\".")))?;
+    let entity = load_entity(ws_id, "flows", flow_id).ok_or_else(|| match entity_lock(ws_id, "flows", flow_id) {
+        Some(version) => crate::workspace::stamp::update_required(&version),
+        None => EngineError::not_found(format!("No saved flow \"{flow_id}\" in workspace \"{ws_id}\".")),
+    })?;
     let flow = Flow::parse(&entity)?;
 
     let described = validate::describe(ws_id, &flow);

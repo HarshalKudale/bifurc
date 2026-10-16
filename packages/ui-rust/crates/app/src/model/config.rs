@@ -133,6 +133,9 @@ pub struct EnvironmentInfo {
     pub variables: Vec<EnvVariable>,
     /// Deleted here; the deletion is waiting to be confirmed or reverted.
     pub deleted: bool,
+    /// The version of Bifurc it needs, when a newer one than this last saved it. It is listed and nothing
+    /// else: the engine does not read or change it until this install is updated.
+    pub locked: Option<String>,
 }
 
 impl EnvironmentInfo {
@@ -152,6 +155,9 @@ pub struct FlowInfo {
     pub folder_id: Option<String>,
     /// Deleted here; the deletion is waiting to be confirmed or reverted.
     pub deleted: bool,
+    /// The version of Bifurc it needs, when a newer one than this last saved it. It is listed and nothing
+    /// else: the engine does not read or change it until this install is updated.
+    pub locked: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -163,6 +169,9 @@ pub struct MappingInfo {
     pub enabled: bool,
     /// Deleted here; the deletion is waiting to be confirmed or reverted.
     pub deleted: bool,
+    /// The version of Bifurc it needs, when a newer one than this last saved it. It is listed and nothing
+    /// else: the engine does not read or change it until this install is updated.
+    pub locked: Option<String>,
 }
 
 /// What the explorer shows for a saved request: enough to list and find it, not the request itself.
@@ -319,7 +328,13 @@ impl ConfigSnapshot {
                             .collect()
                     })
                     .unwrap_or_default();
-                Some(EnvironmentInfo { id: text(e, "id")?, name: text(e, "name")?, variables, deleted: is_deleted(e) })
+                Some(EnvironmentInfo {
+                    id: text(e, "id")?,
+                    name: text(e, "name")?,
+                    variables,
+                    deleted: is_deleted(e),
+                    locked: locked_to(e),
+                })
             })
             .collect();
 
@@ -331,6 +346,7 @@ impl ConfigSnapshot {
                     name: text(f, "name").unwrap_or_default(),
                     folder_id: non_empty(f, "folderId"),
                     deleted: is_deleted(f),
+                    locked: locked_to(f),
                 })
             })
             .collect();
@@ -358,6 +374,7 @@ impl ConfigSnapshot {
                     label: non_empty(m, "label"),
                     enabled: m.get("enabled").and_then(Value::as_bool).unwrap_or(false),
                     deleted: is_deleted(m),
+                    locked: locked_to(m),
                 })
             })
             .collect();
@@ -458,9 +475,10 @@ impl ConfigSnapshot {
         self.environments.iter().find(|e| e.id == id)
     }
 
-    /// The environments a user chooses between: everything except the implicit global layer.
+    /// The environments a user chooses between: everything except the implicit global layer, and what a newer
+    /// Bifurc saved (the engine does not use it).
     pub fn selectable_environments(&self) -> impl Iterator<Item = &EnvironmentInfo> {
-        self.environments.iter().filter(|e| !e.is_global() && !e.deleted)
+        self.environments.iter().filter(|e| !e.is_global() && !e.deleted && e.locked.is_none())
     }
 
     pub fn request(&self, kind: RequestKind, id: &str) -> Option<&RequestStub> {
@@ -624,6 +642,27 @@ mod tests {
         assert_eq!(c.mock("k2").unwrap().locked.as_deref(), Some("9.0.0"));
         let rule = LockedRule { id: "p2".into(), name: "Newer".into(), version: "9.0.0".into() };
         assert_eq!(c.locked_rules, vec![rule]);
+    }
+
+    #[test]
+    fn a_flow_mapping_or_environment_a_newer_bifurc_saved_is_read_as_locked_too() {
+        let mut config = sample();
+        config["flows"] = json!([
+            {"id": "f1", "name": "Open"},
+            {"id": "f2", "name": "Newer", "locked": true, "requiredVersion": "9.0.0"},
+        ]);
+        config["mappings"] = json!([
+            {"id": "a1", "domain": "a.localhost"},
+            {"id": "a2", "domain": "b.localhost", "locked": true, "requiredVersion": "9.0.0"},
+        ]);
+        config["environments"] = json!([
+            {"id": "e1", "name": "Open", "variables": []},
+            {"id": "e2", "name": "Newer", "variables": [], "locked": true, "requiredVersion": "9.0.0"},
+        ]);
+        let c = ConfigSnapshot::from_value(&config).unwrap();
+        assert_eq!(c.flows.iter().map(|f| f.locked.as_deref()).collect::<Vec<_>>(), [None, Some("9.0.0")]);
+        assert_eq!(c.mappings.iter().map(|m| m.locked.as_deref()).collect::<Vec<_>>(), [None, Some("9.0.0")]);
+        assert_eq!(c.environments.iter().map(|e| e.locked.as_deref()).collect::<Vec<_>>(), [None, Some("9.0.0")]);
     }
 
     #[test]

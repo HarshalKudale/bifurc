@@ -9,7 +9,7 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use gpui_kit::component::{
-    ActiveTheme as _, Disableable as _, IconName, Sizable as _,
+    ActiveTheme as _, Disableable as _, Icon, IconName, Sizable as _,
     button::{Button, ButtonVariants as _},
     h_flex,
     input::{InputEvent, InputState},
@@ -29,7 +29,7 @@ use crate::{
     i18n::{t, t_with},
     components::{
         Autosave, EntityAction, EntityBar, KeyValueEvent, KeyValueTable,
-        dialogs::{PromptField, confirm_danger, delete_consequence, prompt, resolve_deleted},
+        dialogs::{PromptField, confirm_danger, delete_consequence, needs_update, prompt, resolve_deleted},
         entity_bar, page,
     },
     engine::{call, failure, patch_entity},
@@ -162,9 +162,11 @@ impl EnvironmentsScreen {
     /// the engine's copy whatever the controls hold.
     fn follow_model(&mut self, force: bool, window: &mut Window, cx: &mut Context<Self>) {
         let config = self.model.read(cx).config().clone();
-        // A deleted environment has nothing to edit: the selection leaves it.
-        let selected =
-            self.selected.as_deref().and_then(|id| config.environments.iter().find(|e| e.id == id && !e.deleted));
+        // A deleted environment has nothing to edit, nor has one a newer Bifurc saved: the selection leaves it.
+        let selected = self
+            .selected
+            .as_deref()
+            .and_then(|id| config.environments.iter().find(|e| e.id == id && !e.deleted && e.locked.is_none()));
         match selected {
             Some(environment) => {
                 let differs = Self::engine_edit(environment) != self.baseline;
@@ -178,8 +180,8 @@ impl EnvironmentsScreen {
             None => {
                 let fallback = config
                     .active_environment()
-                    .filter(|e| !e.deleted)
-                    .or_else(|| config.environments.iter().find(|e| !e.deleted))
+                    .filter(|e| !e.deleted && e.locked.is_none())
+                    .or_else(|| config.environments.iter().find(|e| !e.deleted && e.locked.is_none()))
                     .cloned();
                 match fallback {
                     Some(environment) => self.load(&environment, window, cx),
@@ -203,6 +205,11 @@ impl EnvironmentsScreen {
         if target.deleted {
             let deleted = Deleted::Entity { kind: "environments", id: target.id.clone() };
             resolve_deleted(self.model.clone(), deleted, target.name.clone(), window, cx);
+            return;
+        }
+        // Neither is one a newer Bifurc saved: the engine does not read it until this one is updated.
+        if let Some(version) = target.locked.clone() {
+            needs_update(target.name.clone(), version, window, cx);
             return;
         }
         if !self.is_dirty(cx) {
@@ -412,8 +419,13 @@ impl EnvironmentsScreen {
                                     .when(environment.deleted, |this| {
                                         this.line_through().text_color(theme.muted_foreground)
                                     })
+                                    .when(environment.locked.is_some(), |this| this.text_color(theme.muted_foreground))
                                     .child(environment.name.clone()),
                             )
+                            // Saved by a newer Bifurc: the sign for an update. Opening it says which version.
+                            .when(environment.locked.is_some(), |this| {
+                                this.child(Icon::new(IconName::ArrowUp).small().text_color(theme.muted_foreground))
+                            })
                             .when(environment.is_global(), |this| {
                                 this.child(div().text_xs().text_color(theme.muted_foreground).child(t("environments.always_applied")))
                             })
