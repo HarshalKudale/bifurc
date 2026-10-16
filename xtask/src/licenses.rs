@@ -3,7 +3,8 @@
 //! page embeds.
 //!
 //! It reads `cargo metadata` for the workspace, follows normal dependencies only (build tools and test crates
-//! are not shipped), and for each crate takes its LICENSE/COPYING/NOTICE files from the cargo registry. A crate
+//! are not shipped), ignores every `test-support` feature (a dev-dependency turns those on for the whole
+//! graph, and the optional crates they pull in are not part of any shipped binary), and for each crate takes its LICENSE/COPYING/NOTICE files from the cargo registry. A crate
 //! that publishes no license file gets the standard text of its license, with its authors as the copyright
 //! holder. Texts are grouped by license and de-duplicated, so a notice shared by several crates is stored once
 //! with all their names. Cargo needs the registry sources, so run `cargo fetch` first on a fresh checkout.
@@ -165,6 +166,65 @@ fn authors_of(p: &Value) -> String {
     if names.is_empty() { format!("The {} authors", p["name"].as_str().unwrap_or_default()) } else { names.join(", ") }
 }
 
+/// The optional dependencies of `package` that its enabled features switch on; with `tests` false, as if
+/// no feature named `test-support` were enabled, and with it true also those that feature only mentions.
+///
+/// `cargo metadata` unifies the features dev-dependencies ask for into one graph, so a test-only feature
+/// shows up there as an ordinary edge. Features are followed as the manifest spells them: `dep:x`, `x/feat`
+/// (which also enables an optional `x`, unlike `x?/feat`), another feature, or an implicit feature named
+/// after the dependency.
+fn enabled_optional(package: &Value, enabled: &[String], tests: bool) -> BTreeSet<String> {
+    let manifest = package["features"].as_object();
+    let items_of = |feature: &str| -> Vec<String> {
+        let items = manifest.and_then(|m| m.get(feature)).and_then(Value::as_array);
+        items.into_iter().flatten().filter_map(Value::as_str).map(str::to_owned).collect()
+    };
+    // What `test-support` switches on is enabled in the list too, so it is taken out along with it.
+    let mut implied = BTreeSet::new();
+    let mut on = BTreeSet::new();
+    let mut stack = vec!["test-support".to_owned()];
+    while let Some(feature) = stack.pop() {
+        if implied.insert(feature.clone()) {
+            stack.extend(items_of(&feature).into_iter().filter(|i| !i.contains(['/', ':'])));
+        }
+    }
+    if tests {
+        // `metadata` also lists the optional crate a test feature only mentions weakly (`x?/test-support`).
+        for item in implied.iter().flat_map(|feature| items_of(feature)) {
+            if let Some((dep, _)) = item.split_once('/') {
+                on.insert(dep.trim_end_matches('?').to_owned());
+            }
+        }
+        implied.clear();
+    }
+    let mut stack = enabled.to_vec();
+    let mut seen = BTreeSet::new();
+    while let Some(feature) = stack.pop() {
+        if implied.contains(&feature) || !seen.insert(feature.clone()) {
+            continue;
+        }
+        match manifest.and_then(|m| m.get(&feature)).and_then(Value::as_array) {
+            Some(items) => {
+                for item in items.iter().filter_map(Value::as_str) {
+                    if let Some(dep) = item.strip_prefix("dep:") {
+                        on.insert(dep.to_owned());
+                    } else if let Some((dep, _)) = item.split_once('/') {
+                        if !dep.ends_with('?') {
+                            on.insert(dep.to_owned());
+                        }
+                    } else {
+                        stack.push(item.to_owned());
+                    }
+                }
+            }
+            None => {
+                on.insert(feature);
+            }
+        }
+    }
+    on
+}
+
 /// Every non-workspace package reachable from a workspace member through normal dependencies.
 fn shipped(repo: &Path) -> Result<BTreeMap<(String, String), Value>> {
     let out = Command::new(env::var("CARGO").unwrap_or_else(|_| "cargo".into()))
@@ -189,9 +249,29 @@ fn shipped(repo: &Path) -> Result<BTreeMap<(String, String), Value>> {
         if !seen.insert(id.clone()) {
             continue;
         }
-        for dep in nodes.get(&id).and_then(|n| n["deps"].as_array()).into_iter().flatten() {
-            if dep["dep_kinds"].as_array().into_iter().flatten().any(|k| k["kind"].is_null()) {
-                stack.push(dep["pkg"].as_str().unwrap_or_default().to_owned());
+        let Some(node) = nodes.get(&id) else { continue };
+        let features: Vec<String> =
+            node["features"].as_array().into_iter().flatten().filter_map(Value::as_str).map(str::to_owned).collect();
+        let package = packages.get(&id);
+        let with_tests = package.map(|p| enabled_optional(p, &features, true)).unwrap_or_default();
+        let without_tests = package.map(|p| enabled_optional(p, &features, false)).unwrap_or_default();
+        for dep in node["deps"].as_array().into_iter().flatten() {
+            let pkg = dep["pkg"].as_str().unwrap_or_default();
+            if !dep["dep_kinds"].as_array().into_iter().flatten().any(|k| k["kind"].is_null()) {
+                continue;
+            }
+            // An optional dependency that only a `test-support` feature switches on is not shipped.
+            let name = packages.get(pkg).and_then(|p| p["name"].as_str()).unwrap_or_default();
+            let only_for_tests = package.and_then(|p| p["dependencies"].as_array()).into_iter().flatten().any(|d| {
+                let key = d["rename"].as_str().unwrap_or(name);
+                d["name"].as_str() == Some(name)
+                    && d["kind"].is_null()
+                    && d["optional"].as_bool() == Some(true)
+                    && with_tests.contains(key)
+                    && !without_tests.contains(key)
+            });
+            if !only_for_tests {
+                stack.push(pkg.to_owned());
             }
         }
     }

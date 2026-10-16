@@ -13,7 +13,11 @@ mod preferences;
 mod screens;
 mod session;
 mod shell;
+#[cfg(test)]
+mod test_support;
 mod theme;
+#[cfg(test)]
+mod ui_tests;
 
 use bifurc_engine_client::SidecarConfig;
 use gpui_kit::component::TitleBar;

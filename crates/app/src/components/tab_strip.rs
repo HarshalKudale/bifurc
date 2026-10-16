@@ -18,8 +18,8 @@ use gpui_kit::component::{
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, App, ClickEvent, Context, ElementId, InteractiveElement as _, IntoElement, MouseButton,
-    ParentElement as _, Rems, Render, SharedString, StatefulInteractiveElement as _, Styled as _, WeakEntity, Window,
-    div, px, rems, size,
+    ParentElement as _, Rems, Render, SharedString, StatefulInteractiveElement as _, Styled as _, TestSupportExt as _,
+    WeakEntity, Window, div, px, rems, size,
 };
 
 use crate::i18n::t;
@@ -91,6 +91,7 @@ fn render_tab<V: 'static>(
     let can_duplicate = tab.can_duplicate;
     h_flex()
         .id(ElementId::Name(format!("tab-{}", tab.id).into()))
+        .test_support()
         .flex_none()
         .w(TAB_WIDTH.to_pixels(window.rem_size()))
         .h_7()

@@ -951,7 +951,7 @@ impl MockEditor {
                     .px_3()
                     .py_2()
                     .child(div().w_32().flex_none().child(Select::new(&self.method).h(row_height)))
-                    .child(div().flex_1().min_w_0().child(VarEditor::row_input(&self.pattern, cx))),
+                    .child(div().flex_1().min_w_0().child(VarEditor::row_input(&self.pattern, cx).id("mock-pattern"))),
             )
             .child(
                 h_flex()
