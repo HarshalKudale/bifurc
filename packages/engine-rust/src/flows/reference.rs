@@ -4,7 +4,11 @@
 //! A reference is resolved once, against data: what it yields is never read for further references, so a
 //! response cannot name a secret or a variable for the flow to fill in.
 
-use std::{borrow::Cow, collections::HashMap, sync::Arc};
+use std::{
+    borrow::Cow,
+    collections::HashMap,
+    sync::{Arc, LazyLock},
+};
 
 use regress::Regex;
 use serde_json::Value;
@@ -103,8 +107,11 @@ pub fn pick(value: &Value, path: &[Value]) -> Option<Value> {
     Some(at.into_owned())
 }
 
-fn pattern() -> Regex {
-    Regex::new(r"\{\{\s*((?:input|nodes|flow)(?:\.[\w-]+|\[\d+\])*)\s*\}\}").expect("a valid pattern")
+fn pattern() -> &'static Regex {
+    static PATTERN: LazyLock<Regex> = LazyLock::new(|| {
+        Regex::new(r"\{\{\s*((?:input|nodes|flow)(?:\.[\w-]+|\[\d+\])*)\s*\}\}").expect("a valid pattern")
+    });
+    &PATTERN
 }
 
 /// The paths `template` refers to.

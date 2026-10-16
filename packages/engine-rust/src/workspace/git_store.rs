@@ -1,7 +1,7 @@
 //! Every workspace is a git repository; every saved change can become a commit, and the commit log is the
 //! audit trail. Git is driven through its command line, as a user would.
 
-use std::path::Path;
+use std::{path::Path, sync::LazyLock};
 
 use regress::Regex;
 use serde_json::{Value, json};
@@ -304,8 +304,12 @@ fn parse_audit_entry(block: &str) -> Option<Value> {
     }
     let body = lines.collect::<Vec<_>>().join("\n");
 
-    let current = Regex::new(r"^(create|update|delete) ([A-Za-z]\w*)(?: \[([^\]]*)\])? (.+)$").ok()?;
-    let legacy = Regex::new(r"^(create|update|delete)\((\w+)\): (.+)$").ok()?;
+    static PATTERNS: LazyLock<Option<(Regex, Regex)>> = LazyLock::new(|| {
+        let current = Regex::new(r"^(create|update|delete) ([A-Za-z]\w*)(?: \[([^\]]*)\])? (.+)$").ok()?;
+        let legacy = Regex::new(r"^(create|update|delete)\((\w+)\): (.+)$").ok()?;
+        Some((current, legacy))
+    });
+    let (current, legacy) = PATTERNS.as_ref()?;
     let change = body_field(&body, "change");
     let described = if current.find(subject).is_some() || legacy.find(subject).is_some() {
         subject

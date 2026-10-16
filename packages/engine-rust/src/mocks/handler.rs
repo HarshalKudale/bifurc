@@ -3,7 +3,6 @@
 
 use std::{collections::HashSet, time::Duration};
 
-use regress::Regex;
 use serde_json::Value;
 use tokio::io::{AsyncWrite, AsyncWriteExt};
 
@@ -76,10 +75,7 @@ pub fn match_mock<'a>(mocks: &'a [Value], method: &str, url: &str, env: Option<&
         }
         let pattern = resolve_vars(str_of(mock, "urlPattern"), env);
         let hit = if flag(mock, "useRegex", false) {
-            match Regex::new(&pattern) {
-                Ok(re) => re.find(url).is_some(),
-                Err(_) => continue,
-            }
+crate::utils::regex::is_match(&pattern, url)
         } else {
             url == pattern
         };
