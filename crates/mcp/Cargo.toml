@@ -10,10 +10,6 @@ description = "The Bifurc MCP server: the commands of the `bifurc` command line 
 name = "bifurc_mcp"
 path = "src/lib.rs"
 
-[[bin]]
-name = "bifurc-mcp"
-path = "src/main.rs"
-
 [dependencies]
 # Every tool is a command of the CLI, run by the CLI's own code.
 bifurc-cli = { path = "../cli" }

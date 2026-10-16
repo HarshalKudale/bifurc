@@ -8,7 +8,7 @@ no entity state: every change is an engine command, and the engine's events say 
 ui/
 ├── crates/engine-client   socket framing, hello, request/response + events, sidecar attach-or-start (no GPUI)
 ├── crates/tray            the engine's tray icon (bifurc-tray): a helper the engine runs, no GPUI
-├── crates/launcher        the installed `bifurc` command: a launcher for the Rust CLI (crates/cli)
+├── crates/bifurc          the `bifurc` command: the Rust CLI (crates/cli), or the MCP server (crates/mcp) with `--mcp`
 └── crates/app             the GPUI app (bifurc-ui); build.rs gives the Windows main thread a larger stack
     └── src/
         ├── model/         typed views of engine data and the logic over them (no GPUI; unit-tested)
@@ -33,7 +33,7 @@ Prerequisites: Rust (stable, 2024 edition). The engine and the CLI are Rust too 
 ```sh
 cargo dev:ui           # from the repository root: runs the UI, which joins a running engine or starts one
 # the engine and the CLI it starts come from the repository workspace:
-cargo build -p bifurc-engine -p bifurc-cli     # at the repository root
+cargo build -p bifurc-engine -p bifurc     # at the repository root
 ```
 
 On start the UI reads `<data dir>/runtime.json`. If an engine is already running for that data directory (for
@@ -83,8 +83,7 @@ Rust engine, the tray helper (Windows), and the `bifurc` command. No Node is shi
 bifurc-ui[.exe]      the interface
 bifurc-engine[.exe]  the engine (crates/engine)
 bifurc-tray.exe      the engine's tray icon (Windows)
-bin/bifurc[.exe]     the bifurc command (crates/cli, built as bifurc-launcher): a launcher that runs resources/bifurc-cli and points it at the engine
-resources/bifurc-cli[.exe]   the CLI (crates/cli)
+bin/bifurc[.exe]     the bifurc command (crates/bifurc): the CLI, or the MCP server with --mcp; finds the engine above its bin/
 ```
 
 | Package | File | `bifurc` on `PATH` |
