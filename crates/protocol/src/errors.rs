@@ -158,27 +158,30 @@ impl fmt::Display for EngineError {
 
 impl std::error::Error for EngineError {}
 
+// Catch-alls: an error that slips through unkeyed still has a code in engine.log. A `.keyed()` call overrides these.
 impl From<std::io::Error> for EngineError {
     fn from(err: std::io::Error) -> Self {
-        Self::engine(err.to_string())
+        let detail = err.to_string();
+        Self::engine(detail.clone()).keyed("engine.io_failed", serde_json::json!({ "detail": detail }))
     }
 }
 
 impl From<serde_json::Error> for EngineError {
     fn from(err: serde_json::Error) -> Self {
-        Self::engine(err.to_string())
+        let detail = err.to_string();
+        Self::engine(detail.clone()).keyed("engine.json_failed", serde_json::json!({ "detail": detail }))
     }
 }
 
 impl From<String> for EngineError {
     fn from(message: String) -> Self {
-        Self::engine(message)
+        Self::engine(message.clone()).keyed("engine.failed", serde_json::json!({ "detail": message }))
     }
 }
 
 impl From<&str> for EngineError {
     fn from(message: &str) -> Self {
-        Self::engine(message)
+        Self::from(message.to_owned())
     }
 }
 
@@ -213,6 +216,17 @@ mod tests {
             json!({ "field": "url", "key": "validation.required", "params": { "field": "url" } })
         );
         assert_eq!(EngineError::engine("x").keyed("a.b", json!({})).to_rpc()["details"]["key"], "a.b");
+    }
+
+    #[test]
+    fn converted_errors_carry_a_generic_key_that_keyed_replaces() {
+        let io = EngineError::from(std::io::Error::other("disk"));
+        assert_eq!((io.key(), io.params()), (Some("engine.io_failed"), Some(&json!({ "detail": "disk" }))));
+        assert_eq!(EngineError::from("boom").key(), Some("engine.failed"));
+        assert_eq!(EngineError::from(String::from("boom")).message, "boom");
+        let json_err = serde_json::from_str::<Value>("{").unwrap_err();
+        assert_eq!(EngineError::from(json_err).key(), Some("engine.json_failed"));
+        assert_eq!(EngineError::from("x").keyed("a.b", json!({})).key(), Some("a.b"));
     }
 
     #[test]

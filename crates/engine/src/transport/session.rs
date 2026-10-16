@@ -101,11 +101,15 @@ fn unsupported_event(wire: &str) -> EngineError {
     EngineError::unsupported(format!(
         "This transport cannot deliver \"{wire}\". It is either not a known event or not yet on the wire."
     ))
+    .keyed("transport.event_unsupported", json!({ "wire": wire }))
 }
 
 /// The `events` of a subscribe / unsubscribe payload.
 fn event_names(payload: &Value, what: &str) -> Result<Vec<String>, EngineError> {
-    let invalid = || EngineError::bad_request(format!("Invalid {what} payload: events must be an array of strings"));
+    let invalid = || {
+        EngineError::bad_request(format!("Invalid {what} payload: events must be an array of strings"))
+            .keyed("transport.events_invalid", json!({ "what": what }))
+    };
     let events = payload.get("events").and_then(Value::as_array).ok_or_else(invalid)?;
     events.iter().map(|e| e.as_str().map(str::to_string).ok_or_else(invalid)).collect()
 }
@@ -174,9 +178,13 @@ impl Session {
         if self.inner.state.lock().identity.is_some() {
             return Err(EngineError::conflict(format!(
                 "this session is already authenticated; \"{HELLO_ACTION}\" is only valid once"
-            )));
+            ))
+            .keyed("transport.already_authenticated", json!({ "action": HELLO_ACTION })));
         }
-        let invalid = |reason: &str| EngineError::bad_request(format!("invalid {HELLO_ACTION} payload: {reason}"));
+        let invalid = |reason: &str| {
+            EngineError::bad_request(format!("invalid {HELLO_ACTION} payload: {reason}"))
+                .keyed("transport.hello_invalid", json!({ "action": HELLO_ACTION, "reason": reason }))
+        };
         let protocol_version = payload
             .get("protocolVersion")
             .and_then(Value::as_str)
@@ -203,7 +211,8 @@ impl Session {
                      \"{PROTOCOL_VERSION}\" (major version mismatch)"
                 ),
                 json!({ "client": protocol_version, "engine": PROTOCOL_VERSION }),
-            );
+            )
+            .keyed("transport.version_incompatible", json!({ "client": protocol_version, "engine": PROTOCOL_VERSION }));
             if let Some(hook) = &opts.on_auth_failure {
                 hook(&error, Some(client_name));
             }
@@ -266,7 +275,8 @@ impl Session {
                 format!(
                     "the first request must be \"{HELLO_ACTION}\"; refusing \"{action}\" on an unauthenticated session"
                 ),
-            );
+            )
+            .keyed("transport.hello_required", json!({ "hello": HELLO_ACTION, "action": action }));
             if let Some(hook) = &self.inner.opts.on_auth_failure {
                 hook(&error, None);
             }
@@ -295,7 +305,8 @@ impl Session {
                             required.as_str()
                         ),
                         json!({ "required": required.as_str(), "granted": names }),
-                    ),
+                    )
+                    .keyed("transport.scope_missing", json!({ "required": required.as_str(), "action": action })),
                 ));
                 return;
             }
@@ -315,7 +326,10 @@ impl Session {
             ))
             .catch_unwind()
             .await
-            .unwrap_or_else(|_| Err(EngineError::engine(format!("\"{action}\" crashed inside the engine"))));
+            .unwrap_or_else(|_| {
+                Err(EngineError::engine(format!("\"{action}\" crashed inside the engine"))
+                    .keyed("transport.handler_crashed", json!({ "action": action })))
+            });
             if let Some(client) = client.filter(|_| registry.is_registered(&action)) {
                 let outcome = result.as_ref().map_err(|error| error.code.as_str());
                 crate::analytics::record_command(command, &action, &client, outcome);
@@ -336,14 +350,16 @@ impl Session {
         if let Some(denied) =
             self.inner.opts.allowed_events.and_then(|ok| events.iter().find(|w| !ok.contains(&w.as_str())))
         {
-            return Err(EngineError::new(ErrorCode::Forbidden, format!("this endpoint cannot deliver \"{denied}\"")));
+            return Err(EngineError::new(ErrorCode::Forbidden, format!("this endpoint cannot deliver \"{denied}\""))
+                .keyed("transport.event_forbidden", json!({ "event": denied })));
         }
         let mut state = self.inner.state.lock();
         if state.identity.is_none() {
             return Err(EngineError::new(
                 ErrorCode::Unauthorized,
                 format!("cannot subscribe before the \"{HELLO_ACTION}\" handshake"),
-            ));
+            )
+            .keyed("transport.subscribe_before_hello", json!({ "hello": HELLO_ACTION })));
         }
         let log = &self.inner.opts.log;
         for wire in &events {
@@ -364,7 +380,8 @@ impl Session {
                                  Reconnect without \"lastSeq\" and re-fetch state instead of waiting for events."
                             ),
                             json!({ "lastSeq": resume_from, "reason": reason }),
-                        ));
+                        )
+                        .keyed("transport.resume_unavailable", json!({ "seq": resume_from, "reason": reason })));
                     }
                 },
             };

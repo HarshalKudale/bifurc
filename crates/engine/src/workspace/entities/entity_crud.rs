@@ -40,6 +40,7 @@ use crate::{
 
 fn not_routed(command: &str, kind: &str) -> EngineError {
     EngineError::engine(format!("{command}: kind \"{kind}\" is not routed through the CommandRegistry yet"))
+        .keyed("entity.not_routed", json!({ "command": command, "kind": kind }))
 }
 
 /// The workspace an entity belongs to: its own `workspaceId`, else the active one.
@@ -186,13 +187,16 @@ fn create_entity_core(
 
 fn update_entity_core(kind: &CrudKind, entity: &Value) -> Result<Value> {
     let ws_id = workspace_of(entity, &load_config());
-    let id = opt_str(entity, "id").ok_or_else(|| EngineError::bad_request("entity.id is required"))?.to_string();
+    let id = opt_str(entity, "id")
+        .ok_or_else(|| EngineError::bad_request("entity.id is required").keyed("entity.id_required", json!({})))?
+        .to_string();
     if let Some(version) = entity_lock(&ws_id, kind.kind, &id) {
         return Err(stamp::update_required(&version));
     }
     // Writing it would bring its file back while it is still listed as deleted.
     if pending_entity(&ws_id, kind.kind, &id).is_some() && find_entity_file(&ws_id, kind.kind, &id).is_none() {
-        return Err(EngineError::conflict("It is deleted. Revert the delete to change it."));
+        return Err(EngineError::conflict("It is deleted. Revert the delete to change it.")
+            .keyed("entity.deleted_revert", json!({})));
     }
     let mut entity = entity.clone();
     place_in_folder(kind, &ws_id, &mut entity)?;
@@ -258,7 +262,9 @@ fn listing_of(kind: &str, entity: &Value) -> Value {
 
 async fn delete_entity_core(kind: &CrudKind, id: &str) -> Result<Value> {
     if kind.kind == "environments" && id == "__global__" {
-        return Ok(json!({ "ok": false, "error": "cannot_delete_global" }));
+        return Ok(json!({
+            "ok": false, "error": "cannot_delete_global", "errorKey": "env.cannot_delete_global", "errorParams": {},
+        }));
     }
 
     let mut cfg = load_config();
@@ -508,7 +514,7 @@ mod tests {
         );
         assert_eq!(read_names_index(WS, "requests")[&id]["name"], "Sign in");
 
-        let kept = crate::workspace::response_history::failed("x".into(), "GET".into(), "u".into());
+        let kept = crate::workspace::response_history::failed(&EngineError::engine("x"), "GET".into(), "u".into());
         crate::workspace::response_history::record(WS, &id, kept);
         assert_eq!(
             call(&ctx, "entity.delete", json!({ "kind": "requests", "id": id })).await.unwrap(),
@@ -786,7 +792,13 @@ mod tests {
         let _root = scratch_data_root();
         let ctx = context();
         let out = call(&ctx, "entity.delete", json!({ "kind": "environments", "id": "__global__" })).await.unwrap();
-        assert_eq!(out, json!({ "ok": false, "error": "cannot_delete_global" }));
+        assert_eq!(
+            out,
+            json!({
+                "ok": false, "error": "cannot_delete_global", "errorKey": "env.cannot_delete_global",
+                "errorParams": {},
+            })
+        );
     }
 
     #[tokio::test]

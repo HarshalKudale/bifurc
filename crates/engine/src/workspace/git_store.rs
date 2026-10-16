@@ -41,10 +41,11 @@ impl std::fmt::Display for GitError {
 
 impl From<GitError> for crate::protocol::EngineError {
     fn from(err: GitError) -> Self {
+        let detail = err.0.clone();
         let error = crate::protocol::EngineError::engine(err.0);
         match err.1 {
             Some((key, params)) => error.keyed(key, params),
-            None => error,
+            None => error.keyed("git.failed", json!({ "detail": detail })),
         }
     }
 }

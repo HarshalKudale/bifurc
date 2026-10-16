@@ -10,7 +10,7 @@ use std::{sync::Arc, time::Duration};
 
 use futures::{SinkExt, StreamExt};
 use parking_lot::Mutex;
-use serde_json::Value;
+use serde_json::{Value, json};
 use tokio::{
     io::{AsyncReadExt, AsyncWriteExt},
     net::{TcpListener, TcpStream},
@@ -69,12 +69,16 @@ pub async fn create_ws_server(port: u16, mut opts: SessionOptions) -> Result<Arc
     if !opts.capabilities.contains(&capability::WS) {
         opts.capabilities.push(capability::WS);
     }
-    let listener = TcpListener::bind((BIND_HOST, port))
-        .await
-        .map_err(|e| EngineError::engine(format!("Could not bind {BIND_HOST}:{port}: {e}")))?;
+    let listener = TcpListener::bind((BIND_HOST, port)).await.map_err(|e| {
+        EngineError::engine(format!("Could not bind {BIND_HOST}:{port}: {e}"))
+            .keyed("transport.bind_failed", json!({ "path": format!("{BIND_HOST}:{port}"), "detail": e.to_string() }))
+    })?;
     let port = listener
         .local_addr()
-        .map_err(|e| EngineError::engine(format!("The listener for {BIND_HOST} has no address after binding: {e}")))?
+        .map_err(|e| {
+            EngineError::engine(format!("The listener for {BIND_HOST} has no address after binding: {e}"))
+                .keyed("transport.ws_no_address", json!({ "host": BIND_HOST, "detail": e.to_string() }))
+        })?
         .port();
     let (closed, closed_rx) = watch::channel(false);
     let accept = tokio::spawn(async move {

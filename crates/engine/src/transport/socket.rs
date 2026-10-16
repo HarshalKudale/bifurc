@@ -3,6 +3,7 @@
 
 use std::sync::Arc;
 
+use serde_json::json;
 use tokio::{
     io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt},
     sync::{mpsc::unbounded_channel, watch},
@@ -72,6 +73,16 @@ impl SocketServer {
     }
 }
 
+fn socket_path_required() -> EngineError {
+    EngineError::bad_request("createSocketServer needs a non-empty socket path.")
+        .keyed("transport.socket_path_required", json!({}))
+}
+
+fn bind_failed(path: &str, e: &std::io::Error) -> EngineError {
+    EngineError::engine(format!("Could not bind {path}: {e}"))
+        .keyed("transport.bind_failed", json!({ "path": path, "detail": e.to_string() }))
+}
+
 fn session_options(mut opts: SessionOptions) -> SessionOptions {
     if !opts.capabilities.contains(&capability::SOCKET) {
         opts.capabilities.push(capability::SOCKET);
@@ -85,13 +96,11 @@ pub async fn create_socket_server(path: &str, opts: SessionOptions) -> Result<Ar
     use tokio::net::windows::named_pipe::ServerOptions;
 
     if path.is_empty() {
-        return Err(EngineError::bad_request("createSocketServer needs a non-empty socket path."));
+        return Err(socket_path_required());
     }
     let opts = session_options(opts);
-    let mut listener = ServerOptions::new()
-        .first_pipe_instance(true)
-        .create(path)
-        .map_err(|e| EngineError::engine(format!("Could not bind {path}: {e}")))?;
+    let mut listener =
+        ServerOptions::new().first_pipe_instance(true).create(path).map_err(|e| bind_failed(path, &e))?;
     let (closed, closed_rx) = watch::channel(false);
     let pipe = path.to_string();
     let accept = tokio::spawn(async move {
@@ -120,7 +129,7 @@ pub async fn create_socket_server(path: &str, opts: SessionOptions) -> Result<Ar
     use tokio::net::{UnixListener, UnixStream};
 
     if path.is_empty() {
-        return Err(EngineError::bad_request("createSocketServer needs a non-empty socket path."));
+        return Err(socket_path_required());
     }
     let opts = session_options(opts);
     if let Ok(meta) = std::fs::symlink_metadata(path) {
@@ -128,17 +137,21 @@ pub async fn create_socket_server(path: &str, opts: SessionOptions) -> Result<Ar
             return Err(EngineError::engine(format!(
                 "Refusing to bind {path}: something already exists there and it is not a socket. Remove it \
                  yourself if that is what you intended — the engine will not delete a file it did not create."
-            )));
+            ))
+            .keyed("transport.socket_not_socket", json!({ "path": path })));
         }
         if UnixStream::connect(path).await.is_ok() {
             return Err(EngineError::engine(format!(
                 "Refusing to bind {path}: another engine is already listening there. Attach to it, or stop it first."
-            )));
+            ))
+            .keyed("transport.socket_in_use", json!({ "path": path })));
         }
-        std::fs::remove_file(path)
-            .map_err(|e| EngineError::engine(format!("Could not remove the stale socket at {path}: {e}")))?;
+        std::fs::remove_file(path).map_err(|e| {
+            EngineError::engine(format!("Could not remove the stale socket at {path}: {e}"))
+                .keyed("transport.socket_stale_remove_failed", json!({ "path": path, "detail": e.to_string() }))
+        })?;
     }
-    let listener = UnixListener::bind(path).map_err(|e| EngineError::engine(format!("Could not bind {path}: {e}")))?;
+    let listener = UnixListener::bind(path).map_err(|e| bind_failed(path, &e))?;
     // The socket transport relies on filesystem permissions for access control.
     let secured = std::fs::set_permissions(path, std::fs::Permissions::from_mode(0o600))
         .and_then(|_| std::fs::metadata(path))
@@ -148,7 +161,8 @@ pub async fn create_socket_server(path: &str, opts: SessionOptions) -> Result<Ar
         return Err(EngineError::engine(format!(
             "Could not make {path} private (0600). The socket transport relies on filesystem permissions for \
              access control, so it refuses to serve one it cannot secure."
-        )));
+        ))
+        .keyed("transport.socket_not_private", json!({ "path": path })));
     }
     let (closed, closed_rx) = watch::channel(false);
     let accept = tokio::spawn(async move {

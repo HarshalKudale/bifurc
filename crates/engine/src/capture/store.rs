@@ -173,8 +173,10 @@ pub fn resolve_capture_entry(params: &Value) -> Result<Value> {
     }
     let ws_id = params.get("workspaceId").and_then(Value::as_str).unwrap_or("");
     let id = params.get("id").and_then(Value::as_str).unwrap_or("");
-    get_capture(ws_id, id)
-        .ok_or_else(|| EngineError::not_found(format!("No captured entry \"{id}\" in workspace \"{ws_id}\".")))
+    get_capture(ws_id, id).ok_or_else(|| {
+        EngineError::not_found(format!("No captured entry \"{id}\" in workspace \"{ws_id}\"."))
+            .keyed("capture.entry_not_found_in", serde_json::json!({ "id": id, "workspace": ws_id }))
+    })
 }
 
 pub fn clear_capture(ws_id: &str) {

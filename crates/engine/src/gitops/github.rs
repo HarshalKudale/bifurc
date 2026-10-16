@@ -11,6 +11,7 @@ use serde_json::{Value, json};
 
 use crate::{
     features::team_sync,
+    protocol::EngineError,
     utils::json::{array_of, bool_of, str_of},
     workspace::settings::load_settings,
 };
@@ -84,8 +85,11 @@ async fn read(response: reqwest::Response) -> Result<(u16, Value), String> {
     Ok((status, serde_json::from_str(&text).unwrap_or(Value::Null)))
 }
 
+const UNREACHABLE: &str = "GitHub could not be reached: ";
+const NOT_CONFIGURED: &str = "GitHub sign-in is not set up in this build (no OAuth client id).";
+
 fn unreachable(error: reqwest::Error) -> String {
-    format!("GitHub could not be reached: {error}")
+    format!("{UNREACHABLE}{error}")
 }
 
 async fn api(method: reqwest::Method, token: &str, path: &str, body: Option<Value>) -> Result<(u16, Value), String> {
@@ -106,6 +110,21 @@ const REJECTED: &str = "GitHub no longer accepts this sign-in. Sign in again.";
 /// Whether an error says GitHub refused the token itself (revoked, expired), as opposed to anything else.
 pub fn is_rejected(error: &str) -> bool {
     error == REJECTED
+}
+
+/// A GitHub failure as an engine error a UI translates: the token refusal and the unreachable server have keys
+/// of their own, any other text goes under `github.failed` as `{detail}` (the message stays the raw text).
+pub fn failure(error: String) -> EngineError {
+    let (key, params) = if error == REJECTED {
+        ("github.rejected", json!({}))
+    } else if error == NOT_CONFIGURED {
+        ("github.not_configured", json!({}))
+    } else if let Some(detail) = error.strip_prefix(UNREACHABLE) {
+        ("github.unreachable", json!({ "detail": detail }))
+    } else {
+        ("github.failed", json!({ "detail": error }))
+    };
+    EngineError::upstream(error).keyed(key, params)
 }
 
 fn api_error(status: u16, body: &Value) -> String {
@@ -129,7 +148,7 @@ pub struct DeviceCode {
 }
 
 pub async fn start_device_flow() -> Result<DeviceCode, String> {
-    let client_id = client_id().ok_or("GitHub sign-in is not set up in this build (no OAuth client id).")?;
+    let client_id = client_id().ok_or(NOT_CONFIGURED)?;
     let body = url::form_urlencoded::Serializer::new(String::new())
         .append_pair("client_id", &client_id)
         .append_pair("scope", SCOPE)
@@ -171,7 +190,7 @@ pub enum DevicePoll {
 }
 
 pub async fn poll_device_flow(device_code: &str) -> Result<DevicePoll, String> {
-    let client_id = client_id().ok_or("GitHub sign-in is not set up in this build (no OAuth client id).")?;
+    let client_id = client_id().ok_or(NOT_CONFIGURED)?;
     let body = url::form_urlencoded::Serializer::new(String::new())
         .append_pair("client_id", &client_id)
         .append_pair("device_code", device_code)

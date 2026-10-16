@@ -11,6 +11,7 @@ use tokio::task::JoinHandle;
 use super::github::{self, DevicePoll};
 use crate::{
     kernel::bus,
+    protocol::EngineError,
     utils::id::{generate_id, now_ms},
     workspace::accounts::{Account, account_id, save_account},
 };
@@ -21,7 +22,7 @@ struct Login {
     user_code: String,
     verification_uri: String,
     expires_at: i64,
-    error: Option<String>,
+    error: Option<EngineError>,
     account: Option<Value>,
     task: Option<JoinHandle<()>>,
 }
@@ -35,7 +36,7 @@ impl Login {
         out.insert("verificationUri".into(), json!(self.verification_uri));
         out.insert("expiresAt".into(), json!(self.expires_at));
         if let Some(error) = &self.error {
-            out.insert("error".into(), json!(error));
+            crate::kernel::streams::put_error(&mut out, Some(error));
         }
         if let Some(account) = &self.account {
             out.insert("account".into(), account.clone());
@@ -46,7 +47,7 @@ impl Login {
 
 static LOGINS: Mutex<Option<HashMap<String, Login>>> = Mutex::new(None);
 
-fn finish(login_id: &str, status: &'static str, error: Option<String>, account: Option<Value>) {
+fn finish(login_id: &str, status: &'static str, error: Option<EngineError>, account: Option<Value>) {
     let payload = {
         let mut logins = LOGINS.lock();
         let Some(login) = logins.as_mut().and_then(|logins| logins.get_mut(login_id)) else { return };
@@ -63,8 +64,8 @@ fn finish(login_id: &str, status: &'static str, error: Option<String>, account: 
 }
 
 /// Exchange the granted token for the person it belongs to and store both.
-async fn complete(token: String) -> Result<Value, String> {
-    let user = github::fetch_user(&token).await?;
+async fn complete(token: String) -> Result<Value, EngineError> {
+    let user = github::fetch_user(&token).await.map_err(github::failure)?;
     let host = github::host();
     let account = Account {
         id: account_id(&host, user.id),
@@ -75,7 +76,10 @@ async fn complete(token: String) -> Result<Value, String> {
         avatar_url: user.avatar_url,
         token: Some(token),
     };
-    save_account(&account).map_err(|e| format!("The sign-in could not be saved: {e}"))?;
+    save_account(&account).map_err(|e| {
+        EngineError::engine(format!("The sign-in could not be saved: {e}"))
+            .keyed("github.sign_in_not_saved", json!({ "detail": e.to_string() }))
+    })?;
     Ok(account.public())
 }
 
@@ -83,7 +87,7 @@ async fn wait_for_grant(login_id: String, device_code: String, mut interval: u64
     loop {
         tokio::time::sleep(Duration::from_secs(interval.max(1))).await;
         if now_ms() >= expires_at {
-            return finish(&login_id, "expired", Some("The code expired before it was used.".into()), None);
+            return finish(&login_id, "expired", Some(code_expired()), None);
         }
         match github::poll_device_flow(&device_code).await {
             Ok(DevicePoll::Pending) => {}
@@ -95,10 +99,12 @@ async fn wait_for_grant(login_id: String, device_code: String, mut interval: u64
                 };
             }
             Ok(DevicePoll::Denied) => {
-                return finish(&login_id, "denied", Some("The sign-in was declined on GitHub.".into()), None);
+                let declined = EngineError::engine("The sign-in was declined on GitHub.")
+                    .keyed("github.sign_in_declined", json!({}));
+                return finish(&login_id, "denied", Some(declined), None);
             }
             Ok(DevicePoll::Expired) => {
-                return finish(&login_id, "expired", Some("The code expired before it was used.".into()), None);
+                return finish(&login_id, "expired", Some(code_expired()), None);
             }
             // One failed poll (the network dropped) is not the end of the sign-in; the code's expiry is.
             Err(_) => {}
@@ -106,9 +112,13 @@ async fn wait_for_grant(login_id: String, device_code: String, mut interval: u64
     }
 }
 
+fn code_expired() -> EngineError {
+    EngineError::engine("The code expired before it was used.").keyed("github.code_expired", json!({}))
+}
+
 /// Begin a sign-in. Returns what the user needs: `{ loginId, status, userCode, verificationUri, expiresAt }`.
-pub async fn start_login() -> Result<Value, String> {
-    let code = github::start_device_flow().await?;
+pub async fn start_login() -> Result<Value, EngineError> {
+    let code = github::start_device_flow().await.map_err(github::failure)?;
     let login_id = generate_id();
     let expires_at = now_ms() + (code.expires_in as i64) * 1000;
     let task = tokio::spawn(wait_for_grant(login_id.clone(), code.device_code, code.interval, expires_at));

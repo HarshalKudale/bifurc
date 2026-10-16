@@ -289,7 +289,10 @@ async fn call_once(run: &Run, node: &Node, token: &Token, wired: &Wired) -> Outc
             "durationMs": message["durationMs"],
         });
         // shortcut: the server's own text is shown as it came, in no language of ours.
-        let error = (message["status"] != "ok").then(|| EngineError::engine(str_of(message, "text")));
+        let error = (message["status"] != "ok").then(|| {
+            EngineError::engine(str_of(message, "text"))
+                .keyed("flow.server_error", json!({ "detail": str_of(message, "text") }))
+        });
         return outcome(output, error);
     }
     failed(said("flow.connection_ended_early", json!({}), "The connection ended before the server answered"))

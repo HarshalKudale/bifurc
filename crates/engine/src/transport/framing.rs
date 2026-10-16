@@ -1,7 +1,7 @@
 //! Length-prefixed JSON frames for the byte-stream transports (socket, stdio): a 4-byte big-endian length,
 //! then that many bytes of UTF-8 JSON holding one object.
 
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use crate::protocol::EngineError;
 
@@ -26,7 +26,13 @@ impl FrameError {
 
 impl From<FrameError> for EngineError {
     fn from(err: FrameError) -> Self {
-        EngineError::bad_request(err.message())
+        let detail = err.message();
+        let (key, params) = match &err {
+            FrameError::Oversized(_) => ("transport.frame_oversized", json!({ "detail": detail })),
+            FrameError::InvalidJson(_) => ("transport.frame_invalid_json", json!({ "detail": detail })),
+            FrameError::NotAnObject => ("transport.frame_not_object", json!({})),
+        };
+        EngineError::bad_request(err.message()).keyed(key, params)
     }
 }
 
