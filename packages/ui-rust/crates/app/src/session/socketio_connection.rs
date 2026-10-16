@@ -4,24 +4,15 @@
 //! holds the target, the Connect command and the event to send; this view holds what the connection is doing.
 //! The engine owns the connection; this entity mirrors it ([`SocketIoView`]).
 
-use gpui_kit::component::{
-    ActiveTheme as _, Disableable as _, Sizable as _,
-    button::{Button, ButtonVariants as _},
-    empty::{Empty, EmptyDescription, EmptyHeader, EmptyTitle},
-    h_flex,
-    tag::Tag,
-    v_flex,
-};
-use gpui_kit::prelude::FluentBuilder as _;
+use gpui_kit::component::{ActiveTheme as _, tag::Tag};
 use gpui_kit::{
-    Context, EventEmitter, InteractiveElement as _, IntoElement, ParentElement as _, Render, ScrollHandle,
-    StatefulInteractiveElement as _, Styled as _, Window, div,
+    Context, EventEmitter, IntoElement, ParentElement as _, Render, Styled as _, Window, div,
 };
 use serde_json::Value;
 
 use crate::{
     i18n::{t, t_with},
-    components::stream_log::{LogRow, LogSearch, OpenRows, Way, found, log_row, nothing_found, search_button},
+    components::stream_log::{LogFrame, LogRow, LogState, Way, found, log_frame, log_row},
     model::{
         socket::{Direction, SocketState},
         socketio::{SocketIoMessage, SocketIoView},
@@ -37,11 +28,7 @@ pub struct SocketIoConnection {
     view: SocketIoView,
     /// How many events the request listens to; `None` when it hears every event.
     listening: Option<usize>,
-    scroll: ScrollHandle,
-    follow_tail: bool,
-    /// The messages opened to their whole arguments, by id.
-    open: OpenRows,
-    search: LogSearch,
+    log: LogState,
 }
 
 impl EventEmitter<SocketIoEvent> for SocketIoConnection {}
@@ -51,11 +38,8 @@ impl SocketIoConnection {
         Self {
             view: SocketIoView::default(),
             listening: Some(0),
-            scroll: ScrollHandle::new(),
-            follow_tail: true,
-            open: OpenRows::default(),
-            search: LogSearch::new(window, cx, |this, cx| {
-                this.open.highlight(&this.search.query(cx), cx);
+            log: LogState::new(window, cx, |this, cx| {
+                this.log.search_changed(cx);
                 cx.notify();
             }),
         }
@@ -76,7 +60,7 @@ impl SocketIoConnection {
     pub fn replace_view(&mut self, view: SocketIoView, cx: &mut Context<Self>) {
         self.view = view;
         self.forget_dropped();
-        self.follow_tail = true;
+        self.log.follow();
         cx.notify();
     }
 
@@ -88,22 +72,20 @@ impl SocketIoConnection {
     pub fn apply_message_event(&mut self, payload: &Value, cx: &mut Context<Self>) {
         self.view.apply_message_event(payload);
         self.forget_dropped();
-        self.follow_tail = true;
+        self.log.follow();
         cx.notify();
     }
 
     pub fn clear_messages(&mut self, cx: &mut Context<Self>) {
         self.view.clear_messages();
-        self.open.clear();
+        self.log.close_all();
         cx.notify();
     }
 
     /// The log is bounded, so an open message can leave it.
     fn forget_dropped(&mut self) {
-        if !self.open.is_empty() {
-            let messages = &self.view.messages;
-            self.open.retain(|id| messages.iter().any(|m| m.id == id));
-        }
+        let messages = &self.view.messages;
+        self.log.forget_dropped(|id| messages.iter().any(|m| m.id == id));
     }
 
     /// One message: the shared log row, which opens to the whole arguments.
@@ -121,11 +103,10 @@ impl SocketIoConnection {
         let id = message.id.clone();
         log_row(
             &row,
-            self.open.get(&message.id),
+            self.log.open_row(&message.id),
             cx.listener(move |this, _, window, cx| {
                 let Some(message) = this.view.messages.iter().find(|m| m.id == id) else { return };
-                let query = this.search.query(cx);
-                this.open.toggle(&id, &message.shown(), &query, window, cx);
+                this.log.toggle_open(&id, &message.shown(), window, cx);
                 cx.notify();
             }),
             cx,
@@ -143,15 +124,15 @@ impl Render for SocketIoConnection {
             SocketState::Error => Tag::danger(),
             SocketState::Disconnected => Tag::secondary(),
         };
-        if self.follow_tail {
-            self.follow_tail = false;
-            self.scroll.scroll_to_bottom();
-        }
-        let needle = self.search.needle(cx);
-        let shown: Vec<&SocketIoMessage> =
-            self.view.messages.iter().filter(|m| found(needle.as_deref(), &[&m.data, &m.event])).collect();
-        let search_bar = self.search.bar(shown.len(), self.view.messages.len(), cx);
-        let none_found = shown.is_empty() && !self.view.messages.is_empty();
+        let needle = self.log.needle(cx);
+        let rows: Vec<_> = self
+            .view
+            .messages
+            .iter()
+            .filter(|m| found(needle.as_deref(), &[&m.data, &m.event]))
+            .map(|m| self.render_message(m, cx))
+            .collect();
+        let count = self.view.messages.len();
         // The main namespace needs no label; a server that ended the connection said why.
         let namespace = Some(self.view.namespace.clone()).filter(|ns| !ns.is_empty() && ns != "/");
         let ended = self.view.close_reason.clone().filter(|_| state == SocketState::Disconnected);
@@ -162,69 +143,44 @@ impl Render for SocketIoConnection {
             Some(count) => t_with("session.socketio.listening_other", &[("count", &count)]),
         };
         let nothing_heard = self.listening == Some(0);
-
-        v_flex()
-            .size_full()
-            .bg(theme.background)
-            .child(
-                h_flex()
-                    .px_3()
-                    .py_2()
-                    .gap_2()
-                    .child(state_tag.child(state.label()))
-                    .when_some(namespace, |this, namespace| {
-                        this.child(Tag::secondary().outline().child(namespace))
-                    })
-                    .when_some(self.view.error.clone(), |this, error| {
-                        this.child(div().text_sm().text_color(theme.danger).child(error))
-                    })
-                    .when_some(ended, |this, reason| {
-                        this.child(div().text_sm().text_color(theme.muted_foreground).child(reason))
-                    })
-                    .child(div().flex_1())
-                    .child(div().text_sm().text_color(theme.muted_foreground).child(if self.view.messages.len() == 1 {
-                        t_with("session.socketio.count_one", &[("listening", &listening), ("count", &self.view.messages.len())])
+        let mut lead = vec![state_tag.child(state.label()).into_any_element()];
+        lead.extend(namespace.map(|namespace| Tag::secondary().outline().child(namespace).into_any_element()));
+        lead.extend(
+            self.view.error.clone().map(|error| div().text_sm().text_color(theme.danger).child(error).into_any_element()),
+        );
+        lead.extend(ended.map(|reason| {
+            div().text_sm().text_color(theme.muted_foreground).child(reason).into_any_element()
+        }));
+        log_frame(
+            LogFrame {
+                ids: ["socketio-messages", "search-socketio-messages", "clear-socketio-messages"],
+                lead,
+                summary: if count == 1 {
+                    t_with("session.socketio.count_one", &[("listening", &listening), ("count", &count)])
+                } else {
+                    t_with("session.socketio.count_other", &[("listening", &listening), ("count", &count)])
+                },
+                summary_fixed: false,
+                total: count,
+                empty: (
+                    t("session.socketio.no_events"),
+                    if nothing_heard {
+                        t("session.socketio.empty_nothing_heard")
+                    } else if state == SocketState::Connected {
+                        t("session.socketio.empty_connected")
                     } else {
-                        t_with("session.socketio.count_other", &[("listening", &listening), ("count", &self.view.messages.len())])
-                    }))
-                    .child(search_button("search-socketio-messages").on_click(cx.listener(|this, _, window, cx| {
-                        this.search.toggle(window, cx);
-                        cx.notify();
-                    })))
-                    .child(
-                        Button::new("clear-socketio-messages")
-                            .ghost()
-                            .small()
-                            .label(t("session.connection.clear"))
-                            .disabled(self.view.messages.is_empty())
-                            .on_click(cx.listener(|_, _, _, cx| cx.emit(SocketIoEvent::Clear))),
-                    ),
-            )
-            .children(search_bar)
-            .child(
-                div()
-                    .id("socketio-messages")
-                    .flex_1()
-                    .min_h_0()
-                    .overflow_y_scroll()
-                    .track_scroll(&self.scroll)
-                    .border_t_1()
-                    .border_color(theme.border)
-                    .when(self.view.messages.is_empty(), |this| {
-                        this.child(Empty::new().header(
-                            EmptyHeader::new().title(EmptyTitle::new().child(t("session.socketio.no_events"))).description(
-                                EmptyDescription::new().child(if nothing_heard {
-                                    t("session.socketio.empty_nothing_heard")
-                                } else if state == SocketState::Connected {
-                                    t("session.socketio.empty_connected")
-                                } else {
-                                    t("session.socketio.empty_disconnected")
-                                }),
-                            ),
-                        ))
-                    })
-                    .when(none_found, |this| this.child(nothing_found()))
-                    .children(shown.into_iter().map(|m| self.render_message(m, cx))),
-            )
+                        t("session.socketio.empty_disconnected")
+                    },
+                ),
+                rows,
+            },
+            &mut self.log,
+            cx.listener(|this, _, window, cx| {
+                this.log.toggle_search(window, cx);
+                cx.notify();
+            }),
+            cx.listener(|_, _, _, cx| cx.emit(SocketIoEvent::Clear)),
+            cx,
+        )
     }
 }
