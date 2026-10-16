@@ -7,9 +7,7 @@
 //! that workspace's own id as `workspace_id`, whatever the workspace is (local only, a git repository, synced,
 //! imported by its owner or by a collaborator); an event that belongs to no workspace carries none.
 //!
-//! Console shelved (free app): there are no organizations, so no event is routed to an organization's
-//! analytics, named with an organization or an account, or managed in the Bifurc Console. An `organization`
-//! an older version left in a workspace of `app.json` is ignored.
+//! An `organization` an older version left in a workspace of `app.json` is ignored.
 //!
 //! A command a client sends becomes at most one event ([`events::finished`]), sent within [`EVENTS_EVERY`]:
 //! - what [`events::describe`] makes of it when it succeeds (`mock created`, `request sent`);
@@ -35,8 +33,6 @@
 pub mod events;
 
 use std::{
-    // Console shelved (free app): no per-workspace routing map.
-    // collections::HashMap,
     sync::{Arc, LazyLock},
     time::{Duration, Instant},
 };
@@ -50,8 +46,6 @@ use crate::{
     runtime::notice,
     utils::{
         id::now_ms,
-        // Console shelved (free app): `opt_str` read the organization.
-        // json::{merged, opt_str, read_json, truthy, write_json_pretty},
         json::{merged, read_json, truthy, write_json_pretty},
     },
     workspace::{paths::data_dir, settings::load_settings},
@@ -84,63 +78,7 @@ struct Target {
 struct Queued {
     replaces: Option<String>,
     event: Value,
-// Console shelved (free app): no organization's events are sent whatever the switch says.
-    // /// An organization's: sent whatever this device's switch says.
-    // managed: bool,
 }
-
-// Console shelved (free app): organization routing is gone: one app-level switch decides, for every workspace.
-// /// What an organization decided for one of its workspaces on this device.
-// #[derive(Debug, Clone, PartialEq, Eq)]
-// struct Managed {
-//     public_id: String,
-//     /// The console's id of the workspace.
-//     workspace_id: String,
-//     /// The GitHub id of the account the workspace is used as here.
-//     github_user_id: u64,
-//     analytics: bool,
-// }
-//
-// /// What decides where an event goes: the user's own choice, and the organizations' for their workspaces,
-// /// keyed by the workspace's id on this device.
-// #[derive(Debug, Default)]
-// struct Routing {
-//     anonymous: bool,
-//     managed: HashMap<String, Managed>,
-// }
-//
-// /// Where the one event of a command goes.
-// #[derive(Debug, Clone, PartialEq, Eq)]
-// enum Route {
-//     /// To the anonymous analytics, as this data directory.
-//     Anonymous,
-//     /// To the organization's analytics, as the account its workspace is used as.
-//     Organization(Managed),
-//     Nowhere,
-// }
-//
-// /// A workspace of an organization follows the organization, and only it; everything else follows the user.
-// fn route(routing: &Routing, workspace: Option<&str>) -> Route {
-//     match workspace.and_then(|id| routing.managed.get(id)) {
-//         Some(managed) if managed.analytics => Route::Organization(managed.clone()),
-//         Some(_) => Route::Nowhere,
-//         None if routing.anonymous => Route::Anonymous,
-//         None => Route::Nowhere,
-//     }
-// }
-//
-// /// What a workspace's settings say of its organization, if they name one in full.
-// fn managed_of(workspace: &Value) -> Option<(String, Managed)> {
-//     let organization = workspace.get("organization").filter(|organization| organization.is_object())?;
-//     let text = |key: &str| opt_str(organization, key).filter(|text| !text.is_empty()).map(str::to_string);
-//     let managed = Managed {
-//         public_id: text("publicId")?,
-//         workspace_id: text("workspaceId")?,
-//         github_user_id: organization.get("githubUserId").and_then(Value::as_u64)?,
-//         analytics: organization.get("analytics").and_then(Value::as_bool) == Some(true),
-//     };
-//     Some((opt_str(workspace, "id")?.to_string(), managed))
-// }
 
 /// What decides where an event goes: the user's own choice, and nothing else.
 #[derive(Debug, Default)]
@@ -165,8 +103,6 @@ fn read_routing() -> Routing {
     let settings = load_settings();
     Routing {
         anonymous: !env_opted_out() && settings.telemetry_enabled(),
-        // Console shelved (free app): organizations' routing is gone.
-        // managed: settings.workspaces().iter().filter_map(managed_of).collect(),
     }
 }
 
@@ -268,27 +204,6 @@ fn routing() -> Arc<Routing> {
     fresh
 }
 
-// Console shelved (free app): nothing an organization decides to be told of.
-// /// What an organization decided about a workspace changed: the next command is routed by the new answer.
-// pub fn policies_changed() {
-//     STATE.lock().routing = None;
-// }
-//
-// /// What an organization's event says on top of what was done: whose workspace, which one, and which account.
-// /// The account is a number GitHub gave it; its name is never sent.
-// fn organization_properties(managed: &Managed) -> Value {
-//     json!({
-//         "org_public_id": managed.public_id,
-//         "workspace_id": managed.workspace_id,
-//         "github_user_id": managed.github_user_id,
-//     })
-// }
-//
-// /// Whom an organization's event is from: the account, within the organization. Never the install id, so that
-// /// nothing ties what an account does for an organization to what the same device reports anonymously.
-// fn organization_distinct_id(managed: &Managed) -> String {
-//     format!("{}:{}", managed.public_id, managed.github_user_id)
-// }
 /// What an event done in a workspace says on top of what was done: the workspace's own id on this device, which
 /// is a random id and no name. Nothing about the account or any organization.
 fn workspace_properties(workspace_id: &str) -> Value {
@@ -358,14 +273,6 @@ fn begin() {
     let install_id = (!env_opted_out()).then(install_id);
     let target = Target { key, host: host(), install_id };
     let routing = routing();
-    // Console shelved (free app): no workspace's analytics are managed by an organization.
-    // let reporting = routing.managed.values().filter(|managed| managed.analytics).count();
-    // if reporting > 0 {
-    //     notice(&format!(
-    //         "usage analytics are on for {reporting} workspace(s) of an organization and managed by its owner in the \
-    //          Bifurc Console: what kind of thing is done in them, and as which GitHub account, never its content"
-    //     ));
-    // }
     let mut first: Vec<Value> = Vec::new();
     let mut reports_install = false;
     if let Some(install_id) = &target.install_id {
@@ -519,9 +426,6 @@ pub async fn flush() {
         (target, std::mem::take(&mut state.queue))
     };
     // Switched off since they were queued: they are dropped.
-    // Console shelved (free app): an organization's were not the user's to drop.
-    // let anonymous = !opted_out();
-    // let queue: Vec<Queued> = queue.into_iter().filter(|queued| queued.managed || anonymous).collect();
     if opted_out() || queue.is_empty() {
         return;
     }
@@ -613,76 +517,6 @@ mod tests {
         }
         assert_eq!(queue.len(), MAX_QUEUED);
     }
-
-// Console shelved (free app): the organization tests are gone with the organization routing.
-    // fn managed(analytics: bool) -> Managed {
-    //     Managed { public_id: "pub_acme".into(), workspace_id: "ws_team".into(), github_user_id: 7, analytics }
-    // }
-    //
-    // #[test]
-    // fn an_organizations_workspace_follows_the_organization_and_nothing_else() {
-    //     let routing = |anonymous: bool| Routing {
-    //         anonymous,
-    //         managed: HashMap::from([("team".to_string(), managed(true)), ("quiet".to_string(), managed(false))]),
-    //     };
-    //     for anonymous in [true, false] {
-    //         // The organization has them on: reported, whatever the user's own switch says.
-    //         assert_eq!(route(&routing(anonymous), Some("team")), Route::Organization(managed(true)));
-    //         // The organization has them off: not reported, not even anonymously.
-    //         assert_eq!(route(&routing(anonymous), Some("quiet")), Route::Nowhere);
-    //     }
-    //     // The user's own workspace, and what belongs to no workspace, follow the user's switch.
-    //     assert_eq!(route(&routing(true), Some("mine")), Route::Anonymous);
-    //     assert_eq!(route(&routing(true), None), Route::Anonymous);
-    //     assert_eq!(route(&routing(false), Some("mine")), Route::Nowhere);
-    //     assert_eq!(route(&routing(false), None), Route::Nowhere);
-    // }
-    //
-    // #[test]
-    // fn a_workspace_is_an_organizations_only_when_its_settings_say_so_in_full() {
-    //     let organization = json!({
-    //         "publicId": "pub_acme", "name": "Acme", "workspaceId": "ws_team", "analytics": true, "githubUserId": 7,
-    //     });
-    //     let known = managed_of(&json!({ "id": "team", "name": "Team", "organization": organization })).unwrap();
-    //     assert_eq!(known, ("team".to_string(), managed(true)));
-    //
-    //     // A workspace as every version before organizations wrote it, and one the console said nothing of.
-    //     assert!(managed_of(&json!({ "id": "mine", "name": "Mine", "syncConfig": { "repo": "octo/mine" } })).is_none());
-    //     assert!(managed_of(&json!({ "id": "mine", "organization": null })).is_none());
-    //     for missing in ["publicId", "workspaceId", "githubUserId"] {
-    //         let mut partial = organization.clone();
-    //         partial.as_object_mut().unwrap().remove(missing);
-    //         assert!(managed_of(&json!({ "id": "team", "organization": partial })).is_none(), "{missing}");
-    //     }
-    //     let mut off = organization.clone();
-    //     off.as_object_mut().unwrap().remove("analytics");
-    //     assert_eq!(managed_of(&json!({ "id": "team", "organization": off })).unwrap().1, managed(false));
-    // }
-    //
-    // #[test]
-    // fn an_organizations_event_names_the_organization_the_workspace_and_the_account_and_not_the_install() {
-    //     let managed = managed(true);
-    //     let properties =
-    //         merged(&json!({ "client": "desktop", "request_type": "rest" }), &organization_properties(&managed));
-    //     let sent = event(&organization_distinct_id(&managed), "request sent", properties);
-    //
-    //     assert_eq!(sent["distinct_id"], "pub_acme:7");
-    //     let properties = sent["properties"].as_object().unwrap();
-    //     assert_eq!(properties["org_public_id"], "pub_acme");
-    //     assert_eq!(properties["workspace_id"], "ws_team");
-    //     assert_eq!(properties["github_user_id"], 7);
-    //     assert_eq!(properties["$process_person_profile"], false);
-    //     assert_eq!(properties["$ip"], "0.0.0.0");
-    //     let mut keys: Vec<&str> = properties.keys().map(String::as_str).collect();
-    //     keys.sort_unstable();
-    //     assert_eq!(
-    //         keys,
-    //         [
-    //             "$geoip_disable", "$ip", "$lib", "$process_person_profile", "arch", "client", "engine_version",
-    //             "github_user_id", "org_public_id", "os", "request_type", "workspace_id",
-    //         ]
-    //     );
-    // }
 
     /// A scratch data root with `app.json` holding `settings`, and analytics running as install `install-1` the
     /// way `begin` leaves them. Hand back the root: dropping it releases the store for the next test.
