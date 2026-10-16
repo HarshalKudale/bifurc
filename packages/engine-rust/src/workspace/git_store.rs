@@ -76,6 +76,19 @@ static LOCATED_GIT: parking_lot::Mutex<Option<std::path::PathBuf>> = parking_lot
 /// A git installed after the engine started is not on the `PATH` the engine was given, and the engine
 /// outlives the windows that could restart it. So the places an installer puts it are looked at too.
 fn locate_git() -> Option<std::path::PathBuf> {
+    // `/usr/bin/git` on a Mac is a stand-in that asks for the developer tools when they are missing, and an app
+    // started from the Dock has none of the folders a terminal's `PATH` adds. The real ones are looked for first.
+    if cfg!(target_os = "macos") {
+        return [
+            "/opt/homebrew/bin/git",
+            "/usr/local/bin/git",
+            "/Library/Developer/CommandLineTools/usr/bin/git",
+            "/Applications/Xcode.app/Contents/Developer/usr/bin/git",
+        ]
+        .into_iter()
+        .map(std::path::PathBuf::from)
+        .find(|path| path.is_file());
+    }
     if !cfg!(windows) {
         return None;
     }
@@ -91,8 +104,31 @@ fn locate_git() -> Option<std::path::PathBuf> {
     .find(|path| path.is_file())
 }
 
+static DEVELOPER_TOOLS: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+/// Whether a Mac has the developer tools `/usr/bin/git` hands over to. Without them that file is not git: it
+/// puts up an install dialog and waits for it, which an engine with no window never gets answered. Once seen,
+/// it stays true.
+async fn developer_tools_installed() -> bool {
+    use std::sync::atomic::Ordering::Relaxed;
+    if DEVELOPER_TOOLS.load(Relaxed) {
+        return true;
+    }
+    let found = tokio::process::Command::new("/usr/bin/xcode-select")
+        .arg("-p")
+        .stdin(std::process::Stdio::null())
+        .output()
+        .await
+        .is_ok_and(|out| out.status.success());
+    DEVELOPER_TOOLS.store(found, Relaxed);
+    found
+}
+
 async fn run_git(dir: &Path, args: &[&str], auth: Option<&RemoteAuth>, network: bool) -> Result<String, GitError> {
-    let located = LOCATED_GIT.lock().clone();
+    let located = LOCATED_GIT.lock().clone().or_else(|| if cfg!(target_os = "macos") { locate_git() } else { None });
+    if cfg!(target_os = "macos") && located.is_none() && !developer_tools_installed().await {
+        return Err(GitError("could not run git: it is not installed".to_owned()));
+    }
     let output = match git_command(located.as_deref(), dir, args, auth, network).output().await {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound && located.is_none() => match locate_git() {
             Some(found) => {
@@ -146,7 +182,10 @@ pub async fn git(ws_id: &str, args: &[&str]) -> Result<String, GitError> {
 
 /// The installed git's version (`2.45.1`), or `None` when git cannot be run.
 pub async fn git_version() -> Option<String> {
-    let out = git_in(&std::env::current_dir().unwrap_or_default(), &["--version"]).await.ok()?;
+    // Bounded: an engine that waits on git has no endpoint for anyone to reach it by.
+    let dir = std::env::current_dir().unwrap_or_default();
+    let asking = git_in(&dir, &["--version"]);
+    let out = tokio::time::timeout(std::time::Duration::from_secs(10), asking).await.ok()?.ok()?;
     Some(out.trim().strip_prefix("git version ").unwrap_or(out.trim()).to_string())
 }
 
