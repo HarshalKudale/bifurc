@@ -407,7 +407,7 @@ mod tests {
         };
         connect("refused", &format!("http://127.0.0.1:{port}/")).await;
         let done = wait_status("refused", "error").await;
-        assert!(done["error"].as_str().unwrap().contains("ECONNREFUSED"), "{done}");
+        assert!(done["error"].as_str().unwrap().contains("Nothing is listening at"), "{done}");
 
         for (stream_id, url) in [("bad-url", "not a url"), ("bad-scheme", "ws://127.0.0.1/x"), ("empty", "")] {
             let result = connect(stream_id, url).await;

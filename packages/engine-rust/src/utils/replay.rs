@@ -83,21 +83,9 @@ pub fn decode_base64_lenient(text: &str) -> Vec<u8> {
     out
 }
 
-/// Node's wording for a refused connection or an unknown host, the innermost message of the chain otherwise.
+/// Plain wording for a refused connection or an unknown host, the innermost message of the chain otherwise.
 fn connect_message(err: &reqwest::Error, host: &str, port: u16) -> String {
-    let mut source = std::error::Error::source(err);
-    while let Some(inner) = source {
-        if let Some(io) = inner.downcast_ref::<std::io::Error>()
-            && io.kind() == std::io::ErrorKind::ConnectionRefused
-        {
-            return format!("connect ECONNREFUSED {host}:{port}");
-        }
-        if inner.to_string().contains("dns error") {
-            return format!("getaddrinfo ENOTFOUND {host}");
-        }
-        source = inner.source();
-    }
-    root_message(err)
+    super::http::describe_send_error(err, Some(host), Some(port))
 }
 
 /// A header value's bytes as text, one char per byte (Node decodes header values as latin1).

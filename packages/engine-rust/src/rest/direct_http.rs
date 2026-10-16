@@ -32,23 +32,9 @@ pub(crate) fn client() -> Result<Client, String> {
     RequestSettings::resolve(None).client()
 }
 
-/// Node's wording for the failures a user meets most, the innermost message of the chain otherwise.
+/// Plain wording for the failures a user meets most, the innermost message of the chain otherwise.
 pub(crate) fn describe_error(err: &reqwest::Error, host: &str, port: u16) -> String {
-    let mut message = err.to_string();
-    let mut source = std::error::Error::source(err);
-    while let Some(inner) = source {
-        if let Some(io) = inner.downcast_ref::<std::io::Error>() {
-            if io.kind() == std::io::ErrorKind::ConnectionRefused {
-                return format!("connect ECONNREFUSED {host}:{port}");
-            }
-        }
-        message = inner.to_string();
-        if message.contains("dns error") {
-            return format!("getaddrinfo ENOTFOUND {host}");
-        }
-        source = inner.source();
-    }
-    message
+    crate::utils::http::describe_send_error(err, Some(host), Some(port))
 }
 
 /// Send `method url` with `headers` (names compared case-insensitively, later ones replace earlier ones) and

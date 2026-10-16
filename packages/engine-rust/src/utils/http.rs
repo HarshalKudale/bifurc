@@ -98,6 +98,43 @@ pub fn root_message(err: &dyn std::error::Error) -> String {
     message
 }
 
+pub const REFUSED_NO_ADDRESS: &str = "Nothing is listening at this address. Is the server running?";
+pub const NAME_NOT_FOUND_NO_HOST: &str = "The host name could not be found.";
+
+/// A failed send in plain words: nothing listening, name not found, connection closed early; otherwise the
+/// innermost message of the chain. `host` and `port` name the target in the message when known.
+pub fn describe_send_error(err: &(dyn std::error::Error + 'static), host: Option<&str>, port: Option<u16>) -> String {
+    use std::io::ErrorKind;
+    let mut message = err.to_string();
+    let mut source = Some(err);
+    while let Some(inner) = source {
+        if let Some(io) = inner.downcast_ref::<std::io::Error>() {
+            match (io.kind(), host, port) {
+                (ErrorKind::ConnectionRefused, Some(host), Some(port)) => {
+                    return format!("Nothing is listening at {host}:{port}. Is the server running?");
+                }
+                (ErrorKind::ConnectionRefused, ..) => return REFUSED_NO_ADDRESS.to_string(),
+                (ErrorKind::ConnectionReset | ErrorKind::ConnectionAborted | ErrorKind::BrokenPipe, ..) => {
+                    return "The connection was closed before a response came.".to_string();
+                }
+                _ => {}
+            }
+        }
+        message = inner.to_string();
+        if message.contains("dns error") {
+            return match host {
+                Some(host) => format!("The name {host} could not be found."),
+                None => NAME_NOT_FOUND_NO_HOST.to_string(),
+            };
+        }
+        if message.contains("connection closed before message completed") {
+            return "The connection was closed before a response came.".to_string();
+        }
+        source = inner.source();
+    }
+    message
+}
+
 /// What a request does when nothing says otherwise: certificates are verified, redirects are handed back and
 /// there is no time limit.
 const DEFAULT_VERIFY_TLS: bool = true;
@@ -272,6 +309,21 @@ mod tests {
         let request = json!({ "verifyTls": true, "timeoutMs": null, "followRedirects": "yes" });
         let mixed = RequestSettings::resolve_with(Some(&request), Some(&defaults));
         assert_eq!(mixed, RequestSettings { verify_tls: true, follow_redirects: true, timeout_ms: 5000 });
+    }
+
+    #[test]
+    fn send_failures_are_worded_plainly() {
+        use std::io::{Error, ErrorKind};
+        let refused = Error::from(ErrorKind::ConnectionRefused);
+        assert_eq!(
+            describe_send_error(&refused, Some("127.0.0.1"), Some(9000)),
+            "Nothing is listening at 127.0.0.1:9000. Is the server running?"
+        );
+        assert_eq!(describe_send_error(&refused, None, None), REFUSED_NO_ADDRESS);
+        let reset = Error::from(ErrorKind::ConnectionReset);
+        assert_eq!(describe_send_error(&reset, None, None), "The connection was closed before a response came.");
+        let dns = Error::other("dns error: failed to lookup address information");
+        assert_eq!(describe_send_error(&dns, Some("api.example.test"), None), "The name api.example.test could not be found.");
     }
 
     #[test]
