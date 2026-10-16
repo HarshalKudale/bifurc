@@ -12,9 +12,11 @@ use serde_json::{Map, Value, json};
 use super::{
     model::{Edge, Flow, Node, NodeKind, Rule},
     reference::references,
+    said,
 };
 use crate::{
-    env::load_merged_environment, rest::pipeline::env_to_map, utils::json::str_of, workspace::config::load_entity,
+    env::load_merged_environment, protocol::EngineError, rest::pipeline::env_to_map, utils::json::str_of,
+    workspace::config::load_entity,
 };
 
 #[derive(Debug, Clone, PartialEq)]
@@ -24,13 +26,23 @@ pub struct Problem {
     /// An error keeps the flow from running; a warning does not.
     pub is_error: bool,
     pub message: String,
+    /// The key the UI translates the message by, and the values its sentence needs.
+    pub key: String,
+    pub params: Value,
 }
 
 impl Problem {
+    fn new(node_id: Option<String>, edge_id: Option<String>, is_error: bool, error: EngineError) -> Self {
+        let params = error.params().cloned().unwrap_or_else(|| json!({}));
+        let key = error.key().unwrap_or_default().to_owned();
+        Self { node_id, edge_id, is_error, message: error.message, key, params }
+    }
+
     fn to_value(&self) -> Value {
         json!({
             "nodeId": self.node_id, "edgeId": self.edge_id,
             "severity": if self.is_error { "error" } else { "warning" }, "message": self.message,
+            "errorKey": self.key, "errorParams": self.params,
         })
     }
 }
@@ -39,30 +51,20 @@ impl Problem {
 struct Report(Vec<Problem>);
 
 impl Report {
-    fn node(&mut self, node: &Node, message: impl Into<String>) {
-        self.0.push(Problem { node_id: Some(node.id.clone()), edge_id: None, is_error: true, message: message.into() });
+    fn node(&mut self, node: &Node, error: EngineError) {
+        self.0.push(Problem::new(Some(node.id.clone()), None, true, error));
     }
 
-    fn warn(&mut self, node: &Node, message: impl Into<String>) {
-        self.0.push(Problem {
-            node_id: Some(node.id.clone()),
-            edge_id: None,
-            is_error: false,
-            message: message.into(),
-        });
+    fn warn(&mut self, node: &Node, error: EngineError) {
+        self.0.push(Problem::new(Some(node.id.clone()), None, false, error));
     }
 
-    fn edge(&mut self, edge_id: &str, message: impl Into<String>) {
-        self.0.push(Problem {
-            node_id: None,
-            edge_id: Some(edge_id.to_string()),
-            is_error: true,
-            message: message.into(),
-        });
+    fn edge(&mut self, edge_id: &str, error: EngineError) {
+        self.0.push(Problem::new(None, Some(edge_id.to_string()), true, error));
     }
 
-    fn flow(&mut self, message: impl Into<String>) {
-        self.0.push(Problem { node_id: None, edge_id: None, is_error: true, message: message.into() });
+    fn flow(&mut self, error: EngineError) {
+        self.0.push(Problem::new(None, None, true, error));
     }
 }
 
@@ -92,18 +94,33 @@ fn descendants(flow: &Flow) -> HashMap<&str, HashSet<&str>> {
         .collect()
 }
 
-/// Every text of a node that may hold references, with what it is called in a message.
-fn templates(node: &Node) -> Vec<(String, &str)> {
-    let mut out: Vec<(String, &str)> = Vec::new();
-    out.extend(node.variables.iter().map(|pair| (format!("the variable \"{}\"", pair.name), pair.value.as_str())));
-    out.extend(node.arguments.iter().map(|pair| (format!("the argument \"{}\"", pair.name), pair.value.as_str())));
-    out.push(("the message".to_string(), node.message.as_str()));
-    out.push(("the event".to_string(), node.event.as_str()));
-    out.push(("the target".to_string(), node.target.as_str()));
+/// Every text of a node that may hold references, with what it is: a `variable` or `argument` (by name) or the
+/// `message`, `event`, `target` or `rule` (no name).
+fn templates(node: &Node) -> Vec<(&'static str, &str, &str)> {
+    let mut out: Vec<(&'static str, &str, &str)> = Vec::new();
+    out.extend(node.variables.iter().map(|pair| ("variable", pair.name.as_str(), pair.value.as_str())));
+    out.extend(node.arguments.iter().map(|pair| ("argument", pair.name.as_str(), pair.value.as_str())));
+    out.push(("message", "", node.message.as_str()));
+    out.push(("event", "", node.event.as_str()));
+    out.push(("target", "", node.target.as_str()));
     for rule in node.branches.iter().flat_map(|branch| &branch.rules).chain(&node.rules) {
-        out.push(("a rule".to_string(), rule.value.as_str()));
+        out.push(("rule", "", rule.value.as_str()));
     }
     out
+}
+
+/// "the variable \"x\" reads ..." and its kin: a text of a node reads a node that does not run before it.
+fn reads_later(what: &str, name: &str, other: &str) -> EngineError {
+    let params = json!({ "name": name, "other": other });
+    let tail = format!("reads \"{other}\", which does not run before this node.");
+    match what {
+        "variable" => said("flow.problem.reads_later_variable", params, format!("the variable \"{name}\" {tail}")),
+        "argument" => said("flow.problem.reads_later_argument", params, format!("the argument \"{name}\" {tail}")),
+        "message" => said("flow.problem.reads_later_message", params, format!("the message {tail}")),
+        "event" => said("flow.problem.reads_later_event", params, format!("the event {tail}")),
+        "target" => said("flow.problem.reads_later_target", params, format!("the target {tail}")),
+        _ => said("flow.problem.reads_later_rule", params, format!("a rule {tail}")),
+    }
 }
 
 fn is_variable_name(name: &str) -> bool {
@@ -112,20 +129,36 @@ fn is_variable_name(name: &str) -> bool {
 
 fn check_variables(report: &mut Report, node: &Node) {
     for pair in node.variables.iter().filter(|pair| !is_variable_name(&pair.name)) {
-        report.node(node, format!("\"{}\" is not a variable name: use letters, digits and underscores.", pair.name));
+        report.node(
+            node,
+            said(
+                "flow.problem.variable_name",
+                json!({ "name": pair.name }),
+                format!("\"{}\" is not a variable name: use letters, digits and underscores.", pair.name),
+            ),
+        );
     }
 }
 
 fn check_request(report: &mut Report, ws_id: &str, node: &Node) {
     if node.request_id.is_empty() {
-        return report.node(node, "No saved request is chosen.");
+        return report.node(node, said("flow.problem.no_request", json!({}), "No saved request is chosen."));
     }
     if !node.kind.request_kinds().contains(&node.request_kind.as_str()) {
-        return report
-            .node(node, format!("A request of the kind \"{}\" cannot be used by this node.", node.request_kind));
+        return report.node(
+            node,
+            said(
+                "flow.problem.request_kind",
+                json!({ "kind": node.request_kind }),
+                format!("A request of the kind \"{}\" cannot be used by this node.", node.request_kind),
+            ),
+        );
     }
     if load_entity(ws_id, node.store_kind(), &node.request_id).is_none() {
-        report.node(node, "The saved request this node runs no longer exists.");
+        report.node(
+            node,
+            said("flow.problem.request_gone", json!({}), "The saved request this node runs no longer exists."),
+        );
     }
     check_variables(report, node);
 }
@@ -134,17 +167,39 @@ fn check_request(report: &mut Report, ws_id: &str, node: &Node) {
 fn check_path(report: &mut Report, node: &Node, path: &str) {
     let root = path.split(['.', '[']).next().unwrap_or_default();
     if !matches!(root, "input" | "nodes" | "flow") {
-        report.node(node, format!("\"{path}\" is not a value that can be read: start with input, nodes or flow."));
+        report.node(
+            node,
+            said(
+                "flow.problem.path_unreadable",
+                json!({ "path": path }),
+                format!("\"{path}\" is not a value that can be read: start with input, nodes or flow."),
+            ),
+        );
     }
 }
 
 /// A node that reads what the node before it produced needs one, and what it decides needs somewhere to go.
 fn check_in_the_middle(report: &mut Report, flow: &Flow, node: &Node, what: &str) {
+    let start = format!("{what} cannot start a flow: connect a node to it.");
+    let end = format!("{what} cannot end a flow: connect at least one of its outputs.");
+    let (start, end) = match node.kind {
+        NodeKind::Condition => (
+            said("flow.problem.condition_cannot_start", json!({}), start),
+            said("flow.problem.condition_cannot_end", json!({}), end),
+        ),
+        NodeKind::Validate => (
+            said("flow.problem.validate_cannot_start", json!({}), start),
+            said("flow.problem.validate_cannot_end", json!({}), end),
+        ),
+        _ => {
+            (said("flow.problem.if_cannot_start", json!({}), start), said("flow.problem.if_cannot_end", json!({}), end))
+        }
+    };
     if !flow.edges.iter().any(|edge| edge.to == node.id && !edge.is_wire()) {
-        report.node(node, format!("{what} cannot start a flow: connect a node to it."));
+        report.node(node, start);
     }
     if !flow.edges.iter().any(|edge| edge.from == node.id) {
-        report.node(node, format!("{what} cannot end a flow: connect at least one of its outputs."));
+        report.node(node, end);
     }
 }
 
@@ -156,15 +211,29 @@ fn check_rules(report: &mut Report, node: &Node, rules: &[Rule]) {
 
 fn check_condition(report: &mut Report, flow: &Flow, node: &Node) {
     if node.branches.is_empty() {
-        report.node(node, "A condition needs at least one branch.");
+        report.node(node, said("flow.problem.no_branch", json!({}), "A condition needs at least one branch."));
     }
     let mut seen = HashSet::new();
     for branch in &node.branches {
         if !is_id(&branch.id) || branch.id == super::model::PORT_ELSE || !seen.insert(branch.id.as_str()) {
-            report.node(node, format!("The branch id \"{}\" is empty, taken or not allowed.", branch.id));
+            report.node(
+                node,
+                said(
+                    "flow.problem.branch_id",
+                    json!({ "id": branch.id }),
+                    format!("The branch id \"{}\" is empty, taken or not allowed.", branch.id),
+                ),
+            );
         }
         if branch.rules.is_empty() {
-            report.node(node, format!("The branch \"{}\" has no rules, so it is never taken.", branch.name));
+            report.node(
+                node,
+                said(
+                    "flow.problem.branch_no_rules",
+                    json!({ "name": branch.name }),
+                    format!("The branch \"{}\" has no rules, so it is never taken.", branch.name),
+                ),
+            );
         }
         check_rules(report, node, &branch.rules);
     }
@@ -172,35 +241,59 @@ fn check_condition(report: &mut Report, flow: &Flow, node: &Node) {
 }
 
 /// What a connection is wrong about, if anything. `reach` is what runs after each node.
-fn check_edge(flow: &Flow, edge: &Edge, reach: &HashMap<&str, HashSet<&str>>) -> Option<String> {
+fn check_edge(flow: &Flow, edge: &Edge, reach: &HashMap<&str, HashSet<&str>>) -> Option<EngineError> {
     let (Some(from), Some(to)) = (flow.node(&edge.from), flow.node(&edge.to)) else {
-        return Some("This connection is attached to a node that is gone.".to_string());
+        return Some(said(
+            "flow.problem.edge_detached",
+            json!({}),
+            "This connection is attached to a node that is gone.",
+        ));
     };
     if !from.ports().iter().any(|(port, _)| *port == edge.port) {
-        return Some(format!("\"{}\" has no output \"{}\".", from.label(), edge.port));
+        return Some(said(
+            "flow.problem.edge_no_output",
+            json!({ "node": from.label(), "port": edge.port }),
+            format!("\"{}\" has no output \"{}\".", from.label(), edge.port),
+        ));
     }
     if to.kind == NodeKind::Start {
-        return Some("Nothing can lead into the start node.".to_string());
+        return Some(said("flow.problem.edge_into_start", json!({}), "Nothing can lead into the start node."));
     }
     if !edge.is_wire() {
         return match (from.kind.is_constant(), to.kind.is_constant()) {
-            (true, _) => Some(format!("\"{}\" only holds a value: wire it into an input of a node.", from.label())),
-            (_, true) => Some(format!("\"{}\" only holds a value: nothing runs it.", to.label())),
+            (true, _) => Some(said(
+                "flow.problem.edge_from_constant",
+                json!({ "node": from.label() }),
+                format!("\"{}\" only holds a value: wire it into an input of a node.", from.label()),
+            )),
+            (_, true) => Some(said(
+                "flow.problem.edge_to_constant",
+                json!({ "node": to.label() }),
+                format!("\"{}\" only holds a value: nothing runs it.", to.label()),
+            )),
             _ => None,
         };
     }
     let takes_inputs =
         matches!(to.kind, NodeKind::Request | NodeKind::Stream | NodeKind::Mcp | NodeKind::Evaluate | NodeKind::If);
     if !takes_inputs {
-        return Some(format!("\"{}\" has no inputs to wire a value into.", to.label()));
+        return Some(said(
+            "flow.problem.edge_no_inputs",
+            json!({ "node": to.label() }),
+            format!("\"{}\" has no inputs to wire a value into.", to.label()),
+        ));
     }
     let known = matches!(from.kind, NodeKind::Data | NodeKind::Sample);
     let runs_before = reach.get(from.id.as_str()).is_some_and(|after| after.contains(to.id.as_str()));
     (!known && !runs_before).then(|| {
-        format!(
-            "\"{}\" is wired to \"{}\", which does not run before it: connect them so that it does.",
-            to.label(),
-            from.label()
+        said(
+            "flow.problem.edge_order",
+            json!({ "to": to.label(), "from": from.label() }),
+            format!(
+                "\"{}\" is wired to \"{}\", which does not run before it: connect them so that it does.",
+                to.label(),
+                from.label()
+            ),
         )
     })
 }
@@ -212,20 +305,38 @@ pub fn check(ws_id: &str, flow: &Flow) -> Vec<Problem> {
     let mut ids = HashSet::new();
     for node in &flow.nodes {
         if !is_id(&node.id) {
-            report.node(node, format!("\"{}\" is not a node id: use letters, digits, - and _.", node.id));
+            report.node(
+                node,
+                said(
+                    "flow.problem.node_id_invalid",
+                    json!({ "id": node.id }),
+                    format!("\"{}\" is not a node id: use letters, digits, - and _.", node.id),
+                ),
+            );
         } else if !ids.insert(node.id.as_str()) {
-            report.node(node, format!("Two nodes share the id \"{}\".", node.id));
+            report.node(
+                node,
+                said(
+                    "flow.problem.node_id_duplicate",
+                    json!({ "id": node.id }),
+                    format!("Two nodes share the id \"{}\".", node.id),
+                ),
+            );
         }
     }
     let starts: Vec<&Node> = flow.nodes.iter().filter(|node| node.kind == NodeKind::Start).collect();
     if starts.len() != 1 {
-        report.flow(format!("A flow has exactly one start node; this one has {}.", starts.len()));
+        report.flow(said(
+            "flow.problem.start_count",
+            json!({ "count": starts.len() }),
+            format!("A flow has exactly one start node; this one has {}.", starts.len()),
+        ));
     }
 
     let reach = descendants(flow);
     for edge in &flow.edges {
-        if let Some(message) = check_edge(flow, edge, &reach) {
-            report.edge(&edge.id, message);
+        if let Some(error) = check_edge(flow, edge, &reach) {
+            report.edge(&edge.id, error);
         }
     }
 
@@ -234,7 +345,11 @@ pub fn check(ws_id: &str, flow: &Flow) -> Vec<Problem> {
     {
         report.node(
             node,
-            "This node leads back to itself. To go round, use a Repeat or For each node; to try again, a node's retries.",
+            said(
+                "flow.problem.loops_back",
+                json!({}),
+                "This node leads back to itself. To go round, use a Repeat or For each node; to try again, a node's retries.",
+            ),
         );
     }
     let started: HashSet<&str> =
@@ -244,42 +359,78 @@ pub fn check(ws_id: &str, flow: &Flow) -> Vec<Problem> {
         match node.kind {
             NodeKind::Start => {
                 if !flow.edges.iter().any(|edge| edge.from == node.id) {
-                    report.warn(node, "Nothing is connected to the start, so a run does nothing.");
+                    report.warn(
+                        node,
+                        said(
+                            "flow.problem.start_unconnected",
+                            json!({}),
+                            "Nothing is connected to the start, so a run does nothing.",
+                        ),
+                    );
                 }
             }
             NodeKind::Request | NodeKind::Stream => check_request(&mut report, ws_id, node),
             NodeKind::Mcp => {
                 check_request(&mut report, ws_id, node);
                 if !matches!(node.call.as_str(), "tool" | "prompt" | "resource") {
-                    report.node(node, "Choose what to call: a tool, a prompt or a resource.");
+                    report.node(
+                        node,
+                        said(
+                            "flow.problem.mcp_choose_call",
+                            json!({}),
+                            "Choose what to call: a tool, a prompt or a resource.",
+                        ),
+                    );
                 } else if node.target.trim().is_empty() {
-                    report.node(node, format!("Name the {} to call.", node.call));
+                    let message = format!("Name the {} to call.", node.call);
+                    report.node(
+                        node,
+                        match node.call.as_str() {
+                            "tool" => said("flow.problem.mcp_name_tool", json!({}), message),
+                            "prompt" => said("flow.problem.mcp_name_prompt", json!({}), message),
+                            _ => said("flow.problem.mcp_name_resource", json!({}), message),
+                        },
+                    );
                 }
             }
             NodeKind::Condition => check_condition(&mut report, flow, node),
             NodeKind::Validate => {
                 if node.rules.is_empty() {
-                    report.node(node, "A validate node needs at least one check.");
+                    report.node(
+                        node,
+                        said("flow.problem.no_checks", json!({}), "A validate node needs at least one check."),
+                    );
                 }
                 check_rules(&mut report, node, &node.rules);
                 check_in_the_middle(&mut report, flow, node, "A validate node");
             }
             NodeKind::Evaluate => {
                 if node.expression.trim().is_empty() {
-                    report.node(node, "Write the expression this node works out.");
+                    report.node(
+                        node,
+                        said("flow.problem.no_expression", json!({}), "Write the expression this node works out."),
+                    );
                 }
                 check_variables(&mut report, node);
             }
             NodeKind::If => {
                 if node.expression.trim().is_empty() {
-                    report.node(node, "Write the condition this node decides by.");
+                    report
+                        .node(node, said("flow.problem.no_if", json!({}), "Write the condition this node decides by."));
                 }
                 check_variables(&mut report, node);
                 check_in_the_middle(&mut report, flow, node, "An if node");
             }
             NodeKind::Repeat => {
                 if node.count == 0 {
-                    report.warn(node, "It repeats 0 times, so what follows Each never runs.");
+                    report.warn(
+                        node,
+                        said(
+                            "flow.problem.repeat_zero",
+                            json!({}),
+                            "It repeats 0 times, so what follows Each never runs.",
+                        ),
+                    );
                 }
             }
             NodeKind::ForEach => {
@@ -291,9 +442,16 @@ pub fn check(ws_id: &str, flow: &Flow) -> Vec<Problem> {
         }
         let runs = node.kind == NodeKind::Start || started.contains(node.id.as_str());
         if !runs && !node.kind.is_constant() {
-            report.warn(node, "This node is not connected to the start, so it never runs.");
+            report.warn(
+                node,
+                said(
+                    "flow.problem.unreachable",
+                    json!({}),
+                    "This node is not connected to the start, so it never runs.",
+                ),
+            );
         }
-        for (what, template) in templates(node) {
+        for (what, name, template) in templates(node) {
             for path in references(template) {
                 let Some(other) =
                     path.strip_prefix("nodes.").map(|rest| rest.split(['.', '[']).next().unwrap_or_default())
@@ -302,7 +460,7 @@ pub fn check(ws_id: &str, flow: &Flow) -> Vec<Problem> {
                 };
                 let runs_before = reach.get(other).is_some_and(|after| after.contains(node.id.as_str()));
                 if !runs_before {
-                    report.node(node, format!("{what} reads \"{other}\", which does not run before this node."));
+                    report.node(node, reads_later(what, name, other));
                 }
             }
         }

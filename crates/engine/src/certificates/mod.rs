@@ -216,7 +216,9 @@ FVs1an5osA4S/Ox+lQY4PPy81x+qkBQ4U8kS8dirD0Bu+cjkU2Ew
         assert_eq!(call("tls.certStatus", json!({})).await, json!({ "generated": false, "fingerprint": null }));
         assert_eq!(
             call("tls.exportCert", json!({})).await,
-            json!({ "ok": false, "error": "No CA certificate found." })
+            json!({
+                "ok": false, "error": "No CA certificate found.", "errorKey": "tls.no_ca", "errorParams": {},
+            })
         );
         assert_eq!(call("tls.removeCert", json!({})).await, json!({ "ok": true, "engineRemoved": false }));
 
@@ -240,6 +242,7 @@ FVs1an5osA4S/Ox+lQY4PPy81x+qkBQ4U8kS8dirD0Bu+cjkU2Ew
         let missing = call("tls.importCert", json!({ "blobId": format!("blob_{}", "0".repeat(32)) })).await;
         assert_eq!(missing["ok"], false);
         assert!(missing["error"].as_str().unwrap().contains("No such blob"));
+        assert_eq!(missing["errorKey"], "tls.failed");
 
         assert_eq!(call("tls.removeCert", json!({})).await, json!({ "ok": true, "engineRemoved": true }));
     }

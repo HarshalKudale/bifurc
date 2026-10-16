@@ -15,6 +15,16 @@ use crate::{
     },
 };
 
+/// Why pasted text is not a usable cURL command, keyed by which of the parser's three reasons it is.
+fn curl_error(message: &'static str) -> EngineError {
+    let key = match message {
+        "Paste a cURL command." => "curl.empty",
+        "The cURL command names no URL." => "curl.no_url",
+        _ => "curl.not_curl",
+    };
+    EngineError::bad_request(message).keyed(key, json!({}))
+}
+
 pub fn register(registry: &mut CommandRegistry) {
     // The result carries no `durationMs` although the protocol declares it; clients time the call themselves.
     registry.register("request.replay", |params: Value, _| async move {
@@ -34,7 +44,7 @@ pub fn register(registry: &mut CommandRegistry) {
                 EngineError::with_details(ErrorCode::EngineError, message, json!({ "cancelled": true }))
                     .keyed("request.send.cancelled", json!({}))
             }
-            message => http::send_error(ErrorCode::EngineError, message),
+            message => http::send_failure(ErrorCode::EngineError, "request.failed", message),
         })?;
         Ok(json!({ "status": response.status, "headers": response.headers, "body": response.body }))
     });
@@ -49,11 +59,10 @@ pub fn register(registry: &mut CommandRegistry) {
 
     // A pasted command as the request it describes, of the type it turns out to be, or as a mock of its
     // call. Text that is not a usable cURL command is refused with the reason.
-    registry.register_sync("curl.buildRequest", |params, _| {
-        curl_to_request(str_of(&params, "curl")).map_err(EngineError::bad_request)
-    });
+    registry
+        .register_sync("curl.buildRequest", |params, _| curl_to_request(str_of(&params, "curl")).map_err(curl_error));
     registry.register_sync("curl.buildMock", |params, _| {
-        Ok(json!({ "mock": curl_to_mock(str_of(&params, "curl")).map_err(EngineError::bad_request)? }))
+        Ok(json!({ "mock": curl_to_mock(str_of(&params, "curl")).map_err(curl_error)? }))
     });
 
     registry.register_sync("capture.buildRequest", |params, _| {

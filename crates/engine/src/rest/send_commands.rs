@@ -45,6 +45,7 @@ pub fn register(registry: &mut CommandRegistry) {
         let (request, scripts) = if let Some(id) = opt_str(&params, "id") {
             let entity = load_entity(&ws_id, "requests", id).ok_or_else(|| {
                 EngineError::not_found(format!("No saved requests entity \"{id}\" in workspace \"{ws_id}\"."))
+                    .keyed("request.saved_not_found", json!({ "kind": "requests", "id": id, "workspace": ws_id }))
             })?;
             let mut scripts = scripts_of(&entity, "preScript", "postScript", "testScript");
             for skipped in array_of(&params, "skipScripts") {
@@ -87,7 +88,9 @@ pub fn register(registry: &mut CommandRegistry) {
         // A send stopped by `request.cancel` is an outcome the caller can tell apart from a failure.
         let result = match result {
             Err(error) if error.details.as_ref().is_some_and(|d| d["cancelled"] == true) => {
-                return Ok(json!({ "ok": false, "cancelled": true, "error": error.message }));
+                let mut cancelled = json!({ "ok": false, "cancelled": true });
+                crate::runtime::set_failure(&mut cancelled, &error);
+                return Ok(cancelled);
             }
             result => result,
         };
@@ -299,7 +302,13 @@ mod tests {
             tokio::time::sleep(std::time::Duration::from_millis(10)).await;
         }
         let outcome = sending.await.unwrap().unwrap();
-        assert_eq!(outcome, json!({ "ok": false, "cancelled": true, "error": "Cancelled" }));
+        assert_eq!(
+            outcome,
+            json!({
+                "ok": false, "cancelled": true, "error": "Cancelled",
+                "errorKey": "request.send.cancelled", "errorParams": {},
+            })
+        );
         let nothing = call("request.cancel", json!({ "streamId": "s-hang" })).await.unwrap();
         assert_eq!(nothing["ok"], false);
     }

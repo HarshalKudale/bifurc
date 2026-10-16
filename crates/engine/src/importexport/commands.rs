@@ -11,36 +11,78 @@ use super::{
 };
 use crate::{
     kernel::CommandRegistry,
-    protocol::Result,
+    protocol::{EngineError, Result},
+    runtime::failed,
     utils::{
         id::now_ms,
         json::{opt_str, str_of},
     },
-    workspace::blob::{blob_content_path, describe_blob_error, publish_artifact_checked, read_blob_bytes, stat_blob},
+    workspace::blob::{
+        BlobError, blob_content_path, describe_blob_error, publish_artifact_checked, read_blob_bytes, stat_blob,
+    },
 };
 
-fn failure(error: impl Into<String>) -> Value {
-    json!({ "ok": false, "error": error.into() })
+fn failure(error: EngineError) -> Value {
+    failed(&error)
+}
+
+/// A failure the importers and exporters report as text, keyed by what the text says. Their own sentences
+/// ("Not a valid HAR file", "File not found") get a key each; the rest is the raw text of a parser or the
+/// file system (`SyntaxError: ...`, `YAMLException: ...`, `Error: ...`) under a wrapper key.
+// shortcut: the key is read back from the text (the importers fail with Strings), keep in step with their sentences.
+fn failure_of(text: String) -> Value {
+    let plain = text.strip_prefix("Error: ").unwrap_or(&text);
+    let (key, params) =
+        if let Some(what) = plain.strip_prefix("Not a valid ").and_then(|rest| rest.strip_suffix(" file")) {
+            ("import.not_valid_file", json!({ "what": what }))
+        } else {
+            let key = match plain {
+                "Not a valid OpenAPI specification" => "import.not_openapi",
+                "Not a Postman collection" => "import.not_postman_collection",
+                "File not found" => "import.file_not_found",
+                "Workspace not found" => "export.workspace_not_found",
+                _ if text.starts_with("SyntaxError: ") => "import.syntax_error",
+                _ if text.starts_with("YAMLException: ") => "import.yaml_error",
+                _ => "import.failed",
+            };
+            (key, json!({ "detail": text }))
+        };
+    failure(EngineError::bad_request(text.clone()).keyed(key, params))
+}
+
+/// A blob that could not be read or published, under a wrapper key.
+fn blob_failure(err: &BlobError) -> Value {
+    let text = describe_blob_error(err);
+    failure(EngineError::bad_request(text.clone()).keyed("import.blob_failed", json!({ "detail": text })))
 }
 
 fn export_create(params: &Value) -> Value {
     let (kind, format) = (str_of(params, "kind"), str_of(params, "format"));
     let ws_id = str_of(params, "workspaceId");
     let Some(entry) = get_entry(kind, format) else {
-        return failure(format!("No export format \"{format}\" for kind \"{kind}\"."));
+        return failure(
+            EngineError::bad_request(format!("No export format \"{format}\" for kind \"{kind}\"."))
+                .keyed("export.format_unknown", json!({ "format": format, "kind": kind })),
+        );
     };
     let Some(render) = entry.exporter else {
-        return failure(format!("\"{}\" is a format Bifurc imports. An export is Bifurc JSON.", entry.label));
+        return failure(
+            EngineError::bad_request(format!(
+                "\"{}\" is a format Bifurc imports. An export is Bifurc JSON.",
+                entry.label
+            ))
+            .keyed("export.import_only", json!({ "label": entry.label })),
+        );
     };
     let requested_name = opt_str(params, "filename").filter(|name| !name.is_empty());
     let ExportFile { content, suggested_name } = match render(ws_id) {
         Ok(file) => file,
-        Err(error) => return failure(error),
+        Err(error) => return failure_of(error),
     };
     match publish_artifact_checked(&content, requested_name.unwrap_or(suggested_name), "application/json", Some(ws_id))
     {
         Ok(artifact) => artifact,
-        Err(err) => failure(describe_blob_error(&err)),
+        Err(err) => blob_failure(&err),
     }
 }
 
@@ -54,7 +96,10 @@ fn import_preflight(params: &Value) -> Value {
     let (kind, format) = (str_of(params, "kind"), str_of(params, "format"));
     let (ws_id, blob_id) = (str_of(params, "workspaceId"), str_of(params, "blobId"));
     let Some(entry) = get_entry(kind, format) else {
-        return failure(format!("No import format \"{format}\" for kind \"{kind}\"."));
+        return failure(
+            EngineError::bad_request(format!("No import format \"{format}\" for kind \"{kind}\"."))
+                .keyed("import.format_unknown", json!({ "format": format, "kind": kind })),
+        );
     };
     let outcome = (|| {
         let meta = stat_blob(blob_id, now_ms(), Some(ws_id)).map_err(|e| describe_blob_error(&e))?;
@@ -70,7 +115,7 @@ fn import_preflight(params: &Value) -> Value {
     })();
     match outcome {
         Ok(preflight) => preflight.to_value(),
-        Err(error) => failure(error),
+        Err(error) => failure_of(error),
     }
 }
 
@@ -78,13 +123,16 @@ async fn import_commit(params: &Value) -> Value {
     let (kind, format) = (str_of(params, "kind"), str_of(params, "format"));
     let (ws_id, blob_id) = (str_of(params, "workspaceId"), str_of(params, "blobId"));
     let Some(entry) = get_entry(kind, format) else {
-        return failure(format!("No import format \"{format}\" for kind \"{kind}\"."));
+        return failure(
+            EngineError::bad_request(format!("No import format \"{format}\" for kind \"{kind}\"."))
+                .keyed("import.format_unknown", json!({ "format": format, "kind": kind })),
+        );
     };
     let strategy = Strategy::parse(opt_str(params, "collisionStrategy"));
 
     let meta = match stat_blob(blob_id, now_ms(), Some(ws_id)) {
         Ok(meta) => meta,
-        Err(err) => return failure(describe_blob_error(&err)),
+        Err(err) => return blob_failure(&err),
     };
     let outcome = match &entry.importer {
         Importer::Text(importer) => match read_source(blob_id, ws_id, str_of(&meta, "filename")) {
@@ -98,7 +146,7 @@ async fn import_commit(params: &Value) -> Value {
     };
     match outcome {
         Ok(imported) => imported.to_value(),
-        Err(error) => failure(error),
+        Err(error) => failure_of(error),
     }
 }
 
@@ -151,7 +199,13 @@ mod tests {
             .invoke("export.create", json!({ "kind": "mocks", "format": "nope", "workspaceId": "ws1" }), ctx.clone())
             .await
             .unwrap();
-        assert_eq!(out, json!({ "ok": false, "error": "No export format \"nope\" for kind \"mocks\"." }));
+        assert_eq!(
+            out,
+            json!({
+                "ok": false, "error": "No export format \"nope\" for kind \"mocks\".",
+                "errorKey": "export.format_unknown", "errorParams": { "format": "nope", "kind": "mocks" },
+            })
+        );
         let out = registry
             .invoke("import.preflight", json!({ "kind": "x", "format": "y", "workspaceId": "ws1", "blobId": "b" }), ctx)
             .await
