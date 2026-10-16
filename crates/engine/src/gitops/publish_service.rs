@@ -211,7 +211,7 @@ pub async fn publish_entities(opts: PublishOptions) -> Value {
     let _guard = workspace_lock(&ws_id).lock_owned().await;
     match publish_locked(&opts).await {
         Ok(result) => result,
-        Err(e) => json!({ "ok": false, "error": e.0 }),
+        Err(e) => crate::runtime::failed(&e.into()),
     }
 }
 
@@ -267,7 +267,10 @@ pub(super) async fn commit_paths(opts: &PublishOptions) -> Result<Value, GitErro
         let mut problems = stage_failures;
         problems.extend(find_unstageable_paths(ws_id, &opts.paths).await);
         if !problems.is_empty() {
-            return Ok(json!({ "ok": false, "error": format!("git staged nothing — {}", problems.join("; ")) }));
+            let detail = problems.join("; ");
+            let error = crate::protocol::EngineError::engine(format!("git staged nothing — {detail}"))
+                .keyed("git.staged_nothing", json!({ "detail": detail }));
+            return Ok(crate::runtime::failed(&error));
         }
         return Ok(json!({ "ok": true, "commit": null }));
     }

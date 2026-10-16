@@ -6,9 +6,13 @@ use super::{
     git_lock::workspace_lock,
     git_sync_ops::{fetch_remote_head, perform_git_pull},
     remote::{Need, ensure_access, git_net, workspace_auth},
-    sync_state::{emit, get_sync_config, get_sync_meta, save_sync_meta, set_state, sync_meta_value},
+    sync_state::{emit, get_sync_config, get_sync_meta, no_remote, save_sync_meta, set_state, sync_meta_value},
 };
-use crate::utils::{id::now_ms, json::str_of};
+use crate::{
+    protocol::EngineError,
+    runtime::failed,
+    utils::{id::now_ms, json::str_of},
+};
 
 /// The entity id a workspace-relative path names (`requests/folder/abc.json` -> `abc`), if it is an entity file.
 fn entity_id_from_path(path: &str) -> Option<String> {
@@ -18,10 +22,10 @@ fn entity_id_from_path(path: &str) -> Option<String> {
 }
 
 pub async fn sync_push(ws_id: &str) -> Value {
-    let Some(config) = get_sync_config(ws_id) else { return json!({ "ok": false, "error": "No remote configured" }) };
+    let Some(config) = get_sync_config(ws_id) else { return failed(&no_remote()) };
     set_state(ws_id, |s| {
         s.status = "pushing".into();
-        s.error = None;
+        s.clear_error();
     });
     emit(ws_id);
 
@@ -37,28 +41,26 @@ pub async fn sync_push(ws_id: &str) -> Value {
             save_sync_meta(ws_id, Some(sync_meta_value(Some(now), pulled, None)));
             set_state(ws_id, |s| {
                 s.status = "idle".into();
-                s.error = None;
+                s.clear_error();
                 s.last_pushed_at = Some(now);
             });
             emit(ws_id);
             json!({ "ok": true })
         }
         Err(e) => {
-            set_state(ws_id, |s| {
-                s.status = "error".into();
-                s.error = Some(e.0.clone());
-            });
+            let error = EngineError::from(e);
+            set_state(ws_id, |s| s.fail(&error));
             emit(ws_id);
-            json!({ "ok": false, "error": e.0 })
+            failed(&error)
         }
     }
 }
 
 pub async fn sync_pull(ws_id: &str) -> Value {
-    let Some(config) = get_sync_config(ws_id) else { return json!({ "ok": false, "error": "No remote configured" }) };
+    let Some(config) = get_sync_config(ws_id) else { return failed(&no_remote()) };
     set_state(ws_id, |s| {
         s.status = "pulling".into();
-        s.error = None;
+        s.clear_error();
         s.updated_ids = None;
     });
     emit(ws_id);
@@ -79,7 +81,7 @@ pub async fn sync_pull(ws_id: &str) -> Value {
             if !outcome.updated {
                 set_state(ws_id, |s| {
                     s.status = "idle".into();
-                    s.error = None;
+                    s.clear_error();
                     s.last_pulled_at = Some(now);
                 });
                 emit(ws_id);
@@ -89,7 +91,7 @@ pub async fn sync_pull(ws_id: &str) -> Value {
                 outcome.changed_paths.iter().filter_map(|p| entity_id_from_path(p)).collect();
             set_state(ws_id, |s| {
                 s.status = "idle".into();
-                s.error = None;
+                s.clear_error();
                 s.last_pulled_at = Some(now);
                 s.updated_ids = Some(updated_ids.clone());
             });
@@ -97,12 +99,10 @@ pub async fn sync_pull(ws_id: &str) -> Value {
             json!({ "ok": true, "updated": true, "updatedIds": updated_ids })
         }
         Err(e) => {
-            set_state(ws_id, |s| {
-                s.status = "error".into();
-                s.error = Some(e.0.clone());
-            });
+            let error = EngineError::from(e);
+            set_state(ws_id, |s| s.fail(&error));
             emit(ws_id);
-            json!({ "ok": false, "error": e.0 })
+            failed(&error)
         }
     }
 }

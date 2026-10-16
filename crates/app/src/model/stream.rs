@@ -6,6 +6,7 @@
 
 use serde_json::Value;
 
+use crate::engine::error_text;
 use crate::i18n::t;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Default)]
@@ -93,7 +94,7 @@ impl StreamView {
         }
         Self {
             state: StreamState::parse(result.get("status").and_then(Value::as_str).unwrap_or("")),
-            error: result.get("error").and_then(Value::as_str).map(str::to_owned),
+            error: error_text(result),
             http_status: http_status(result),
             messages: result
                 .get("messages")
@@ -106,7 +107,7 @@ impl StreamView {
     /// Applies an `event.sse.status` payload.
     pub fn apply_status_event(&mut self, payload: &Value) {
         self.state = StreamState::parse(payload.get("status").and_then(Value::as_str).unwrap_or(""));
-        self.error = payload.get("error").and_then(Value::as_str).map(str::to_owned);
+        self.error = error_text(payload);
         self.http_status = http_status(payload);
     }
 

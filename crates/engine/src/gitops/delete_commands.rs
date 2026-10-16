@@ -179,7 +179,10 @@ async fn confirm(ws_id: &str, records: &[(String, Value)], message: String) -> V
         if is_git_tracked(ws_id, &path).await {
             paths.push(path);
         } else if let Err(e) = forget_deleted(ws_id, kind, str_of(record, "id")) {
-            return json!({ "ok": false, "error": e.to_string() });
+            let detail = e.to_string();
+            return crate::runtime::failed(
+                &EngineError::engine(detail.clone()).keyed("files.failed", json!({ "detail": detail })),
+            );
         }
     }
     let result = if paths.is_empty() {
@@ -205,7 +208,10 @@ async fn revert(ws_id: &str, records: &[(String, Value)]) -> Value {
         let result = if is_git_tracked(ws_id, &path).await {
             discard_changes(ws_id, &path).await
         } else {
-            json!({ "ok": false, "error": "Its deletion is already committed. Confirm the delete to finish it." })
+            crate::runtime::failed(
+                &EngineError::conflict("Its deletion is already committed. Confirm the delete to finish it.")
+                    .keyed("delete.already_committed", json!({})),
+            )
         };
         if result.get("ok") != Some(&Value::Bool(true)) {
             failure.get_or_insert(result);
@@ -218,7 +224,9 @@ async fn revert(ws_id: &str, records: &[(String, Value)]) -> Value {
 }
 
 fn deleted_entity(ws_id: &str, kind: &str, id: &str) -> Result<Value> {
-    pending_entity(ws_id, kind, id).ok_or_else(|| EngineError::not_found("It is not waiting to be deleted."))
+    pending_entity(ws_id, kind, id).ok_or_else(|| {
+        EngineError::not_found("It is not waiting to be deleted.").keyed("delete.not_pending", json!({}))
+    })
 }
 
 /// The folder, the ids of the folders under it, and the entities in them with their kinds.
@@ -228,11 +236,9 @@ type DeletedFolder = (Value, Vec<String>, Vec<(String, Value)>);
 /// kind: the folders of a tree hold entities of every kind of the tree.
 fn deleted_folder(ws_id: &str, kind: &str, id: &str) -> Result<DeletedFolder> {
     let folders = pending_folders(ws_id, kind);
-    let folder = folders
-        .iter()
-        .find(|f| str_of(f, "id") == id)
-        .cloned()
-        .ok_or_else(|| EngineError::not_found("The folder is not waiting to be deleted."))?;
+    let folder = folders.iter().find(|f| str_of(f, "id") == id).cloned().ok_or_else(|| {
+        EngineError::not_found("The folder is not waiting to be deleted.").keyed("delete.folder_not_pending", json!({}))
+    })?;
     let subtree = folder_subtree(&folders, id);
     let records = sharing_kinds(kind)
         .into_iter()
@@ -244,7 +250,10 @@ fn deleted_folder(ws_id: &str, kind: &str, id: &str) -> Result<DeletedFolder> {
 
 fn store_kind_of_folder(params: &Value) -> Result<&'static str> {
     let kind = str_of(params, "kind");
-    folder_store_kind(kind).ok_or_else(|| EngineError::engine(format!("Unknown folder kind \"{kind}\".")))
+    folder_store_kind(kind).ok_or_else(|| {
+        EngineError::engine(format!("Unknown folder kind \"{kind}\"."))
+            .keyed("delete.unknown_folder_kind", json!({ "kind": kind }))
+    })
 }
 
 pub fn register(registry: &mut CommandRegistry) {

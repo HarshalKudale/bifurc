@@ -18,7 +18,20 @@ const STRIPPED_GIT_VARS: [&str; 7] =
 
 /// What a failed git invocation said.
 #[derive(Debug, Clone)]
-pub struct GitError(pub String);
+pub struct GitError(pub String, pub Option<(&'static str, serde_json::Value)>);
+
+impl GitError {
+    /// An error whose English `message` a client can translate by `key` with `params`.
+    pub fn keyed(key: &'static str, message: impl Into<String>, params: serde_json::Value) -> Self {
+        Self(message.into(), Some((key, params)))
+    }
+
+    /// Git's own output as the error, which a client wraps in `git.failed`.
+    pub fn raw(detail: String) -> Self {
+        let params = serde_json::json!({ "detail": detail });
+        Self::keyed("git.failed", detail, params)
+    }
+}
 
 impl std::fmt::Display for GitError {
     fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
@@ -28,7 +41,11 @@ impl std::fmt::Display for GitError {
 
 impl From<GitError> for crate::protocol::EngineError {
     fn from(err: GitError) -> Self {
-        crate::protocol::EngineError::engine(err.0)
+        let error = crate::protocol::EngineError::engine(err.0);
+        match err.1 {
+            Some((key, params)) => error.keyed(key, params),
+            None => error,
+        }
     }
 }
 
@@ -127,7 +144,11 @@ async fn developer_tools_installed() -> bool {
 async fn run_git(dir: &Path, args: &[&str], auth: Option<&RemoteAuth>, network: bool) -> Result<String, GitError> {
     let located = LOCATED_GIT.lock().clone().or_else(|| if cfg!(target_os = "macos") { locate_git() } else { None });
     if cfg!(target_os = "macos") && located.is_none() && !developer_tools_installed().await {
-        return Err(GitError("could not run git: it is not installed".to_owned()));
+        return Err(GitError::keyed(
+            "git.not_installed",
+            "could not run git: it is not installed",
+            serde_json::json!({}),
+        ));
     }
     let output = match git_command(located.as_deref(), dir, args, auth, network).output().await {
         Err(e) if e.kind() == std::io::ErrorKind::NotFound && located.is_none() => match locate_git() {
@@ -139,12 +160,22 @@ async fn run_git(dir: &Path, args: &[&str], auth: Option<&RemoteAuth>, network: 
         },
         other => other,
     }
-    .map_err(|e| GitError(format!("could not run git: {e}")))?;
+    .map_err(|e| {
+        GitError::keyed(
+            "git.run_failed",
+            format!("could not run git: {e}"),
+            serde_json::json!({ "detail": e.to_string() }),
+        )
+    })?;
     if output.status.success() {
         return Ok(String::from_utf8_lossy(&output.stdout).into_owned());
     }
     let stderr = String::from_utf8_lossy(&output.stderr).trim().to_string();
-    Err(GitError(if stderr.is_empty() { String::from_utf8_lossy(&output.stdout).trim().to_string() } else { stderr }))
+    Err(GitError::raw(if stderr.is_empty() {
+        String::from_utf8_lossy(&output.stdout).trim().to_string()
+    } else {
+        stderr
+    }))
 }
 
 fn git_command(
@@ -408,7 +439,7 @@ pub async fn get_entity_at_commit(commit_ref: &str, ws_id: &str, rel_path: &str)
 pub async fn commit_patch(ws_id: &str, commit: &str, rel_path: Option<&str>) -> Result<String, GitError> {
     // The hash goes on git's command line: nothing but an object id may.
     if !matches!(commit.len(), 40 | 64) || !commit.bytes().all(|b| b.is_ascii_hexdigit()) {
-        return Err(GitError("Not a commit id.".to_string()));
+        return Err(GitError::keyed("git.not_commit_id", "Not a commit id.", serde_json::json!({})));
     }
     let mut args = vec![
         "show",
