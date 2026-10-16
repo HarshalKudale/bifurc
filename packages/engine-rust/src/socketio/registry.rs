@@ -19,7 +19,6 @@ use std::{
 };
 
 use futures::{SinkExt, StreamExt};
-use parking_lot::Mutex;
 use serde_json::{Map, Value, json};
 use tokio::{
     sync::mpsc::{UnboundedReceiver, UnboundedSender, unbounded_channel},
@@ -41,7 +40,7 @@ use super::packet::{
 };
 use crate::{
     env::{load_merged_environment, resolve_headers, resolve_vars},
-    kernel::bus,
+    kernel::streams::{Event, Stream, Streams, emit, key_of, trim_log},
     utils::id::now_ms,
 };
 
@@ -122,11 +121,6 @@ struct Entry {
     listeners: Option<Vec<String>>,
 }
 
-struct Event {
-    name: &'static str,
-    payload: Value,
-}
-
 /// One line of the log: an event or an acknowledgement, in either direction.
 struct Logged<'a> {
     direction: &'static str,
@@ -137,26 +131,6 @@ struct Logged<'a> {
 }
 
 impl Entry {
-    fn is_live(&self) -> bool {
-        self.tx.is_some()
-    }
-
-    fn snapshot(&self) -> Value {
-        let mut out = Map::new();
-        out.insert("workspaceId".into(), json!(self.workspace_id));
-        out.insert("connectionId".into(), json!(self.connection_id));
-        out.insert("url".into(), json!(self.url));
-        out.insert("namespace".into(), json!(self.namespace));
-        out.insert("status".into(), json!(self.status));
-        out.insert("error".into(), json!(self.error));
-        out.insert("sid".into(), json!(self.sid));
-        out.insert("closeReason".into(), json!(self.close_reason));
-        out.insert("listeners".into(), json!(self.listeners));
-        out.insert("openedAt".into(), json!(self.opened_at));
-        out.insert("messages".into(), Value::Array(self.messages.clone()));
-        Value::Object(out)
-    }
-
     fn status_event(&self) -> Event {
         Event {
             name: "socketio.status",
@@ -187,10 +161,7 @@ impl Entry {
             "ackId": logged.ack_id,
         });
         self.messages.push(message.clone());
-        if self.messages.len() > MAX_SOCKETIO_MESSAGES {
-            let excess = self.messages.len() - MAX_SOCKETIO_MESSAGES;
-            self.messages.drain(..excess);
-        }
+        trim_log(&mut self.messages, MAX_SOCKETIO_MESSAGES);
         Event {
             name: "socketio.message",
             payload: json!({
@@ -200,20 +171,41 @@ impl Entry {
     }
 }
 
-/// Events are emitted after the registry lock is released: a listener may call back into the registry.
-fn emit(events: Vec<Event>) {
-    for event in events {
-        bus().emit(event.name, event.payload);
+impl Stream for Entry {
+    fn workspace_id(&self) -> &str {
+        &self.workspace_id
+    }
+
+    fn is_live(&self) -> bool {
+        self.tx.is_some()
+    }
+
+    fn generation(&self) -> u64 {
+        self.generation
+    }
+
+    fn snapshot(&self) -> Value {
+        let mut out = Map::new();
+        out.insert("workspaceId".into(), json!(self.workspace_id));
+        out.insert("connectionId".into(), json!(self.connection_id));
+        out.insert("url".into(), json!(self.url));
+        out.insert("namespace".into(), json!(self.namespace));
+        out.insert("status".into(), json!(self.status));
+        out.insert("error".into(), json!(self.error));
+        out.insert("sid".into(), json!(self.sid));
+        out.insert("closeReason".into(), json!(self.close_reason));
+        out.insert("listeners".into(), json!(self.listeners));
+        out.insert("openedAt".into(), json!(self.opened_at));
+        out.insert("messages".into(), Value::Array(self.messages.clone()));
+        Value::Object(out)
+    }
+
+    fn clear_log(&mut self) {
+        self.messages.clear();
     }
 }
 
-static CONNECTIONS: LazyLock<Mutex<HashMap<String, Entry>>> = LazyLock::new(|| Mutex::new(HashMap::new()));
-
-/// `\0` separates the ids: an id containing a colon is legal, and a collision would attach one workspace's
-/// connection to another's.
-fn key_of(workspace_id: &str, connection_id: &str) -> String {
-    format!("{workspace_id}\0{connection_id}")
-}
+static CONNECTIONS: LazyLock<Streams<Entry>> = LazyLock::new(Streams::new);
 
 fn no_connection(workspace_id: &str, connection_id: &str) -> String {
     format!("No connection \"{connection_id}\" in workspace \"{workspace_id}\".")
@@ -221,21 +213,16 @@ fn no_connection(workspace_id: &str, connection_id: &str) -> String {
 
 /// The snapshot for one connection, live or finished, or `None` if the engine never opened that id.
 pub fn get_connection(workspace_id: &str, connection_id: &str) -> Option<Value> {
-    CONNECTIONS.lock().get(&key_of(workspace_id, connection_id)).map(Entry::snapshot)
+    CONNECTIONS.get(workspace_id, connection_id)
 }
 
 /// The live connections of a workspace. A finished connection keeps its entry but does not appear here.
 pub fn list_connections(workspace_id: &str) -> Vec<Value> {
-    CONNECTIONS
-        .lock()
-        .values()
-        .filter(|e| e.workspace_id == workspace_id && e.is_live())
-        .map(Entry::snapshot)
-        .collect()
+    CONNECTIONS.list(workspace_id)
 }
 
 fn live_count(workspace_id: &str) -> usize {
-    CONNECTIONS.lock().values().filter(|e| e.workspace_id == workspace_id && e.is_live()).count()
+    CONNECTIONS.live_count(workspace_id)
 }
 
 /// The WebSocket request a connect makes, the namespace it joins and what it authenticates with, everything
@@ -470,12 +457,10 @@ pub fn set_listeners(workspace_id: &str, connection_id: &str, listeners: Option<
 
 /// Drop the retained log of one connection; the connection itself is untouched.
 pub fn clear_connection_messages(workspace_id: &str, connection_id: &str) -> OkResult {
-    match CONNECTIONS.lock().get_mut(&key_of(workspace_id, connection_id)) {
-        Some(entry) => {
-            entry.messages.clear();
-            Ok(())
-        }
-        None => Err(no_connection(workspace_id, connection_id)),
+    if CONNECTIONS.clear_log(workspace_id, connection_id) {
+        Ok(())
+    } else {
+        Err(no_connection(workspace_id, connection_id))
     }
 }
 
@@ -483,16 +468,12 @@ pub fn clear_connection_messages(workspace_id: &str, connection_id: &str) -> OkR
 
 /// Record an event or an acknowledgement the server sent. `false` when the connection has been superseded.
 fn record_received(key: &str, generation: u64, incoming: Incoming) -> bool {
-    let event = {
-        let mut connections = CONNECTIONS.lock();
-        let Some(entry) = connections.get_mut(key).filter(|e| e.generation == generation) else {
-            return false;
-        };
-        match incoming {
+    CONNECTIONS.record(key, generation, |entry| {
+        let event = match incoming {
             Incoming::Event { name, args, ack_id } => {
                 // An event nothing listens to is not heard, as in a Socket.IO client.
                 if entry.listeners.as_ref().is_some_and(|heard| !heard.contains(&name)) {
-                    return true;
+                    return Vec::new();
                 }
                 entry.push(Logged { direction: "received", kind: "event", event: &name, args: &args, ack_id })
             }
@@ -507,38 +488,27 @@ fn record_received(key: &str, generation: u64, incoming: Incoming) -> bool {
                     ack_id: Some(id),
                 })
             }
-            _ => return true,
-        }
-    };
-    emit(vec![event]);
-    true
+            _ => return Vec::new(),
+        };
+        vec![event]
+    })
 }
 
 /// The namespace accepted the connection. `false` when the connection has been superseded meanwhile.
 fn record_open(key: &str, generation: u64, sid: Option<String>) -> bool {
-    let event = {
-        let mut connections = CONNECTIONS.lock();
-        let Some(entry) = connections.get_mut(key).filter(|e| e.generation == generation) else {
-            return false;
-        };
+    CONNECTIONS.record(key, generation, |entry| {
         entry.status = "connected";
         entry.error = None;
         entry.sid = sid;
         entry.opened_at = Some(now_ms());
-        entry.status_event()
-    };
-    emit(vec![event]);
-    true
+        vec![entry.status_event()]
+    })
 }
 
 /// The connection is over, for `reason`. `error` is why it failed; with none it ended cleanly. A close the
 /// caller asked for is never an error.
 fn record_end(key: &str, generation: u64, error: Option<String>, reason: &'static str) {
-    let event = {
-        let mut connections = CONNECTIONS.lock();
-        let Some(entry) = connections.get_mut(key).filter(|e| e.generation == generation) else {
-            return;
-        };
+    CONNECTIONS.record(key, generation, |entry| {
         entry.tx = None;
         entry.pending_acks.clear();
         match error.filter(|_| !entry.close_requested) {
@@ -553,9 +523,8 @@ fn record_end(key: &str, generation: u64, error: Option<String>, reason: &'stati
                 entry.close_reason = Some(if entry.close_requested { "io client disconnect" } else { reason });
             }
         }
-        entry.status_event()
-    };
-    emit(vec![event]);
+        vec![entry.status_event()]
+    });
 }
 
 type Socket = tokio_tungstenite::WebSocketStream<tokio_tungstenite::MaybeTlsStream<tokio::net::TcpStream>>;
