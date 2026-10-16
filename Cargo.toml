@@ -1,8 +1,28 @@
-# The Rust engine and CLI. The desktop UI is its own workspace in `packages/ui-rust`.
+# The whole repository: the engine, CLI and MCP server, and the desktop UI (`packages/ui-rust`).
 [workspace]
 resolver = "2"
-members = ["packages/protocol-rust", "packages/client-rust", "packages/engine-rust", "packages/cli-rust", "packages/mcp-rust", "xtask"]
-exclude = ["packages/ui-rust"]
+members = [
+    "packages/protocol-rust",
+    "packages/client-rust",
+    "packages/engine-rust",
+    "packages/cli-rust",
+    "packages/mcp-rust",
+    "packages/ui-rust/crates/engine-client",
+    "packages/ui-rust/crates/app",
+    "packages/ui-rust/crates/tray",
+    "packages/ui-rust/crates/cli",
+    "xtask",
+]
+# What a plain `cargo build` / `cargo test` at the root covers: everything but the GPUI app, whose build needs a
+# graphics toolchain (and, via build.rs, a nested tray build). Use `--workspace` or `-p bifurc-ui` for it.
+default-members = [
+    "packages/protocol-rust",
+    "packages/client-rust",
+    "packages/engine-rust",
+    "packages/cli-rust",
+    "packages/mcp-rust",
+    "xtask",
+]
 
 [workspace.package]
 version = "0.5.0"
@@ -12,9 +32,21 @@ authors = ["Harshal Kudale"]
 
 [profile.release]
 opt-level = 3
-lto = "fat"
-codegen-units = 1
+# Thin LTO for the whole workspace: a fat link of the GPUI app is too slow. The engine side keeps one codegen unit.
+lto = "thin"
+codegen-units = 16
 strip = true
+
+[profile.release.package.bifurc-protocol]
+codegen-units = 1
+[profile.release.package.bifurc-client]
+codegen-units = 1
+[profile.release.package.bifurc-engine]
+codegen-units = 1
+[profile.release.package.bifurc-cli]
+codegen-units = 1
+[profile.release.package.bifurc-mcp]
+codegen-units = 1
 
 # Argon2 is the one slow thing a vault does; unoptimised it takes seconds per key in debug builds and tests.
 [profile.dev.package.argon2]

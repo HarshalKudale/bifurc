@@ -83,7 +83,7 @@ fn locate(bin_dir: &Path, this: &Path, packaged: &str, built: &str) -> Option<(P
     let this = this.canonicalize().ok();
     bin_dir
         .ancestors()
-        // Only the repository root: `packages/ui-rust/target` holds launchers of this very kind, not the CLI.
+        // Only the repository root: the one `target/` holds the CLI (`bifurc`); this launcher is `bifurc-launcher`.
         .filter(|dir| dir.join("packages").join("cli-rust").is_dir())
         .flat_map(|dir| ["release", "debug"].map(|profile| dir.join("target").join(profile).join(format!("{built}{suffix}"))))
         .filter(|candidate| candidate.is_file() && candidate.canonicalize().ok() != this)
