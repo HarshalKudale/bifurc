@@ -21,7 +21,9 @@ use crate::{
     env::effective_environment_id,
     utils::{
         id::generate_id,
-        json::{array_of, bool_of, opt_str, str_of, truthy},
+        // Console shelved (free app): `bool_of` read the organization.
+        // json::{array_of, bool_of, opt_str, str_of, truthy},
+        json::{array_of, opt_str, str_of, truthy},
     },
 };
 
@@ -380,9 +382,10 @@ fn settings_snapshot(settings: &super::settings::AppSettings, active_ws_id: &str
         .iter()
         .map(|w| {
             let account = accounts.iter().find(|a| str_of(a, "id") == str_of(w, "accountId")).cloned();
-            let organization = w.get("organization").filter(|organization| organization.is_object()).map(|known| {
-                json!({ "name": str_of(known, "name"), "analytics": bool_of(known, "analytics", false) })
-            });
+// Console shelved (free app): an `organization` left in app.json by an older version is ignored.
+            // let organization = w.get("organization").filter(|organization| organization.is_object()).map(|known| {
+            //     json!({ "name": str_of(known, "name"), "analytics": bool_of(known, "analytics", false) })
+            // });
             json!({
                 "id": w.get("id").cloned().unwrap_or(Value::Null),
                 "name": w.get("name").cloned().unwrap_or(Value::Null),
@@ -391,7 +394,8 @@ fn settings_snapshot(settings: &super::settings::AppSettings, active_ws_id: &str
                 "account": account,
                 "syncConfig": w.get("syncConfig").cloned().unwrap_or(Value::Null),
                 "syncMeta": w.get("syncMeta").cloned().unwrap_or(Value::Null),
-                "organization": organization,
+// Console shelved (free app): the snapshot no longer carries an organization.
+                // "organization": organization,
             })
         })
         .collect();
