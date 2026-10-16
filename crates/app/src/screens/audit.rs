@@ -21,7 +21,7 @@ use gpui_kit::component::{
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AnyElement, AppContext as _, Context, Entity, InteractiveElement as _, IntoElement, ParentElement as _, Render,
-    StatefulInteractiveElement as _, Styled as _, Subscription, Window, div,
+    StatefulInteractiveElement as _, Styled as _, Subscription, TestSupportExt as _, Window, div,
 };
 use serde_json::{Value, json};
 
@@ -526,6 +526,7 @@ impl AuditScreen {
         };
         let row = h_flex()
             .id(gpui_kit::ElementId::Name(format!("audit-row-{}", entry.commit).into()))
+            .test_support()
             .w_full()
             .gap_3()
             .px_4()

@@ -459,7 +459,12 @@ fn render_row<S: FolderTreeSource>(
     let open = key.clone().filter(|key| key.item_id().is_some());
     let folder = key.as_ref().and_then(|key| drop_folder::<S>(model.read(cx), key));
     let (click_tree, drag_tree, drop_tree, drop_model) = (tree.clone(), tree.clone(), tree.clone(), model.clone());
-    let row = ListItem::new(ix)
+    // Rows are named after what they stand for, which is also how UI tests find one.
+    let row_id: gpui_kit::ElementId = match key.as_ref().and_then(|key| key.item_id().or(key.folder_id())) {
+        Some(id) => gpui_kit::ElementId::Name(format!("tree-row-{id}").into()),
+        None => ix.into(),
+    };
+    let row = ListItem::new(row_id)
         .selected(selected)
         .pl(rems(0.5 + entry.depth() as f32 * 1.0))
         .py_1()
