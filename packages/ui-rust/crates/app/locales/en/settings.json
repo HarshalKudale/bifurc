@@ -61,7 +61,6 @@
   "keywords.network": "network",
   "keywords.telemetry": "telemetry",
   "keywords.tracking": "tracking",
-  "keywords.organization": "organization",
 
   "engine.name": "Engine",
   "engine.runtime_group": "Engine runtime",
@@ -145,16 +144,8 @@
   "about.desktop_app": "Desktop app",
   "about.protocol": "Protocol",
   "about.engine_process": "Engine process",
-  "about.organization_owner": "its organization",
-  "about.managed_title": "Usage analytics for {name}",
   "about.terms": "Terms of service",
   "about.privacy_policy": "Privacy policy",
-  "about.footer": "A workspace that belongs to an organization follows that organization's setting, not this one.",
-
-  "analytics.on": "On",
-  "analytics.off": "Off",
-  "analytics.managed_on": "Managed by the owner of {owner}. What kind of thing you do in this workspace is reported to them with your GitHub account, never its content. The switch above does not change this.",
-  "analytics.managed_off": "Managed by the owner of {owner}, who has not turned usage analytics on. Nothing done in this workspace is reported.",
 
   "telemetry.title": "Anonymous usage analytics",
   "telemetry.description": "On by default. What kind of thing you do in the app and in your own workspaces, and where in Bifurc's own code it crashed or failed, never its content. Off, only that Bifurc was installed on this device is reported, once.",

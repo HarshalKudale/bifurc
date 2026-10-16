@@ -61,7 +61,6 @@
   "keywords.network": "ネットワーク",
   "keywords.telemetry": "テレメトリ",
   "keywords.tracking": "トラッキング",
-  "keywords.organization": "組織",
 
   "engine.name": "エンジン",
   "engine.runtime_group": "エンジンのランタイム",
@@ -145,16 +144,8 @@
   "about.desktop_app": "デスクトップアプリ",
   "about.protocol": "プロトコル",
   "about.engine_process": "エンジンプロセス",
-  "about.organization_owner": "その組織",
-  "about.managed_title": "{name} の利用状況の分析",
   "about.terms": "利用規約",
   "about.privacy_policy": "プライバシーポリシー",
-  "about.footer": "組織に属するワークスペースは、この設定ではなく、その組織の設定に従います。",
-
-  "analytics.on": "オン",
-  "analytics.off": "オフ",
-  "analytics.managed_on": "{owner} のオーナーが管理しています。このワークスペースで行った操作の種類が、GitHub アカウントとともにオーナーに報告されます。内容は報告されません。上のスイッチでは変更できません。",
-  "analytics.managed_off": "{owner} のオーナーが管理しており、利用状況の分析はオンになっていません。このワークスペースでの操作は報告されません。",
 
   "telemetry.title": "匿名の利用状況の分析",
   "telemetry.description": "既定でオンです。アプリや自分のワークスペースで行った操作の種類と、クラッシュやエラーが Bifurc のコードのどこで発生したかのみで、内容は送信されません。オフの場合は、このデバイスに Bifurc がインストールされたことのみが、1 回だけ報告されます。",
