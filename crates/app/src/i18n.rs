@@ -26,6 +26,7 @@ macro_rules! language {
                 ("audit", include_str!(concat!("../locales/", $code, "/audit.json"))),
                 ("capture", include_str!(concat!("../locales/", $code, "/capture.json"))),
                 ("components", include_str!(concat!("../locales/", $code, "/components.json"))),
+                ("errors", include_str!(concat!("../locales/", $code, "/errors.json"))),
                 ("environments", include_str!(concat!("../locales/", $code, "/environments.json"))),
                 ("flows", include_str!(concat!("../locales/", $code, "/flows.json"))),
                 ("healthbar", include_str!(concat!("../locales/", $code, "/healthbar.json"))),
@@ -112,6 +113,12 @@ pub fn t(key: &str) -> &'static str {
     })
 }
 
+/// Whether the current language, or English, has text for `key`.
+pub fn has(key: &str) -> bool {
+    let bundles = bundles();
+    bundles[*current_index().read().unwrap()].contains_key(key) || bundles[0].contains_key(key)
+}
+
 /// The text for `key` with each `{name}` replaced by its value.
 pub fn t_with(key: &str, values: &[(&str, &dyn Display)]) -> String {
     values
@@ -166,6 +173,12 @@ mod tests {
             }
         }
         assert!(missing.is_empty(), "keys with no English text:\n{}", missing.join("\n"));
+    }
+
+    #[test]
+    fn has_tells_a_known_key_from_an_unknown_one() {
+        assert!(has("errors.request.send.refused"));
+        assert!(!has(&format!("errors.{}", "no.such.key")));
     }
 
     #[test]

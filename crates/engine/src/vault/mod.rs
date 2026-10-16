@@ -63,6 +63,7 @@ fn ready_key(ws_id: &str, vault: &VaultFile) -> Result<crypto::Key> {
             format!("The vault \"{}\" is sealed. Enter its passphrase first.", vault.name),
             json!({ "reason": "vault_sealed", "vaultId": vault.id }),
         )
+        .keyed("vault.sealed", json!({ "name": vault.name }))
     })
 }
 
@@ -74,7 +75,8 @@ fn verify(ws_id: &str, vault: &VaultFile, passphrase: &str) -> Result<crypto::Ke
             ErrorCode::Forbidden,
             format!("Too many wrong passphrases. Try again in {wait} s."),
             json!({ "reason": "throttled", "retryAfterSecs": wait }),
-        ));
+        )
+        .keyed("vault.throttled", json!({ "seconds": wait })));
     }
     match vault.unlock(passphrase) {
         Ok(key) => {
@@ -93,7 +95,12 @@ fn verify(ws_id: &str, vault: &VaultFile, passphrase: &str) -> Result<crypto::Ke
 fn check_name_free(ws_id: &str, name: &str, except_id: Option<&str>) -> Result<()> {
     let taken =
         store::list(ws_id).into_iter().any(|v| v.name.eq_ignore_ascii_case(name) && Some(v.id.as_str()) != except_id);
-    if taken { Err(EngineError::conflict(format!("A vault named \"{name}\" already exists."))) } else { Ok(()) }
+    if taken {
+        Err(EngineError::conflict(format!("A vault named \"{name}\" already exists."))
+            .keyed("vault.name_taken", json!({ "name": name })))
+    } else {
+        Ok(())
+    }
 }
 
 fn changed_event(ws_id: &str, id: &str) {
@@ -252,7 +259,8 @@ pub fn register(registry: &mut CommandRegistry) {
                 return Err(EngineError::bad_request(format!(
                     "A secret must be at least {} characters, so that it can be kept out of logs.",
                     state::MIN_SECRET_LEN
-                )));
+                ))
+                .keyed("vault.secret_short", json!({ "min": state::MIN_SECRET_LEN })));
             }
             let mut vault = store::get(&ws_id, &id)?;
             let key = ready_key(&ws_id, &vault)?;
@@ -272,7 +280,8 @@ pub fn register(registry: &mut CommandRegistry) {
             let before = vault.secrets.len();
             vault.secrets.retain(|s| s.name != name);
             if vault.secrets.len() == before {
-                return Err(EngineError::not_found(format!("No secret \"{name}\" in this vault.")));
+                return Err(EngineError::not_found(format!("No secret \"{name}\" in this vault."))
+                    .keyed("vault.secret_not_found", json!({ "name": name })));
             }
             store::save(&ws_id, &vault)?;
             changed_event(&ws_id, &id);

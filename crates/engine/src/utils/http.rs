@@ -25,9 +25,11 @@ use std::{
 };
 
 use reqwest::{Client, redirect::Policy};
-use serde_json::Value;
+use serde_json::{Value, json};
 use tokio::time::Instant;
 use tokio_util::sync::CancellationToken;
+
+use crate::protocol::{EngineError, ErrorCode};
 
 /// The options that need a different reqwest `Client`. Everything else about a request (timeout, headers)
 /// is set on the request, so a handful of clients serve every send.
@@ -100,6 +102,7 @@ pub fn root_message(err: &dyn std::error::Error) -> String {
 
 pub const REFUSED_NO_ADDRESS: &str = "Nothing is listening at this address. Is the server running?";
 pub const NAME_NOT_FOUND_NO_HOST: &str = "The host name could not be found.";
+const CLOSED_EARLY: &str = "The connection was closed before a response came.";
 
 /// A failed send in plain words: nothing listening, name not found, connection closed early; otherwise the
 /// innermost message of the chain. `host` and `port` name the target in the message when known.
@@ -115,7 +118,7 @@ pub fn describe_send_error(err: &(dyn std::error::Error + 'static), host: Option
                 }
                 (ErrorKind::ConnectionRefused, ..) => return REFUSED_NO_ADDRESS.to_string(),
                 (ErrorKind::ConnectionReset | ErrorKind::ConnectionAborted | ErrorKind::BrokenPipe, ..) => {
-                    return "The connection was closed before a response came.".to_string();
+                    return CLOSED_EARLY.to_string();
                 }
                 _ => {}
             }
@@ -128,11 +131,44 @@ pub fn describe_send_error(err: &(dyn std::error::Error + 'static), host: Option
             };
         }
         if message.contains("connection closed before message completed") {
-            return "The connection was closed before a response came.".to_string();
+            return CLOSED_EARLY.to_string();
         }
         source = inner.source();
     }
     message
+}
+
+/// A failed send as an engine error: `message` as it is, plus the key and params a UI translates it by
+/// (`request.send.refused {host, port}`, `.refused_no_address`, `.dns {host}`, `.dns_no_host`, `.closed`,
+/// `.timeout {seconds | ms}`, `.invalid_url`, `.cancelled`). Any other text stays English only.
+// shortcut: the key is read back from the message text (sends fail as Strings), keep in step with describe_send_error.
+pub fn send_error(code: ErrorCode, message: String) -> EngineError {
+    let tail = |prefix: &str, suffix: &str| message.strip_prefix(prefix)?.strip_suffix(suffix);
+    let (key, params) = if let Some(target) =
+        tail("Nothing is listening at ", ". Is the server running?").filter(|_| message != REFUSED_NO_ADDRESS)
+    {
+        let (host, port) = target.rsplit_once(':').unwrap_or((target, ""));
+        ("refused", json!({ "host": host, "port": port }))
+    } else if let Some(host) = tail("The name ", " could not be found.") {
+        ("dns", json!({ "host": host }))
+    } else if let Some(amount) = message.strip_prefix("Timed out after ") {
+        match amount.split_once(' ') {
+            Some((n, "s")) => ("timeout", json!({ "seconds": n })),
+            Some((n, _)) => ("timeout_ms", json!({ "ms": n })),
+            None => return EngineError::new(code, message),
+        }
+    } else {
+        let key = match message.as_str() {
+            REFUSED_NO_ADDRESS => "refused_no_address",
+            NAME_NOT_FOUND_NO_HOST => "dns_no_host",
+            CLOSED_EARLY => "closed",
+            "Invalid URL" => "invalid_url",
+            CANCELLED => "cancelled",
+            _ => return EngineError::new(code, message),
+        };
+        (key, json!({}))
+    };
+    EngineError::new(code, message).keyed(&format!("request.send.{key}"), params)
 }
 
 /// What a request does when nothing says otherwise: certificates are verified, redirects are handed back and
@@ -327,6 +363,22 @@ mod tests {
             describe_send_error(&dns, Some("api.example.test"), None),
             "The name api.example.test could not be found."
         );
+    }
+
+    #[test]
+    fn send_errors_are_keyed_by_what_describe_send_error_says() {
+        let key = |e: &EngineError| e.details.as_ref().map(|d| (d["key"].clone(), d["params"].clone()));
+        let refused = std::io::Error::from(std::io::ErrorKind::ConnectionRefused);
+        let e = send_error(ErrorCode::EngineError, describe_send_error(&refused, Some("127.0.0.1"), Some(9000)));
+        assert_eq!(key(&e), Some((json!("request.send.refused"), json!({ "host": "127.0.0.1", "port": "9000" }))));
+        assert!(e.message.starts_with("Nothing is listening"), "the English message stays");
+        let e = send_error(ErrorCode::EngineError, describe_send_error(&refused, None, None));
+        assert_eq!(key(&e).unwrap().0, "request.send.refused_no_address");
+        let e = send_error(ErrorCode::Timeout, timeout_message(30_000));
+        assert_eq!(key(&e), Some((json!("request.send.timeout"), json!({ "seconds": "30" }))));
+        let e = send_error(ErrorCode::Timeout, timeout_message(1500));
+        assert_eq!(key(&e), Some((json!("request.send.timeout_ms"), json!({ "ms": "1500" }))));
+        assert_eq!(key(&send_error(ErrorCode::EngineError, "Something odd".into())), None);
     }
 
     #[test]

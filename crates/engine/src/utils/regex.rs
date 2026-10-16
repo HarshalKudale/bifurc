@@ -43,7 +43,8 @@ pub fn validate(label: &str, pattern: &str) -> crate::protocol::Result<()> {
         crate::protocol::ErrorCode::BadRequest,
         format!("{label} \"{pattern}\" is not a valid regular expression."),
         serde_json::json!({ "field": label }),
-    ))
+    )
+    .keyed("validation.regex_invalid", serde_json::json!({ "pattern": pattern })))
 }
 
 #[cfg(test)]
@@ -67,5 +68,6 @@ mod tests {
         assert!(validate("pattern", "^{{host}}/(").is_ok());
         let err = validate("pattern", "(").unwrap_err();
         assert!(err.to_string().contains("\"(\""), "{err}");
+        assert_eq!(err.details.unwrap()["key"], "validation.regex_invalid");
     }
 }

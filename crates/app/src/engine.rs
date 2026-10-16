@@ -6,11 +6,11 @@
 
 use std::path::PathBuf;
 
-use bifurc_engine_client::{ClientError, EngineClient, Hello, RuntimeInfo, Sidecar, SidecarConfig};
+use bifurc_engine_client::{ClientError, EngineClient, EngineError, Hello, RuntimeInfo, Sidecar, SidecarConfig};
 use gpui_kit::{AppContext as _, AsyncApp, Context, Global, Window};
 use serde_json::Value;
 
-use crate::i18n::t;
+use crate::i18n::{has, t, t_with};
 
 /// A connected engine.
 ///
@@ -57,10 +57,26 @@ pub fn sidecar_config() -> SidecarConfig {
     config
 }
 
+/// The engine's own words for `error` in the user's language, when it named a key (`details.key`) this
+/// build has text for; `None` for an old engine or a key added since, which show `message` instead.
+pub fn translated(error: &EngineError) -> Option<String> {
+    let key = format!("errors.{}", error.key()?);
+    if !has(&key) {
+        return None;
+    }
+    let values: Vec<(&str, String)> = error
+        .params()?
+        .iter()
+        .map(|(name, value)| (name.as_str(), value.as_str().map_or_else(|| value.to_string(), str::to_owned)))
+        .collect();
+    let values: Vec<(&str, &dyn std::fmt::Display)> = values.iter().map(|(n, v)| (*n, v as _)).collect();
+    Some(t_with(&key, &values))
+}
+
 /// Short text for a failed call, as the UI shows it.
 pub fn describe(error: &ClientError) -> String {
     match error {
-        ClientError::Engine(e) => e.message.clone(),
+        ClientError::Engine(e) => translated(e).unwrap_or_else(|| e.message.clone()),
         ClientError::Closed => t("app.engine.connection_lost").to_owned(),
         other => other.to_string(),
     }
@@ -289,4 +305,35 @@ pub fn call_in<V: 'static>(
         this.update_in(cx, |this, window, cx| then(this, outcome, window, cx)).ok();
     })
     .detach();
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::*;
+
+    fn engine_error(details: Value) -> ClientError {
+        let details = (!details.is_null()).then_some(details);
+        ClientError::Engine(EngineError {
+            code: "ENGINE_ERROR".into(),
+            message: "English from the engine".into(),
+            details,
+        })
+    }
+
+    #[test]
+    fn a_known_key_is_shown_translated_with_its_params() {
+        let error =
+            engine_error(json!({ "key": "request.send.refused", "params": { "host": "h.test", "port": "9000" } }));
+        assert_eq!(describe(&error), t_with("errors.request.send.refused", &[("host", &"h.test"), ("port", &"9000")]));
+        assert!(describe(&error).contains("h.test") && describe(&error).contains("9000"), "{}", describe(&error));
+    }
+
+    #[test]
+    fn an_unknown_key_or_no_key_falls_back_to_the_engines_message() {
+        for details in [json!({ "key": "from.a.newer.engine", "params": {} }), json!({ "reason": "x" }), json!(null)] {
+            assert_eq!(describe(&engine_error(details)), "English from the engine");
+        }
+    }
 }
