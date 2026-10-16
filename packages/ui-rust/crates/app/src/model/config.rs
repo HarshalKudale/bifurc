@@ -273,6 +273,67 @@ fn array<'a>(config: &'a Value, key: &str) -> &'a [Value] {
     config.get(key).and_then(Value::as_array).map(Vec::as_slice).unwrap_or(&[])
 }
 
+impl EnvironmentInfo {
+    fn from_value(e: &Value) -> Option<Self> {
+        let variables = e
+            .get("variables")
+            .and_then(Value::as_array)
+            .map(|vars| {
+                vars.iter()
+                    .filter_map(|v| {
+                        Some(EnvVariable { id: text(v, "id").unwrap_or_default(), key: text(v, "key")?, value: text(v, "value")? })
+                    })
+                    .collect()
+            })
+            .unwrap_or_default();
+        Some(Self { id: text(e, "id")?, name: text(e, "name")?, variables, deleted: is_deleted(e), locked: locked_to(e) })
+    }
+}
+
+impl MappingInfo {
+    fn from_value(m: &Value) -> Option<Self> {
+        Some(Self {
+            id: text(m, "id")?,
+            domain: text(m, "domain")?,
+            target: text(m, "target").unwrap_or_default(),
+            label: non_empty(m, "label"),
+            enabled: m.get("enabled").and_then(Value::as_bool).unwrap_or(false),
+            deleted: is_deleted(m),
+            locked: locked_to(m),
+        })
+    }
+}
+
+impl MockStub {
+    fn from_value(m: &Value) -> Option<Self> {
+        Some(Self {
+            id: text(m, "id")?,
+            name: text(m, "name").unwrap_or_default(),
+            method: text(m, "method").unwrap_or_default(),
+            url_pattern: text(m, "urlPattern").unwrap_or_default(),
+            enabled: m.get("enabled").and_then(Value::as_bool).unwrap_or(false),
+            folder_id: non_empty(m, "folderId"),
+            deleted: is_deleted(m),
+            locked: locked_to(m),
+        })
+    }
+}
+
+impl RequestStub {
+    fn from_value(kind: RequestKind, stub: &Value) -> Option<Self> {
+        Some(Self {
+            kind,
+            id: text(stub, "id")?,
+            name: text(stub, "name").unwrap_or_default(),
+            folder_id: non_empty(stub, "folderId"),
+            method: (kind == RequestKind::Rest).then(|| text(stub, "method")).flatten(),
+            target: stub_target(kind, stub),
+            deleted: is_deleted(stub),
+            locked: locked_to(stub),
+        })
+    }
+}
+
 impl ConfigSnapshot {
     pub fn from_value(config: &Value) -> Result<Self, String> {
         let active_workspace_id = text(config, "activeWorkspaceId").ok_or("config.get has no activeWorkspaceId")?;
@@ -292,33 +353,7 @@ impl ConfigSnapshot {
             })
             .collect();
 
-        let environments = array(config, "environments")
-            .iter()
-            .filter_map(|e| {
-                let variables = e
-                    .get("variables")
-                    .and_then(Value::as_array)
-                    .map(|vars| {
-                        vars.iter()
-                            .filter_map(|v| {
-                                Some(EnvVariable {
-                                    id: text(v, "id").unwrap_or_default(),
-                                    key: text(v, "key")?,
-                                    value: text(v, "value")?,
-                                })
-                            })
-                            .collect()
-                    })
-                    .unwrap_or_default();
-                Some(EnvironmentInfo {
-                    id: text(e, "id")?,
-                    name: text(e, "name")?,
-                    variables,
-                    deleted: is_deleted(e),
-                    locked: locked_to(e),
-                })
-            })
-            .collect();
+        let environments = array(config, "environments").iter().filter_map(EnvironmentInfo::from_value).collect();
 
         let flows = array(config, "flows")
             .iter()
@@ -346,36 +381,13 @@ impl ConfigSnapshot {
                 .collect()
         };
 
-        let mappings = array(config, "mappings")
-            .iter()
-            .filter_map(|m| {
-                Some(MappingInfo {
-                    id: text(m, "id")?,
-                    domain: text(m, "domain")?,
-                    target: text(m, "target").unwrap_or_default(),
-                    label: non_empty(m, "label"),
-                    enabled: m.get("enabled").and_then(Value::as_bool).unwrap_or(false),
-                    deleted: is_deleted(m),
-                    locked: locked_to(m),
-                })
-            })
-            .collect();
+        let mappings = array(config, "mappings").iter().filter_map(MappingInfo::from_value).collect();
 
         let mut requests = Vec::new();
         let mut folders = Vec::new();
         for kind in RequestKind::ALL {
             for stub in array(config, kind.config_key()) {
-                let Some(id) = text(stub, "id") else { continue };
-                requests.push(RequestStub {
-                    kind,
-                    id,
-                    name: text(stub, "name").unwrap_or_default(),
-                    folder_id: non_empty(stub, "folderId"),
-                    method: (kind == RequestKind::Rest).then(|| text(stub, "method")).flatten(),
-                    target: stub_target(kind, stub),
-                    deleted: is_deleted(stub),
-                    locked: locked_to(stub),
-                });
+                requests.extend(RequestStub::from_value(kind, stub));
             }
         }
         // One tree of folders for every request type.
@@ -388,21 +400,7 @@ impl ConfigSnapshot {
         let port = |key: &str| config.get(key).and_then(Value::as_u64).and_then(|p| u16::try_from(p).ok()).unwrap_or(0);
         let flag = |key: &str| config.get(key).and_then(Value::as_bool).unwrap_or(false);
 
-        let mocks = array(config, "mocks")
-            .iter()
-            .filter_map(|m| {
-                Some(MockStub {
-                    id: text(m, "id")?,
-                    name: text(m, "name").unwrap_or_default(),
-                    method: text(m, "method").unwrap_or_default(),
-                    url_pattern: text(m, "urlPattern").unwrap_or_default(),
-                    enabled: m.get("enabled").and_then(Value::as_bool).unwrap_or(false),
-                    folder_id: non_empty(m, "folderId"),
-                    deleted: is_deleted(m),
-                    locked: locked_to(m),
-                })
-            })
-            .collect();
+        let mocks = array(config, "mocks").iter().filter_map(MockStub::from_value).collect();
         let mock_folders = plain_folders("mockFolders");
 
         Ok(Self {
@@ -446,6 +444,82 @@ impl ConfigSnapshot {
                 update_check_enabled: config.get("updateCheckEnabled").and_then(Value::as_bool).unwrap_or(true),
             },
         })
+    }
+
+    /// Patches the listing of one entity from an `entity.changed` payload, so nothing has to be fetched.
+    ///
+    /// Returns whether the snapshot now shows the change. `false` means the payload cannot say what the
+    /// listing looks like afterwards (a creation, a folder, another workspace, a kind the payload does not
+    /// describe, an entity this snapshot does not list) and the caller must fetch `config.get`.
+    ///
+    /// An update carries the listed fields only; what the event does not carry (`enabled`, `deleted`,
+    /// `locked`) stays as it is, as the engine refuses to update a deleted or locked entity.
+    pub fn apply_change(&mut self, change: &Value) -> bool {
+        let (Some(kind), Some(id)) = (text(change, "kind"), non_empty(change, "id")) else { return false };
+        if text(change, "wsId").as_deref() != Some(self.active_workspace_id.as_str()) {
+            return false;
+        }
+        let listing = change.get("listing").filter(|l| l.is_object() && text(l, "id").as_deref() == Some(id.as_str()));
+        match (text(change, "action").as_deref(), listing) {
+            (Some("updated"), Some(listing)) => self.update_stub(&kind, &id, listing),
+            (Some("deleted"), _) => {
+                self.delete_stub(&kind, &id, change.get("pending").and_then(Value::as_bool).unwrap_or(true))
+            }
+            _ => false,
+        }
+    }
+
+    fn update_stub(&mut self, kind: &str, id: &str, listing: &Value) -> bool {
+        if let Some(request_kind) = RequestKind::from_entity_kind(kind) {
+            let Some(old) = self.requests.iter_mut().find(|r| r.kind == request_kind && r.id == id) else { return false };
+            let Some(new) = RequestStub::from_value(request_kind, listing) else { return false };
+            *old = RequestStub { deleted: old.deleted, locked: old.locked.take(), ..new };
+            return true;
+        }
+        match kind {
+            "mocks" => {
+                let Some(old) = self.mocks.iter_mut().find(|m| m.id == id) else { return false };
+                let Some(new) = MockStub::from_value(listing) else { return false };
+                *old = MockStub { enabled: old.enabled, deleted: old.deleted, locked: old.locked.take(), ..new };
+            }
+            "mappings" => {
+                let Some(old) = self.mappings.iter_mut().find(|m| m.id == id) else { return false };
+                let Some(new) = MappingInfo::from_value(listing) else { return false };
+                *old = MappingInfo { enabled: old.enabled, deleted: old.deleted, locked: old.locked.take(), ..new };
+            }
+            "environments" => {
+                let Some(old) = self.environments.iter_mut().find(|e| e.id == id) else { return false };
+                let Some(new) = EnvironmentInfo::from_value(listing) else { return false };
+                *old = EnvironmentInfo { deleted: old.deleted, locked: old.locked.take(), ..new };
+            }
+            _ => return false,
+        }
+        true
+    }
+
+    /// A deleted request or mock either goes from the listing, or stays in it marked as deleted while its
+    /// deletion waits to be confirmed or reverted. Deleting anything else changes more than its own entry
+    /// (a mapping takes its proxy rules, an environment may have been the active one).
+    fn delete_stub(&mut self, kind: &str, id: &str, pending: bool) -> bool {
+        if let Some(request_kind) = RequestKind::from_entity_kind(kind) {
+            let Some(at) = self.requests.iter().position(|r| r.kind == request_kind && r.id == id) else { return false };
+            if pending {
+                self.requests[at].deleted = true;
+            } else {
+                self.requests.remove(at);
+            }
+            return true;
+        }
+        if kind != "mocks" {
+            return false;
+        }
+        let Some(at) = self.mocks.iter().position(|m| m.id == id) else { return false };
+        if pending {
+            self.mocks[at].deleted = true;
+        } else {
+            self.mocks.remove(at);
+        }
+        true
     }
 
     pub fn active_workspace(&self) -> Option<&WorkspaceInfo> {
@@ -577,6 +651,116 @@ mod tests {
             "socketioRequests": [{"id": "i1", "name": "Chat", "url": "https://io.test", "namespace": "/chat", "folderId": "if"}],
             "mcpRequests": [{"id": "m1", "name": "Tools", "transport": "stdio", "url": "npx my-server", "folderId": "mf"}],
         })
+    }
+
+    fn change(action: &str, kind: &str, id: &str, extra: Value) -> Value {
+        let mut change = json!({ "wsId": "w1", "kind": kind, "id": id, "action": action });
+        change.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+        change
+    }
+
+    #[test]
+    fn an_update_patches_the_listing_of_one_request_of_every_type() {
+        let cases = [
+            ("requests", "r1", json!({"name": "New", "method": "PUT", "url": "/new", "folderId": "f1"}), "/new"),
+            ("graphqlRequests", "q1", json!({"name": "New", "endpointUrl": "https://new"}), "https://new"),
+            ("grpcRequests", "g1", json!({"name": "New", "serverAddress": "h:1", "serviceName": "S", "methodName": "M"}), "h:1/S/M"),
+            ("wsConnections", "s1", json!({"name": "New", "url": "wss://new", "folderId": "wf"}), "wss://new"),
+            ("sseRequests", "e1", json!({"name": "New", "url": "https://sse"}), "https://sse"),
+            ("socketioRequests", "i1", json!({"name": "New", "url": "https://io"}), "https://io"),
+            ("mcpRequests", "m1", json!({"name": "New", "url": "npx other"}), "npx other"),
+        ];
+        for (kind, id, mut listing, target) in cases {
+            let mut c = ConfigSnapshot::from_value(&sample()).unwrap();
+            let count = c.requests.len();
+            listing["id"] = json!(id);
+            assert!(c.apply_change(&change("updated", kind, id, json!({ "listing": listing }))), "{kind}");
+            let stub = c.request(RequestKind::from_entity_kind(kind).unwrap(), id).unwrap();
+            assert_eq!((stub.name.as_str(), stub.target.as_str()), ("New", target), "{kind}");
+            assert_eq!(c.requests.len(), count);
+        }
+    }
+
+    #[test]
+    fn an_update_keeps_what_the_event_does_not_carry() {
+        let mut c = ConfigSnapshot::from_value(&sample()).unwrap();
+        c.requests[1].locked = Some("9.0.0".into());
+        c.requests[1].deleted = true;
+        let listing = json!({"id": "r2", "name": "Pong", "method": "GET", "url": "/pong"});
+        assert!(c.apply_change(&change("updated", "requests", "r2", json!({ "listing": listing }))));
+        let stub = c.request(RequestKind::Rest, "r2").unwrap();
+        assert_eq!((stub.name.as_str(), stub.deleted, stub.locked.as_deref()), ("Pong", true, Some("9.0.0")));
+
+        let mut config = sample();
+        config["mocks"] = json!([{"id": "k1", "name": "A", "method": "GET", "urlPattern": "/a", "enabled": true}]);
+        let mut c = ConfigSnapshot::from_value(&config).unwrap();
+        let listing = json!({"id": "k1", "name": "B", "method": "POST", "urlPattern": "/b"});
+        assert!(c.apply_change(&change("updated", "mocks", "k1", json!({ "listing": listing }))));
+        let mock = c.mock("k1").unwrap();
+        assert_eq!((mock.name.as_str(), mock.method.as_str(), mock.url_pattern.as_str(), mock.enabled), ("B", "POST", "/b", true));
+    }
+
+    #[test]
+    fn an_update_patches_a_mapping_and_an_environment() {
+        let mut c = ConfigSnapshot::from_value(&sample()).unwrap();
+        let listing = json!({"id": "m1", "domain": "b.localhost", "target": "localhost:1", "label": "B"});
+        assert!(c.apply_change(&change("updated", "mappings", "m1", json!({ "listing": listing }))));
+        let mapping = &c.mappings[0];
+        assert_eq!((mapping.domain.as_str(), mapping.label.as_deref(), mapping.enabled), ("b.localhost", Some("B"), true));
+
+        let listing = json!({"id": "e1", "name": "Prod", "variables": [{"id": "v", "key": "HOST", "value": "prod"}]});
+        assert!(c.apply_change(&change("updated", "environments", "e1", json!({ "listing": listing }))));
+        assert_eq!(c.active_environment().unwrap().name, "Prod");
+        assert_eq!(c.resolved_variables()[0].0.value, "prod");
+    }
+
+    #[test]
+    fn a_delete_removes_the_stub_or_marks_it_while_the_deletion_waits() {
+        let mut c = ConfigSnapshot::from_value(&sample()).unwrap();
+        assert!(c.apply_change(&change("deleted", "requests", "r1", json!({ "pending": false }))));
+        assert!(c.request(RequestKind::Rest, "r1").is_none());
+        assert!(c.apply_change(&change("deleted", "requests", "r2", json!({ "pending": true }))));
+        assert!(c.request(RequestKind::Rest, "r2").unwrap().deleted);
+
+        let mut config = sample();
+        config["mocks"] = json!([{"id": "k1", "name": "A", "method": "GET", "urlPattern": "/a"}]);
+        let mut c = ConfigSnapshot::from_value(&config).unwrap();
+        assert!(c.apply_change(&change("deleted", "mocks", "k1", json!({ "pending": true }))));
+        assert!(c.mock("k1").unwrap().deleted);
+        assert!(c.apply_change(&change("deleted", "mocks", "k1", json!({ "pending": false }))));
+        assert!(c.mock("k1").is_none());
+    }
+
+    #[test]
+    fn what_a_payload_cannot_express_asks_for_a_fetch() {
+        let mut c = ConfigSnapshot::from_value(&sample()).unwrap();
+        let before = c.clone();
+        let listing = json!({"id": "r1", "name": "x", "url": "/x"});
+        let unknown = [
+            // A creation: its position and what it displaced are the engine's to say.
+            change("created", "requests", "r9", json!({})),
+            change("created", "request", "f9", json!({})),
+            // An entity this snapshot does not list.
+            change("updated", "requests", "gone", json!({ "listing": { "id": "gone", "name": "x", "url": "/x" } })),
+            change("deleted", "requests", "gone", json!({ "pending": false })),
+            // Kinds that are not patched: deleting them changes more than their entry.
+            change("deleted", "mappings", "m1", json!({ "pending": false })),
+            change("deleted", "environments", "e1", json!({ "pending": false })),
+            change("updated", "flows", "f1", json!({ "listing": { "id": "f1", "name": "x" } })),
+            change("updated", "proxyRules", "p1", json!({ "listing": { "id": "p1", "name": "x" } })),
+            // Not enough: no listing, or one for another id.
+            change("updated", "requests", "r1", json!({})),
+            change("updated", "requests", "r2", json!({ "listing": listing })),
+            change("renamed", "requests", "r1", json!({ "listing": listing })),
+            // Another workspace.
+            json!({ "wsId": "w2", "kind": "requests", "id": "r1", "action": "deleted", "pending": false }),
+            json!({ "kind": "requests", "id": "r1", "action": "deleted", "pending": false }),
+            json!({}),
+        ];
+        for payload in unknown {
+            assert!(!c.apply_change(&payload), "{payload}");
+            assert_eq!(c, before, "{payload}");
+        }
     }
 
     #[test]

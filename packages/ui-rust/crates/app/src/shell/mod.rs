@@ -233,6 +233,7 @@ impl Shell {
             | ModelEvent::CompanionsChanged
             | ModelEvent::CookiesChanged
             | ModelEvent::EngineRestarted
+            | ModelEvent::ConfigPatched
             | ModelEvent::EntityReverted(_) => {}
         }
     }
