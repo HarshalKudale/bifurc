@@ -31,7 +31,7 @@ Groups (bifurc <group> --help shows the arguments and options of each verb)
   flows         list | show | create | update | validate | run | loadtest | loadstatus | loadcancel | status | cancel | duplicate | delete
                                                                       Saved chains of requests
   health        list | show | create | update | run | delete          Health checks
-  capture       list | show | mock | request | remove | clear | pause | resume | cache
+  capture       list | show | mock | request | secrets | import | remove | clear | pause | resume | cache
                                                                       Traffic the proxies captured
   cookies       list | clear | configure                              The cookie jar of the workspace's requests
   sync          status | changes | pull | push | commit | diff | discard | confirm | restore

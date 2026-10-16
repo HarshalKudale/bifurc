@@ -3126,6 +3126,66 @@
    ],
    "additionalProperties": false
   },
+  "capture.inspectImport": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "ids": {
+     "minItems": 1,
+     "type": "array",
+     "items": {
+      "type": "string"
+     }
+    }
+   },
+   "required": [
+    "workspaceId",
+    "ids"
+   ],
+   "additionalProperties": false
+  },
+  "capture.import": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "ids": {
+     "minItems": 1,
+     "type": "array",
+     "items": {
+      "type": "string"
+     }
+    },
+    "secrets": {
+     "type": "string",
+     "enum": [
+      "keep",
+      "environment",
+      "vault"
+     ]
+    },
+    "vaultId": {
+     "type": "string"
+    },
+    "cookiesToJar": {
+     "type": "boolean"
+    },
+    "flow": {
+     "type": "boolean"
+    },
+    "folderName": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "workspaceId",
+    "ids"
+   ],
+   "additionalProperties": false
+  },
   "request.send": {
    "anyOf": [
     {
