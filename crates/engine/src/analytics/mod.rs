@@ -193,10 +193,10 @@ fn install_id() -> String {
 }
 
 fn routing() -> Arc<Routing> {
-    if let Some((read_at, routing)) = &STATE.lock().routing {
-        if read_at.elapsed() < ROUTING_TTL {
-            return routing.clone();
-        }
+    if let Some((read_at, routing)) = &STATE.lock().routing
+        && read_at.elapsed() < ROUTING_TTL
+    {
+        return routing.clone();
     }
     let fresh = Arc::new(read_routing());
     STATE.lock().routing = Some((Instant::now(), fresh.clone()));

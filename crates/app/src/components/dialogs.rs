@@ -68,7 +68,8 @@ pub fn prompt<V: 'static>(
     submit: impl Fn(&mut V, Vec<String>, &mut Window, &mut Context<V>) + 'static,
 ) {
     let title = title.into();
-    let inputs: Rc<Vec<(&'static str, bool, bool, Entity<InputState>)>> = Rc::new(
+    type PromptInput = (&'static str, bool, bool, Entity<InputState>);
+    let inputs: Rc<Vec<PromptInput>> = Rc::new(
         fields
             .into_iter()
             .map(|field| {

@@ -611,7 +611,7 @@ fn find_sdk_tool(name: &str) -> Result<PathBuf> {
         .collect();
     // Newest first, comparing each dotted number as a number.
     let key = |v: &str| v.split('.').map(|part| part.parse::<u64>().unwrap_or(0)).collect::<Vec<_>>();
-    versions.sort_by(|a, b| key(b).cmp(&key(a)));
+    versions.sort_by_key(|b| std::cmp::Reverse(key(b)));
     first_existing(versions.iter().map(|sdk| kits.as_ref().map(|k| k.join(sdk).join(sdk_arch()).join(name))))
         .ok_or_else(|| format!("{name} was not found. Install the Windows SDK."))
 }

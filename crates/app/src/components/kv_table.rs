@@ -124,15 +124,6 @@ impl KeyValueTable {
             .collect()
     }
 
-    pub fn set_readonly(&mut self, readonly: bool, cx: &mut Context<Self>) {
-        self.readonly = readonly;
-        for row in &self.rows {
-            row.key.update(cx, |state, cx| state.set_readonly(readonly, cx));
-            row.value.set_readonly(readonly, cx);
-        }
-        cx.notify();
-    }
-
     fn remove_row(&mut self, id: u64, window: &mut Window, cx: &mut Context<Self>) {
         self.rows.retain(|row| row.id != id);
         if self.rows.is_empty() {

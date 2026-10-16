@@ -51,10 +51,10 @@ pub fn register(registry: &mut CommandRegistry) {
         let name = str_of(&params, "name").trim();
         let name = if name.is_empty() { generate_random_workspace_name() } else { name.to_string() };
         let account_id = opt_str(&params, "accountId").filter(|id| !id.is_empty());
-        if let Some(account_id) = account_id {
-            if find_account(account_id).is_none() {
-                return Err(EngineError::not_found("That account is not signed in on this device."));
-            }
+        if let Some(account_id) = account_id
+            && find_account(account_id).is_none()
+        {
+            return Err(EngineError::not_found("That account is not signed in on this device."));
         }
         let id = generate_id();
         let mut settings = load_settings();
@@ -85,10 +85,10 @@ pub fn register(registry: &mut CommandRegistry) {
     registry.register_sync("workspace.rename", |params, _| {
         let mut cfg = load_config();
         let (id, name) = (str_of(&params, "id"), str_of(&params, "name").trim());
-        if let Some(ws) = array_mut(&mut cfg, "workspaces").iter_mut().find(|w| str_of(w, "id") == id) {
-            if !name.is_empty() {
-                ws["name"] = json!(name);
-            }
+        if let Some(ws) = array_mut(&mut cfg, "workspaces").iter_mut().find(|w| str_of(w, "id") == id)
+            && !name.is_empty()
+        {
+            ws["name"] = json!(name);
         }
         save_config(&cfg)?;
         Ok(json!({ "ok": true }))

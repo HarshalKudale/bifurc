@@ -595,11 +595,10 @@ async fn run(key: String, generation: u64, prepared: Prepared, mut rx: Unbounded
                             return record_end(&key, generation, Some(lost(connected, None)), "transport error");
                         }
                     }
-                    Incoming::Ping => {
-                        if stream.send(Message::text(PONG)).await.is_err() {
+                    Incoming::Ping
+                        if stream.send(Message::text(PONG)).await.is_err() => {
                             return record_end(&key, generation, Some(lost(connected, None)), "transport error");
                         }
-                    }
                     Incoming::Connected { sid } if !connected => {
                         if !record_open(&key, generation, sid) {
                             return close(&mut stream).await;
@@ -618,6 +617,8 @@ async fn run(key: String, generation: u64, prepared: Prepared, mut rx: Unbounded
                     Incoming::Closed => {
                         return record_end(&key, generation, Some(lost(connected, None)), "transport close");
                     }
+                    // The guard would move `received`, so the `if` cannot be folded into it.
+                    #[allow(clippy::collapsible_match)]
                     received @ (Incoming::Event { .. } | Incoming::Ack { .. }) if connected => {
                         if !record_received(&key, generation, received) {
                             return close(&mut stream).await;

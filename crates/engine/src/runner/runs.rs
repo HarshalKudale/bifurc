@@ -218,16 +218,16 @@ async fn run_collection(
 /// Start a run in the background. `{ ok: true, total }`, or `{ ok: false, error }` if the folder is already
 /// running. Progress and the finished report go out as `runner.progress` / `runner.finished` events.
 pub async fn start_run(ctx: &CommandContext, ws_id: &str, folder_id: &str) -> Result<Value> {
-    if let Some(existing) = get_run(ws_id, folder_id) {
-        if existing["running"] == json!(true) {
-            return Ok(json!({
-                "ok": false,
-                "error": format!(
-                    "A run of folder \"{folder_id}\" is already in flight in workspace \"{ws_id}\". \
-                     Cancel it with runner.cancel, or wait for it to finish."
-                ),
-            }));
-        }
+    if let Some(existing) = get_run(ws_id, folder_id)
+        && existing["running"] == json!(true)
+    {
+        return Ok(json!({
+            "ok": false,
+            "error": format!(
+                "A run of folder \"{folder_id}\" is already in flight in workspace \"{ws_id}\". \
+                 Cancel it with runner.cancel, or wait for it to finish."
+            ),
+        }));
     }
 
     let requests = load_ordered_requests(ctx, ws_id, folder_id).await?;

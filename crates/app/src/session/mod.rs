@@ -268,12 +268,4 @@ impl Session {
         let session = self.clone();
         each_kind!(self, s => cx.subscribe_in(s, window, move |this, _, event, window, cx| handler(this, &session, event, window, cx)))
     }
-
-    pub fn subscribe<T: 'static>(
-        &self,
-        cx: &mut Context<T>,
-        mut handler: impl FnMut(&mut T, &SessionEvent, &mut Context<T>) + 'static,
-    ) -> gpui_kit::Subscription {
-        each_kind!(self, s => cx.subscribe(s, move |this, _, event, cx| handler(this, event, cx)))
-    }
 }

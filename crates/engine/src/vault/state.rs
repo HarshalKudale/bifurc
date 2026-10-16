@@ -197,7 +197,7 @@ impl Redactor {
         if secrets.is_empty() {
             return None;
         }
-        secrets.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
+        secrets.sort_by_key(|b| std::cmp::Reverse(b.0.len()));
         Some(Self { secrets })
     }
 
@@ -287,7 +287,7 @@ mod tests {
         use base64::{Engine as _, engine::general_purpose::STANDARD};
         let value = "p@ss word/123";
         let mut secrets: Vec<_> = encodings(value).into_iter().map(|v| (v, "{{v.P}}".to_string())).collect();
-        secrets.sort_by(|a, b| b.0.len().cmp(&a.0.len()));
+        secrets.sort_by_key(|b| std::cmp::Reverse(b.0.len()));
         let redactor = Redactor { secrets };
         let text = format!(
             "a={} b={} c={}",

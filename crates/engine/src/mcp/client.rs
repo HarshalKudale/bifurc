@@ -284,16 +284,14 @@ pub async fn call(
     let result = match kind {
         CallKind::Tool => {
             let params = CallToolRequestParams::new(name).with_arguments(arguments);
-            peer.call_tool(params).await.map(|result| serde_json::to_value(result))
+            peer.call_tool(params).await.map(serde_json::to_value)
         }
         CallKind::Prompt => {
             let mut params = GetPromptRequestParams::new(name);
             params.arguments = Some(arguments);
-            peer.get_prompt(params).await.map(|result| serde_json::to_value(result))
+            peer.get_prompt(params).await.map(serde_json::to_value)
         }
-        CallKind::Resource => {
-            peer.read_resource(ReadResourceRequestParams::new(name)).await.map(|result| serde_json::to_value(result))
-        }
+        CallKind::Resource => peer.read_resource(ReadResourceRequestParams::new(name)).await.map(serde_json::to_value),
     };
     let failed = |message: String| serde_json::json!({ "message": message });
     match result {

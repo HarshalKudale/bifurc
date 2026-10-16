@@ -197,7 +197,7 @@ impl RequestSettings {
 
 /// The wording of a send that ran out of time: "Timed out after 30 s".
 pub fn timeout_message(timeout_ms: u64) -> String {
-    if timeout_ms % 1000 == 0 {
+    if timeout_ms.is_multiple_of(1000) {
         format!("Timed out after {} s", timeout_ms / 1000)
     } else {
         format!("Timed out after {timeout_ms} ms")
@@ -294,7 +294,7 @@ mod tests {
         assert_eq!(ClientOptions::sending(false, false).max_redirects, 0);
         assert_eq!(ClientOptions::sending(false, true).max_redirects, MAX_REDIRECTS);
         assert!(ClientOptions::sending(true, false).pooled);
-        assert!(!ClientOptions::PROXY_UPSTREAM.pooled && !ClientOptions::PROXY_UPSTREAM.verify_tls);
+        const { assert!(!ClientOptions::PROXY_UPSTREAM.pooled && !ClientOptions::PROXY_UPSTREAM.verify_tls) };
     }
 
     #[test]

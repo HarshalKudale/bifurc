@@ -352,6 +352,8 @@ struct EdgeDraw {
     selected: bool,
 }
 
+/// A drawn connection: the edge id and its two end points.
+type DrawnConnection = (String, (f32, f32), (f32, f32));
 type Anchors = Rc<RefCell<HashMap<String, Point<Pixels>>>>;
 
 /// The list a node to add is chosen from, open where it was asked for.
@@ -382,7 +384,7 @@ pub struct FlowCanvas {
     /// Where each port is in the window, as of the last layout. Connections are painted between them.
     anchors: Anchors,
     /// The connections as they were last painted, for picking one by a click.
-    drawn: Rc<RefCell<Vec<(String, (f32, f32), (f32, f32))>>>,
+    drawn: Rc<RefCell<Vec<DrawnConnection>>>,
     /// How high what each display node shows is in the window, as of the last layout: what pulling its
     /// corner starts from.
     heights: Rc<RefCell<HashMap<String, f32>>>,

@@ -214,7 +214,7 @@ mod tests {
         );
         let key = json!({"workspaceId": "w1", "connectionId": "m1"});
         // A saved request is opened by its id: the connect carries nothing of the request.
-        assert_eq!(payloads(&calls, "mcp.connect"), [key.clone()]);
+        assert_eq!(payloads(&calls, "mcp.connect"), std::slice::from_ref(&key));
         assert!(payloads(&calls, "mcp.call").is_empty());
         assert_eq!(payloads(&calls, "mcp.disconnect"), [key]);
     }

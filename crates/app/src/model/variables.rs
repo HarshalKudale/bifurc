@@ -42,18 +42,6 @@ pub fn variable_ranges(text: &str) -> Vec<Range<usize>> {
     ranges
 }
 
-/// The names referenced in `text`, in order of first use, without duplicates.
-pub fn variable_names(text: &str) -> Vec<String> {
-    let mut names: Vec<String> = Vec::new();
-    for range in variable_ranges(text) {
-        let name = text[range.start + 2..range.end - 2].trim().to_owned();
-        if !names.contains(&name) {
-            names.push(name);
-        }
-    }
-    names
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -70,7 +58,6 @@ mod tests {
     #[test]
     fn spaces_inside_the_braces_belong_to_the_reference() {
         assert_eq!(found("Bearer {{ token }}"), ["{{ token }}"]);
-        assert_eq!(variable_names("Bearer {{ token }}"), ["token"]);
     }
 
     #[test]
@@ -91,10 +78,5 @@ mod tests {
         let text = "né {{clé}} ü";
         let ranges = variable_ranges(text);
         assert_eq!(&text[ranges[0].clone()], "{{clé}}");
-    }
-
-    #[test]
-    fn names_are_listed_once_in_order_of_first_use() {
-        assert_eq!(variable_names("{{b}}{{a}}{{b}}"), ["b", "a"]);
     }
 }

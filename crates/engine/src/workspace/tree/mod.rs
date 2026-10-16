@@ -486,13 +486,10 @@ pub fn move_folder(ws_id: &str, scope: Scope, id: &str, parent_id: Option<&str>)
             Some(parent_id) => Some(db::folder(conn, parent_id).map_err(db::io)?.ok_or_else(no_folder)?),
             None => None,
         };
-        if let Some(parent) = &parent {
-            if parent.id == folder.id || parent.path.starts_with(&format!("{}/", folder.path)) {
-                return Err(std::io::Error::new(
-                    std::io::ErrorKind::InvalidInput,
-                    "A folder cannot be moved into itself.",
-                ));
-            }
+        if let Some(parent) = &parent
+            && (parent.id == folder.id || parent.path.starts_with(&format!("{}/", folder.path)))
+        {
+            return Err(std::io::Error::new(std::io::ErrorKind::InvalidInput, "A folder cannot be moved into itself."));
         }
         let path = join(parent.as_ref(), &folder.name);
         if path == folder.path {

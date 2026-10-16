@@ -50,10 +50,10 @@ fn post_headers(headers: &Value) -> Vec<(String, String)> {
 fn execute_body(query: &str, variables: &str, operation_name: &str) -> String {
     let mut body = Map::new();
     body.insert("query".into(), json!(query));
-    if !variables.trim().is_empty() {
-        if let Ok(parsed) = serde_json::from_str::<Value>(variables) {
-            body.insert("variables".into(), parsed);
-        }
+    if !variables.trim().is_empty()
+        && let Ok(parsed) = serde_json::from_str::<Value>(variables)
+    {
+        body.insert("variables".into(), parsed);
     }
     if !operation_name.is_empty() {
         body.insert("operationName".into(), json!(operation_name));

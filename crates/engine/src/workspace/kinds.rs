@@ -9,6 +9,9 @@ use crate::{
     utils::json::{array_mut, bool_of, is_truthy, str_of},
 };
 
+/// Rejects an entity before it is written; the second argument is the kind's other entities in the workspace.
+pub type Validator = fn(entity: &Value, siblings: &[Value]) -> Result<()>;
+
 pub struct CrudKind {
     /// The store's directory name (`rules`, not `proxyRules`).
     pub kind: &'static str,
@@ -22,7 +25,7 @@ pub struct CrudKind {
     /// Whether entities can be switched on and off (`enabled.json`).
     pub has_enabled_state: bool,
     /// Reject an entity before it is written. `siblings` are the kind's other entities in the workspace.
-    pub validate: Option<fn(entity: &Value, siblings: &[Value]) -> Result<()>>,
+    pub validate: Option<Validator>,
     /// Switch off, in the snapshot, the entities a newly enabled one would shadow.
     pub on_add_conflict: Option<fn(cfg: &mut Value, target: &Value)>,
     /// The entity's names-index entry.

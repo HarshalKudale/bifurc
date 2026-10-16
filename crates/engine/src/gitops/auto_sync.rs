@@ -66,7 +66,7 @@ pub fn start_auto_sync(ws_id: &str) {
                 // The owner's access does not change; anyone else's is what the owner last made it.
                 ticks = ticks.wrapping_add(1);
                 let shared = workspace_access(&ws_id).is_some_and(|access| access != "owner");
-                if shared && team_sync() && ticks % ACCESS_CHECK_EVERY == 0 {
+                if shared && team_sync() && ticks.is_multiple_of(ACCESS_CHECK_EVERY) {
                     let _ = refresh_access(&ws_id).await;
                 }
                 // Unreadable while offline or signed out: looked at again on the next tick.
