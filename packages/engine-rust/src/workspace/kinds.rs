@@ -163,7 +163,9 @@ pub static CRUD_KINDS: [CrudKind; 13] = [
         folder_config_key: Some("ruleFolders"),
         is_flat: false,
         has_enabled_state: true,
-        validate: None,
+        validate: Some(|rule, _| {
+            if bool_of(rule, "useRegex", false) { crate::utils::regex::validate("pattern", str_of(rule, "pattern")) } else { Ok(()) }
+        }),
         on_add_conflict: Some(|cfg, target| disable_shadowed(cfg, "proxyRules", target, rule_signature)),
         name_entry: Some(|r| entry(&[("name", field(r, "name")), ("url", field(r, "pattern"))])),
         gate_kind: None,
@@ -176,7 +178,11 @@ pub static CRUD_KINDS: [CrudKind; 13] = [
         has_enabled_state: true,
         validate: Some(|mock, _| {
             required(mock, "urlPattern", "urlPattern is required for mocks")?;
-            required(mock, "method", "method is required for mocks")
+            required(mock, "method", "method is required for mocks")?;
+            if bool_of(mock, "useRegex", false) {
+                crate::utils::regex::validate("urlPattern", str_of(mock, "urlPattern"))?;
+            }
+            Ok(())
         }),
         on_add_conflict: Some(|cfg, target| disable_shadowed(cfg, "mocks", target, mock_signature)),
         name_entry: Some(|m| {
@@ -362,6 +368,19 @@ mod tests {
         assert!(validate_mapping(&json!({ "domain": "a.localhost", "target": "nope" }), &[]).is_err());
         assert!(validate_mapping(&json!({ "domain": "a.localhost", "target": "https://example.com/x" }), &[]).is_ok());
         assert!(validate_mapping(&json!({ "domain": "a.localhost", "target": "a:70000" }), &[]).is_err());
+    }
+
+    #[test]
+    fn an_invalid_regex_is_rejected_on_save() {
+        let validate = |kind: &str, entity: Value| (crud_kind(kind).unwrap().validate.unwrap())(&entity, &[]);
+        let bad_mock = json!({ "method": "GET", "urlPattern": "(", "useRegex": true });
+        let message = validate("mocks", bad_mock).unwrap_err().to_string();
+        assert!(message.contains("urlPattern \"(\""), "{message}");
+        assert!(validate("mocks", json!({ "method": "GET", "urlPattern": "(", "useRegex": false })).is_ok());
+        assert!(validate("mocks", json!({ "method": "GET", "urlPattern": r"^/a/\d+$", "useRegex": true })).is_ok());
+        assert!(validate("rules", json!({ "pattern": "(", "useRegex": true })).is_err());
+        assert!(validate("rules", json!({ "pattern": "(", "useRegex": false })).is_ok());
+        assert!(validate("rules", json!({ "pattern": r"^http://a\.test/", "useRegex": true })).is_ok());
     }
 
     #[test]
