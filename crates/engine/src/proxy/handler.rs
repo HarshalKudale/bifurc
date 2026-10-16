@@ -3,7 +3,6 @@
 
 use std::time::Instant;
 
-use serde_json::Value;
 use tokio::{
     io::{AsyncRead, AsyncWrite, AsyncWriteExt, copy_bidirectional},
     net::TcpStream,
@@ -13,10 +12,8 @@ use super::response::{Outcome, collect_response_headers, forward_streaming, log_
 use crate::{
     kernel::traffic::Headers,
     scripting::{execute_request_script, execute_response_script},
-    utils::{
-        decompress::{decompress_body, strip_content_encoding},
-        json::{is_truthy, str_of},
-    },
+    utils::decompress::{decompress_body, strip_content_encoding},
+    workspace::models::{Mapping, ProxyRule},
 };
 
 /// Connect to `host:port` and copy bytes both ways until either side closes. `preamble` is written to the
@@ -100,16 +97,21 @@ pub(super) struct ScriptedRequest {
 /// writing `{{vault.secret}}` into a header or the body; only references that appear in the script itself are
 /// resolved, so a client cannot get a secret out of the proxy by sending a reference of its own. The script
 /// runs before any value is put in, so it never sees one.
-pub(super) async fn run_request_script(rule: &Value, ws_id: &str, headers: &Headers, body: &[u8]) -> ScriptedRequest {
+pub(super) async fn run_request_script(
+    rule: &ProxyRule,
+    ws_id: &str,
+    headers: &Headers,
+    body: &[u8],
+) -> ScriptedRequest {
     let (mut shown_headers, mut shown_body) = (headers.clone(), body.to_vec());
-    if let Some(script) = script_of(rule, "requestScript") {
+    if let Some(script) = script_of(&rule.request_script) {
         let result = execute_request_script(script, headers, &String::from_utf8_lossy(body)).await;
         if result.error.is_none() {
             shown_headers = result.headers;
             shown_body = result.body.into_bytes();
         }
     }
-    let allowed = crate::vault::references_in(str_of(rule, "requestScript"));
+    let allowed = crate::vault::references_in(&rule.request_script);
     // What the client sent and the script left alone stays as written; only what the script set is resolved.
     let wire_headers: Headers = shown_headers
         .iter()
@@ -128,8 +130,7 @@ pub(super) async fn run_request_script(rule: &Value, ws_id: &str, headers: &Head
     ScriptedRequest { headers: wire_headers, body: wire_body, shown_headers }
 }
 
-fn script_of<'a>(rule: &'a Value, key: &str) -> Option<&'a str> {
-    let script = str_of(rule, key);
+fn script_of(script: &str) -> Option<&str> {
     (!script.trim().is_empty()).then_some(script)
 }
 
@@ -144,14 +145,14 @@ pub async fn proxy_with_scripts<W: AsyncWrite + Unpin>(
     path: &str,
     req_headers: &Headers,
     req_body: &[u8],
-    rule: &Value,
+    rule: &ProxyRule,
     ws_id: &str,
 ) -> Option<Outcome> {
     let scripted = run_request_script(rule, ws_id, req_headers, req_body).await;
     let (headers, body) = (scripted.headers, scripted.body);
     // The log shows the request as the script made it, with secrets as written, only if that differs.
     let shown = (scripted.shown_headers != *req_headers).then_some(scripted.shown_headers);
-    let Some(response_script) = script_of(rule, "responseScript") else {
+    let Some(response_script) = script_of(&rule.response_script) else {
         let mut outcome = proxy_to_upstream(out, method, target, path, &headers, &body, None).await;
         if let Some(outcome) = outcome.as_mut() {
             outcome.req_headers = shown;
@@ -222,33 +223,27 @@ pub async fn proxy_with_scripts<W: AsyncWrite + Unpin>(
 #[derive(Debug, Clone, Default)]
 pub struct RuleMatch<'a> {
     pub matched: bool,
-    pub rule: Option<&'a Value>,
+    pub rule: Option<&'a ProxyRule>,
     /// The target the rule resolves to; `None` when it names no usable one.
     pub target: Option<String>,
 }
 
 /// The first rule whose pattern matches `target_url` (exactly, or as a JavaScript regular expression), with
 /// the target it resolves to: the external target, or the target of the mapping it points at.
-pub fn match_proxy_rule<'a>(rules: &'a [Value], target_url: &str, mappings: &[Value]) -> RuleMatch<'a> {
+pub fn match_proxy_rule<'a>(rules: &'a [ProxyRule], target_url: &str, mappings: &[Mapping]) -> RuleMatch<'a> {
     for rule in rules {
-        let pattern = str_of(rule, "pattern");
-        let matches = if rule.get("useRegex").is_some_and(is_truthy) {
-            crate::utils::regex::is_match(pattern, target_url)
+        let matches = if rule.use_regex {
+            crate::utils::regex::is_match(&rule.pattern, target_url)
         } else {
-            target_url == pattern
+            target_url == rule.pattern
         };
         if !matches {
             continue;
         }
-        let target = if str_of(rule, "targetType") == "external" {
-            Some(str_of(rule, "targetExternal").to_string()).filter(|t| !t.is_empty())
+        let target = if rule.target_type == "external" {
+            Some(rule.target_external.clone()).filter(|t| !t.is_empty())
         } else {
-            let mapping_id = str_of(rule, "targetMappingId");
-            mappings
-                .iter()
-                .find(|m| str_of(m, "id") == mapping_id)
-                .and_then(|m| m.get("target")?.as_str())
-                .map(str::to_string)
+            mappings.iter().find(|m| m.id == rule.target_mapping_id).and_then(|m| m.target.clone())
         };
         return RuleMatch { matched: true, rule: Some(rule), target };
     }
@@ -264,7 +259,7 @@ mod tests {
 
     #[test]
     fn rules_match_exactly_or_by_regex() {
-        let rules = vec![
+        let rules: Vec<ProxyRule> = [
             json!({ "id": "bad", "pattern": "(", "useRegex": true }),
             json!({ "id": "ext", "pattern": "http://a.test/x", "useRegex": false, "targetType": "external",
                     "targetExternal": "localhost:3000" }),
@@ -273,12 +268,16 @@ mod tests {
             json!({ "id": "dangling", "pattern": "^http://c\\.test/", "useRegex": true, "targetType": "mapping",
                     "targetMappingId": "nope" }),
             json!({ "id": "empty", "pattern": "http://d.test/", "targetType": "external", "targetExternal": "" }),
-        ];
-        let mappings = vec![json!({ "id": "m1", "target": "localhost:4000" })];
+            json!({ "id": "loose", "pattern": "http://e.test/", "useRegex": "false-but-truthy" }),
+        ]
+        .iter()
+        .map(ProxyRule::from_value)
+        .collect();
+        let mappings = vec![Mapping::from_value(&json!({ "id": "m1", "target": "localhost:4000" }))];
 
         let hit = match_proxy_rule(&rules, "http://a.test/x", &mappings);
         assert_eq!((hit.matched, hit.target.as_deref()), (true, Some("localhost:3000")));
-        assert_eq!(str_of(hit.rule.unwrap(), "id"), "ext");
+        assert_eq!(hit.rule.unwrap().id, "ext");
 
         let hit = match_proxy_rule(&rules, "http://b.test/anything", &mappings);
         assert_eq!(hit.target.as_deref(), Some("localhost:4000"));
@@ -290,6 +289,8 @@ mod tests {
         assert!(hit.matched && hit.target.is_none());
 
         assert!(!match_proxy_rule(&rules, "http://a.test/x/y", &mappings).matched);
+        // A loose flag (a non-empty string) is truthy, so the pattern is a regex: the dot matches any character.
+        assert!(match_proxy_rule(&rules, "http://eXtest/", &mappings).matched);
     }
 
     #[test]

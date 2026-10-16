@@ -31,8 +31,9 @@ use crate::{
     },
     workspace::{
         config::{load_config, load_workspace_dispatch_slice},
-        dispatch::{active_env, load_enabled_sets, workspace_cfg},
+        dispatch::{load_enabled_sets, workspace_cfg},
         fs::read_all_entities,
+        models::Routing,
         settings::load_settings,
     },
 };
@@ -42,6 +43,8 @@ struct Snapshot {
     tls_enabled: bool,
     /// The served workspace's mocks, mappings, rules and environments, narrowed to what is switched on.
     dispatch: Value,
+    /// `dispatch` as the routing reads it.
+    routing: Routing,
 }
 
 fn compose_snapshot() -> Snapshot {
@@ -50,10 +53,8 @@ fn compose_snapshot() -> Snapshot {
     let rules = read_all_entities(&ws_id, "rules");
     let enabled = load_enabled_sets(&ws_id);
     let slice = load_workspace_dispatch_slice(&ws_id);
-    Snapshot {
-        tls_enabled: bool_of(&cfg, "tlsEnabled", false),
-        dispatch: workspace_cfg(&cfg, &rules, &enabled, &slice),
-    }
+    let dispatch = workspace_cfg(&cfg, &rules, &enabled, &slice);
+    Snapshot { tls_enabled: bool_of(&cfg, "tlsEnabled", false), routing: Routing::from_cfg(&dispatch), dispatch }
 }
 
 #[derive(Default)]
@@ -190,7 +191,7 @@ fn base_entry(
     host: String,
     headers: Headers,
     body: &[u8],
-    cfg: &Value,
+    workspace_id: &str,
 ) -> (RequestLogEntry, String) {
     use base64::Engine as _;
     let req_body = if body.is_empty() { String::new() } else { base64::engine::general_purpose::STANDARD.encode(body) };
@@ -202,7 +203,7 @@ fn base_entry(
         host,
         req_headers: headers,
         req_body: req_body.clone(),
-        workspace_id: Some(str_of(cfg, "activeWorkspaceId").to_string()),
+        workspace_id: Some(workspace_id.to_string()),
         origin: Some("forward".to_string()),
         ..Default::default()
     };
@@ -211,7 +212,8 @@ fn base_entry(
 
 /// A request that arrived in absolute form on the plain port.
 async fn dispatch<W: AsyncRead + AsyncWrite + Unpin>(shared: &Shared, out: &mut W, head: &RequestHead, body: &[u8]) {
-    let cfg = shared.snapshot().dispatch.clone();
+    let snapshot = shared.snapshot();
+    let routing = &snapshot.routing;
     let t0 = now_ms();
     let id = mk_id();
     let headers = request_headers(head);
@@ -232,13 +234,12 @@ async fn dispatch<W: AsyncRead + AsyncWrite + Unpin>(shared: &Shared, out: &mut 
     };
     let url =
         if raw_target.starts_with("http") { raw_target.to_string() } else { format!("http://{host_header}{req_path}") };
-    let (base, req_body_b64) = base_entry(id, t0, head, url.clone(), host.clone(), headers.clone(), body, &cfg);
+    let (base, req_body_b64) =
+        base_entry(id, t0, head, url.clone(), host.clone(), headers.clone(), body, &routing.workspace_id);
 
     if absolute {
-        let env = active_env(&cfg);
         let exchange = Exchange {
-            cfg: &cfg,
-            env: env.as_ref(),
+            routing,
             method: &head.method,
             url: &url,
             rule_match_target: raw_target,
@@ -282,19 +283,19 @@ pub(super) async fn dispatch_https<W: AsyncRead + AsyncWrite + Unpin>(
     hostname: &str,
     port: u16,
 ) {
-    let cfg = shared.snapshot().dispatch.clone();
+    let snapshot = shared.snapshot();
+    let routing = &snapshot.routing;
     let t0 = now_ms();
     let id = mk_id();
     let headers = request_headers(head);
     let req_path = if head.target.is_empty() { "/".to_string() } else { head.target.clone() };
     let port_suffix = if port == 443 { String::new() } else { format!(":{port}") };
     let url = format!("https://{hostname}{port_suffix}{req_path}");
-    let (base, req_body_b64) = base_entry(id, t0, head, url.clone(), hostname.to_string(), headers.clone(), body, &cfg);
+    let (base, req_body_b64) =
+        base_entry(id, t0, head, url.clone(), hostname.to_string(), headers.clone(), body, &routing.workspace_id);
 
-    let env = active_env(&cfg);
     let exchange = Exchange {
-        cfg: &cfg,
-        env: env.as_ref(),
+        routing,
         method: &head.method,
         url: &url,
         rule_match_target: &url,
