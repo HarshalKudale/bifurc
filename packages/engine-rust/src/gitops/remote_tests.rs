@@ -1,6 +1,5 @@
 //! Tests of sign-in, import, publish and the owner and access rules, against a stand-in for GitHub whose repositories are
-//! bare repositories in a temporary directory. Console shelved (free app): the stand-in no longer plays the console;
-//! it only counts the questions put to one, which must stay none.
+//! bare repositories in a temporary directory.
 //! Skipped when git is missing.
 
 use std::{
@@ -17,8 +16,6 @@ use tokio::{
 };
 
 use super::{
-// Console shelved (free app): no console and no organization to test.
-    // auto_sync, console, get_sync_config, organization, get_workspace_git_state, get_workspace_sync_status,
     auto_sync, get_sync_config, get_workspace_git_state, get_workspace_sync_status,
     github::{Endpoints, set_test_endpoints},
     remote::forget_access,
@@ -56,18 +53,6 @@ struct Hub {
     root: PathBuf,
     /// Whether the user has typed the device code yet.
     granted: bool,
-    // Console shelved (free app): the stand-in no longer plays the console.
-    // /// The console: the repositories that are an organization's workspace, by id.
-    // managed: std::collections::HashSet<u64>,
-    // /// The console: (repository id, user id) -> `read`, `write`, or `seatInactive` for someone who was given
-    // /// the workspace and has no seat.
-    // grants: HashMap<(u64, u64), &'static str>,
-    // /// The console does not answer.
-    // console_down: bool,
-    // /// The console: the organization the managed repositories belong to has usage analytics on.
-    // analytics: bool,
-    /// How many questions were put to the console, which the app no longer has: none must come.
-    console_hits: u32,
     /// `owner/name` of the repositories that do not carry the workspace topic.
     untagged: std::collections::HashSet<String>,
 }
@@ -116,58 +101,6 @@ async fn answer(hub: &Arc<Mutex<Hub>>, method: &str, path: &str, token: &str, bo
             true => (200, json!({ "access_token": "tok-octo" })),
             false => (200, json!({ "error": "authorization_pending" })),
         },
-        // Console shelved (free app): the console's two questions are no longer answered; any is counted.
-        // // The console's one question. It is asked without a token.
-        // ("POST", "/api/v1/access/check") => {
-        //     let asked: Value = serde_json::from_str(body).unwrap_or(Value::Null);
-        //     let (Some(user_id), Some(repo)) = (asked["githubUserId"].as_u64(), asked["repoId"].as_u64()) else {
-        //         return (400, json!({ "error": { "code": "invalid" } }));
-        //     };
-        //     let hub = hub.lock();
-        //     if hub.console_down {
-        //         return (503, json!({}));
-        //     }
-        //     if !hub.managed.contains(&repo) {
-        //         let message = "Not a workspace of an organization.";
-        //         return (200, json!({ "allowed": false, "reason": "unmanaged", "message": message }));
-        //     }
-        //     match hub.grants.get(&(repo, user_id)) {
-        //         Some(&"seatInactive") => {
-        //             (200, json!({ "allowed": false, "reason": "seatInactive", "message": "Your seat is not active." }))
-        //         }
-        //         Some(permission) => (200, json!({ "allowed": true, "permission": permission })),
-        //         None => (200, json!({ "allowed": false, "reason": "notGranted", "message": "Ask the owner to add you." })),
-        //     }
-        // }
-        // // The console's other question: whose the workspace is. The owner of the repository is the owner of
-        // // the organization; anyone else has to have been given the workspace.
-        // ("POST", "/api/v1/workspaces/policy") => {
-        //     let asked: Value = serde_json::from_str(body).unwrap_or(Value::Null);
-        //     let (Some(user_id), Some(repo)) = (asked["githubUserId"].as_u64(), asked["repoId"].as_u64()) else {
-        //         return (400, json!({ "error": { "code": "invalid" } }));
-        //     };
-        //     let hub = hub.lock();
-        //     if hub.console_down {
-        //         return (503, json!({}));
-        //     }
-        //     let owner = hub.repos.iter().any(|(name, (owner, _))| repo_id(name) == repo && *owner == user_id);
-        //     if !hub.managed.contains(&repo) || !(owner || hub.grants.contains_key(&(repo, user_id))) {
-        //         return (200, json!({ "managed": false }));
-        //     }
-        //     (
-        //         200,
-        //         json!({
-        //             "managed": true,
-        //             "organization": { "publicId": "pub_acme", "name": "Acme" },
-        //             "workspace": { "id": format!("ws_{repo}") },
-        //             "analytics": { "enabled": hub.analytics },
-        //         }),
-        //     )
-        // }
-        (_, path) if path.starts_with("/api/v1/") => {
-            hub.lock().console_hits += 1;
-            (503, json!({}))
-        }
         ("GET", "/user") => match user {
             Some((id, login)) => (200, json!({ "id": id, "login": login, "name": "", "avatar_url": "" })),
             None => (401, json!({ "message": "Bad credentials" })),
@@ -224,30 +157,13 @@ async fn answer(hub: &Arc<Mutex<Hub>>, method: &str, path: &str, token: &str, bo
 struct HubGuard {
     hub: Arc<Mutex<Hub>>,
     /// Where the stand-in listens.
-    base: String,
     _dir: tempfile::TempDir,
 }
 
 impl Drop for HubGuard {
     fn drop(&mut self) {
         set_test_endpoints(None);
-        // Console shelved (free app): no console stand-in to detach.
-        // console::set_test_url(None);
     }
-}
-
-impl HubGuard {
-    // Console shelved (free app): nothing is given to anyone in a console.
-    // /// In the console: make the repository an organization's workspace and give it to `user` (`read`, `write`,
-    // /// or `seatInactive`), or with `None` take it from them.
-    // fn grant(&self, full_name: &str, user: u64, permission: Option<&'static str>) {
-    //     let mut hub = self.hub.lock();
-    //     hub.managed.insert(repo_id(full_name));
-    //     match permission {
-    //         Some(permission) => hub.grants.insert((repo_id(full_name), user), permission),
-    //         None => hub.grants.remove(&(repo_id(full_name), user)),
-    //     };
-    // }
 }
 
 async fn start_hub() -> HubGuard {
@@ -256,8 +172,6 @@ async fn start_hub() -> HubGuard {
     let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
     let base = format!("http://{HOST}:{}", listener.local_addr().unwrap().port());
     set_test_endpoints(Some(Endpoints { web: base.clone(), api: base.clone() }));
-    // Console shelved (free app): the engine is not pointed at a console.
-    // console::set_test_url(Some(base.clone()));
     let state = hub.clone();
     tokio::spawn(async move {
         loop {
@@ -309,7 +223,7 @@ async fn start_hub() -> HubGuard {
             });
         }
     });
-    HubGuard { hub, base, _dir: dir }
+    HubGuard { hub, _dir: dir }
 }
 
 struct Engine {
@@ -891,10 +805,6 @@ async fn a_shared_workspace_is_imported_and_synced_with_the_access_github_gives(
         guard.hub.lock().collaborators.entry(repo.to_string()).or_default().insert(7, push);
     };
     share("octo/team", false);
-    // Console shelved (free app): the organization used to give eve both workspaces to write to; what GitHub
-    // gives is what she has.
-    // guard.grant("octo/team", 7, Some("write"));
-    // guard.grant("octo/other", 7, Some("write"));
     let bare = guard.hub.lock().repos["octo/team"].1.clone();
     let refuse = |result: Value, needle: &str| {
         assert_eq!(result["ok"], false, "{result}");
@@ -1046,301 +956,20 @@ async fn a_shared_workspace_is_imported_and_synced_with_the_access_github_gives(
     assert_eq!(engine.call("sync.getState", json!({ "workspaceId": "mine-ws" })).await["access"], "owner");
 }
 
-// Console shelved (free app): the tests of the console's second yes and of organization analytics are kept below, commented out.
-// #[tokio::test]
-// async fn someone_elses_workspace_is_imported_only_when_the_console_gave_it_to_the_account() {
-//     if !check_git_installed().await {
-//         return;
-//     }
-//     let _root = scratch_data_root();
-//     let guard = start_hub().await;
-//     let _team = TeamSync::set(true);
-//     let engine = Engine::new();
-//     let octo = sign_in(42, "octo");
-//     let eve = sign_in(7, "eve");
-//     let ws = "remote-ws";
-//
-//     seed_remote(&guard, "octo/team", 42, workspace_file(ws)).await;
-//     seed_remote(&guard, "octo/before", 42, workspace_file("before-ws")).await;
-//     seed_remote(&guard, "octo/mine", 42, workspace_file("mine-ws")).await;
-//     // GitHub lets eve push to both: she was made a collaborator there.
-//     for repo in ["octo/team", "octo/before"] {
-//         guard.hub.lock().collaborators.entry(repo.to_string()).or_default().insert(7, true);
-//     }
-//     let down = |down: bool| guard.hub.lock().console_down = down;
-//     let import = |repo: &'static str| engine.call("workspace.import", json!({ "accountId": eve, "repo": repo }));
-//     let refused = |result: Value, reason: &str| {
-//         assert_eq!((result["ok"].as_bool(), result["reason"].as_str()), (Some(false), Some(reason)), "{result}");
-//         assert!(!ws_dir(ws).exists(), "a refused import brings nothing to this device");
-//     };
-//     let access = || async { engine.call("sync.getState", json!({ "workspaceId": ws })).await["access"].clone() };
-//     let publish = |id: &'static str| {
-//         write_entity(ws, "requests", id, &request(id, "Request"), None).unwrap();
-//         engine.call("entity.publish", json!({ "workspaceId": ws, "paths": [format!("requests/{id}.json")] }))
-//     };
-//
-//     // Being a collaborator on GitHub imports nothing: not while no organization has the repository, not
-//     // while the organization has not given it to her, and not while she has no seat there.
-//     refused(import("octo/team").await, "unmanaged");
-//     guard.grant("octo/team", 7, None);
-//     refused(import("octo/team").await, "notGranted");
-//     guard.grant("octo/team", 7, Some("seatInactive"));
-//     refused(import("octo/team").await, "seatInactive");
-//     // No answer is not a yes.
-//     guard.grant("octo/team", 7, Some("write"));
-//     down(true);
-//     let unreachable = import("octo/team").await;
-//     assert!(unreachable["error"].as_str().unwrap().contains("could not be reached"), "{unreachable}");
-//     refused(unreachable, "consoleUnreachable");
-//     // The owner of a repository is never asked about.
-//     let mine = engine.call("workspace.import", json!({ "accountId": octo, "repo": "octo/mine" })).await;
-//     assert_eq!(mine["ok"], true, "{mine}");
-//     auto_sync::stop_all_auto_sync();
-//     down(false);
-//
-//     // Given it to read, she has it read-only, whatever GitHub lets her do.
-//     guard.grant("octo/team", 7, Some("read"));
-//     let imported = import("octo/team").await;
-//     assert_eq!(imported["ok"], true, "{imported}");
-//     auto_sync::stop_all_auto_sync();
-//     assert_eq!(imported["workspace"]["syncConfig"]["access"], "read");
-//     let bare = guard.hub.lock().repos["octo/team"].1.clone();
-//     let first = run(&bare, &["rev-parse", "main"]).await;
-//     let blocked = publish("r2").await;
-//     assert!(blocked["error"].as_str().unwrap().contains("read-only"), "{blocked}");
-//     assert_eq!(run(&bare, &["rev-parse", "main"]).await, first);
-//     // While the console cannot be asked, reading stays all she has.
-//     down(true);
-//     assert_eq!(publish("r2").await["ok"], false);
-//     assert_eq!(access().await, "read");
-//     down(false);
-//
-//     // Given it to write, the next thing that pushes finds out.
-//     guard.grant("octo/team", 7, Some("write"));
-//     let pushed = publish("r2").await;
-//     assert_eq!(pushed["ok"], true, "{pushed}");
-//     assert_eq!(access().await, "write");
-//     assert_eq!(run(&bare, &["rev-parse", "main"]).await, run(&ws_dir(ws), &["rev-parse", "HEAD"]).await);
-//     // A console that cannot be asked takes nothing away from someone who had it to write.
-//     down(true);
-//     assert_eq!(publish("r3").await["ok"], true);
-//     down(false);
-//     // Losing the seat, or the workspace, in the console leaves her what is on this device, read-only.
-//     for lost in [Some("seatInactive"), None] {
-//         guard.grant("octo/team", 7, lost);
-//         assert_eq!(publish("r4").await["ok"], false, "{lost:?}");
-//         assert_eq!(access().await, "read");
-//     }
-//
-//     // A workspace that was shared before there was a console is in settings from the version before this
-//     // one, on a repository no organization has. It keeps syncing with what GitHub gives.
-//     guard.grant("octo/before", 7, Some("write"));
-//     let before = import("octo/before").await;
-//     assert_eq!(before["ok"], true, "{before}");
-//     auto_sync::stop_all_auto_sync();
-//     {
-//         let mut hub = guard.hub.lock();
-//         hub.managed.remove(&repo_id("octo/before"));
-//         hub.grants.clear();
-//     }
-//     write_entity("before-ws", "requests", "r2", &request("r2", "Second"), None).unwrap();
-//     let synced =
-//         engine.call("entity.publish", json!({ "workspaceId": "before-ws", "paths": ["requests/r2.json"] })).await;
-//     assert_eq!(synced["ok"], true, "{synced}");
-//     assert_eq!(get_sync_config("before-ws").unwrap()["access"], "write");
-// }
-//
-// #[tokio::test]
-// async fn an_organizations_workspace_has_its_analytics_decided_in_the_console() {
-//     if !check_git_installed().await {
-//         return;
-//     }
-//     let _root = scratch_data_root();
-//     let guard = start_hub().await;
-//     let _team = TeamSync::set(true);
-//     let engine = Engine::new();
-//     let octo = sign_in(42, "octo");
-//     let eve = sign_in(7, "eve");
-//     let (ws, mine, own) = ("remote-ws", "mine-ws", "own-ws");
-//
-//     seed_remote(&guard, "octo/team", 42, workspace_file(ws)).await;
-//     seed_remote(&guard, "octo/mine", 42, workspace_file(mine)).await;
-//     seed_remote(&guard, "eve/own", 7, workspace_file(own)).await;
-//     guard.hub.lock().collaborators.entry("octo/team".to_string()).or_default().insert(7, true);
-//     guard.grant("octo/team", 7, Some("write"));
-//     guard.hub.lock().managed.insert(repo_id("octo/mine"));
-//     let down = |down: bool| guard.hub.lock().console_down = down;
-//     let stored = |id: &str| load_settings().workspace(id).unwrap().get("organization").cloned().unwrap_or(Value::Null);
-//     let shown = |id: &'static str| {
-//         let engine = &engine;
-//         async move {
-//             let config = engine.call("config.get", json!({})).await;
-//             let workspaces = config["workspaces"].as_array().unwrap();
-//             workspaces.iter().find(|workspace| workspace["id"] == id).unwrap()["organization"].clone()
-//         }
-//     };
-//     let acme = |repo: &str, user: u64, analytics: bool| {
-//         json!({
-//             "publicId": "pub_acme", "name": "Acme", "workspaceId": format!("ws_{}", repo_id(repo)),
-//             "analytics": analytics, "githubUserId": user,
-//         })
-//     };
-//
-//     // Whose a workspace is is known as soon as it is on this device: the member's, the organization owner's
-//     // own, and one that is nobody's but its user's.
-//     for (account, repo) in [(&eve, "octo/team"), (&octo, "octo/mine"), (&eve, "eve/own")] {
-//         let imported = engine.call("workspace.import", json!({ "accountId": account, "repo": repo })).await;
-//         assert_eq!(imported["ok"], true, "{imported}");
-//         auto_sync::stop_all_auto_sync();
-//     }
-//     assert_eq!(stored(ws), acme("octo/team", 7, false));
-//     assert_eq!(stored(mine), acme("octo/mine", 42, false));
-//     assert_eq!(stored(own), Value::Null);
-//     assert_eq!(shown(ws).await, json!({ "name": "Acme", "analytics": false }));
-//     assert_eq!(shown(own).await, Value::Null);
-//
-//     // The owner turns analytics on in the console: each workspace finds out the next time it asks, and the
-//     // member's own switch on this device has no say in it.
-//     engine.call("settings.update", json!({ "telemetryEnabled": false })).await;
-//     guard.hub.lock().analytics = true;
-//     engine.call("sync.pull", json!({ "workspaceId": ws })).await;
-//     organization::refresh(mine).await;
-//     organization::refresh(own).await;
-//     assert_eq!(stored(ws), acme("octo/team", 7, true));
-//     assert_eq!(stored(mine), acme("octo/mine", 42, true));
-//     assert_eq!(stored(own), Value::Null);
-//     assert_eq!(shown(ws).await, json!({ "name": "Acme", "analytics": true }));
-//     assert_eq!(engine.call("config.get", json!({})).await["telemetryEnabled"], false);
-//
-//     // A console that cannot be asked changes nothing.
-//     down(true);
-//     engine.call("sync.pull", json!({ "workspaceId": ws })).await;
-//     organization::refresh(mine).await;
-//     assert_eq!((stored(ws), stored(mine)), (acme("octo/team", 7, true), acme("octo/mine", 42, true)));
-//     down(false);
-//
-//     // Turned off again, and then the workspace taken out of the organization: it is its user's again.
-//     guard.hub.lock().analytics = false;
-//     organization::refresh(ws).await;
-//     assert_eq!(stored(ws), acme("octo/team", 7, false));
-//     guard.hub.lock().managed.remove(&repo_id("octo/team"));
-//     organization::refresh(ws).await;
-//     assert_eq!((stored(ws), shown(ws).await), (Value::Null, Value::Null));
-// }
-//
-// #[tokio::test]
-// async fn a_workspace_the_console_made_says_whose_it_is_at_the_import() {
-//     if !check_git_installed().await {
-//         return;
-//     }
-//     let _root = scratch_data_root();
-//     let guard = start_hub().await;
-//     let engine = Engine::new();
-//     let octo = sign_in(42, "octo");
-//     let declares = |ws: &str, organization: Value| {
-//         let mut file = workspace_file(ws).unwrap();
-//         file["organization"] = organization;
-//         Some(file)
-//     };
-//     let acme = json!({ "publicId": "pub_acme", "name": "Acme", "workspaceId": "wsp_team" });
-//     seed_remote(&guard, "octo/team", 42, declares("team-ws", acme)).await;
-//     seed_remote(&guard, "octo/odd", 42, declares("odd-ws", json!({ "publicId": "../x", "workspaceId": "wsp_odd" }))).await;
-//     let stored = |id: &str| load_settings().workspace(id).unwrap().get("organization").cloned().unwrap_or(Value::Null);
-//     let import = |repo: &'static str| engine.call("workspace.import", json!({ "accountId": octo, "repo": repo }));
-//
-//     // The console cannot be asked: the ids are known all the same, and nothing is reported until it says so.
-//     guard.hub.lock().console_down = true;
-//     for repo in ["octo/team", "octo/odd"] {
-//         let imported = import(repo).await;
-//         assert_eq!(imported["ok"], true, "{imported}");
-//         auto_sync::stop_all_auto_sync();
-//     }
-//     let known = json!({
-//         "publicId": "pub_acme", "name": "Acme", "workspaceId": "wsp_team", "analytics": false, "githubUserId": 42,
-//     });
-//     assert_eq!(stored("team-ws"), known);
-//     // An id that is not a plain one is not taken.
-//     assert_eq!(stored("odd-ws"), Value::Null);
-//
-//     // What the console says once it can be asked is what stands.
-//     guard.hub.lock().console_down = false;
-//     guard.hub.lock().managed.insert(repo_id("octo/team"));
-//     guard.hub.lock().analytics = true;
-//     organization::refresh("team-ws").await;
-//     assert_eq!(stored("team-ws")["analytics"], true);
-//     assert_eq!(stored("team-ws")["workspaceId"], format!("ws_{}", repo_id("octo/team")));
-// }
-//
-// #[tokio::test]
-// async fn a_workspace_synced_by_a_version_before_organizations_learns_whose_it_is() {
-//     if !check_git_installed().await {
-//         return;
-//     }
-//     let _root = scratch_data_root();
-//     let guard = start_hub().await;
-//     let _team = TeamSync::set(true);
-//     let engine = Engine::new();
-//     let octo = sign_in(42, "octo");
-//     let ws = "mine-ws";
-//     seed_remote(&guard, "octo/mine", 42, workspace_file(ws)).await;
-//     let imported = engine.call("workspace.import", json!({ "accountId": octo, "repo": "octo/mine" })).await;
-//     assert_eq!(imported["ok"], true, "{imported}");
-//     auto_sync::stop_all_auto_sync();
-//
-//     // The workspace as 0.5.0 left it in `app.json`: a remote with no repository id, and no organization.
-//     let mut settings = load_settings();
-//     let workspace = settings.workspace_mut(ws).unwrap();
-//     let before = {
-//         let stored = workspace.as_object_mut().unwrap();
-//         stored.remove("organization");
-//         stored["syncConfig"].as_object_mut().unwrap().remove("repoId");
-//         stored.clone()
-//     };
-//     assert_eq!(
-//         before.keys().map(String::as_str).collect::<Vec<_>>(),
-//         ["id", "name", "activeEnvironmentId", "accountId", "syncConfig", "syncMeta"]
-//     );
-//     crate::workspace::settings::save_settings(&settings).unwrap();
-//
-//     // Nobody's but its user's until an organization has it: nothing is added but the repository's id.
-//     organization::refresh(ws).await;
-//     let mut expected = before.clone();
-//     expected["syncConfig"]["repoId"] = json!(repo_id("octo/mine"));
-//     assert_eq!(load_settings().workspace(ws).unwrap(), &Value::Object(expected.clone()));
-//
-//     // The owner adds it to an organization in the console and turns analytics on there.
-//     guard.hub.lock().managed.insert(repo_id("octo/mine"));
-//     guard.hub.lock().analytics = true;
-//     organization::refresh(ws).await;
-//     expected.insert(
-//         "organization".into(),
-//         json!({
-//             "publicId": "pub_acme", "name": "Acme", "workspaceId": format!("ws_{}", repo_id("octo/mine")),
-//             "analytics": true, "githubUserId": 42,
-//         }),
-//     );
-//     assert_eq!(load_settings().workspace(ws).unwrap(), &Value::Object(expected));
-//     // What it synced with and as whom is what it was.
-//     assert_eq!(engine.call("sync.getState", json!({ "workspaceId": ws })).await["access"], "owner");
-// }
-
 #[tokio::test]
-async fn a_collaborator_imports_a_shared_workspace_with_the_access_github_gives_and_no_console_is_contacted() {
+async fn a_collaborator_imports_a_shared_workspace_with_the_access_github_gives() {
     if !check_git_installed().await {
         return;
     }
     let _root = scratch_data_root();
     let guard = start_hub().await;
     let _team = TeamSync::set(true);
-    // A console stand-in is announced to the engine the way the old one was; the engine must not look.
-    // SAFETY: the data root is held by this test, and the only reader of this variable was the console client.
-    unsafe { std::env::set_var("BIFURC_CONSOLE_URL", &guard.base) };
     let engine = Engine::new();
     let eve = sign_in(7, "eve");
 
     seed_remote(&guard, "octo/writable", 42, workspace_file("writable-ws")).await;
     seed_remote(&guard, "octo/readable", 42, workspace_file("readable-ws")).await;
-    // A repository the old console never heard of, and one that says it belongs to an organization.
+    // A repository that says it belongs to an organization.
     let mut declares = workspace_file("declared-ws").unwrap();
     declares["organization"] = json!({ "publicId": "pub_acme", "name": "Acme", "workspaceId": "ws_1" });
     seed_remote(&guard, "octo/declared", 42, Some(declares)).await;
@@ -1376,10 +1005,4 @@ async fn a_collaborator_imports_a_shared_workspace_with_the_access_github_gives_
     let blocked = publish("readable-ws", "r2").await;
     assert!(blocked["error"].as_str().unwrap().contains("read-only"), "{blocked}");
     assert_eq!(engine.call("sync.getState", json!({ "workspaceId": "readable-ws" })).await["access"], "read");
-
-    // The app never asked a console anything.
-    assert_eq!(guard.hub.lock().console_hits, 0);
-    assert!(engine.call("setup.getState", json!({})).await.get("consoleUrl").is_none());
-    // SAFETY: as above.
-    unsafe { std::env::remove_var("BIFURC_CONSOLE_URL") };
 }
