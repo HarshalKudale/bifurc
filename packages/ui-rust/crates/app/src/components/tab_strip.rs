@@ -216,3 +216,60 @@ pub fn tab_strip<V: Render>(
         .child(suffix.into_any_element())
         .into_any_element()
 }
+
+/// The tabs a screen's user closed last, newest last, for Ctrl+Shift+T.
+pub struct ClosedTabs<K>(Vec<K>);
+
+impl<K: PartialEq> ClosedTabs<K> {
+    const CAP: usize = 10;
+
+    pub fn new() -> Self {
+        Self(Vec::new())
+    }
+
+    pub fn push(&mut self, key: K) {
+        self.0.retain(|kept| *kept != key);
+        self.0.push(key);
+        if self.0.len() > Self::CAP {
+            self.0.remove(0);
+        }
+    }
+
+    /// The newest closed tab that `can_open`. Entries that cannot be opened any more are dropped on the way.
+    pub fn pop_openable(&mut self, can_open: impl Fn(&K) -> bool) -> Option<K> {
+        while let Some(key) = self.0.pop() {
+            if can_open(&key) {
+                return Some(key);
+            }
+        }
+        None
+    }
+}
+
+#[cfg(test)]
+mod closed_tabs_tests {
+    use super::ClosedTabs;
+
+    #[test]
+    fn keeps_the_newest_ten_without_repeats() {
+        let mut stack = ClosedTabs::new();
+        for n in 0..12 {
+            stack.push(n);
+        }
+        stack.push(5);
+        assert_eq!(stack.0.len(), 10);
+        assert_eq!(stack.pop_openable(|_| true), Some(5));
+        assert_eq!(stack.pop_openable(|_| true), Some(11));
+        assert_eq!(stack.0[0], 2);
+    }
+
+    #[test]
+    fn skips_and_drops_entries_that_are_gone() {
+        let mut stack = ClosedTabs::new();
+        for n in [1, 2, 3] {
+            stack.push(n);
+        }
+        assert_eq!(stack.pop_openable(|n| *n == 1), Some(1));
+        assert_eq!(stack.pop_openable(|_| true), None);
+    }
+}

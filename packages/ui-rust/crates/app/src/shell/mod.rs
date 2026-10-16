@@ -425,6 +425,15 @@ impl Shell {
         self.entity_action(action, window, cx);
     }
 
+    /// Reopens the tab last closed on the screen in front, when that screen has tabs.
+    pub fn reopen_closed_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        match self.screen {
+            Screen::Requests => self.requests.update(cx, |screen, cx| screen.reopen_closed(window, cx)),
+            Screen::Mocks => self.mocks.update(cx, |screen, cx| screen.reopen_closed(window, cx)),
+            _ => {}
+        }
+    }
+
     /// Moves to the tab `by` places away. With `items_too`, the screens that list items instead of tabs (proxy
     /// rules, flows) move their selection.
     pub fn step_tab(&mut self, by: isize, items_too: bool, window: &mut Window, cx: &mut Context<Self>) {

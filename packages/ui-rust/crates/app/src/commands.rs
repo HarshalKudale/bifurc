@@ -49,6 +49,7 @@ actions!(
         RunRequest,
         CancelRequest,
         CloseRequestTab,
+        ReopenClosedTab,
         NextTab,
         PreviousTab,
         NextItem,
@@ -117,6 +118,7 @@ fn keys() -> Vec<KeyBinding> {
         // Esc cancels a send only from inside a request editor; elsewhere it closes what is open.
         KeyBinding::new("escape", CancelRequest, Some("RestEditor")),
         KeyBinding::new("secondary-w", CloseRequestTab, IN_SHELL),
+        KeyBinding::new("secondary-shift-t", ReopenClosedTab, IN_SHELL),
         // Not Ctrl+arrows: macOS takes those for Spaces, and in text they jump by word.
         KeyBinding::new("ctrl-pagedown", NextTab, IN_SHELL),
         KeyBinding::new("ctrl-pageup", PreviousTab, IN_SHELL),
@@ -203,6 +205,7 @@ pub fn register_actions(cx: &mut App) {
     on_shell::<SyncEntity>(cx, |shell, window, cx| shell.act_on_active(EntityAction::Sync, window, cx));
     on_shell::<DeleteEntity>(cx, |shell, window, cx| shell.act_on_active(EntityAction::Delete, window, cx));
     on_shell::<CloseRequestTab>(cx, |shell, window, cx| shell.act_on_active(EntityAction::Close, window, cx));
+    on_shell::<ReopenClosedTab>(cx, |shell, window, cx| shell.reopen_closed_tab(window, cx));
     on_shell::<NextTab>(cx, |shell, window, cx| shell.step_tab(1, false, window, cx));
     on_shell::<PreviousTab>(cx, |shell, window, cx| shell.step_tab(-1, false, window, cx));
     on_shell::<NextItem>(cx, |shell, window, cx| shell.step_tab(1, true, window, cx));
@@ -278,6 +281,7 @@ mod tests {
         assert!(first_for("ctrl-enter", &field).unwrap().as_any().is::<RunRequest>());
         assert!(first_for("ctrl-enter", &["Root", "Shell", "Input mode=editor"]).unwrap().as_any().is::<RunRequest>());
         assert!(first_for("ctrl-s", &["Root", "Shell"]).unwrap().as_any().is::<SaveRequest>());
+        assert!(first_for("ctrl-shift-t", &field).unwrap().as_any().is::<ReopenClosedTab>());
     }
 
     #[test]
@@ -285,6 +289,7 @@ mod tests {
         let dialog = ["Root", "Dialog", "Input"];
         assert!(first_for("ctrl-s", &dialog).is_none());
         assert!(first_for("ctrl-w", &dialog).is_none());
+        assert!(first_for("ctrl-shift-t", &dialog).is_none());
         assert!(first_for("ctrl-enter", &dialog).unwrap().as_any().is::<InputEnter>());
         // Palette and finder stay reachable from anywhere.
         assert!(first_for("ctrl-k", &dialog).unwrap().as_any().is::<OpenCommandPalette>());

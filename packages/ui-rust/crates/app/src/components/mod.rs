@@ -26,5 +26,5 @@ pub use kv_table::{KeyValueEvent, KeyValueTable};
 pub use request_bar::request_bar;
 pub use request_settings::{SettingsChanged, SettingsForm};
 pub use parts_table::{FileData, Part, PartValue, PartsEvent, PartsTable};
-pub use tab_strip::{StripTab, TabAction, TabStrip, tab_strip};
+pub use tab_strip::{ClosedTabs, StripTab, TabAction, TabStrip, tab_strip};
 pub use var_editor::{Syntax, VarEditor};

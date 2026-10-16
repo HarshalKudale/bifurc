@@ -109,6 +109,7 @@
   "palette.revert_item": "Revert to the last synced version…",
   "palette.delete_item": "Delete this item…",
   "palette.close_tab": "Close tab",
+  "palette.reopen_tab": "Reopen closed tab",
   "palette.new_environment": "New environment…",
   "palette.add_workspace": "Add workspace…",
   "palette.rename_workspace": "Rename this workspace…",

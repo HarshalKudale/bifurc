@@ -33,7 +33,7 @@ use self::tree::{RequestTree, RequestTreeEvent, is_deleted, locked_to, new_menu}
 use crate::{
     app_model::{AppModel, Deleted, Load, ModelEvent},
     components::{
-        CURL_TAB_BADGE, CURL_TAB_TITLE, CurlImport, CurlImportEvent, CurlTarget, EntityAction, StripTab, TabAction,
+        CURL_TAB_BADGE, CURL_TAB_TITLE, ClosedTabs, CurlImport, CurlImportEvent, CurlTarget, EntityAction, StripTab, TabAction,
         TabStrip,
         dialogs::{
             FOLDER_DELETE_CONSEQUENCE, PromptField, confirm_danger, delete_consequence, needs_update, prompt,
@@ -119,6 +119,8 @@ pub struct RequestsScreen {
     response_panel: Entity<HostPanel>,
     /// Numbers drafts so each gets a stable identity before it has an id from the engine.
     next_draft: u64,
+    /// Saved requests and runners the user closed, for Ctrl+Shift+T. Drafts are discarded for good.
+    closed: ClosedTabs<TabKey>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -175,6 +177,7 @@ impl RequestsScreen {
             request_panel,
             response_panel,
             next_draft: 1,
+            closed: ClosedTabs::new(),
             _subscriptions: subscriptions,
         }
     }
@@ -573,6 +576,9 @@ impl RequestsScreen {
                 session.clone().flush(window, cx);
             }
         }
+        for tab in self.tabs.iter().filter(|tab| keys.contains(&tab.key) && !matches!(tab.key, TabKey::Draft(_))) {
+            self.closed.push(tab.key.clone());
+        }
         self.tabs.retain(|tab| !keys.contains(&tab.key));
         let next = match front.and_then(|key| self.tabs.iter().position(|tab| tab.key == key)) {
             Some(ix) => Some(ix),
@@ -720,6 +726,22 @@ impl RequestsScreen {
             if let Some(ix) = self.tabs.iter().position(|tab| tab.key == key) {
                 self.remove_tab(ix, cx);
             }
+        }
+    }
+
+    /// Reopens the newest closed request or runner that still exists. One already open is brought to the front.
+    pub fn reopen_closed(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let model = self.model.read(cx);
+        let config = model.config();
+        let key = self.closed.pop_openable(|key| match key {
+            TabKey::Saved { kind, id } => config.request(*kind, id).is_some_and(|r| !r.deleted && r.locked.is_none()),
+            TabKey::Runner(folder) => config.folder(folder).is_some_and(|f| !f.deleted),
+            TabKey::Draft(_) => false,
+        });
+        match key {
+            Some(TabKey::Saved { kind, id }) => self.open_node(&NodeRef::Request { kind, id }, window, cx),
+            Some(TabKey::Runner(folder)) => self.open_runner(&folder, window, cx),
+            _ => {}
         }
     }
 
