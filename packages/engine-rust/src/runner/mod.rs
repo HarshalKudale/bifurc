@@ -223,6 +223,7 @@ mod tests {
         assert_eq!(names, vec!["second", "first"]);
         assert_eq!(status["results"][0]["status"], 200);
         assert_eq!(status["report"]["totalRequests"], 2);
+        assert_eq!(status["report"]["folderName"], "F", "an exported report is titled with it");
         assert_eq!(status["report"]["passedTests"], 2);
         assert_eq!(finished.lock().len(), 1);
         let row = &status["results"][0];
