@@ -52,9 +52,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: |
-            .
-            packages/ui-rust
+          workspaces: .
           shared-key: release
           cache-on-failure: true
 
@@ -95,9 +93,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: |
-            .
-            packages/ui-rust
+          workspaces: .
           shared-key: release
           cache-on-failure: true
 
@@ -138,9 +134,7 @@ jobs:
 
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: |
-            .
-            packages/ui-rust
+          workspaces: .
           shared-key: release
           cache-on-failure: true
 

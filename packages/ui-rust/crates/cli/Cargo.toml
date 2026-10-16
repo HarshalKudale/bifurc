@@ -1,5 +1,5 @@
 [package]
-name = "bifurc-cli"
+name = "bifurc-launcher"
 version.workspace = true
 edition.workspace = true
 license.workspace = true
@@ -7,7 +7,7 @@ authors.workspace = true
 description = "The `bifurc` command of an installed Bifurc: runs the packaged CLI, or the MCP server with `--mcp`."
 
 [[bin]]
-name = "bifurc"
+name = "bifurc-launcher"
 path = "src/main.rs"
 
 [target.'cfg(windows)'.dependencies]
