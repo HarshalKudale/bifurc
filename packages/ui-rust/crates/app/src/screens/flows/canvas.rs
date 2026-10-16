@@ -41,7 +41,7 @@ use super::{
     json_view::{Pick, Toggle, flip, json_tree},
 };
 use crate::{
-    commands::NewRestRequest,
+    commands::{DuplicateNode, NewRestRequest},
     i18n::{t, t_with},
     model::flow::{Described, FlowDoc, FlowEdge, FlowNode, InputInfo, NodeInfo, NodeKind, NodeRun, RunView, path_label},
 };
@@ -703,11 +703,6 @@ impl FlowCanvas {
                     cx.emit(CanvasEvent::Disconnect(id));
                 } else if let Some(id) = self.selected.clone() {
                     cx.emit(CanvasEvent::Delete(id));
-                }
-            }
-            ("d", true) => {
-                if let Some(id) = self.selected.clone() {
-                    cx.emit(CanvasEvent::Duplicate(id));
                 }
             }
             _ => return,
@@ -1589,6 +1584,7 @@ impl Render for FlowCanvas {
             .size_full()
             .overflow_hidden()
             .bg(theme.muted.opacity(0.35))
+            .key_context("FlowCanvas")
             .track_focus(&self.focus)
             .on_key_down(cx.listener(|this, event: &KeyDownEvent, window, cx| this.key_pressed(event, window, cx)))
             .on_mouse_down(
@@ -1598,6 +1594,15 @@ impl Render for FlowCanvas {
             .on_mouse_move(cx.listener(|this, event: &MouseMoveEvent, window, cx| this.pointer_moved(event, window, cx)))
             .on_mouse_up(MouseButton::Left, cx.listener(|this, _, window, cx| this.finish_gesture(true, window, cx)))
             .on_mouse_up_out(MouseButton::Left, cx.listener(|this, _, window, cx| this.finish_gesture(false, window, cx)))
+            // Ctrl+D, which elsewhere copies the open item, copies the picked node here. A key typed into a field of
+            // a node is that field's, so nothing is copied then.
+            .on_action(cx.listener(|this, _: &DuplicateNode, window, cx| {
+                if this.focus.is_focused(window)
+                    && let Some(id) = this.selected.clone()
+                {
+                    cx.emit(CanvasEvent::Duplicate(id));
+                }
+            }))
             // Ctrl+N, which elsewhere starts a request, asks here for a node, where the pointer is.
             .on_action(cx.listener(|this, _: &NewRestRequest, window, cx| {
                 let viewport = this.viewport.get();

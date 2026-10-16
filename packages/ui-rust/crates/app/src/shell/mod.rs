@@ -425,6 +425,34 @@ impl Shell {
         self.entity_action(action, window, cx);
     }
 
+    /// Copies the item open on the screen in front, when the screen has copies.
+    pub fn duplicate_active(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        match self.screen {
+            Screen::Requests => self.requests.update(cx, |screen, cx| screen.duplicate_active(window, cx)),
+            Screen::Mocks => self.mocks.update(cx, |screen, cx| screen.duplicate_active(window, cx)),
+            Screen::Flows => self.flows.update(cx, |screen, cx| screen.duplicate_active(window, cx)),
+            _ => {}
+        }
+    }
+
+    /// Renames the item open on the screen in front.
+    pub fn rename_active(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        match self.screen {
+            Screen::Requests => self.requests.update(cx, |screen, cx| screen.rename_active(window, cx)),
+            Screen::Mocks => self.mocks.update(cx, |screen, cx| screen.rename_active(window, cx)),
+            Screen::Flows => self.flows.update(cx, |screen, cx| screen.rename_active(window, cx)),
+            Screen::Vaults => self.vaults.update(cx, |screen, cx| screen.prompt_rename(window, cx)),
+            _ => {}
+        }
+    }
+
+    /// Puts the cursor in the address of the open request.
+    pub fn focus_url(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.screen == Screen::Requests {
+            self.requests.update(cx, |screen, cx| screen.focus_url(window, cx));
+        }
+    }
+
     /// Reopens the tab last closed on the screen in front, when that screen has tabs.
     pub fn reopen_closed_tab(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         match self.screen {

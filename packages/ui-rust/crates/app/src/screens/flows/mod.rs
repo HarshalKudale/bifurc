@@ -28,7 +28,7 @@ use serde_json::{Map, Value, json};
 use self::{
     canvas::{CanvasEvent, FlowCanvas},
     editor::{EditorEvent, NodeEditor},
-    tree::{FlowTree, FlowTreeEvent, deleted_target, is_deleted},
+    tree::{FlowTree, FlowTreeEvent, deleted_target, is_deleted, locked_to},
 };
 use crate::{
     app_model::{AppModel, ModelEvent},
@@ -804,6 +804,27 @@ impl FlowsScreen {
                     self.confirm_delete(key, window, cx);
                 }
             }
+        }
+    }
+
+    /// The selected flow, unless it is deleted or saved by a newer Bifurc.
+    fn active_flow(&self, cx: &Context<Self>) -> Option<TreeKey> {
+        let key = TreeKey::Item(self.selected.clone()?);
+        let model = self.model.read(cx);
+        (!is_deleted(model, &key) && locked_to(model, &key).is_none()).then_some(key)
+    }
+
+    /// Copies the selected flow, as the tree's menu does.
+    pub fn duplicate_active(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(TreeKey::Item(id)) = self.active_flow(cx) {
+            self.duplicate(id, window, cx);
+        }
+    }
+
+    /// Asks for a new name for the selected flow, as the tree's menu does.
+    pub fn rename_active(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if let Some(key) = self.active_flow(cx) {
+            self.prompt_rename(key, window, cx);
         }
     }
 

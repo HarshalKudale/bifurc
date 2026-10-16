@@ -64,7 +64,7 @@ pub fn is_deleted(model: &AppModel, key: &TreeKey) -> bool {
 
 /// The version of Bifurc the flow needs, when a newer one than this last saved it. A folder is never locked:
 /// it is a directory, and moving or renaming it changes nothing in it.
-fn locked_to(model: &AppModel, key: &TreeKey) -> Option<String> {
+pub fn locked_to(model: &AppModel, key: &TreeKey) -> Option<String> {
     match key {
         TreeKey::Folder(_) => None,
         TreeKey::Item(id) => model.config().flows.iter().find(|f| f.id == *id).and_then(|f| f.locked.clone()),
