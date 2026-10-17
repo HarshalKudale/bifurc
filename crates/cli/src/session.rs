@@ -67,7 +67,12 @@ fn engine_error(raw: &Value) -> CliError {
     {
         return CliError::msg(message);
     }
+    // A send that failed on the way (refused, DNS, closed, timed out) is keyed `request.send.*`, whatever its code.
+    let key = raw.pointer("/details/key").and_then(Value::as_str).unwrap_or_default();
+    let sent_and_lost =
+        key.starts_with("request.send.") && !key.ends_with("invalid_url") && !key.ends_with("cancelled");
     match (text("code"), text("message")) {
+        (Some(code), Some(message)) if sent_and_lost => CliError::network(format!("{code}: {message}")),
         (Some(code), Some(message)) => CliError::Engine { code, message },
         _ => CliError::Engine {
             code: "ENGINE_ERROR".to_string(),
@@ -222,16 +227,16 @@ pub fn unreachable_reason(info: &RuntimeInfo, data_dir: &Path) -> Option<String>
 /// Connect to the engine serving `data_dir`, found through its runtime.json, and open a session.
 pub fn connect(data_dir: &Path, client_version: &str) -> Result<EngineConnection> {
     let Some(info) = find_running_engine(data_dir) else {
-        return Err(CliError::msg(format!(
+        return Err(CliError::engine_unreachable(format!(
             "No engine is running for {}.\nStart one with: bifurc engine start",
             data_dir.display()
         )));
     };
     if let Some(reason) = unreachable_reason(&info, data_dir) {
-        return Err(CliError::msg(reason));
+        return Err(CliError::engine_unreachable(reason));
     }
     let open_failed = |reason: String| {
-        CliError::msg(format!("Could not open a session with the engine at {}: {reason}", info.address))
+        CliError::engine_unreachable(format!("Could not open a session with the engine at {}: {reason}", info.address))
     };
     let stream = open_stream(&info.address).map_err(|e| open_failed(e.to_string()))?;
     let mut session = Session::new(stream);
@@ -360,6 +365,21 @@ mod tests {
         let stream = Scripted::new(&[json!({"id": "cli-1", "ok": false, "error": error})]);
         let err = Session::new(stream).call("config.get", json!({})).unwrap_err();
         assert_eq!(err.line(), "bifurc: FORBIDDEN: no");
+    }
+
+    #[test]
+    fn a_missing_thing_and_a_send_that_got_nowhere_have_their_own_exit_codes() {
+        let code_of = |error: Value| {
+            let stream = Scripted::new(&[json!({"id": "cli-1", "ok": false, "error": error})]);
+            Session::new(stream).call("x.y", json!({})).unwrap_err().code()
+        };
+        assert_eq!(code_of(json!({"code": "NOT_FOUND", "message": "no such request"})), 3);
+        let refused = json!({"code": "ENGINE_ERROR", "message": "Nothing is listening at x:1.",
+            "details": {"key": "request.send.refused", "params": {}}});
+        assert_eq!(code_of(refused), 4);
+        let bad_url = json!({"code": "BAD_REQUEST", "message": "Invalid URL",
+            "details": {"key": "request.send.invalid_url", "params": {}}});
+        assert_eq!(code_of(bad_url), 1);
     }
 
     #[test]

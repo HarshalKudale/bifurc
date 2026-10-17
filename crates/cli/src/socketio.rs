@@ -41,7 +41,7 @@ pub fn socketio_exchange(
     if event.is_none()
         && let Some(option) = ["body", "ack"].into_iter().find(|option| ctx.args.has(option))
     {
-        return Err(CliError::msg(format!("--{option} goes with --event <name>, the event to emit")));
+        return Err(CliError::usage(format!("--{option} goes with --event <name>, the event to emit")));
     }
 
     let key = json!({ "workspaceId": workspace, "connectionId": connection_id });
@@ -325,7 +325,7 @@ mod tests {
         let (out, _) = run(&argv, answers, |c| requests(c, sub(&argv)));
         assert_eq!(
             out.unwrap_err(),
-            CliError::msg(
+            CliError::usage(
                 "a saved request is sent as it is saved, without --listen; change it with: bifurc requests update"
             )
         );
@@ -367,7 +367,7 @@ mod tests {
             ),
         ] {
             let (out, calls) = run(&argv, engine(), |c| requests(c, sub(&argv)));
-            assert_eq!(out.unwrap_err(), CliError::msg(message), "{argv:?}");
+            assert_eq!(out.unwrap_err(), CliError::usage(message), "{argv:?}");
             assert!(payloads(&calls, "socketio.connect").is_empty(), "{argv:?}");
         }
     }
