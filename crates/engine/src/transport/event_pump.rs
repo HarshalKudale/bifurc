@@ -34,7 +34,7 @@ pub fn to_log_entry_event(payload: &Value) -> Value {
         out.insert("pinned".into(), json!(true));
     }
     if let Some(origin) = e.get("origin").and_then(Value::as_str)
-        && (origin == "forward" || origin == "reverse" || origin == "server")
+        && matches!(origin, "forward" | "reverse" | "server" | "webhook")
     {
         out.insert("origin".into(), json!(origin));
     }
