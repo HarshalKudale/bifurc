@@ -42,7 +42,7 @@ fn folders_list(ctx: &mut Context) -> Result<String> {
     ctx.accept(&["tree"], 0)?;
     let wanted = need(ctx.args.flag("tree"), "--tree request|mock|flow|rule")?;
     let Some((_, key)) = TREES.iter().find(|(tree, _)| *tree == wanted) else {
-        return Err(CliError::msg(format!("--tree must be one of request, mock, flow, rule, not \"{wanted}\"")));
+        return Err(CliError::usage(format!("--tree must be one of request, mock, flow, rule, not \"{wanted}\"")));
     };
     if ctx.args.flag("workspace").is_some() {
         return Err(CliError::msg(
@@ -61,13 +61,13 @@ fn env_variables(ctx: &mut Context, set: bool) -> Result<String> {
     let wanted = need(args.positional(2), "environment id or name")?;
     let given = args.positionals.get(3..).unwrap_or_default();
     if given.is_empty() {
-        return Err(CliError::msg(if set { "missing KEY=VALUE" } else { "missing the name of a variable" }));
+        return Err(CliError::usage(if set { "missing KEY=VALUE" } else { "missing the name of a variable" }));
     }
     let mut changes: Vec<(&str, Option<&str>)> = Vec::new();
     for raw in given {
         changes.push(match (set, raw.split_once('=')) {
             (true, Some((key, value))) if !key.is_empty() => (key, Some(value)),
-            (true, _) => return Err(CliError::msg(format!("a variable is set as KEY=VALUE, not \"{raw}\""))),
+            (true, _) => return Err(CliError::usage(format!("a variable is set as KEY=VALUE, not \"{raw}\""))),
             (false, _) => (raw.as_str(), None),
         });
     }
@@ -87,7 +87,7 @@ fn env_variables(ctx: &mut Context, set: bool) -> Result<String> {
                 variables.remove(at);
             }
             (None, None) => {
-                return Err(CliError::msg(format!("{} has no variable \"{key}\"", js_template(env.get("name")))));
+                return Err(CliError::not_found(format!("{} has no variable \"{key}\"", js_template(env.get("name")))));
             }
         }
     }

@@ -63,7 +63,7 @@ fn load(ctx: &mut Context, kind: &Kind, workspace: &str, id: &str) -> Result<Val
     let response = ctx.request("entity.load", json!({ "workspaceId": workspace, "kind": kind.kind, "id": id }))?;
     match response.get("entity").filter(|entity| entity.is_object()) {
         Some(entity) if response.get("ok").is_some_and(truthy) => Ok(entity.clone()),
-        _ => Err(CliError::msg(format!("no {} \"{id}\" (see: bifurc {} list)", kind.what, kind.group))),
+        _ => Err(CliError::not_found(format!("no {} \"{id}\" (see: bifurc {} list)", kind.what, kind.group))),
     }
 }
 
@@ -129,7 +129,7 @@ fn update(
     options: &str,
 ) -> Result<String> {
     if !changed {
-        return Err(CliError::msg(format!("nothing to change: give at least one of {options}")));
+        return Err(CliError::usage(format!("nothing to change: give at least one of {options}")));
     }
     if entity.get("workspaceId").is_none_or(Value::is_null) {
         entity["workspaceId"] = json!(workspace);
@@ -197,7 +197,7 @@ pub fn mappings(ctx: &mut Context, sub: Option<&str>) -> Result<String> {
 fn set_rule_target(ctx: &mut Context, workspace: &str, rule: &mut Value) -> Result<bool> {
     let args = ctx.args;
     match (args.flag("mapping"), args.flag("target")) {
-        (Some(_), Some(_)) => Err(CliError::msg("--mapping and --target cannot both be given")),
+        (Some(_), Some(_)) => Err(CliError::usage("--mapping and --target cannot both be given")),
         (Some(wanted), None) => {
             let mappings = list_entities(ctx, workspace, MAPPINGS.kind)?;
             let mapping = find_one(&mappings, wanted, MAPPINGS.name_keys, MAPPINGS.what, MAPPINGS.group)?;
@@ -241,7 +241,7 @@ pub fn rules(ctx: &mut Context, sub: Option<&str>) -> Result<String> {
             ctx.accept(&["mapping", "target", "name", "regex", "disabled"], 1)?;
             let pattern = need(args.positional(2), "pattern, e.g. api.example.com/v1")?;
             if args.flag("mapping").is_none() && args.flag("target").is_none() {
-                return Err(CliError::msg(
+                return Err(CliError::usage(
                     "missing where to send what matches: --mapping <id|domain> or --target <url>",
                 ));
             }
@@ -313,7 +313,7 @@ fn number(args: &ParsedArgs, flag: &str, min: u64, max: u64, what: &str) -> Resu
     let Some(raw) = args.flag(flag) else { return Ok(None) };
     match raw.parse::<u64>() {
         Ok(value) if (min..=max).contains(&value) => Ok(Some(value)),
-        _ => Err(CliError::msg(format!("--{flag} must be {what}, not \"{raw}\""))),
+        _ => Err(CliError::usage(format!("--{flag} must be {what}, not \"{raw}\""))),
     }
 }
 
@@ -406,7 +406,7 @@ pub fn mocks(ctx: &mut Context, sub: Option<&str>) -> Result<String> {
             let pattern = args.positional(2).or(args.flag("url"));
             let mut mock = match (args.flag("curl"), pattern) {
                 (Some(_), Some(_)) => {
-                    return Err(CliError::msg(
+                    return Err(CliError::usage(
                         "--curl already says what the mock answers to; leave out the URL pattern",
                     ));
                 }
@@ -502,10 +502,10 @@ mod tests {
         }
         let argv = ["mappings", "show", "nope"];
         let (out, _) = run(&argv, one_mapping(), |c| mappings(c, sub(&argv)));
-        assert_eq!(out.unwrap_err(), CliError::msg("no mapping \"nope\" (see: bifurc mappings list)"));
+        assert_eq!(out.unwrap_err(), CliError::not_found("no mapping \"nope\" (see: bifurc mappings list)"));
         let argv = ["mappings", "show"];
         let (out, _) = run(&argv, vec![], |c| mappings(c, sub(&argv)));
-        assert_eq!(out.unwrap_err(), CliError::msg("missing mapping id or name"));
+        assert_eq!(out.unwrap_err(), CliError::usage("missing mapping id or name"));
     }
 
     #[test]
@@ -541,10 +541,10 @@ mod tests {
     fn mappings_create_needs_domain_and_target() {
         let argv = ["mappings", "create"];
         let (out, _) = run(&argv, vec![], |c| mappings(c, sub(&argv)));
-        assert_eq!(out.unwrap_err(), CliError::msg("missing domain, e.g. api or api.localhost"));
+        assert_eq!(out.unwrap_err(), CliError::usage("missing domain, e.g. api or api.localhost"));
         let argv = ["mappings", "create", "api"];
         let (out, _) = run(&argv, vec![], |c| mappings(c, sub(&argv)));
-        assert_eq!(out.unwrap_err(), CliError::msg("missing target, e.g. 127.0.0.1:3000 or http://host:port"));
+        assert_eq!(out.unwrap_err(), CliError::usage("missing target, e.g. 127.0.0.1:3000 or http://host:port"));
     }
 
     #[test]
@@ -563,7 +563,7 @@ mod tests {
         let (out, calls) = run(&argv, one_mapping(), |c| mappings(c, sub(&argv)));
         assert_eq!(
             out.unwrap_err(),
-            CliError::msg("nothing to change: give at least one of --domain, --target, --label")
+            CliError::usage("nothing to change: give at least one of --domain, --target, --label")
         );
         assert!(payloads(&calls, "entity.update").is_empty());
     }
@@ -633,21 +633,21 @@ mod tests {
     fn rules_create_needs_a_pattern_and_exactly_one_target() {
         let argv = ["rules", "create"];
         let (out, _) = run(&argv, vec![], |c| rules(c, sub(&argv)));
-        assert_eq!(out.unwrap_err(), CliError::msg("missing pattern, e.g. api.example.com/v1"));
+        assert_eq!(out.unwrap_err(), CliError::usage("missing pattern, e.g. api.example.com/v1"));
         let argv = ["rules", "create", "x"];
         let (out, calls) = run(&argv, vec![], |c| rules(c, sub(&argv)));
         assert_eq!(
             out.unwrap_err(),
-            CliError::msg("missing where to send what matches: --mapping <id|domain> or --target <url>")
+            CliError::usage("missing where to send what matches: --mapping <id|domain> or --target <url>")
         );
         assert!(calls.is_empty());
         let argv = ["rules", "create", "x", "--mapping", "m1", "--target", "http://y"];
         let (out, calls) = run(&argv, one_rule(), |c| rules(c, sub(&argv)));
-        assert_eq!(out.unwrap_err(), CliError::msg("--mapping and --target cannot both be given"));
+        assert_eq!(out.unwrap_err(), CliError::usage("--mapping and --target cannot both be given"));
         assert!(payloads(&calls, "entity.create").is_empty());
         let argv = ["rules", "create", "x", "--mapping", "nope"];
         let (out, _) = run(&argv, one_rule(), |c| rules(c, sub(&argv)));
-        assert_eq!(out.unwrap_err(), CliError::msg("no mapping \"nope\" (see: bifurc mappings list)"));
+        assert_eq!(out.unwrap_err(), CliError::not_found("no mapping \"nope\" (see: bifurc mappings list)"));
     }
 
     #[test]
@@ -666,13 +666,13 @@ mod tests {
         let (out, calls) = run(&argv, one_rule(), |c| rules(c, sub(&argv)));
         assert_eq!(
             out.unwrap_err(),
-            CliError::msg("unknown option --request-script for \"rules update\" (see: bifurc rules --help)")
+            CliError::usage("unknown option --request-script for \"rules update\" (see: bifurc rules --help)")
         );
         assert!(calls.is_empty());
 
         let argv = ["rules", "update", "r1", "--regex", "--no-regex"];
         let (out, calls) = run(&argv, one_rule(), |c| rules(c, sub(&argv)));
-        assert_eq!(out.unwrap_err(), CliError::msg("--regex and --no-regex cannot both be given"));
+        assert_eq!(out.unwrap_err(), CliError::usage("--regex and --no-regex cannot both be given"));
         assert!(calls.is_empty());
     }
 
@@ -800,7 +800,7 @@ mod tests {
         let (out, calls) = run(&argv, one_mock(), |c| mocks(c, sub(&argv)));
         assert_eq!(
             out.unwrap_err(),
-            CliError::msg("--curl already says what the mock answers to; leave out the URL pattern")
+            CliError::usage("--curl already says what the mock answers to; leave out the URL pattern")
         );
         assert!(calls.is_empty());
     }
@@ -817,7 +817,7 @@ mod tests {
             (vec!["mocks", "create"], "missing URL pattern, e.g. https://api.example.com/users"),
         ] {
             let (out, calls) = run(&argv, one_mock(), |c| mocks(c, sub(&argv)));
-            assert_eq!(out.unwrap_err(), CliError::msg(message));
+            assert_eq!(out.unwrap_err(), CliError::usage(message));
             assert!(calls.is_empty(), "{argv:?}");
         }
     }
@@ -863,7 +863,7 @@ mod tests {
 
         let argv = ["mocks", "update", "k1", "--status", "9000"];
         let (out, calls) = run(&argv, one_mock(), |c| mocks(c, sub(&argv)));
-        assert_eq!(out.unwrap_err(), CliError::msg("--status must be a status from 100 to 599, not \"9000\""));
+        assert_eq!(out.unwrap_err(), CliError::usage("--status must be a status from 100 to 599, not \"9000\""));
         assert!(calls.is_empty());
 
         let argv = ["mocks", "update", "k1"];

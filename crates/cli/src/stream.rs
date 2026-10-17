@@ -253,7 +253,7 @@ mod tests {
             ),
         ] {
             let (out, calls) = run(&argv, engine(), |c| requests(c, sub(&argv)));
-            assert_eq!(out.unwrap_err(), CliError::msg(message), "{argv:?}");
+            assert_eq!(out.unwrap_err(), CliError::usage(message), "{argv:?}");
             assert!(payloads(&calls, "sse.connect").is_empty(), "{argv:?}");
         }
     }

@@ -823,7 +823,7 @@ fn put(payload: &mut Value, key: &str, value: Value) {
 /// An argument that needs nothing of the engine, as the value the payload takes. `None` for one that does.
 fn simple(arg: &Arg, given: &[String]) -> Result<Option<Value>> {
     let raw = given[0].as_str();
-    let wrong = |expected: &str| CliError::msg(format!("{} must be {expected}, not \"{raw}\"", arg.name));
+    let wrong = |expected: &str| CliError::usage(format!("{} must be {expected}, not \"{raw}\"", arg.name));
     Ok(Some(match arg.take {
         Take::Text => json!(raw),
         Take::Int => json!(raw.parse::<i64>().map_err(|_| wrong("a whole number"))?),
@@ -837,7 +837,8 @@ fn simple(arg: &Arg, given: &[String]) -> Result<Option<Value>> {
                 }
                 None => raw.to_string(),
             };
-            serde_json::from_str(&text).map_err(|e| CliError::msg(format!("--{} is not valid JSON: {e}", arg.name)))?
+            serde_json::from_str(&text)
+                .map_err(|e| CliError::usage(format!("--{} is not valid JSON: {e}", arg.name)))?
         }
         Take::List => json!(given),
         Take::Item(_) | Take::Named(_) | Take::Workspace | Take::Account | Take::Vault | Take::File => return Ok(None),
@@ -897,10 +898,10 @@ fn save(ctx: &mut Context, artifact: &Value, workspace: Option<&str>) -> Result<
 /// Lay the payload's `data` over the item it names and write the item back. Returns the item as it is now.
 fn patch(ctx: &mut Context, payload: &Value) -> Result<Value> {
     let Some(data) = payload.get("data").and_then(Value::as_object) else {
-        return Err(CliError::msg("--data must be a JSON object of the fields to set"));
+        return Err(CliError::usage("--data must be a JSON object of the fields to set"));
     };
     if data.contains_key("id") {
-        return Err(CliError::msg("an item's id cannot be changed"));
+        return Err(CliError::usage("an item's id cannot be changed"));
     }
     let (workspace, kind, id) = (&payload["workspaceId"], &payload["kind"], &payload["id"]);
     let loaded = ctx.request("entity.load", json!({ "workspaceId": workspace, "kind": kind, "id": id }))?;
@@ -958,7 +959,7 @@ pub fn run(ctx: &mut Context, verb: &Verb) -> Result<String> {
         if given.is_empty() {
             if arg.required {
                 let label = if arg.operand { format!("<{}>", arg.name) } else { format!("--{}", arg.name) };
-                return Err(CliError::msg(format!("missing {label}: {} (see: bifurc {group} --help)", arg.about)));
+                return Err(CliError::usage(format!("missing {label}: {} (see: bifurc {group} --help)", arg.about)));
             }
             continue;
         }
@@ -968,7 +969,7 @@ pub fn run(ctx: &mut Context, verb: &Verb) -> Result<String> {
         }
     }
     if verb.confirm && !args.has("yes") {
-        return Err(CliError::msg(format!("\"{command}\" cannot be undone: add --yes to do it")));
+        return Err(CliError::usage(format!("\"{command}\" cannot be undone: add --yes to do it")));
     }
 
     let workspace = match verb.scope {
