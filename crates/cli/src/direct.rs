@@ -1014,6 +1014,21 @@ pub fn run(ctx: &mut Context, verb: &Verb) -> Result<String> {
     if command == "capture import" && !ctx.json {
         return Ok(crate::capture::imported(ctx, workspace.as_deref().unwrap_or_default(), &response));
     }
+    // A bare `{ok: true}` (plus `pending` for a deletion) is one line, not the raw result.
+    let bare = response
+        .as_object()
+        .is_some_and(|o| o.get("ok") == Some(&json!(true)) && o.keys().all(|k| k == "ok" || k == "pending"));
+    if bare && !ctx.json {
+        let pending = if response["pending"] == json!(true) {
+            " (pending: sync confirm commits, sync restore undoes)"
+        } else {
+            ""
+        };
+        return Ok(match (verb.words[1], args.positional(2)) {
+            ("delete", Some(item)) => format!("Deleted {item}{pending}"),
+            _ => format!("ok{pending}"),
+        });
+    }
     Ok(ctx.print(&response, || json(&response)))
 }
 
@@ -1164,7 +1179,7 @@ mod tests {
             ]
         };
         let (out, calls) = go(&["requests", "delete", "feed"], answers());
-        assert!(out.unwrap().contains("\"pending\": true"));
+        assert_eq!(out.unwrap(), "Deleted feed (pending: sync confirm commits, sync restore undoes)");
         assert_eq!(
             payloads(&calls, "entity.delete"),
             [json!({"workspaceId": "w1", "kind": "wsConnections", "id": "s1"})]

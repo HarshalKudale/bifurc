@@ -436,8 +436,13 @@ fn body_field(ty: &RequestType) -> &'static str {
     }
 }
 
-/// Refuse the override options on a send of a request that does not answer once.
+/// Refuse the output options and the override options on a send of a request that does not answer once.
 fn refuse_overrides(ty: &RequestType, args: &ParsedArgs) -> Result<()> {
+    if ty.send.is_none()
+        && let Some(option) = OUTPUT_OPTIONS.iter().find(|option| args.has(option))
+    {
+        return Err(CliError::usage(format!("--{option} does not apply to a {} request", ty.name)));
+    }
     match OVERRIDE_OPTIONS.iter().find(|option| args.has(option)) {
         Some(option) if ty.send.is_none() => Err(CliError::usage(format!(
             "--{option} applies to rest, graphql, soap and grpc sends, not to a {} request",
@@ -1530,6 +1535,18 @@ mod tests {
         let (out, sent) = send_with(&["requests", "send", "s1", "--patch", ".a=1"], "soap.send");
         assert_eq!(out.unwrap_err(), CliError::usage("--patch needs a JSON body, and the body of \"Add\" is not JSON"));
         assert!(sent.is_empty());
+    }
+
+    #[test]
+    fn output_options_are_refused_for_a_request_that_streams() {
+        for flag in [["--select", ".a"], ["--out", "f"], ["--expect-status", "200"]] {
+            let argv = ["requests", "send", "--type", "websocket", "--url", "ws://x", flag[0], flag[1]];
+            let (out, _) = run(&argv, saved_requests(), |c| requests(c, sub(&argv)));
+            assert_eq!(out.unwrap_err(), CliError::usage(format!("{} does not apply to a websocket request", flag[0])));
+        }
+        let argv = ["requests", "send", "--type", "websocket", "--url", "ws://x", "--quiet"];
+        let (out, _) = run(&argv, saved_requests(), |c| requests(c, sub(&argv)));
+        assert_eq!(out.unwrap_err(), CliError::usage("--quiet does not apply to a websocket request"));
     }
 
     #[test]

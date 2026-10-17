@@ -579,6 +579,7 @@ pub fn status(ctx: &mut Context) -> Result<String> {
     value["capture"] =
         parts.capture.as_ref().map_or(Value::Null, |c| json!({ "count": c["matched"], "paused": c["paused"] }));
     value["cookies"] = parts.cookies_domains().map_or(Value::Null, |n| json!(n));
+    value["mockServers"] = parts.mock_servers.as_ref().map_or(Value::Null, |s| s["servers"].clone());
     Ok(ctx.print(&value, || {
         let text = describe_status(&info, &active, &parts);
         match (&session, text.split_once('\n')) {
@@ -959,6 +960,7 @@ mocks 1 on · mock server :4010 · capture 143/200 paused · cookies 1 domain"
             (&json!("Prod"), &json!(1), &json!(1))
         );
         assert_eq!(parsed["capture"], json!({"count": 143, "paused": true}));
+        assert_eq!(parsed["mockServers"], json!([{"port": 4010}]));
     }
 
     #[test]
