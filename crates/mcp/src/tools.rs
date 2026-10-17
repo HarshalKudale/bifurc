@@ -1219,6 +1219,15 @@ pub fn catalog() -> Vec<Tool> {
     ]);
     let mut tools: Vec<Tool> = rows.into_iter().map(Row::tool).collect();
     tools.extend(direct::verbs().iter().map(of_verb));
+    // A flow can also be written as steps (the text of the step file) instead of the JSON of its nodes.
+    for tool in tools.iter_mut().filter(|tool| matches!(tool.name, "flows_create" | "flows_update")) {
+        tool.params.iter_mut().filter(|param| param.name == "data").for_each(|param| param.required = false);
+        tool.params.push(text(
+            "steps",
+            "steps",
+            "The flow as steps, the text of a YAML or JSON file (name, steps: request/inline, extract, vars, expect), instead of data.",
+        ));
+    }
     tools
 }
 
@@ -1230,7 +1239,12 @@ fn of_verb(verb: &Verb) -> Tool {
         .args
         .iter()
         .map(|arg| Param {
-            name: arg.name,
+            // A tool's arguments are snake_case; the option keeps its dash.
+            name: if arg.name.contains('-') {
+                Box::leak(arg.name.replace('-', "_").into_boxed_str())
+            } else {
+                arg.name
+            },
             about: arg.about,
             ty: match arg.take {
                 Take::Int => Type::Integer,

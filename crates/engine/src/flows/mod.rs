@@ -10,6 +10,7 @@ pub mod model;
 mod nodes;
 mod reference;
 mod run;
+mod steps;
 mod streams;
 mod validate;
 
@@ -83,6 +84,8 @@ fn flow_of(params: &Value) -> Result<Flow> {
 }
 
 pub fn register(registry: &mut CommandRegistry) {
+    steps::register(registry);
+
     registry.register_sync("flow.validate", |params, _| {
         Ok(validate::describe(str_of(&params, "workspaceId"), &flow_of(&params)?))
     });

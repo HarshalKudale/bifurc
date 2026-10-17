@@ -124,6 +124,10 @@ fn dispatch(args: &ParsedArgs, data_dir: &Path, stdout: &mut dyn Write) -> Resul
     if let Some(done) = extras::run(&mut ctx, group, verb) {
         return done;
     }
+    // A flow written as steps is compiled, not saved as the JSON of its nodes.
+    if group == "flows" && matches!(verb, "create" | "update") && args.has("steps") {
+        return flows::from_steps(&mut ctx, verb);
+    }
     if let Some(row) = direct::find(group, verb) {
         return direct::run(&mut ctx, &row);
     }
