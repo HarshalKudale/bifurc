@@ -78,6 +78,7 @@ pub async fn enter<F: Future>(ws_id: &str, name: &str, work: F) -> F::Output {
 /// would, since task-locals do not cross `tokio::spawn`.
 pub fn carry<F: Future>(work: F) -> impl Future<Output = F::Output> {
     let current = CURRENT.try_with(Clone::clone).ok();
+    let work = crate::workspace::changes::carry(work);
     async move {
         match current {
             Some((ws_id, name)) => enter(&ws_id, &name, work).await,

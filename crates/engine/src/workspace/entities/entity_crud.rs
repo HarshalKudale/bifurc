@@ -21,9 +21,10 @@ use crate::{
     },
     utils::{
         id::{generate_id, now_ms},
-        json::{array_mut, array_of, is_truthy, merged, object_mut, opt_str, str_of, truthy},
+        json::{array_mut, array_of, is_truthy, merged, object_mut, opt_str, read_json, str_of, truthy},
     },
     workspace::{
+        changes,
         config::{load_config, save_config},
         deletions::{pending_entity, remove_entity},
         fs::{
@@ -182,6 +183,7 @@ fn create_entity_core(
     if kind.kind == "mocks" || kind.kind == "requests" {
         bus().emit("entity.changed", json!({ "wsId": ws_id, "kind": kind.kind, "id": id, "action": "created" }));
     }
+    changes::record(&ws_id, kind.kind, &id, str_of(&new_entity, "name"), "created", &[]);
     Ok(new_entity)
 }
 
@@ -206,7 +208,11 @@ fn update_entity_core(kind: &CrudKind, entity: &Value) -> Result<Value> {
     }
 
     let list = array_mut(&mut cfg, kind.config_key);
+    let mut fields = Vec::new();
     if let Some(slot) = list.iter_mut().find(|e| str_of(e, "id") == id) {
+        // The config holds only a stub of a request-like entity: the file has what it was.
+        let before = find_entity_file(&ws_id, kind.kind, &id).and_then(|file| read_json(&file));
+        fields = changes::changed_fields(before.as_ref().unwrap_or(slot), &entity);
         *slot = entity.clone();
     }
 
@@ -220,6 +226,10 @@ fn update_entity_core(kind: &CrudKind, entity: &Value) -> Result<Value> {
     }
 
     notify_config_changed();
+    // A save that changes nothing (an autosave) is not a change.
+    if !fields.is_empty() {
+        changes::record(&ws_id, kind.kind, &id, str_of(&entity, "name"), "updated", &fields);
+    }
     bus().emit(
         "entity.changed",
         json!({
@@ -300,6 +310,7 @@ async fn delete_entity_core(kind: &CrudKind, id: &str) -> Result<Value> {
 
     notify_config_changed();
     invalidate_cache(&ws_id);
+    changes::record(&ws_id, kind.kind, id, str_of(&entity, "name"), "deleted", &[]);
     bus().emit(
         "entity.changed",
         json!({ "wsId": ws_id, "kind": to_protocol_kind(kind.kind), "id": id, "action": "deleted", "pending": pending }),
