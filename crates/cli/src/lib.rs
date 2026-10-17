@@ -6,6 +6,8 @@
 
 pub mod agent;
 pub mod args;
+#[cfg(test)]
+mod budget;
 pub mod capture;
 pub mod cli;
 pub mod commands;
