@@ -443,7 +443,7 @@ pub fn catalog() -> Vec<Tool> {
         Row {
             name: "status",
             words: &["status"],
-            summary: "Show the Bifurc engine, its proxy and the active workspace.",
+            summary: "Show the Bifurc engine, proxy, workspace, environment, mocks, capture and cookies in two lines.",
             details: "",
             effect: Effect::Reads,
             upfront: true,
@@ -960,6 +960,28 @@ pub fn catalog() -> Vec<Tool> {
             upfront: true,
             scoped: false,
             params: vec![],
+        },
+        Row {
+            name: "wait",
+            words: &["wait"],
+            summary: "Wait until a URL answers, a TCP port accepts, or a new matching request is captured; replaces sleep loops.",
+            details: "Give one of target, port or capture. Ready: one line. Not ready after timeout: an error with the last reason.",
+            effect: Effect::Runs,
+            upfront: false,
+            scoped: true,
+            params: vec![
+                operand("target", "A URL, or the name of a health check (its URL is used)."),
+                typed("port", "port", Type::Integer, "Wait for this TCP port on host."),
+                switch("capture", "capture", None, "Wait for a new captured request matching method, host, path, status, origin, grep."),
+                text("status", "status", "For a URL: the status it must answer (default: any). For capture: 422, 4xx, !2xx."),
+                text("host", "host", "For port: the host (default 127.0.0.1). For capture: the host filter."),
+                text("method", "method", "Capture filter: the HTTP method."),
+                text("path", "path", "Capture filter: the path; * matches any run of characters."),
+                typed("origin", "origin", Type::Choice(&["real", "mock", "mapped", "rule", "error"]), "Capture filter: who answered."),
+                text("grep", "grep", "Capture filter: text in the URL or a body."),
+                text("timeout", "timeout", "500ms, 30s, 2m or seconds (default 30s)."),
+                text("interval", "interval", "Time between attempts (default 500ms)."),
+            ],
         },
         // -- The verbs beside the command line's table that take more than one engine command -----------------
         Row {

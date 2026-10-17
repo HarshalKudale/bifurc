@@ -34,3 +34,4 @@ pub(crate) mod testing;
 pub mod update;
 pub mod usage;
 pub mod vault;
+pub mod wait;
