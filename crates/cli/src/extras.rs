@@ -9,7 +9,8 @@ use serde_json::{Map, Value, json};
 use crate::{
     commands::{Context, created, find_one, id_of, list_entities, need, refused, workspace_id},
     error::{CliError, Result},
-    format::{js_template, json, table},
+    format::{aligned, js_template, json, table},
+    response::{is_sensitive_name, mask, revealed},
 };
 
 /// The tree of each folder kind, as the engine's snapshot names its folders.
@@ -27,6 +28,8 @@ const RUN_POLL: Duration = Duration::from_millis(300);
 pub fn run(ctx: &mut Context, group: &str, verb: &str) -> Option<Result<String>> {
     Some(match (group, verb) {
         ("folders", "list") => folders_list(ctx),
+        ("cookies", "list") => cookies_list(ctx),
+        ("env", "show") => env_show(ctx),
         ("env", "set") => env_variables(ctx, true),
         ("env", "unset") => env_variables(ctx, false),
         ("capture", "mock") => capture_save(ctx, "mocks"),
@@ -52,6 +55,88 @@ fn folders_list(ctx: &mut Context) -> Result<String> {
     let config = ctx.request("config.get", json!({}))?;
     let rows = config.get(*key).and_then(Value::as_array).cloned().unwrap_or_default();
     Ok(ctx.print(&Value::Array(rows.clone()), || table(&rows, &["id", "name", "parentId", "deleted"])))
+}
+
+/// `cookies list [--domain <d>]`: the jar with every value masked (`--reveal` shows them on a terminal).
+fn cookies_list(ctx: &mut Context) -> Result<String> {
+    ctx.accept(&["domain", "reveal"], 0)?;
+    let workspace = workspace_id(ctx)?;
+    let mut jar = ctx.request("cookies.list", json!({ "workspaceId": workspace }))?;
+    let reveal = revealed(ctx.args);
+    let wanted = ctx.args.flag("domain").map(|d| d.trim_start_matches('.').to_lowercase());
+    let domains = jar.get_mut("domains").and_then(Value::as_array_mut);
+    let mut cells: Vec<Vec<String>> = Vec::new();
+    if let Some(domains) = domains {
+        domains.retain(|d| {
+            wanted.as_deref().is_none_or(|w| js_template(d.get("domain")).trim_start_matches('.').to_lowercase() == w)
+        });
+        for domain in domains.iter_mut() {
+            let name = js_template(domain.get("domain"));
+            for cookie in domain.get_mut("cookies").and_then(Value::as_array_mut).into_iter().flatten() {
+                if !reveal {
+                    cookie["value"] = json!(mask(&js_template(cookie.get("value"))));
+                }
+                let expires = match cookie.get("expires").and_then(Value::as_i64) {
+                    Some(ms) => format!("expires {}", utc_minute(ms / 1000)),
+                    None => "session".to_string(),
+                };
+                let flags = [("httpOnly", "HttpOnly"), ("secure", "Secure")]
+                    .iter()
+                    .filter(|(key, _)| cookie.get(*key).is_some_and(|v| v == true))
+                    .map(|(_, label)| *label)
+                    .collect::<Vec<_>>()
+                    .join(" ");
+                cells.push(vec![
+                    name.clone(),
+                    js_template(cookie.get("name")),
+                    js_template(cookie.get("value")),
+                    expires,
+                    flags,
+                ]);
+            }
+        }
+    }
+    Ok(ctx.print(&jar, || if cells.is_empty() { "(none)".to_string() } else { aligned(&cells) }))
+}
+
+/// `1970-01-01 00:00` for Unix seconds, in UTC (days to a civil date by Howard Hinnant's algorithm).
+fn utc_minute(seconds: i64) -> String {
+    let (days, rest) = (seconds.div_euclid(86_400), seconds.rem_euclid(86_400));
+    let z = days + 719_468;
+    let era = z.div_euclid(146_097);
+    let doe = z.rem_euclid(146_097);
+    let year_of_era = (doe - doe / 1460 + doe / 36_524 - doe / 146_096) / 365;
+    let day_of_year = doe - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let mp = (5 * day_of_year + 2) / 153;
+    let day = day_of_year - (153 * mp + 2) / 5 + 1;
+    let month = if mp < 10 { mp + 3 } else { mp - 9 };
+    let year = year_of_era + era * 400 + i64::from(month <= 2);
+    format!("{year:04}-{month:02}-{day:02} {:02}:{:02}", rest / 3600, rest % 3600 / 60)
+}
+
+/// `env show`: the merged variables, those with a secret-looking name masked (`--reveal` shows them on a
+/// terminal). `{{vault.x}}` references are not secrets and print as written.
+fn env_show(ctx: &mut Context) -> Result<String> {
+    ctx.accept(&["reveal"], 0)?;
+    let workspace = workspace_id(ctx)?;
+    let mut merged = ctx.request("env.getMerged", json!({ "workspaceId": workspace }))?;
+    if !revealed(ctx.args) {
+        for variable in merged.get_mut("variables").and_then(Value::as_array_mut).into_iter().flatten() {
+            let value = js_template(variable.get("value"));
+            if is_sensitive_name(&js_template(variable.get("key"))) && !value.contains("{{vault.") {
+                variable["value"] = json!(mask(&value));
+            }
+        }
+    }
+    // One `KEY  value` line per variable: the merged environment's own fields say nothing an agent needs.
+    let rows: Vec<Vec<String>> = merged
+        .get("variables")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .map(|variable| vec![js_template(variable.get("key")), js_template(variable.get("value"))])
+        .collect();
+    Ok(ctx.print(&merged, || aligned(&rows)))
 }
 
 /// `env set <env> KEY=VALUE...` and `env unset <env> KEY...`: change some variables and leave the others.
@@ -273,5 +358,54 @@ mod tests {
         assert!(calls.is_empty());
         let (out, _) = go(&["settings", "show", "--json"], snapshot());
         assert_eq!(serde_json::from_str::<Value>(&out.unwrap()).unwrap(), json!({"port": 80, "tlsEnabled": false}));
+    }
+
+    fn jar() -> Value {
+        json!({"clearOnRestart": true, "domains": [
+            {"domain": "a.com", "cookies": [
+                {"name": "sid", "value": "0123456789abcdef0123456789abcdef", "path": "/", "expires": 1792332120000i64,
+                 "secure": true, "httpOnly": true}]},
+            {"domain": "b.com", "cookies": [
+                {"name": "t", "value": "x", "path": "/", "expires": null, "secure": false, "httpOnly": false}]}]})
+    }
+
+    #[test]
+    fn cookies_list_masks_values_and_filters_by_domain() {
+        let go = |extra: &[&str]| {
+            let argv = [&["cookies", "list"], extra].concat();
+            go(&argv, vec![("config.get", Ok(config())), ("cookies.list", Ok(jar()))]).0.unwrap()
+        };
+        assert_eq!(
+            go(&[]),
+            "a.com  sid  ••••(32)  expires 2026-10-18 14:02  HttpOnly Secure\nb.com  t    ••••(1)   session"
+        );
+        assert_eq!(go(&["--domain", "B.com"]), "b.com  t  ••••(1)  session");
+        let masked: Value = serde_json::from_str(&go(&["--json", "--domain", "a.com"])).unwrap();
+        assert_eq!(masked["domains"].as_array().unwrap().len(), 1);
+        assert_eq!(masked["domains"][0]["cookies"][0]["value"], "••••(32)");
+        // Not a terminal here, so --reveal is ignored.
+        assert!(!go(&["--reveal"]).contains("0123456789"));
+    }
+
+    #[test]
+    fn env_show_masks_secret_looking_names_but_not_vault_references() {
+        let merged = json!({"id": "merged", "variables": [
+            {"key": "baseUrl", "value": "http://x", "enabled": true},
+            {"key": "API_KEY", "value": "abcdef", "enabled": true},
+            {"key": "dbPassword", "value": "{{vault.db}}", "enabled": true}]});
+        let answers = || vec![("config.get", Ok(config())), ("env.getMerged", Ok(merged.clone()))];
+        let (out, _) = go(&["env", "show"], answers());
+        assert_eq!(
+            out.unwrap(),
+            "baseUrl     http://x
+API_KEY     ••••(6)
+dbPassword  {{vault.db}}"
+        );
+        let (out, calls) = go(&["env", "show", "--json"], answers());
+        let shown: Value = serde_json::from_str(&out.unwrap()).unwrap();
+        let values: Vec<&str> =
+            shown["variables"].as_array().unwrap().iter().map(|v| v["value"].as_str().unwrap()).collect();
+        assert_eq!(values, ["http://x", "••••(6)", "{{vault.db}}"]);
+        assert_eq!(calls[1].1, json!({"workspaceId": "w1"}));
     }
 }

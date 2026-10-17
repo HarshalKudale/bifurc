@@ -515,7 +515,8 @@ pub fn verbs() -> Vec<Verb> {
         ]),
         // -- Cookies ------------------------------------------------------------------------------------------
         verb(&["cookies", "list"], "cookies.list", Effect::Reads, "List the cookies the workspace's requests hold."),
-        verb(&["cookies", "clear"], "cookies.clear", Effect::Deletes, "Forget every cookie of the workspace."),
+        verb(&["cookies", "clear"], "cookies.clear", Effect::Deletes, "Forget the cookies of the workspace.")
+            .args(vec![option("domain", "domain", Take::Text, "Forget only this domain's cookies.")]),
         verb(
             &["cookies", "configure"],
             "cookies.configure",
@@ -1279,9 +1280,24 @@ mod tests {
     }
 
     #[test]
+    fn cookies_clear_takes_a_domain() {
+        let (out, calls) = go(
+            &["cookies", "clear", "--domain", "a.com"],
+            vec![("config.get", Ok(config())), ("cookies.clear", Ok(json!({"ok": true})))],
+        );
+        out.unwrap();
+        assert_eq!(payloads(&calls, "cookies.clear"), [json!({"workspaceId": "w1", "domain": "a.com"})]);
+    }
+
+    #[test]
     fn the_help_of_a_group_is_written_from_its_rows() {
         let help = usage("cookies");
-        assert!(help.starts_with("  list\n      List the cookies the workspace's requests hold.\n  clear\n"), "{help}");
+        assert!(
+            help.starts_with(
+                "  list\n      List the cookies the workspace's requests hold.\n  clear [--domain <text>]\n"
+            ),
+            "{help}"
+        );
         assert!(help.contains("  configure --clear true|false\n"), "{help}");
         assert!(usage("sync").contains("  discard <path> --yes\n      Throw away a file's changes since the last sync. Cannot be undone: it runs only with --yes."));
         assert!(usage("tls").contains("  export [--out <file>]"));

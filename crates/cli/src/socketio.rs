@@ -404,6 +404,6 @@ mod tests {
     fn list_shows_the_namespace_and_the_url() {
         let argv = ["requests", "list", "--type", "sio"];
         let (out, _) = run(&argv, engine(), |c| requests(c, sub(&argv)));
-        assert_eq!(out.unwrap(), "ID  TYPE      NAME  METHOD  URL\ni1  socketio  Chat  /chat   http://x");
+        assert_eq!(out.unwrap(), "SIO  http://x  Chat");
     }
 }

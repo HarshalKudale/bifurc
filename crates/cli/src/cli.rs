@@ -111,11 +111,12 @@ fn dispatch(args: &ParsedArgs, data_dir: &Path, stdout: &mut dyn Write) -> Resul
     let group = canonical_group(group);
     // The verbs that are one engine command, and the few beside them that take more than one.
     let verb = sub.unwrap_or("list");
-    if let Some(row) = direct::find(group, verb) {
-        return direct::run(&mut ctx, &row);
-    }
+    // Extras first: `cookies list` and `env show` there print what the table's plain row would show in clear.
     if let Some(done) = extras::run(&mut ctx, group, verb) {
         return done;
+    }
+    if let Some(row) = direct::find(group, verb) {
+        return direct::run(&mut ctx, &row);
     }
     match group {
         "engine" => engine_command(args, &ctx, data_dir),
