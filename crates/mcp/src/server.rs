@@ -85,7 +85,7 @@ fn hidden(tool: &str) -> &'static [&'static str] {
         "curl" => &["folder", "update", "save_only", "vars", "env", "show_headers", "max_body", "extract"],
         "mocks_create" => &["curl", "name", "delay", "regex", "disabled"],
         "flows_run" => &["timeout", "max_events", "fresh_session", "verbose", "max_body"],
-        "capture_list" => &["since", "origin"],
+        "capture_list" => &["since", "origin", "pinned"],
         "capture_show" => &["req_body", "req_headers", "max_body", "show_headers"],
         _ => &[],
     }

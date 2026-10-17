@@ -318,6 +318,30 @@ mod tests {
     }
 
     #[test]
+    fn the_newer_verbs_write_their_command_lines() {
+        let built =
+            line("contract_check", json!({"openapi": "o.yaml", "ignore": [".meta.*", ".a[].b"], "all": true})).unwrap();
+        assert_eq!(
+            built,
+            ["contract", "check", "--all", "--ignore", ".meta.*", "--ignore", ".a[].b", "--openapi", "o.yaml"]
+        );
+        let built = line("capture_diff", json!({"entry": "#k3f9", "other": "x1"})).unwrap();
+        assert_eq!(built, ["capture", "diff", "--", "#k3f9", "x1"]);
+        let built = line("capture_diff", json!({"entry": "k3f9", "mock": "Get order", "shape": true})).unwrap();
+        assert_eq!(built, ["capture", "diff", "--mock", "Get order", "--shape", "--", "k3f9"]);
+        let built = line("claim", json!({"kind": "mock", "name": "Get orders", "release": true})).unwrap();
+        assert_eq!(built, ["claim", "--release", "--", "mock", "Get orders"]);
+        let built = line("env_auth", json!({"environment": "dev", "login": "Login", "retry": "false"})).unwrap();
+        assert_eq!(built, ["env", "auth", "--login", "Login", "--retry", "false", "--", "dev"]);
+        let built = line("changes", json!({"since": "10m", "mine": true})).unwrap();
+        assert_eq!(built, ["changes", "--since", "10m", "--mine"]);
+        let built = line("capture_pin", json!({"entries": ["a", "b"]})).unwrap();
+        assert_eq!(built, ["capture", "pin", "--", "a", "b"]);
+        let built = line("contract_update_mock", json!({"mock": "M", "force": true})).unwrap();
+        assert_eq!(built, ["contract", "update-mock", "--force", "--", "M"]);
+    }
+
+    #[test]
     fn a_null_is_an_argument_left_out() {
         assert_eq!(line("health_run", json!({"check": null})).unwrap(), ["health", "run"]);
     }
@@ -519,7 +543,7 @@ mod tests {
                 "capture_list",
                 with(json!({
                     "last": 5, "status": "4xx", "method": "POST", "host": "api.*", "path": "/orders*",
-                    "since": "2m", "origin": "mock", "grep": "qty",
+                    "since": "2m", "origin": "mock", "grep": "qty", "pinned": true,
                 })),
             ),
             (
@@ -547,6 +571,38 @@ mod tests {
             ),
             ("wait", json!({"port": 3000, "host": "127.0.0.1", "timeout": "0", "json": true})),
             ("health_delete", with(json!({"check": "h1"}))),
+            ("flows_show", with(json!({"flow": "f1", "steps": true}))),
+            ("capture_diff", with(json!({"entry": "k3f9", "other": "x1", "shape": true}))),
+            ("capture_diff", with(json!({"entry": "k3f9", "mock": "M"}))),
+            (
+                "capture_diff",
+                with(json!({"entry": "k3f9", "request": "R", "vars": {"a": "b"}, "env": "dev", "fresh_session": true})),
+            ),
+            ("capture_pin", with(json!({"entries": ["k3f9"]}))),
+            ("capture_unpin", with(json!({"entries": ["k3f9"]}))),
+            (
+                "contract_check",
+                with(json!({"mock": "M", "folder": "shop", "all": true, "ignore": [".a.*"], "openapi": "o.yaml", "vars": {"a": "b"}, "env": "dev", "fresh_session": true})),
+            ),
+            ("contract_check", with(json!({"from_capture": true, "from_snapshot": true}))),
+            (
+                "contract_update_mock",
+                with(json!({"mock": "M", "from_capture": true, "vars": {"a": "b"}, "env": "dev", "fresh_session": true, "force": true})),
+            ),
+            (
+                "contract_snapshot",
+                with(json!({"mock": "M", "folder": "shop", "all": true, "vars": {"a": "b"}, "env": "dev", "fresh_session": true})),
+            ),
+            ("changes", with(json!({"since": "2m", "mine": true}))),
+            ("claim", with(json!({"kind": "mock", "name": "M", "release": true}))),
+            ("claims", all.clone()),
+            ("env_auth", with(json!({"environment": "Dev", "login": "L", "flow": "F", "retry": "false", "off": true, "force": true}))),
+            ("requests_update", with(json!({"request": "Ping", "force": true}))),
+            ("mocks_update", with(json!({"mock": "m1", "force": true}))),
+            ("mappings_update", with(json!({"mapping": "api", "force": true}))),
+            ("rules_update", with(json!({"rule": "r1", "force": true}))),
+            ("env_set", with(json!({"environment": "Dev", "variables": ["A=1"], "force": true}))),
+            ("env_unset", with(json!({"environment": "Dev", "variables": ["A"], "force": true}))),
         ]
         .into_iter()
         .chain(table_examples())
