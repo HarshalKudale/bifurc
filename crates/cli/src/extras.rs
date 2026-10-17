@@ -7,6 +7,7 @@ use std::time::Duration;
 use serde_json::{Map, Value, json};
 
 use crate::{
+    capture,
     commands::{Context, created, find_one, id_of, list_entities, need, refused, workspace_id},
     error::{CliError, Result},
     format::{aligned, js_template, json, table},
@@ -32,6 +33,8 @@ pub fn run(ctx: &mut Context, group: &str, verb: &str) -> Option<Result<String>>
         ("env", "show") => env_show(ctx),
         ("env", "set") => env_variables(ctx, true),
         ("env", "unset") => env_variables(ctx, false),
+        ("capture", "list") => capture::list(ctx),
+        ("capture", "show") => capture::show(ctx),
         ("capture", "mock") => capture_save(ctx, "mocks"),
         ("capture", "request") => capture_save(ctx, "requests"),
         ("runner", "run") => runner_run(ctx),
@@ -189,6 +192,7 @@ fn capture_save(ctx: &mut Context, kind: &str) -> Result<String> {
     ctx.accept(&[], 1)?;
     let entry = need(ctx.args.positional(2), "the entry's id (see: bifurc capture list)")?;
     let workspace = workspace_id(ctx)?;
+    let entry = capture::entry_ids(ctx, &workspace, &[entry])?.remove(0);
     let (command, field) =
         if kind == "mocks" { ("capture.buildMock", "mock") } else { ("capture.buildRequest", "request") };
     let built = ctx.request(command, json!({ "workspaceId": workspace, "id": entry }))?;
@@ -305,13 +309,14 @@ mod tests {
     fn a_captured_exchange_is_saved_as_a_mock_or_a_request() {
         let answers = vec![
             ("config.get", Ok(config())),
+            ("capture.list", Ok(json!({"entries": [{"id": "xxxxc1"}, {"id": "xxxxc2"}]}))),
             ("capture.buildMock", Ok(json!({"mock": {"urlPattern": "http://a/"}}))),
             ("entity.create", Ok(json!({"id": "m9", "entity": {"id": "m9"}}))),
         ];
-        let (out, calls) = go(&["capture", "mock", "c1"], answers);
+        let (out, calls) = go(&["capture", "mock", "#c1"], answers);
         assert_eq!(out.unwrap(), "Saved mock m9");
-        assert_eq!(calls[1].1, json!({"workspaceId": "w1", "id": "c1"}));
-        assert_eq!(calls[2].1, json!({"kind": "mocks", "workspaceId": "w1", "entity": {"urlPattern": "http://a/"}}));
+        assert_eq!(calls[2].1, json!({"workspaceId": "w1", "id": "xxxxc1"}));
+        assert_eq!(calls[3].1, json!({"kind": "mocks", "workspaceId": "w1", "entity": {"urlPattern": "http://a/"}}));
     }
 
     #[test]
