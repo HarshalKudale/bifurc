@@ -420,6 +420,9 @@ fn settings_show(ctx: &mut Context) -> Result<String> {
     {
         settings.insert("captureLimit".into(), buffer["limit"].clone());
     }
+    if let Ok(mail) = ctx.request("mail.status", json!({})) {
+        settings.insert("mailPort".into(), mail["port"].clone());
+    }
     let settings = Value::Object(settings);
     Ok(ctx.print(&settings, || json(&settings)))
 }

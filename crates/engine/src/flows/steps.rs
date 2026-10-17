@@ -5,6 +5,7 @@
 //! is wired to every later request node as the variable of that name, so `{{cartId}}` resolves wherever a
 //! later request uses it. Nothing is saved but the requests of `inline` steps; the caller saves the flow.
 
+use percent_encoding::{AsciiSet, NON_ALPHANUMERIC, utf8_percent_encode};
 use serde_json::{Map, Value, json};
 
 use crate::{
@@ -214,6 +215,8 @@ impl Expect {
 struct Inline {
     headers: Map<String, Value>,
     body: String,
+    /// The request's own timeout, for a step that waits on purpose.
+    timeout_ms: Option<u64>,
 }
 
 struct Step {
@@ -303,12 +306,100 @@ fn path_of(url: &str) -> String {
     if rest.is_empty() { "/".to_string() } else { rest.to_string() }
 }
 
+/// What a `mail:` step can `extract`: the fields of the sink's answer.
+const MAIL_FIELDS: [&str; 4] = ["id", "subject", "otp", "link"];
+
+/// How long a `mail:` step waits for the mail, unless it says.
+const MAIL_WAIT_MS: u64 = 30_000;
+
+/// What a URL's query takes literally: letters, digits and the characters of an address or a `{{variable}}`.
+const QUERY: &AsciiSet =
+    &NON_ALPHANUMERIC.remove(b'@').remove(b'.').remove(b'-').remove(b'_').remove(b'{').remove(b'}');
+
+/// `500ms`, `30s`, `2m`, `1h` or a number of seconds.
+fn millis(text: &str) -> Option<u64> {
+    let (number, unit) = match text.strip_suffix("ms") {
+        Some(number) => (number, 1.0),
+        None => match (text.strip_suffix('m'), text.strip_suffix('s'), text.strip_suffix('h')) {
+            (Some(number), ..) => (number, 60_000.0),
+            (_, Some(number), _) => (number, 1000.0),
+            (.., Some(number)) => (number, 3_600_000.0),
+            _ => (text, 1000.0),
+        },
+    };
+    number.trim().parse::<f64>().ok().filter(|n| *n >= 0.0 && n.is_finite()).map(|n| (n * unit) as u64)
+}
+
+/// A `mail: { to, timeout, extract }` step. There is no node for mail (the desktop app's flow editor would not
+/// know one), so it becomes the `inline` request the sink answers on its own port: `GET /mail/wait`, which
+/// returns `{id, subject, otp, link}`, and each `extract` is read from that JSON like any other step's.
+fn read_mail(
+    n: usize,
+    map: &Map<String, Value>,
+    flow_name: &str,
+    port: u16,
+    problems: &mut Vec<Problem>,
+) -> Option<Step> {
+    let before = problems.len();
+    for key in map.keys().filter(|key| *key != "mail") {
+        problems.push(usage(n, format!("step {n}: unknown key `{key}` beside `mail` (put `extract` inside it)")));
+    }
+    let Some(spec) = map["mail"].as_object() else {
+        problems.push(usage(
+            n,
+            format!("step {n}: `mail` takes a mapping like {{ to: \"{{{{email}}}}\", timeout: 30s, extract: {{ otp: otp }} }}"),
+        ));
+        return None;
+    };
+    for key in spec.keys().filter(|key| !["to", "timeout", "extract"].contains(&key.as_str())) {
+        problems.push(usage(n, format!("step {n}: unknown key `{key}` in `mail` (to, timeout, extract)")));
+    }
+    let wait_ms = match spec.get("timeout") {
+        None => Some(MAIL_WAIT_MS),
+        Some(value) => scalar(value).and_then(|text| millis(text.trim())),
+    };
+    let Some(wait_ms) = wait_ms else {
+        problems.push(usage(n, format!("step {n}: `timeout` is like 30s, 2m or 500ms")));
+        return None;
+    };
+    let mut address = format!("http://127.0.0.1:{port}/mail/wait?timeoutMs={wait_ms}");
+    if let Some(to) = spec.get("to").and_then(scalar) {
+        address += &format!("&to={}", utf8_percent_encode(&to, QUERY));
+    }
+    let mut step = Step {
+        name: format!("{flow_name} · {n}"),
+        kind: "requests",
+        id: String::new(),
+        method: "GET".into(),
+        address,
+        // A little longer than the wait, so the sink's own answer (408) is what a miss reports.
+        inline: Some(Inline { headers: Map::new(), body: String::new(), timeout_ms: Some(wait_ms + 5000) }),
+        vars: Vec::new(),
+        extract: Vec::new(),
+        expects: Vec::new(),
+    };
+    for (name, field) in spec.get("extract").and_then(Value::as_object).into_iter().flatten() {
+        match (is_name(name), field.as_str().filter(|field| MAIL_FIELDS.contains(field))) {
+            (true, Some(field)) => step.extract.push((name.clone(), format!(".{field}"), vec![json!(field)])),
+            _ => problems.push(usage(
+                n,
+                format!("step {n}: `extract` in `mail` takes `name: field` with a field of {}", MAIL_FIELDS.join(", ")),
+            )),
+        }
+    }
+    (problems.len() == before).then_some(step)
+}
+
 fn read_step(n: usize, item: &Value, flow_name: &str, rows: &[Row], problems: &mut Vec<Problem>) -> Option<Step> {
     let before = problems.len();
     let Some(map) = item.as_object() else {
         problems.push(usage(n, format!("step {n}: a step is a mapping like `request: <name>` or `inline: GET <url>`")));
         return None;
     };
+    if map.contains_key("mail") {
+        let port = crate::workspace::settings::load_settings().mail_port();
+        return read_mail(n, map, flow_name, port, problems);
+    }
     for key in map
         .keys()
         .filter(|key| !["request", "inline", "vars", "extract", "expect", "headers", "body"].contains(&key.as_str()))
@@ -373,7 +464,7 @@ fn read_step(n: usize, item: &Value, flow_name: &str, rows: &[Row], problems: &m
             step.name = format!("{flow_name} · {n}");
             step.method = method;
             step.address = url.trim().to_string();
-            step.inline = Some(Inline { headers, body });
+            step.inline = Some(Inline { headers, body, timeout_ms: None });
         }
         _ => {
             problems.push(usage(n, format!("step {n}: give exactly one of `request: <name>` or `inline: METHOD URL`")))
@@ -456,10 +547,13 @@ async fn save_inline(ctx: &CommandContext, ws_id: &str, flow_name: &str, steps: 
     let existing = read_all_entities(ws_id, to_engine_kind("requests"));
     for step in steps.iter_mut() {
         let Some(inline) = &step.inline else { continue };
-        let fields = json!({
+        let mut fields = json!({
             "name": step.name, "method": step.method, "url": step.address, "headers": inline.headers,
             "body": inline.body,
         });
+        if let Some(timeout) = inline.timeout_ms {
+            fields["settings"] = json!({ "timeoutMs": timeout });
+        }
         let same = existing.iter().find(|row| str_of(row, "folderId") == folder && str_of(row, "name") == step.name);
         step.id = match same {
             Some(row) => {
@@ -627,6 +721,56 @@ mod tests {
         }
         assert_eq!(simple_path("."), Some(vec![]));
         assert_eq!(simple_path(".a-b[2].c"), Some(vec![json!("a-b"), json!(2), json!("c")]));
+    }
+
+    fn mail_step(text: &str, problems: &mut Vec<Problem>) -> Option<Step> {
+        let value: Value = serde_json::from_str(text).unwrap();
+        read_mail(3, value.as_object().unwrap(), "Signup", 1025, problems)
+    }
+
+    #[test]
+    fn a_mail_step_becomes_a_request_to_the_sink_with_extracts_read_from_its_answer() {
+        let mut problems = Vec::new();
+        let text =
+            r#"{"mail": {"to": "{{email}}", "timeout": "20s", "extract": {"code": "otp", "verifyUrl": "link"}}}"#;
+        let step = mail_step(text, &mut problems).unwrap();
+        assert!(problems.is_empty());
+        assert_eq!((step.method.as_str(), step.name.as_str()), ("GET", "Signup · 3"));
+        assert_eq!(step.address, "http://127.0.0.1:1025/mail/wait?timeoutMs=20000&to={{email}}");
+        assert_eq!(step.inline.as_ref().and_then(|i| i.timeout_ms), Some(25_000));
+        assert_eq!(
+            step.extract,
+            [
+                ("code".into(), ".otp".into(), vec![json!("otp")]),
+                ("verifyUrl".into(), ".link".into(), vec![json!("link")])
+            ]
+        );
+        assert_eq!(
+            describe(3, &step),
+            "3 GET /mail/wait?timeoutMs=20000&to={{email}}  Signup · 3  extract code=.otp, verifyUrl=.link"
+        );
+        let plain = mail_step(r#"{"mail": {"to": "a+b@x.test"}}"#, &mut problems).unwrap();
+        assert_eq!(plain.address, "http://127.0.0.1:1025/mail/wait?timeoutMs=30000&to=a%2Bb@x.test");
+        assert_eq!(
+            (millis("500ms"), millis("2m"), millis("5"), millis("soon")),
+            (Some(500), Some(120_000), Some(5000), None)
+        );
+    }
+
+    #[test]
+    fn a_mail_step_with_a_mistake_is_a_usage_problem() {
+        for bad in [
+            r#"{"mail": "a@b"}"#,
+            r#"{"mail": {"timeout": "soon"}}"#,
+            r#"{"mail": {"extract": {"code": "digits"}}}"#,
+            r#"{"mail": {"extract": {"bad name": "otp"}}}"#,
+            r#"{"mail": {"to": "a@b", "cc": "x"}}"#,
+            r#"{"mail": {}, "extract": {"a": "otp"}}"#,
+        ] {
+            let mut problems = Vec::new();
+            assert!(mail_step(bad, &mut problems).is_none(), "{bad}");
+            assert!(!problems.is_empty() && problems.iter().all(|p| p.kind == "usage"), "{bad}");
+        }
     }
 
     #[test]

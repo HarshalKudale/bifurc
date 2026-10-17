@@ -27,6 +27,7 @@ pub mod format;
 pub mod health;
 pub mod locate;
 pub mod logtrace;
+pub mod mail;
 pub mod mcp;
 pub mod named;
 pub mod prompt;

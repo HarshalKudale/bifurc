@@ -18,6 +18,7 @@ pub mod graphql;
 pub mod grpc;
 pub mod importexport;
 pub mod kernel;
+pub mod mail;
 pub mod mcp;
 pub mod mocks;
 pub mod protocol;

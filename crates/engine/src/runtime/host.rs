@@ -245,6 +245,9 @@ impl WorkspaceHost {
             forward_proxy.start(forward_port);
         }
         bind_forward_proxy(Some(forward_proxy.clone()));
+        if start_listeners {
+            crate::mail::ensure(&settings);
+        }
 
         let served: Arc<RwLock<Vec<ServedWorkspace>>> = Arc::new(RwLock::new(Vec::new()));
         let edge_port = opts.edge_port.unwrap_or_else(|| settings.port());

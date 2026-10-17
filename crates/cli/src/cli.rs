@@ -20,7 +20,7 @@ use crate::{
     error::{CliError, Result},
     extras, flows, health,
     locate::locate_engine,
-    named, requests,
+    mail, named, requests,
     session::{Engine, connect, session_name},
     setup,
     supervisor::{RESTART_TIMEOUT, START_TIMEOUT, STOP_TIMEOUT, restart_engine, start_engine, stop_engine},
@@ -161,6 +161,7 @@ fn dispatch(args: &ParsedArgs, data_dir: &Path, stdout: &mut dyn Write) -> Resul
         "capture" if verb == "watch" => capture::watch(&mut ctx, stdout),
         "services" => devservices::services(&mut ctx, sub),
         "logs" => devservices::logs(&mut ctx),
+        "mail" => mail::mail(&mut ctx, sub),
         "port" => devservices::port(&mut ctx, sub),
         "vault" => vault::vaults(&mut ctx, sub),
         "update" => update::update(&mut ctx, sub),
@@ -229,7 +230,7 @@ pub fn run_with_env(
                 0
             }
             None => {
-                let message = "examples exist for: agent, curl, requests, capture, mocks, flows, runner, env, cookies, wait, services";
+                let message = "examples exist for: agent, curl, requests, capture, mocks, flows, runner, env, cookies, wait, services, mail";
                 let _ = writeln!(stderr, "{}", CliError::usage(message).line());
                 2
             }

@@ -39,7 +39,7 @@ fn origin_word(entry: &Value) -> &'static str {
 }
 
 /// `HH:MM:SS` of a time in ms since the epoch, in UTC (a local clock needs a platform call per OS), with a `Z`.
-fn clock(ms: i64) -> String {
+pub(crate) fn clock(ms: i64) -> String {
     let seconds = ms.div_euclid(1000).rem_euclid(86_400);
     format!("{:02}:{:02}:{:02}Z", seconds / 3600, seconds % 3600 / 60, seconds % 60)
 }
@@ -54,7 +54,7 @@ pub(crate) fn short_url(url: &str) -> String {
 }
 
 /// The shortest end of each id, at least 4 characters, that no other of `ids` ends with.
-fn tails(ids: &[&str]) -> Vec<String> {
+pub(crate) fn tails(ids: &[&str]) -> Vec<String> {
     ids.iter()
         .map(|id| {
             (4..=id.len())
