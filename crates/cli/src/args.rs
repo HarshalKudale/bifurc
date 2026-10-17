@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 /// Flags that take no value.
-const BOOLEAN_FLAGS: [&str; 38] = [
+const BOOLEAN_FLAGS: [&str; 40] = [
     "list",
     "mine",
     "yes",
@@ -42,6 +42,8 @@ const BOOLEAN_FLAGS: [&str; 38] = [
     "pinned",
     "shape",
     "release",
+    "errors",
+    "kill",
 ];
 
 /// Single-letter aliases; any other letter stands for itself.
@@ -158,6 +160,9 @@ pub fn parse_args(argv: &[String]) -> Result<ParsedArgs, String> {
         // `contract check --all` and `--from-capture` are switches (`mocks create --from-capture` takes an entry).
         let contract_switch = matches!(name.as_str(), "all" | "from-capture" | "from-snapshot")
             && parsed.positionals.first().is_some_and(|group| group == "contract");
+        // `services up --all` and `--wait` are switches (`--wait` takes a time on `requests send`).
+        let services_switch = matches!(name.as_str(), "all" | "wait")
+            && parsed.positionals.first().is_some_and(|group| matches!(group.as_str(), "services" | "service"));
         // `env auth <env> --off` is a switch (`--off` elsewhere takes true or false).
         let auth_off = name == "off"
             && matches!(parsed.positionals.as_slice(), [group, verb, ..] if group == "env" && verb == "auth");
@@ -180,6 +185,7 @@ pub fn parse_args(argv: &[String]) -> Result<ParsedArgs, String> {
             || asks_status
             || prints_steps
             || contract_switch
+            || services_switch
             || auth_off
         {
             parsed.add(&name, "true".to_string());

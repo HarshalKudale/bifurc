@@ -4302,6 +4302,149 @@
     }
    },
    "additionalProperties": false
+  },
+  "devservice.define": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "name": {
+     "type": "string"
+    },
+    "cmd": {
+     "type": "string"
+    },
+    "port": {
+     "type": "integer",
+     "minimum": 1,
+     "maximum": 65535
+    },
+    "cwd": {
+     "type": "string"
+    },
+    "vault": {
+     "type": "string"
+    },
+    "env": {
+     "type": "object",
+     "additionalProperties": {
+      "type": "string"
+     }
+    }
+   },
+   "required": [
+    "workspaceId",
+    "name",
+    "cmd"
+   ],
+   "additionalProperties": false
+  },
+  "devservice.list": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "workspaceId"
+   ],
+   "additionalProperties": false
+  },
+  "devservice.remove": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "name": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "workspaceId",
+    "name"
+   ],
+   "additionalProperties": false
+  },
+  "devservice.up": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "name": {
+     "type": "string"
+    },
+    "secrets": {
+     "type": "object",
+     "additionalProperties": {
+      "type": "string"
+     }
+    }
+   },
+   "required": [
+    "workspaceId",
+    "name"
+   ],
+   "additionalProperties": false
+  },
+  "devservice.down": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "name": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "workspaceId",
+    "name"
+   ],
+   "additionalProperties": false
+  },
+  "devservice.logs": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "name": {
+     "type": "string"
+    },
+    "last": {
+     "type": "integer",
+     "minimum": 0
+    },
+    "sinceTs": {
+     "type": "integer"
+    }
+   },
+   "required": [
+    "workspaceId",
+    "name"
+   ],
+   "additionalProperties": false
+  },
+  "devservice.freePort": {
+   "type": "object",
+   "properties": {
+    "port": {
+     "type": "integer",
+     "minimum": 1,
+     "maximum": 65535
+    },
+    "kill": {
+     "type": "boolean"
+    }
+   },
+   "required": [
+    "port"
+   ],
+   "additionalProperties": false
   }
  }
 }

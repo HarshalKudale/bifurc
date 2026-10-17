@@ -15,6 +15,7 @@ pub mod cli;
 pub mod commands;
 pub mod contract;
 pub mod curl;
+pub mod devservices;
 pub mod direct;
 pub mod discovery;
 pub mod entities;
