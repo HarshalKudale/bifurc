@@ -348,6 +348,64 @@
    "curlCommand": "curl http://x"
   }
  },
+ "devservice.define": {
+  "valid": {
+   "workspaceId": "ws1",
+   "name": "api",
+   "cmd": "npm run dev",
+   "port": 3000,
+   "env": {
+    "A": "1"
+   }
+  },
+  "invalid": {}
+ },
+ "devservice.down": {
+  "valid": {
+   "workspaceId": "ws1",
+   "name": "api"
+  },
+  "invalid": {}
+ },
+ "devservice.freePort": {
+  "valid": {
+   "port": 3000,
+   "kill": true
+  },
+  "invalid": {}
+ },
+ "devservice.list": {
+  "valid": {
+   "workspaceId": "ws1"
+  },
+  "invalid": {}
+ },
+ "devservice.logs": {
+  "valid": {
+   "workspaceId": "ws1",
+   "name": "api",
+   "last": 50,
+   "sinceTs": 1
+  },
+  "invalid": {}
+ },
+ "devservice.remove": {
+  "valid": {
+   "workspaceId": "ws1",
+   "name": "api"
+  },
+  "invalid": {}
+ },
+ "devservice.up": {
+  "valid": {
+   "workspaceId": "ws1",
+   "name": "api",
+   "secrets": {
+    "TOKEN": "x"
+   }
+  },
+  "invalid": {}
+ },
  "engine.companions": {
   "valid": {},
   "invalid": {
