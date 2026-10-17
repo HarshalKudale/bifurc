@@ -70,6 +70,10 @@ pub fn log_outcome(base: &RequestLogEntry, via: &str, target: Option<String>, ou
         finished_entry(base, outcome.status, via, target, outcome.duration_ms, outcome.res_headers, outcome.res_body);
     if let Some(shown) = outcome.req_headers {
         entry.req_headers = shown;
+        // The capture shows the request as the client sent it, without the trace header a script saw.
+        if let Some(name) = crate::capture::trace_header() {
+            entry.req_headers.shift_remove(&name);
+        }
     }
     mask_secrets(&mut entry);
     emit_log(&entry);

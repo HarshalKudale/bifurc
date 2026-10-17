@@ -27,6 +27,7 @@ pub fn services(ctx: &mut Context, sub: Option<&str>) -> Result<String> {
         "remove" => remove(ctx),
         "ps" => ps(ctx),
         "show" => show(ctx),
+        "snippet" => crate::logtrace::snippet(ctx),
         _ => crate::commands::services(ctx, sub),
     }
 }
@@ -51,7 +52,7 @@ fn targets(ctx: &Context, rows: &[Value], all_by_default: bool) -> Result<Vec<Va
 }
 
 fn define(ctx: &mut Context) -> Result<String> {
-    ctx.accept(&["cmd", "port", "cwd", "vault", "env"], 1)?;
+    ctx.accept(&["cmd", "port", "cwd", "vault", "env", "log-file"], 1)?;
     let args = ctx.args;
     let name = need(args.positional(2), "service name")?;
     let cmd = need(args.flag("cmd"), "--cmd <command>")?;
@@ -69,6 +70,11 @@ fn define(ctx: &mut Context) -> Result<String> {
             return Err(CliError::usage(format!("--cwd \"{cwd}\" is not a directory")));
         }
         payload["cwd"] = json!(full.to_string_lossy());
+    }
+    if let Some(file) = args.flag("log-file") {
+        // Like --cwd: the engine tails it from elsewhere.
+        let full = std::path::absolute(file).map_err(|e| CliError::usage(format!("--log-file \"{file}\": {e}")))?;
+        payload["logFile"] = json!(full.to_string_lossy());
     }
     if let Some(vault) = args.flag("vault") {
         payload["vault"] = json!(vault);
@@ -287,7 +293,7 @@ fn show(ctx: &mut Context) -> Result<String> {
     }
     Ok(ctx.print(&service, || {
         let mut lines = vec![format!("{}  {}", js_template(service.get("name")), js_template(service.get("cmd")))];
-        for key in ["port", "cwd", "vault"] {
+        for key in ["port", "cwd", "logFile", "vault"] {
             if !service[key].is_null() {
                 lines.push(format!("{key}: {}", js_template(service.get(key))));
             }

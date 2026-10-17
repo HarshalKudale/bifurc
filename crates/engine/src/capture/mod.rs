@@ -18,7 +18,7 @@ use crate::{
 pub use entities::{captured_to_har, captured_to_mock, captured_to_request};
 pub use store::{
     DEFAULT_CAPTURE_LIMIT, capture_limit, clear_capture, get_capture, is_capture_paused, list_capture, pin_capture,
-    record_capture, refresh_capture_limit, remove_capture, resolve_capture_entry, set_capture_paused,
+    record_capture, refresh_capture_limit, remove_capture, resolve_capture_entry, set_capture_paused, trace_header,
 };
 
 pub fn register(registry: &mut CommandRegistry) {
