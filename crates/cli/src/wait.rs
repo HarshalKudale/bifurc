@@ -14,13 +14,14 @@ use crate::{
     format::js_template,
 };
 
-/// `500ms`, `30s`, `2m`, or a plain number of seconds.
-fn duration(raw: &str, flag: &str) -> Result<Duration> {
+/// `500ms`, `30s`, `2m`, `1h`, or a plain number of seconds.
+pub(crate) fn duration(raw: &str, flag: &str) -> Result<Duration> {
     let (number, unit) = match raw.strip_suffix("ms") {
         Some(number) => (number, 0.001),
-        None => match (raw.strip_suffix('m'), raw.strip_suffix('s')) {
-            (Some(number), _) => (number, 60.0),
-            (_, Some(number)) => (number, 1.0),
+        None => match (raw.strip_suffix('m'), raw.strip_suffix('s'), raw.strip_suffix('h')) {
+            (Some(number), ..) => (number, 60.0),
+            (_, Some(number), _) => (number, 1.0),
+            (.., Some(number)) => (number, 3600.0),
             _ => (raw, 1.0),
         },
     };
@@ -29,7 +30,18 @@ fn duration(raw: &str, flag: &str) -> Result<Duration> {
         .ok()
         .filter(|n| *n >= 0.0 && n.is_finite())
         .map(|n| Duration::from_secs_f64(n * unit))
-        .ok_or_else(|| CliError::usage(format!("--{flag} is 500ms, 30s, 2m or a number of seconds, not \"{raw}\"")))
+        .ok_or_else(|| CliError::usage(format!("--{flag} is 500ms, 30s, 2m, 1h or a number of seconds, not \"{raw}\"")))
+}
+
+/// One try at connecting to `host:port`; why not, when it fails.
+pub(crate) fn probe_port(host: &str, port: u16) -> std::result::Result<(), String> {
+    let mut addrs = (host, port).to_socket_addrs().map_err(|e| e.to_string())?;
+    let addr = addrs.next().ok_or("no address")?;
+    TcpStream::connect_timeout(&addr, Duration::from_millis(500)).map(|_| ()).map_err(|e| match e.kind() {
+        std::io::ErrorKind::ConnectionRefused => "connection refused".to_string(),
+        std::io::ErrorKind::TimedOut => "timed out".to_string(),
+        _ => e.to_string(),
+    })
 }
 
 /// What one attempt found: the success line, or why not yet.
@@ -76,14 +88,7 @@ pub fn wait(ctx: &mut Context) -> Result<String> {
         let host = args.flag("host").unwrap_or("127.0.0.1").to_string();
         Box::new(move |_| {
             // No engine: the CLI connects itself.
-            let connected = (host.as_str(), port).to_socket_addrs().map_err(|e| e.to_string()).and_then(|mut addrs| {
-                let addr = addrs.next().ok_or("no address")?;
-                TcpStream::connect_timeout(&addr, Duration::from_millis(500)).map_err(|e| match e.kind() {
-                    std::io::ErrorKind::ConnectionRefused => "connection refused".to_string(),
-                    std::io::ErrorKind::TimedOut => "timed out".to_string(),
-                    _ => e.to_string(),
-                })
-            });
+            let connected = probe_port(&host, port);
             Ok(connected.map(|_| format!("port {port}")))
         })
     } else if args.has("capture") {

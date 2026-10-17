@@ -14,7 +14,7 @@ use crate::{
     args::{ParsedArgs, parse_args},
     capture, changes, claims,
     commands::{self, Connector, Context, unknown_verb},
-    curl, direct,
+    curl, devservices, direct,
     discovery::{RuntimeInfo, find_running_engine, platform_default_data_dir},
     entities,
     error::{CliError, Result},
@@ -159,7 +159,9 @@ fn dispatch(args: &ParsedArgs, data_dir: &Path, stdout: &mut dyn Write) -> Resul
         "health" => health::health(&mut ctx, sub),
         "flows" => flows::flows(&mut ctx, sub, stdout),
         "capture" if verb == "watch" => capture::watch(&mut ctx, stdout),
-        "services" => commands::services(&mut ctx, sub),
+        "services" => devservices::services(&mut ctx, sub),
+        "logs" => devservices::logs(&mut ctx),
+        "port" => devservices::port(&mut ctx, sub),
         "vault" => vault::vaults(&mut ctx, sub),
         "update" => update::update(&mut ctx, sub),
         "call" => commands::call(&mut ctx),
@@ -227,8 +229,7 @@ pub fn run_with_env(
                 0
             }
             None => {
-                let message =
-                    "examples exist for: agent, curl, requests, capture, mocks, flows, runner, env, cookies, wait";
+                let message = "examples exist for: agent, curl, requests, capture, mocks, flows, runner, env, cookies, wait, services";
                 let _ = writeln!(stderr, "{}", CliError::usage(message).line());
                 2
             }

@@ -593,6 +593,13 @@ mod tests {
                 "contract_snapshot",
                 with(json!({"mock": "M", "folder": "shop", "all": true, "vars": {"a": "b"}, "env": "dev", "fresh_session": true})),
             ),
+            (
+                "services",
+                with(json!({"verb": "define", "name": "api", "cmd": "npm run dev", "port": 3000, "cwd": ".", "vault": "dev", "env": {"A": "b"}})),
+            ),
+            ("services", with(json!({"verb": "up", "all": true, "wait": true, "timeout": "30s"}))),
+            ("logs", with(json!({"name": "api", "errors": true, "since": "2m", "grep": "x", "last": 20}))),
+            ("port_free", with(json!({"port": 3000, "kill": true}))),
             ("changes", with(json!({"since": "2m", "mine": true}))),
             ("claim", with(json!({"kind": "mock", "name": "M", "release": true}))),
             ("claims", all.clone()),

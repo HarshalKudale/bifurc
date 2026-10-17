@@ -1,9 +1,10 @@
-//! Service discovery (`services.discover`) and the health bar (`healthbar.*`).
+//! Service discovery (`services.discover`), the health bar (`healthbar.*`) and dev servers (`devservice.*`).
 
 use serde_json::Value;
 
 use crate::kernel::CommandRegistry;
 
+pub mod dev;
 pub mod discovery;
 pub mod healthbar;
 
@@ -12,6 +13,7 @@ pub fn register(registry: &mut CommandRegistry) {
         Ok(Value::Array(discovery::discover_services().await.iter().map(discovery::ServiceInfo::to_json).collect()))
     });
     healthbar::register(registry);
+    dev::register(registry);
 }
 
 #[cfg(test)]
