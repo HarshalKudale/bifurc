@@ -68,6 +68,8 @@ Groups (bifurc <group> --help shows the arguments and options of each verb)
   cookies       list | set | clear | configure                       The cookie jar of the workspace's requests
   session       show | reset                                          Your named session: cookies, variables, environment
   changes       [--since <seq|time>] [--mine]                         What others changed since you last asked
+  claim         [--release] <request|mock|flow|env> <name>            Mark an item you are editing (30 minutes)
+  claims                                                              The live claims
   vars          list | set | clear                                    The runtime variables of the session
   sync          status | changes | pull | push | commit | diff | discard | confirm | restore
                                                                       Git: what changed, and the remote
@@ -498,6 +500,13 @@ values or headers) are compared.
                                          e.g. '.meta.*' or '.items[].debug'. Repeatable
   --from-capture                         Compare with the newest captured real answer (not a mock's) instead
   --from-snapshot                        Compare with the stored snapshots only; sends nothing
+  --openapi <file>                       Compare with an OpenAPI 3 / Swagger 2 file (JSON or YAML) instead: the
+                                         first 2xx JSON response schema of the operation with the mock's method
+                                         and path ({id} matches any one segment; the servers[0].url / basePath
+                                         prefix is optional). Sends and stores nothing; rows end `(openapi)`;
+                                         a mock without an operation is unpaired (`not in the spec`). In an
+                                         object with a `required` list only those properties count (a mock may
+                                         omit or carry optional ones); without one, all do. Not with the two above
   --var k=v  --env <name>  --fresh-session   As for requests send
   --json  --quiet                        Machine-readable; or nothing but the exit code
 
@@ -574,6 +583,18 @@ Name the session with --session <name> or BIFURC_SESSION; without one the cursor
                                          the cursor stays
   --mine                                 Include the changes this session made itself
   --json                                 {schemaVersion, changes: [{seq, ts, kind, id, name, action, fields, by}], cursor}";
+
+const CLAIM: &str = "Usage: bifurc claim [--release] <request|mock|flow|env> <name> | bifurc claims
+
+Tell the other agents which item you are editing. Advisory only, nothing is blocked: when someone else updates
+a claimed item the update goes through and prints `bifurc: warning: \"Get orders\" is claimed by session:frontend
+(3m ago)` on stderr (exit code unchanged). Claims live in the engine's memory and lapse after 30 minutes;
+claiming again renews. Deleting the item drops its claim. Name the session with --session or BIFURC_SESSION.
+
+  claim <kind> <name>                    `claimed mock \"Get orders\"`, or `… — was held by session:frontend 3m ago`
+  claim --release <kind> <name>          `released mock \"Get orders\"` (anyone may release)
+  claims                                 One line per claim: `mock  \"Get orders\"  by session:backend  3m ago`
+  --json                                 {schemaVersion, claim, previous} / {schemaVersion, claims: [{id, kind, name, by, ts}]}";
 
 const VARS: &str = "Usage: bifurc vars <verb>
 
@@ -686,6 +707,7 @@ pub fn group_usage(group: &str) -> Option<String> {
         "session" => SESSION,
         "vars" => VARS,
         "changes" => CHANGES,
+        "claim" | "claims" => CLAIM,
         "sync" => SYNC,
         "history" => HISTORY,
         "export" => EXPORT,
@@ -734,7 +756,7 @@ pub fn examples(group: &str) -> Option<&'static [&'static str]> {
         "contract" => &[
             "bifurc contract check",
             r#"bifurc contract check --mock "Get orders" --ignore '.meta.*'"#,
-            "bifurc contract check --from-capture --all",
+            "bifurc contract check --openapi openapi.yaml",
             r#"bifurc contract update-mock "Get orders""#,
             "bifurc contract snapshot --folder shop",
         ],
@@ -782,6 +804,11 @@ pub fn examples(group: &str) -> Option<&'static [&'static str]> {
         "changes" => {
             &["bifurc changes --session frontend", "bifurc changes --since 10m", "bifurc changes --mine --json"]
         }
+        "claim" | "claims" => &[
+            r#"bifurc claim mock "Get orders" --session backend"#,
+            r#"bifurc claim --release mock "Get orders" --session backend"#,
+            r#"bifurc claim request "Create user" --json"#,
+        ],
         "wait" => &[
             "bifurc wait http://api.localhost/health --timeout 30s",
             "bifurc wait api-health --status 200",
@@ -830,7 +857,7 @@ pub(crate) mod tests {
     fn every_example_is_a_known_group_and_verb_with_flags_its_help_names() {
         for group in [
             "agent", "curl", "requests", "capture", "mocks", "contract", "flows", "runner", "env", "cookies",
-            "session", "vars", "changes", "wait",
+            "session", "vars", "changes", "claim", "wait",
         ] {
             let list = examples(group).unwrap_or_else(|| panic!("{group} has no examples"));
             assert!((3..=5).contains(&list.len()), "{group}");

@@ -184,8 +184,8 @@ struct Check<'a> {
     mock: &'a Value,
     request: &'a Req,
     result: Outcome,
-    /// Compared with a stored snapshot, not a live answer.
-    snapshot: bool,
+    /// What the mock was compared with: `real`, `snapshot` or `openapi`.
+    source: &'static str,
 }
 
 fn one_line(error: &str) -> String {
@@ -212,7 +212,8 @@ fn selection(ctx: &mut Context, workspace: &str) -> Result<(Vec<Value>, Vec<Req>
             path.trim_end_matches('/') == wanted || path.starts_with(&format!("{wanted}/"))
         });
     }
-    Ok((mocks, saved_requests(ctx, workspace)?))
+    // --openapi pairs with the spec's operations, not with saved requests.
+    Ok((mocks, if args.has("openapi") { Vec::new() } else { saved_requests(ctx, workspace)? }))
 }
 
 fn saved_requests(ctx: &mut Context, workspace: &str) -> Result<Vec<Req>> {
@@ -254,16 +255,108 @@ fn snapshots(ctx: &mut Context, workspace: &str, cache: &mut Option<HashMap<Stri
     Ok(())
 }
 
+/// The operations of an OpenAPI file as pairing sees them.
+struct Spec {
+    /// status and the response skeleton, per `METHOD path` key of a [`Req`] built from the operation.
+    sides: HashMap<String, Vec<Side>>,
+    /// Shape paths of the properties the operation declares but does not require, by the same key and order.
+    optional: HashMap<String, Vec<Vec<String>>>,
+}
+
+impl Spec {
+    /// The operation's response for a mock answering `status`: the one with that status, else the first 2xx,
+    /// and its optional paths.
+    fn side(&self, key: &str, status: u16) -> (Side, &[String]) {
+        let all = &self.sides[key];
+        let at = all.iter().position(|s| s.status == status).unwrap_or(0);
+        (all[at].clone(), &self.optional[key][at])
+    }
+}
+
+/// `/orders/{id}` as a mock path: a whole `{id}` segment becomes the variable segment `{{id}}`.
+fn template_path(path: &str) -> String {
+    let segment = |s: &str| match s.strip_prefix('{').and_then(|r| r.strip_suffix('}')) {
+        Some(name) if !name.starts_with('{') => format!("{{{{{name}}}}}"),
+        _ => s.to_string(),
+    };
+    path.split('/').map(segment).collect::<Vec<_>>().join("/")
+}
+
+/// Read `file` and have the engine turn its 2xx responses into skeletons. Each operation is reachable by its
+/// path with the spec's base path (`servers[0].url`, `basePath`) and by the path alone.
+fn load_spec(ctx: &mut Context, file: &str) -> Result<(Vec<Req>, Spec)> {
+    let text = std::fs::read_to_string(file).map_err(|e| CliError::usage(format!("cannot read {file}: {e}")))?;
+    let got = ctx.request("contract.fromOpenApi", json!({ "text": text }))?;
+    let base = text_of(&got, "basePath");
+    let (mut reqs, mut sides): (Vec<Req>, HashMap<String, Vec<Side>>) = (Vec::new(), HashMap::new());
+    let mut optional: HashMap<String, Vec<Vec<String>>> = HashMap::new();
+    let paths_of = |op: &Value| -> Vec<String> {
+        op["optional"].as_array().into_iter().flatten().filter_map(Value::as_str).map(str::to_string).collect()
+    };
+    for op in got["operations"].as_array().into_iter().flatten() {
+        let (method, path) = (text_of(op, "method"), text_of(op, "path"));
+        let raw = if op["body"].is_null() { Vec::new() } else { serde_json::to_vec(&op["body"]).unwrap_or_default() };
+        let status = op["status"].as_u64().unwrap_or(200) as u16;
+        let side = Side::new(status, &text_of(op, "contentType"), &[], raw);
+        let mut prefixes = vec![base.as_str()];
+        if !base.is_empty() {
+            prefixes.push("");
+        }
+        for prefix in prefixes {
+            let full = format!("{prefix}{path}");
+            let key = format!("{method} {full}");
+            if !sides.contains_key(&key) {
+                reqs.push(Req {
+                    id: key.clone(),
+                    name: key.clone(),
+                    method: method.clone(),
+                    path: template_path(&full),
+                });
+            }
+            optional.entry(key.clone()).or_default().push(paths_of(op));
+            sides.entry(key).or_default().push(side.clone());
+        }
+    }
+    Ok((reqs, Spec { sides, optional }))
+}
+
+fn text_of(value: &Value, key: &str) -> String {
+    value.get(key).and_then(Value::as_str).unwrap_or_default().to_string()
+}
+
 /// `contract check [--mock <name>] [--folder <folder>] [--all] [--ignore <glob>]... [--from-capture]
 /// [--from-snapshot]`.
 pub fn check(ctx: &mut Context) -> Result<String> {
     ctx.accept(
-        &["mock", "folder", "all", "ignore", "from-capture", "from-snapshot", "var", "env", "fresh-session", "quiet"],
+        &[
+            "mock",
+            "folder",
+            "all",
+            "ignore",
+            "from-capture",
+            "from-snapshot",
+            "openapi",
+            "var",
+            "env",
+            "fresh-session",
+            "quiet",
+        ],
         0,
     )?;
     let args = ctx.args;
+    if args.has("openapi") && (args.has("from-capture") || args.has("from-snapshot")) {
+        return Err(CliError::usage("--openapi cannot be combined with --from-capture or --from-snapshot"));
+    }
     let workspace = workspace_id(ctx)?;
-    let (mocks, reqs) = selection(ctx, &workspace)?;
+    let (mocks, mut reqs) = selection(ctx, &workspace)?;
+    let spec = match args.flag("openapi") {
+        Some(file) => {
+            let loaded = load_spec(ctx, file)?;
+            reqs = loaded.0;
+            Some(loaded.1)
+        }
+        None => None,
+    };
     let from_snapshot = args.has("from-snapshot");
     let mut stored: Option<HashMap<String, Value>> = None;
     let ignore = args.flags("ignore");
@@ -273,12 +366,18 @@ pub fn check(ctx: &mut Context) -> Result<String> {
         let request = match pair_of(mock, &reqs) {
             Ok(request) => request,
             Err(reason) => {
-                unpaired.push((mock, reason));
+                unpaired.push((mock, if spec.is_some() { "not in the spec".into() } else { reason }));
                 continue;
             }
         };
-        let mut snapshot = from_snapshot;
-        let right = if from_snapshot {
+        let mut allowed: &[String] = &[];
+        let mut source = if from_snapshot { "snapshot" } else { "real" };
+        let right = if let Some(spec) = &spec {
+            source = "openapi";
+            let (side, optional) = spec.side(&request.id, mock_side(mock).status);
+            allowed = optional;
+            Ok(side)
+        } else if from_snapshot {
             snapshots(ctx, &workspace, &mut stored)?;
             match stored.iter().flatten().find(|(id, _)| **id == request.id) {
                 Some((_, row)) => Ok(snapshot_side(row)),
@@ -298,7 +397,7 @@ pub fn check(ctx: &mut Context) -> Result<String> {
                     snapshots(ctx, &workspace, &mut stored)?;
                     match stored.iter().flatten().find(|(id, _)| **id == request.id) {
                         Some((_, row)) => {
-                            snapshot = true;
+                            source = "snapshot";
                             Ok(snapshot_side(row))
                         }
                         None => Err(reason),
@@ -314,11 +413,13 @@ pub fn check(ctx: &mut Context) -> Result<String> {
                 (left.headers, right.headers) = (Vec::new(), Vec::new());
                 let mut lines = shape::diff(&left, &right, false);
                 lines.retain(|line| !ignore.iter().any(|glob| glob_matches(glob, &line.path)));
+                // A mock may carry a property the spec declares without requiring it.
+                lines.retain(|line| !(line.kind == '-' && allowed.contains(&line.path)));
                 let (lines, more) = shape::capped(lines);
                 Outcome::Drift(lines, more)
             }
         };
-        checks.push(Check { mock, request, result, snapshot });
+        checks.push(Check { mock, request, result, source });
     }
     let drifted =
         checks.iter().filter(|c| matches!(&c.result, Outcome::Drift(l, m) if !l.is_empty() || *m > 0)).count();
@@ -330,7 +431,7 @@ pub fn check(ctx: &mut Context) -> Result<String> {
             let mut row = json!({
                 "mock": text(c.mock, "name"), "mockId": id_of(c.mock), "method": text(c.mock, "method").to_uppercase(),
                 "path": path_of(&text(c.mock, "urlPattern")), "request": c.request.name,
-                "source": if c.snapshot { "snapshot" } else { "real" },
+                "source": c.source,
             });
             match &c.result {
                 Outcome::Drift(lines, more) => {
@@ -359,7 +460,11 @@ pub fn check(ctx: &mut Context) -> Result<String> {
                     Outcome::Drift(l, m) if !l.is_empty() || *m > 0 => "✗".to_string(),
                     Outcome::Drift(..) => "✓".to_string(),
                 };
-                let mark = if c.snapshot && !mark.contains("failed") { format!("{mark} (snapshot)") } else { mark };
+                let mark = if c.source != "real" && !mark.contains("failed") {
+                    format!("{mark} ({})", c.source)
+                } else {
+                    mark
+                };
                 vec![
                     text(c.mock, "method").to_uppercase(),
                     path_of(&text(c.mock, "urlPattern")),
@@ -760,5 +865,83 @@ updated mock \"Get orders\""
         let (out, calls) = run(&["contract", "check", "--from-snapshot"], down, check);
         assert_eq!(out.unwrap_err().code(), 1);
         assert!(payloads(&calls, "request.send").is_empty());
+    }
+
+    #[test]
+    fn a_spec_pairs_by_method_and_path_with_or_without_the_base_path_and_sends_nothing() {
+        let file = std::env::temp_dir().join(format!("bifurc-spec-{}.yaml", std::process::id()));
+        std::fs::write(&file, "x").unwrap();
+        let operations = json!({"basePath": "/v1", "operations": [
+            {"method": "GET", "path": "/orders", "status": 200, "contentType": "application/json", "body": {"items": [{"id": 0, "discount": 0}]}},
+            {"method": "GET", "path": "/orders/{id}", "status": 200, "contentType": "application/json", "body": {"id": 0}},
+            {"method": "POST", "path": "/orders", "status": 201, "contentType": "", "body": null}]});
+        let rows =
+            json!([{"id": "m1", "name": "Get orders"}, {"id": "m3", "name": "Lonely"}, {"id": "m4", "name": "One"}]);
+        let answers: Vec<Answer> = vec![
+            ("config.get", Ok(config())),
+            ("contract.fromOpenApi", Ok(operations)),
+            ("entity.list:mocks", Ok(json!({"entities": rows}))),
+            (
+                "entity.load:mocks:m1",
+                Ok(
+                    json!({"ok": true, "entity": mock("m1", "Get orders", "GET", "http://h/v1/orders", 200, r#"{"items":[{"id":1}]}"#)}),
+                ),
+            ),
+            (
+                "entity.load:mocks:m3",
+                Ok(json!({"ok": true, "entity": mock("m3", "Lonely", "GET", "http://h/none", 200, "{}")})),
+            ),
+            (
+                "entity.load:mocks:m4",
+                Ok(json!({"ok": true, "entity": mock("m4", "One", "GET", "http://h/orders/9", 200, r#"{"id":3}"#)})),
+            ),
+            ("entity.list", Ok(json!({"entities": []}))),
+        ];
+        let path = file.to_str().unwrap().to_string();
+        let (out, calls) = run(&["contract", "check", "--openapi", &path], answers, check);
+        std::fs::remove_file(&file).ok();
+        let Err(CliError::Failed(text)) = out else { panic!("{out:?}") };
+        assert_eq!(
+            text,
+            "GET  /v1/orders  Get orders  ✗ (openapi)\n  + .items[].discount (number)\nGET  /orders/9   One         ✓ (openapi)\n1 drifted · 1 ok · 1 unpaired"
+        );
+        assert!(payloads(&calls, "request.send").is_empty());
+        let (out, _) = run(&["contract", "check", "--openapi", "a.yaml", "--from-capture"], vec![], check);
+        assert_eq!(out.unwrap_err().code(), 2);
+    }
+
+    #[test]
+    fn a_mock_may_carry_an_optional_property_but_not_an_undeclared_one() {
+        let file = std::env::temp_dir().join(format!("bifurc-spec-opt-{}.yaml", std::process::id()));
+        std::fs::write(&file, "x").unwrap();
+        let operations = json!({"basePath": "", "operations": [
+            {"method": "GET", "path": "/a", "status": 200, "contentType": "application/json", "body": {"id": 0}, "optional": [".note"]}]});
+        let rows = json!([{"id": "m1", "name": "Has note"}, {"id": "m2", "name": "Has extra"}]);
+        let answers: Vec<Answer> = vec![
+            ("config.get", Ok(config())),
+            ("contract.fromOpenApi", Ok(operations)),
+            ("entity.list:mocks", Ok(json!({"entities": rows}))),
+            (
+                "entity.load:mocks:m1",
+                Ok(
+                    json!({"ok": true, "entity": mock("m1", "Has note", "GET", "http://h/a", 200, r#"{"id":1,"note":"x"}"#)}),
+                ),
+            ),
+            (
+                "entity.load:mocks:m2",
+                Ok(
+                    json!({"ok": true, "entity": mock("m2", "Has extra", "GET", "http://h/a", 200, r#"{"id":1,"zzz":"x"}"#)}),
+                ),
+            ),
+            ("entity.list", Ok(json!({"entities": []}))),
+        ];
+        let path = file.to_str().unwrap().to_string();
+        let (out, _) = run(&["contract", "check", "--openapi", &path], answers, check);
+        std::fs::remove_file(&file).ok();
+        let Err(CliError::Failed(text)) = out else { panic!("{out:?}") };
+        assert_eq!(
+            text,
+            "GET  /a  Has note   ✓ (openapi)\nGET  /a  Has extra  ✗ (openapi)\n  - .zzz (string)\n1 drifted · 1 ok"
+        );
     }
 }

@@ -24,7 +24,7 @@ use crate::{
         json::{array_mut, array_of, is_truthy, merged, object_mut, opt_str, read_json, str_of, truthy},
     },
     workspace::{
-        changes,
+        changes, claims,
         config::{load_config, save_config},
         deletions::{pending_entity, remove_entity},
         fs::{
@@ -332,6 +332,7 @@ async fn delete_entity_core(kind: &CrudKind, id: &str) -> Result<Value> {
     notify_config_changed();
     invalidate_cache(&ws_id);
     changes::record(&ws_id, kind.kind, id, str_of(&entity, "name"), "deleted", &[]);
+    claims::drop_claim(&ws_id, id);
     bus().emit(
         "entity.changed",
         json!({ "wsId": ws_id, "kind": to_protocol_kind(kind.kind), "id": id, "action": "deleted", "pending": pending }),
@@ -382,8 +383,9 @@ pub fn register(registry: &mut CommandRegistry) {
         let entity = params.get("entity").unwrap_or(&Value::Null);
         let (ws_id, id) = (workspace_of(entity, &load_config()), str_of(entity, "id").to_string());
         versions::check(&ws_id, kind.kind, &id, truthy(&params, "force"))?;
-        let done = update_entity_core(kind, entity)?;
+        let mut done = update_entity_core(kind, entity)?;
         versions::wrote(&ws_id, kind.kind, &id);
+        claims::annotate(&ws_id, &id, &mut done);
         Ok(done)
     });
 

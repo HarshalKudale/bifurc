@@ -240,6 +240,24 @@
    "after": "3"
   }
  },
+ "claims.list": {
+  "valid": {
+   "workspaceId": "ws1"
+  },
+  "invalid": {
+   "workspaceId": 1
+  }
+ },
+ "claims.set": {
+  "valid": {
+   "kind": "mocks",
+   "id": "m1",
+   "release": true
+  },
+  "invalid": {
+   "kind": "mocks"
+  }
+ },
  "config.get": {
   "valid": {},
   "invalid": {
@@ -251,6 +269,12 @@
    "config": {
     "port": 80
    }
+  },
+  "invalid": {}
+ },
+ "contract.fromOpenApi": {
+  "valid": {
+   "text": "openapi: 3.0.0"
   },
   "invalid": {}
  },
