@@ -83,7 +83,9 @@ Groups (bifurc <group> --help shows the arguments and options of each verb)
   settings      show | update                                         Ports, HTTPS, telemetry
   tls           status | generate | export | importcert | importkey | remove
                                                                       The root certificate of HTTPS interception
-  services      list                                                  Local processes listening on a port
+  services      list | define | up | down | restart | remove | ps | show   Dev servers the engine runs; local ports
+  logs          <service> [--errors] [--since 2m] [--grep x] [--last 50]   A dev server's output, filtered
+  port          free <port> [--kill]                                  What holds a port, and stopping it
 
 Engine
   engine start [--transport socket|ws] [--no-tray]   Start a standalone engine in the background
@@ -637,9 +639,43 @@ const TLS: &str = "Usage: bifurc tls <verb>
 The root certificate HTTPS interception signs with. HTTPS itself is switched with bifurc settings update
 --https true|false.";
 
-const SERVICES: &str = "Usage: bifurc services list
+const SERVICES: &str = "Usage: bifurc services <verb>
 
-Local processes listening on a port.";
+Dev servers the engine runs in the background (they outlive this command, end with the engine, and are
+stopped as a whole process tree). A definition is saved in the workspace (devservices/); the output of each
+is kept in memory, last 5000 lines. Read it with: bifurc logs <service> [--errors] [--since 2m] [--grep x] [--last 50]
+(--errors: warn/error lines and stack traces, repeats as `line ×42`). Free a port with: bifurc port free <port> [--kill]
+
+  list                                   Local processes listening on a port (any process, not only these)
+  define <name> --cmd <command> [--port <n>] [--cwd <dir>] [--vault <vault>] [--env KEY=VALUE]...
+                                         Save a service; --cwd is stored as an absolute path. Do not put secrets
+                                         in --env (it is a workspace file): use --vault, whose secrets are
+                                         injected like `vault run` (sealed and no terminal: exit 6)
+  up [<name>|--all] [--wait] [--timeout 30s]   Start (default: all); --wait blocks until the port listens, exit 4 on
+                                         timeout with the last lines of output
+  down <name>|--all                      Stop the whole process tree
+  restart <name> [--wait] [--timeout 30s]   Stop and start again
+  remove <name>                          Stop and delete the definition
+  ps                                     One line each: name, state, port, pid, uptime, health. A crashed service
+                                         shows `crashed (exit 1) 12s ago` and its last 5 error lines
+  show <name>                            The definition; secret-looking env values masked
+  --passphrase-stdin                     With up, restart: the vault passphrase from stdin";
+
+const LOGS: &str = "Usage: bifurc logs <service> [--errors] [--since 2m] [--grep x] [--last 50]
+
+The recent output of a dev server (bifurc services), plain lines, the last 50 by default.
+
+  --errors                               Only warn/error lines and stack traces; repeated lines as `line ×42`
+  --since <30s|2m|1h>                    Only lines from that long ago
+  --grep <text>                          Only lines containing the text (any case)
+  --last <n>                             At most the last n lines (default 50)";
+
+const PORT: &str = "Usage: bifurc port free <port> [--kill]
+
+Who holds a TCP port on this machine: `3000 held by node (pid 4242)`, or `free` (exit 0).
+
+  free <port>                            Show the process holding the port
+  free <port> --kill                     Stop it with everything it started";
 
 const ENGINE: &str = "Usage: bifurc engine <verb>
 
@@ -698,6 +734,8 @@ pub fn group_usage(group: &str) -> Option<String> {
         "vault" => VAULT,
         "account" => ACCOUNT,
         "services" => SERVICES,
+        "logs" => LOGS,
+        "port" => PORT,
         "engine" => ENGINE,
         "update" => UPDATE,
         "folders" => FOLDERS,
@@ -809,6 +847,12 @@ pub fn examples(group: &str) -> Option<&'static [&'static str]> {
             r#"bifurc claim --release mock "Get orders" --session backend"#,
             r#"bifurc claim request "Create user" --json"#,
         ],
+        "services" => &[
+            r#"bifurc services define api --cmd "npm run dev" --port 3000 --cwd ./api --vault dev"#,
+            "bifurc services up --all --wait --timeout 60s",
+            "bifurc services ps",
+            "bifurc services down api",
+        ],
         "wait" => &[
             "bifurc wait http://api.localhost/health --timeout 30s",
             "bifurc wait api-health --status 200",
@@ -857,7 +901,7 @@ pub(crate) mod tests {
     fn every_example_is_a_known_group_and_verb_with_flags_its_help_names() {
         for group in [
             "agent", "curl", "requests", "capture", "mocks", "contract", "flows", "runner", "env", "cookies",
-            "session", "vars", "changes", "claim", "wait",
+            "session", "vars", "changes", "claim", "wait", "services",
         ] {
             let list = examples(group).unwrap_or_else(|| panic!("{group} has no examples"));
             assert!((3..=5).contains(&list.len()), "{group}");

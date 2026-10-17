@@ -261,11 +261,11 @@ fn resolve_program(program: &str) -> std::path::PathBuf {
     std::path::PathBuf::from(program)
 }
 
-/// The secrets of the vault `vault run` names, unsealing it first if it is sealed.
-fn secrets_for(ctx: &mut Context) -> Result<Vec<(String, String)>> {
-    ctx.accept(&["passphrase-stdin"], 1)?;
-    let (workspace, vault) = named(ctx)?;
-    unseal(ctx, &workspace, &vault)?;
+/// The secrets of the vault `name`, unsealing it first if it is sealed.
+pub fn secrets_of(ctx: &mut Context, workspace: &str, name: &str) -> Result<Vec<(String, String)>> {
+    let listed = ctx.request("vault.list", json!({ "workspaceId": workspace }))?;
+    let vault = find_vault(&listed, name)?.clone();
+    unseal(ctx, workspace, &vault)?;
     let read = ctx.request("vault.secrets", json!({ "workspaceId": workspace, "id": vault["id"] }))?;
     Ok(read["secrets"]
         .as_object()
@@ -273,6 +273,14 @@ fn secrets_for(ctx: &mut Context) -> Result<Vec<(String, String)>> {
         .flatten()
         .map(|(name, value)| (name.clone(), value.as_str().unwrap_or_default().to_string()))
         .collect())
+}
+
+/// The secrets of the vault `vault run` names.
+fn secrets_for(ctx: &mut Context) -> Result<Vec<(String, String)>> {
+    ctx.accept(&["passphrase-stdin"], 1)?;
+    let name = need(ctx.args.positional(2), "vault name")?;
+    let workspace = workspace_id(ctx)?;
+    secrets_of(ctx, &workspace, &name)
 }
 
 /// `vault run <vault> -- <command…>`: run `command` with the vault's secrets as environment variables and
