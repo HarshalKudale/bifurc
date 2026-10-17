@@ -87,6 +87,7 @@ Groups (bifurc <group> --help shows the arguments and options of each verb)
   logs          <service> [--errors] [--since 2m] [--grep x] [--last 50]   A dev server's output, filtered
   port          free <port> [--kill]                                  What holds a port, and stopping it
   mail          list | show | last | clear                            Mail the local SMTP sink caught; codes and links
+  webhooks      listen | stop                                         Receive webhooks locally, optionally forward them
 
 Engine
   engine start [--transport socket|ws] [--no-tray]   Start a standalone engine in the background
@@ -165,7 +166,7 @@ Run           --var KEY=VALUE   A variable for this run (repeatable)    --env <n
 
 const WAIT: &str = "Usage: bifurc wait <url|health check> [--status <code>] [--timeout 30s] [--interval 500ms]
        bifurc wait --port <n> [--host 127.0.0.1] [--timeout 30s] [--interval 500ms]
-       bifurc wait --capture [--method M] [--host H] [--path P*] [--status 4xx] [--origin real|mock|mapped|rule|error|server]
+       bifurc wait --capture [--method M] [--host H] [--path P*] [--status 4xx] [--origin real|mock|mapped|rule|error|server|webhook]
                    [--grep text] [--timeout 30s] [--interval 500ms]
 
 Polls until the thing is ready, then prints one line (`ready · http://api.localhost/health 200 · 2.4s`) and
@@ -535,7 +536,7 @@ const CAPTURE: &str = "Usage: bifurc capture <verb>
 What went through the proxies: each exchange with its request and its response.
 
   list [--last N] [--status 4xx|422|!2xx] [--method M] [--host H] [--path P*] [--since 2m|1h|#id]
-       [--origin real|mock|mapped|rule|error|server] [--grep text] [--pinned]
+       [--origin real|mock|mapped|rule|error|server|webhook] [--grep text] [--pinned]
                                          One line per entry, newest first (default 20): #id time method
                                          host/path status duration origin. Times are UTC; #id* is pinned.
   show <entry> [--body] [--headers] [--req-body] [--req-headers] [--select <path>] [--max-body N]
@@ -689,6 +690,20 @@ Who holds a TCP port on this machine: `3000 held by node (pid 4242)`, or `free` 
   free <port>                            Show the process holding the port
   free <port> --kill                     Stop it with everything it started";
 
+const WEBHOOKS: &str = "Usage: bifurc webhooks <verb>
+
+The engine receives webhooks on a local port (127.0.0.1) and captures each one with its exact headers and raw
+body (origin webhook), so a signature check still passes when it is sent again. See them with
+`capture list --origin webhook` and `capture show <id>`; `status` shows `webhooks :4020`.
+
+  listen [--port N] [--name x] [--forward <url>] [--detach] [--quiet]
+                                         Any method and path is accepted and answered 200 {\"ok\":true}. With
+                                         --forward the request goes on unchanged (the path it came on is appended
+                                         to the URL's path) and the upstream's answer comes back; refused: 502.
+                                         Blocks and prints a line per request until Ctrl+C or the end of the
+                                         command; --detach keeps it running under the engine. No --port: a free one
+  stop [<name|port>]                     Stop that listener, or every one";
+
 const MAIL: &str = "Usage: bifurc mail <verb>
 
 The engine runs an SMTP server on 127.0.0.1:1025 (settings update --mailport), no login, no TLS: point the
@@ -746,6 +761,7 @@ pub fn canonical_group(group: &str) -> &str {
         "audit" => "history",
         "setting" | "config" => "settings",
         "cert" | "certificate" | "https" => "tls",
+        "webhook" => "webhooks",
         other => other,
     }
 }
@@ -770,6 +786,7 @@ pub fn group_usage(group: &str) -> Option<String> {
         "logs" => LOGS,
         "port" => PORT,
         "mail" => MAIL,
+        "webhooks" => WEBHOOKS,
         "engine" => ENGINE,
         "update" => UPDATE,
         "folders" => FOLDERS,
@@ -888,6 +905,11 @@ pub fn examples(group: &str) -> Option<&'static [&'static str]> {
             "bifurc services down api",
             "bifurc services snippet express",
         ],
+        "webhooks" => &[
+            "bifurc webhooks listen --name stripe --forward http://api.localhost/webhooks/stripe --detach",
+            "bifurc webhooks listen --port 4020",
+            "bifurc webhooks stop stripe",
+        ],
         "mail" => &[
             "bifurc mail clear",
             "bifurc mail list --to dana@x.test --last 5",
@@ -943,7 +965,7 @@ pub(crate) mod tests {
     fn every_example_is_a_known_group_and_verb_with_flags_its_help_names() {
         for group in [
             "agent", "curl", "requests", "capture", "mocks", "contract", "flows", "runner", "env", "cookies",
-            "session", "vars", "changes", "claim", "wait", "services", "mail",
+            "session", "vars", "changes", "claim", "wait", "services", "mail", "webhooks",
         ] {
             let list = examples(group).unwrap_or_else(|| panic!("{group} has no examples"));
             assert!((3..=5).contains(&list.len()), "{group}");

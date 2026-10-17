@@ -1734,6 +1734,30 @@
   },
   "invalid": {}
  },
+ "webhook.list": {
+  "valid": {},
+  "invalid": {
+   "extra": true
+  }
+ },
+ "webhook.listen": {
+  "valid": {
+   "workspaceId": "ws1",
+   "port": 4020,
+   "name": "stripe",
+   "forward": "http://api.localhost/webhooks/stripe",
+   "detach": true
+  },
+  "invalid": {}
+ },
+ "webhook.stop": {
+  "valid": {
+   "id": "k3f9"
+  },
+  "invalid": {
+   "id": 1
+  }
+ },
  "workspace.add": {
   "valid": {
    "name": "WS"

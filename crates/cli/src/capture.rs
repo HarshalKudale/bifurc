@@ -34,6 +34,7 @@ fn origin_word(entry: &Value) -> &'static str {
         Some("mapping") => "mapped",
         Some("rule") => "rule",
         Some("error") => "error",
+        Some("webhook") => "webhook",
         _ => "real",
     }
 }
@@ -128,8 +129,8 @@ pub(crate) fn filters(ctx: &Context) -> Result<Value> {
             payload[*name] = json!(value);
         }
     }
-    if ctx.args.flag("origin") == Some("server") {
-        payload["origin"] = json!("server");
+    if let Some(origin) = ctx.args.flag("origin").filter(|o| matches!(*o, "server" | "webhook")) {
+        payload["origin"] = json!(origin);
     } else if let Some(origin) = ctx.args.flag("origin") {
         payload["via"] = json!(match origin {
             "real" => "proxy,rfc6761",
@@ -139,7 +140,7 @@ pub(crate) fn filters(ctx: &Context) -> Result<Value> {
             "error" => "error",
             other => {
                 return Err(CliError::usage(format!(
-                    "--origin must be one of real, mock, mapped, rule, error, server, not \"{other}\""
+                    "--origin must be one of real, mock, mapped, rule, error, server, webhook, not \"{other}\""
                 )));
             }
         });

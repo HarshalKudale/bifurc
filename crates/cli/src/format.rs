@@ -268,6 +268,8 @@ pub struct StatusParts {
     pub mock_servers: Option<Value>,
     /// `mail.status`: the local mail sink.
     pub mail: Option<Value>,
+    /// `webhook.list`: the webhook receivers that run.
+    pub webhooks: Option<Value>,
 }
 
 impl StatusParts {
@@ -330,6 +332,16 @@ pub fn describe_status(engine: &RuntimeInfo, active_workspace: &Value, parts: &S
             (false, Some(reason)) => format!("mail :{port} off ({reason})"),
             (false, None) => format!("mail :{port} off"),
         });
+    }
+    let hooks: Vec<String> = parts
+        .webhooks
+        .iter()
+        .flat_map(|w| w["listeners"].as_array())
+        .flatten()
+        .map(|l| format!(":{}", js_template(l.get("port"))))
+        .collect();
+    if !hooks.is_empty() {
+        second.push(format!("webhooks {}", hooks.join(",")));
     }
     if let Some(capture) = &parts.capture {
         let limit = capture.get("limit").and_then(Value::as_u64).unwrap_or(MAX_CAPTURE);
@@ -533,11 +545,12 @@ boom"
             cookies: Some(json!({"domains": [{}, {}, {}]})),
             mock_servers: Some(json!({"servers": [{"port": 4010}]})),
             mail: Some(json!({"port": 1025, "running": true, "count": 3})),
+            webhooks: Some(json!({"listeners": [{"port": 4020}]})),
         };
         assert_eq!(
             describe_status(&info, &workspace, &parts),
             "engine 0.6.0 · proxy :8080 on · workspace smoke · env dev
-mocks 2 on · mock server :4010 · mail :1025 (3) · capture 143/200 · cookies 3 domains"
+mocks 2 on · mock server :4010 · mail :1025 (3) · webhooks :4020 · capture 143/200 · cookies 3 domains"
         );
         let parts = StatusParts {
             server: Some(json!({"running": false, "port": 9})),
@@ -546,6 +559,7 @@ mocks 2 on · mock server :4010 · mail :1025 (3) · capture 143/200 · cookies 
             cookies: None,
             mock_servers: None,
             mail: Some(json!({"port": 1025, "running": false, "error": "Port 1025 is already in use", "count": 0})),
+            webhooks: None,
         };
         assert_eq!(
             describe_status(&info, &json!(null), &parts),
@@ -559,6 +573,7 @@ mail :1025 off (Port 1025 is already in use) · capture 0/200 paused"
             cookies: None,
             mock_servers: None,
             mail: None,
+            webhooks: None,
         };
         assert_eq!(describe_status(&info, &workspace, &none), "engine 0.6.0 · workspace smoke · env none");
     }

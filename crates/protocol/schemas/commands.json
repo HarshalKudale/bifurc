@@ -653,6 +653,46 @@
    },
    "additionalProperties": false
   },
+  "webhook.list": {
+   "type": "object",
+   "properties": {},
+   "additionalProperties": false
+  },
+  "webhook.listen": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "port": {
+     "type": "integer",
+     "minimum": 0,
+     "maximum": 65535
+    },
+    "name": {
+     "type": "string"
+    },
+    "forward": {
+     "type": "string"
+    },
+    "detach": {
+     "type": "boolean"
+    }
+   },
+   "required": [
+    "workspaceId"
+   ],
+   "additionalProperties": false
+  },
+  "webhook.stop": {
+   "type": "object",
+   "properties": {
+    "id": {
+     "type": "string"
+    }
+   },
+   "additionalProperties": false
+  },
   "workspace.add": {
    "type": "object",
    "properties": {
