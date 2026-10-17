@@ -10,7 +10,7 @@ Runs requests, mocks, flows and the proxies of a Bifurc workspace; starts an eng
   agent     init [--skill]                                 Teach an AI agent this CLI: a cheat sheet in AGENTS.md / CLAUDE.md
   curl      <curl arguments> [--save <name>]               A curl command through the engine, one summary line
   requests  list | show | send | create | update | delete  Saved requests of every type
-  capture   list | show | watch | pin | mock | request | clear
+  capture   list | show | diff | watch | pin | mock | request | clear
   mocks     list | show | create | update | enable | disable | scenario | status | hits | serve
   flows     list | show | run | validate | loadtest         Saved chains of requests
   runner    run <folder> [--bail]                          Run a folder's requests
@@ -60,7 +60,7 @@ Groups (bifurc <group> --help shows the arguments and options of each verb)
   flows         list | show | create | update | validate | run | loadtest | loadstatus | loadcancel | status | cancel | duplicate | delete
                                                                       Saved chains of requests
   health        list | show | create | update | run | delete          Health checks
-  capture       list | show | watch | pin | unpin | mock | request | secrets | import | remove | clear | pause | resume | cache
+  capture       list | show | diff | watch | pin | unpin | mock | request | secrets | import | remove | clear | pause | resume | cache
                                                                       Traffic the proxies captured
   cookies       list | set | clear | configure                       The cookie jar of the workspace's requests
   session       show | reset                                          Your named session: cookies, variables, environment
@@ -487,6 +487,9 @@ What went through the proxies: each exchange with its request and its response.
   show <entry> [--body] [--headers] [--req-body] [--req-headers] [--select <path>] [--max-body N]
                                          The response as `requests send` prints it (--out, --raw, --quiet,
                                          --expect* too); --req-* show the request (secrets masked)
+  diff <a> [<b>] [--mock <name>] [--request <name>] [--shape] [--var K=V] [--env <name>]
+                                         Two sides (entries, a mock, a saved request that is sent now):
+                                         + .new (number), - .gone, ~ .a 1 → 2; --shape: no values
   watch [filters] [--count N] [--timeout S]
                                          One JSON line per new matching entry until stopped
   pin <entry>...                         Keep entries beyond the buffer limit (200; settings update
@@ -670,7 +673,7 @@ pub fn examples(group: &str) -> Option<&'static [&'static str]> {
             "bifurc capture show #k3f9 --select .error",
             "bifurc capture list --host api.localhost --path /orders* --since 2m",
             "bifurc capture show #k3f9 --req-body --headers",
-            "bifurc capture pin #k3f9",
+            r#"bifurc capture diff #k3f9 --mock "Get order" --shape"#,
         ],
         "mocks" => &[
             r#"bifurc mocks create http://api.localhost/users/1 --status 200 -d '{"id":1}' -H "Content-Type: application/json""#,

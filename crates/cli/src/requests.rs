@@ -391,14 +391,29 @@ fn described(ty: &RequestType, args: &ParsedArgs, extra: &[&str]) -> Result<Valu
     Ok(entity)
 }
 
+fn response_of(ty: &RequestType, response: &Value) -> Response {
+    match ty.name {
+        "rest" => Response::from_rest(response),
+        "grpc" => Response::from_grpc(response),
+        _ => Response::from_text(response),
+    }
+}
+
 /// What the engine answered a send, printed as the output options say; a failure of what was sent fails the command.
 fn sent(ctx: &mut Context, ty: &RequestType, response: Value) -> Result<String> {
-    let response = match ty.name {
-        "rest" => Response::from_rest(&response),
-        "grpc" => Response::from_grpc(&response),
-        _ => Response::from_text(&response),
+    present(ctx, &response_of(ty, &response))
+}
+
+/// Send the saved request `wanted` as `requests send` does (`--var`, `--env`, `--fresh-session` apply) and
+/// return its response; only types that answer once can be.
+pub(crate) fn send_saved(ctx: &mut Context, workspace: &str, wanted: &str) -> Result<Response> {
+    let (ty, entity) = find(ctx, workspace, wanted)?;
+    let Some(command) = ty.send else {
+        return Err(CliError::usage(format!("a {} request does not answer once, so it cannot be compared", ty.name)));
     };
-    present(ctx, &response)
+    let mut payload = json!({ "workspaceId": workspace, "id": id_of(&entity) });
+    add_overrides(ctx, ty, workspace, Some(&entity), &mut payload)?;
+    Ok(response_of(ty, &ctx.request(command, payload)?))
 }
 
 /// How long a WebSocket, an SSE stream or a Socket.IO connection is given to open.

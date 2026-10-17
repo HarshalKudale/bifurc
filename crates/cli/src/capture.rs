@@ -10,10 +10,11 @@ use std::{
 use serde_json::{Value, json};
 
 use crate::{
-    commands::{Context, need, workspace_id},
+    commands::{Context, find_one, list_entities, need, workspace_id},
     error::{CliError, Result},
     format::{aligned, js_template},
     response::{Response, decode_base64, mask_header, present, preview, revealed, size},
+    shape::{self, Side},
 };
 
 /// The filters `list` and `watch` share.
@@ -308,6 +309,77 @@ pub fn show(ctx: &mut Context) -> Result<String> {
         before.join("\n")
     };
     if passed { Ok(out) } else { Err(CliError::Failed(out)) }
+}
+
+/// A mock's answer as one side of a comparison.
+fn mock_side(mock: &Value) -> Side {
+    let headers: Vec<(String, String)> = mock
+        .get("responseHeaders")
+        .and_then(Value::as_object)
+        .into_iter()
+        .flatten()
+        .map(|(k, v)| (k.clone(), js_template(Some(v))))
+        .collect();
+    let content_type = headers.iter().find(|(k, _)| k.eq_ignore_ascii_case("content-type")).map_or("", |(_, v)| v);
+    let raw = if mock.get("responseBodyEncoding").and_then(Value::as_str) == Some("base64") {
+        decode_base64(mock.get("responseBody"))
+    } else {
+        js_template(mock.get("responseBody")).into_bytes()
+    };
+    let status = mock.get("responseStatus").and_then(Value::as_u64).unwrap_or(200) as u16;
+    Side::new(status, content_type, &headers, raw)
+}
+
+fn response_side(response: &Response) -> Side {
+    Side::new(response.status, &response.content_type, &response.headers, response.body.clone())
+}
+
+/// `capture diff <a> [<b>] [--mock <name>] [--request <name>] [--shape]`: exactly two sides, from the entries
+/// given, then the mock, then the saved request (sent now). Only the differences print; the exit code is 0.
+pub fn diff(ctx: &mut Context) -> Result<String> {
+    ctx.accept(&["mock", "request", "shape", "var", "env", "fresh-session", "type"], 2)?;
+    let args = ctx.args;
+    let wanted: Vec<String> = args.positionals.iter().skip(2).cloned().collect();
+    let extra = usize::from(args.has("mock")) + usize::from(args.has("request"));
+    if wanted.len() + extra != 2 {
+        return Err(CliError::usage(
+            "capture diff needs two sides: <a> <b>, or <a> with --mock <name> or --request <name> (see: bifurc capture --help)",
+        ));
+    }
+    let workspace = workspace_id(ctx)?;
+    let mut sides = Vec::new();
+    for id in entry_ids(ctx, &workspace, &wanted)? {
+        let got = ctx.request("capture.get", json!({ "workspaceId": workspace, "id": id }))?;
+        let Some(entry) = got.get("entry").filter(|entry| entry.is_object()) else {
+            return Err(CliError::not_found(format!("no captured entry \"{id}\" (see: bifurc capture list)")));
+        };
+        sides.push(response_side(&Response::from_capture(entry)));
+    }
+    if let Some(name) = args.flag("mock") {
+        let mocks = list_entities(ctx, &workspace, "mocks")?;
+        sides.push(mock_side(find_one(&mocks, name, &["name"], "mock", "mocks")?));
+    }
+    if let Some(name) = args.flag("request") {
+        let response = crate::requests::send_saved(ctx, &workspace, name)?;
+        sides.push(response_side(&response));
+    }
+    let (lines, more) = shape::capped(shape::diff(&sides[0], &sides[1], !args.has("shape")));
+    let total = lines.len() + more;
+    let mut out = json!({
+        "schemaVersion": 1,
+        "differences": lines.iter().map(shape::Line::to_json).collect::<Vec<_>>(),
+        "truncated": more,
+    });
+    out["same"] = json!(total == 0);
+    Ok(ctx.print(&out, || match total {
+        0 => "same".to_string(),
+        n => format!(
+            "{}
+{n} difference{}",
+            shape::render(&lines, more),
+            if n == 1 { "" } else { "s" }
+        ),
+    }))
 }
 
 /// `capture pin|unpin <entry>...`: keep the entries beyond the buffer limit, or let them age out. The entries
