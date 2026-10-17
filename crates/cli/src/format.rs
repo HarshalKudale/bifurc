@@ -322,8 +322,9 @@ pub fn describe_status(engine: &RuntimeInfo, active_workspace: &Value, parts: &S
         second.push(format!("mock server {}", ports.join(",")));
     }
     if let Some(capture) = &parts.capture {
+        let limit = capture.get("limit").and_then(Value::as_u64).unwrap_or(MAX_CAPTURE);
         let paused = if capture.get("paused").is_some_and(truthy) { " paused" } else { "" };
-        second.push(format!("capture {}/{}{paused}", js_template(capture.get("matched")), MAX_CAPTURE));
+        second.push(format!("capture {}/{}{paused}", js_template(capture.get("matched")), limit));
     }
     second.extend(parts.cookies_domains().map(|n| format!("cookies {n} domain{}", if n == 1 { "" } else { "s" })));
     [first, second].iter().filter(|line| !line.is_empty()).map(|line| line.join(" · ")).collect::<Vec<_>>().join(
@@ -332,8 +333,8 @@ pub fn describe_status(engine: &RuntimeInfo, active_workspace: &Value, parts: &S
     )
 }
 
-/// What the engine keeps of captured traffic, per workspace.
-const MAX_CAPTURE: u32 = 200;
+/// What the engine keeps of captured traffic, per workspace, when it does not say.
+const MAX_CAPTURE: u64 = 200;
 
 /// JavaScript truthiness.
 pub fn truthy(value: &Value) -> bool {

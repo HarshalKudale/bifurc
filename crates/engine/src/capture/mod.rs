@@ -17,8 +17,8 @@ use crate::{
 
 pub use entities::{captured_to_har, captured_to_mock, captured_to_request};
 pub use store::{
-    MAX_CAPTURE_ENTRIES, clear_capture, get_capture, is_capture_paused, list_capture, record_capture, remove_capture,
-    resolve_capture_entry, set_capture_paused,
+    DEFAULT_CAPTURE_LIMIT, capture_limit, clear_capture, get_capture, is_capture_paused, list_capture, pin_capture,
+    record_capture, refresh_capture_limit, remove_capture, resolve_capture_entry, set_capture_paused,
 };
 
 pub fn register(registry: &mut CommandRegistry) {
@@ -30,7 +30,7 @@ pub fn register(registry: &mut CommandRegistry) {
         let entries: Vec<Value> =
             if truthy(&params, "summary") { entries.iter().map(to_log_entry_event).collect() } else { entries };
         Ok(json!({
-            "entries": entries, "matched": matched, "paused": is_capture_paused(ws_id),
+            "entries": entries, "matched": matched, "paused": is_capture_paused(ws_id), "limit": capture_limit(),
             "disableCache": is_cache_disabled()
         }))
     });
@@ -60,6 +60,13 @@ pub fn register(registry: &mut CommandRegistry) {
         let ids: Vec<String> =
             array_of(&params, "ids").iter().filter_map(|id| id.as_str().map(str::to_string)).collect();
         Ok(json!({ "ok": true, "removed": remove_capture(str_of(&params, "workspaceId"), &ids) }))
+    });
+
+    registry.register_sync("capture.pin", |params, _| {
+        let ids: Vec<String> =
+            array_of(&params, "ids").iter().filter_map(|id| id.as_str().map(str::to_string)).collect();
+        let (changed, missing) = pin_capture(str_of(&params, "workspaceId"), &ids, bool_of(&params, "pinned", true));
+        Ok(json!({ "ok": true, "changed": changed, "missing": missing }))
     });
 
     registry.register_sync("capture.buildMock", |params, _| {
@@ -99,7 +106,7 @@ fn status_matches(filter: &str, status: Option<u64>) -> bool {
 }
 
 /// The entries `capture.list` was asked for (newest first, as given) and how many matched before `last` cut them.
-/// Filters: `status`, `method`, `host` and `path` (glob), `since` (ms), `origin`, `via` and `mockId` (one or several, comma-separated), `grep` (the URL or a decoded body).
+/// Filters: `status`, `method`, `host` and `path` (glob), `since` (ms), `pinned`, `origin`, `via` and `mockId` (one or several, comma-separated), `grep` (the URL or a decoded body).
 fn filter_entries(entries: Vec<Value>, params: &Value) -> (Vec<Value>, usize) {
     use base64::{Engine as _, engine::general_purpose::STANDARD};
     let text_of = |entry: &Value, key: &str| {
@@ -126,6 +133,7 @@ fn filter_entries(entries: Vec<Value>, params: &Value) -> (Vec<Value>, usize) {
                     let answered = str_of(entry, "target").strip_prefix("mock:").unwrap_or("");
                     ids.split(',').any(|id| id == answered)
                 })
+                && params.get("pinned").and_then(Value::as_bool).is_none_or(|p| p == store::is_pinned(entry))
                 && params.get("since").and_then(Value::as_i64).is_none_or(|s| entry["ts"].as_i64().unwrap_or(0) >= s)
                 && grep.as_deref().is_none_or(|g| {
                     url.to_lowercase().contains(g)
@@ -262,6 +270,14 @@ mod tests {
             call(&registry, "capture.setPaused", json!({ "workspaceId": "ws1", "paused": true })).await.unwrap();
         assert_eq!(paused, json!({ "paused": true }));
         call(&registry, "capture.setPaused", json!({ "workspaceId": "ws1", "paused": false })).await.unwrap();
+
+        let pinned = call(&registry, "capture.pin", json!({ "workspaceId": "ws1", "ids": ["a", "zz"] })).await.unwrap();
+        assert_eq!(pinned, json!({ "ok": true, "changed": 1, "missing": ["zz"] }));
+        let only = call(&registry, "capture.list", json!({ "workspaceId": "ws1", "summary": true, "pinned": true }));
+        let only = only.await.unwrap();
+        assert_eq!((only["entries"].as_array().unwrap().len(), only["entries"][0]["pinned"].clone()), (1, json!(true)));
+        assert_eq!(only["limit"], DEFAULT_CAPTURE_LIMIT);
+        call(&registry, "capture.pin", json!({ "workspaceId": "ws1", "ids": ["a"], "pinned": false })).await.unwrap();
 
         let removed =
             call(&registry, "capture.remove", json!({ "workspaceId": "ws1", "ids": ["a", "nope"] })).await.unwrap();
