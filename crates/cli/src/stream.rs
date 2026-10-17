@@ -240,7 +240,7 @@ mod tests {
         for (argv, message) in [
             (
                 vec!["requests", "send", "e1", "-d", "x"],
-                "a saved request is sent as it is saved, without --body; change it with: bifurc requests update",
+                "a saved request is sent as it is saved, without --data; change it with: bifurc requests update",
             ),
             (vec!["requests", "send", "e1", "--wait", "soon"], "--wait must be a number of seconds, not \"soon\""),
             (

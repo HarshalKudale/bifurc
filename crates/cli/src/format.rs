@@ -1,6 +1,5 @@
 //! Output formatting: tables, JSON, and the human renderings of a few payloads.
 
-use base64::Engine as _;
 use serde_json::Value;
 
 use crate::discovery::RuntimeInfo;
@@ -64,48 +63,6 @@ pub fn table(rows: &[Value], columns: &[&str]) -> String {
     let headings: Vec<String> = columns.iter().map(|c| c.to_uppercase()).collect();
     let mut lines = vec![line(headings.iter().map(String::as_str).collect())];
     lines.extend(cells.iter().map(|row| line(row.iter().map(String::as_str).collect())));
-    lines.join("\n")
-}
-
-/// A saved or unsaved request's response as printed by `requests send`.
-pub fn describe_send(result: &Value) -> String {
-    let mut lines =
-        vec![format!("HTTP {}  ({} ms)", js_template(result.get("status")), js_template(result.get("durationMs")))];
-    if let Some(headers) = result.get("headers").and_then(Value::as_object) {
-        lines.extend(headers.iter().map(|(k, v)| format!("{k}: {}", js_template(Some(v)))));
-    }
-    let body = result.get("body").and_then(Value::as_str).unwrap_or_default();
-    let decoded =
-        base64::engine::general_purpose::STANDARD_NO_PAD.decode(body.trim_end_matches('=')).unwrap_or_default();
-    lines.push(String::new());
-    lines.push(String::from_utf8_lossy(&decoded).into_owned());
-    for (key, label) in [("preScriptError", "pre-script error"), ("postScriptError", "post-script error")] {
-        if let Some(message) = result.get(key).and_then(Value::as_str).filter(|m| !m.is_empty()) {
-            lines.push(String::new());
-            lines.push(format!("{label}: {message}"));
-        }
-    }
-    for test in result.get("tests").and_then(Value::as_array).into_iter().flatten() {
-        let passed = test.get("passed").and_then(Value::as_bool).unwrap_or(false);
-        let name = js_template(test.get("name"));
-        let error = match test.get("error").and_then(Value::as_str).filter(|e| !e.is_empty()) {
-            Some(error) => format!(" — {error}"),
-            None => String::new(),
-        };
-        lines.push(format!("{}  {name}{error}", if passed { "PASS" } else { "FAIL" }));
-    }
-    lines.join("\n")
-}
-
-/// The response of a GraphQL or SOAP request as printed by `requests send`: its body is text already.
-pub fn describe_text_response(result: &Value) -> String {
-    let mut lines =
-        vec![format!("HTTP {}  ({} ms)", js_template(result.get("status")), js_template(result.get("durationMs")))];
-    if let Some(headers) = result.get("headers").and_then(Value::as_object) {
-        lines.extend(headers.iter().map(|(k, v)| format!("{k}: {}", js_template(Some(v)))));
-    }
-    lines.push(String::new());
-    lines.push(result.get("body").and_then(Value::as_str).unwrap_or_default().to_string());
     lines.join("\n")
 }
 
@@ -261,26 +218,6 @@ pub fn describe_stream(snapshot: &Value) -> String {
     lines.join("\n")
 }
 
-/// A gRPC result as printed by `requests send`: the status line, the metadata, then each response.
-pub fn describe_grpc(result: &Value) -> String {
-    let status = result.get("status").and_then(Value::as_i64).unwrap_or(0);
-    let message = result.get("statusMessage").and_then(Value::as_str).unwrap_or_default();
-    let mut lines = vec![format!(
-        "gRPC {}{}  ({} ms)",
-        if status == 0 { "OK".to_string() } else { format!("status {status}") },
-        if status == 0 || message.is_empty() { String::new() } else { format!(" {message}") },
-        js_template(result.get("durationMs"))
-    )];
-    if let Some(metadata) = result.get("metadata").and_then(Value::as_object) {
-        lines.extend(metadata.iter().map(|(k, v)| format!("{k}: {}", js_template(Some(v)))));
-    }
-    for response in result.get("responses").and_then(Value::as_array).into_iter().flatten() {
-        lines.push(String::new());
-        lines.push(js_string(response));
-    }
-    lines.join("\n")
-}
-
 /// The services and methods a server reflects, as `grpc reflect` prints them.
 pub fn describe_reflection(result: &Value) -> String {
     let mut lines = Vec::new();
@@ -395,34 +332,6 @@ mod tests {
     }
 
     #[test]
-    fn a_send_result_prints_status_headers_decoded_body_and_tests() {
-        let result = json!({
-            "status": 200,
-            "durationMs": 12,
-            "headers": {"content-type": "text/plain", "x-n": 1},
-            "body": "aGVsbG8=",
-            "tests": [{"name": "ok", "passed": true}, {"name": "bad", "passed": false, "error": "nope"}],
-            "preScriptError": "pre boom",
-            "postScriptError": "post boom",
-        });
-        assert_eq!(
-            describe_send(&result),
-            "HTTP 200  (12 ms)\ncontent-type: text/plain\nx-n: 1\n\nhello\n\npre-script error: pre boom\n\n\
-             post-script error: post boom\nPASS  ok\nFAIL  bad — nope"
-        );
-    }
-
-    #[test]
-    fn a_text_response_prints_its_body_as_it_is() {
-        let result = json!({"status": 200, "durationMs": 7, "headers": {"content-type": "application/json"},
-                            "body": "{\"data\":{}}"});
-        assert_eq!(
-            describe_text_response(&result),
-            "HTTP 200  (7 ms)\ncontent-type: application/json\n\n{\"data\":{}}"
-        );
-    }
-
-    #[test]
     fn a_socket_prints_its_state_and_its_messages_by_direction() {
         let snapshot = json!({"status": "connected", "url": "ws://h/", "error": null, "messages": [
             {"direction": "sent", "data": "ping"}, {"direction": "received", "data": "pong"}]});
@@ -524,12 +433,6 @@ boom"
         assert_eq!(describe_stream(&snapshot), "SSE connected  http://h/e\n< hi\n< [tick] 1\n< a\n  b");
         let failed = json!({"status": "error", "url": "http://h/e", "error": "HTTP 404 Not Found", "messages": []});
         assert_eq!(describe_stream(&failed), "SSE error  http://h/e\nerror: HTTP 404 Not Found");
-    }
-
-    #[test]
-    fn an_empty_body_still_leaves_the_blank_separator() {
-        let result = json!({"status": 204, "durationMs": 1, "headers": {}, "body": ""});
-        assert_eq!(describe_send(&result), "HTTP 204  (1 ms)\n\n");
     }
 
     #[test]

@@ -388,7 +388,7 @@ fn default_content_type(mock: &mut Value) {
 }
 
 const MOCK_RESPONSE_OPTIONS: [&str; 9] =
-    ["method", "name", "status", "header", "body", "body-file", "delay", "regex", "no-regex"];
+    ["method", "name", "status", "header", "data", "body-file", "delay", "regex", "no-regex"];
 
 /// `mocks list|show|create|update|enable|disable`.
 pub fn mocks(ctx: &mut Context, sub: Option<&str>) -> Result<String> {
@@ -442,7 +442,7 @@ pub fn mocks(ctx: &mut Context, sub: Option<&str>) -> Result<String> {
                 &workspace,
                 mock,
                 changed,
-                "--url, --method, --name, --status, -H, --body, --body-file, --delay, --regex, --no-regex",
+                "--url, --method, --name, --status, -H, -d/--data, --body-file, --delay, --regex, --no-regex",
             )
         }
         "enable" => set_enabled(ctx, &MOCKS, true),
