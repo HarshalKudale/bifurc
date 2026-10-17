@@ -140,12 +140,14 @@ impl<S: Read + Write> Session<S> {
         read_frame(&mut self.stream)
     }
 
-    /// The `hello` handshake.
-    pub fn hello(&mut self, client_version: &str) -> Result<Value> {
-        self.call(
-            "hello",
-            json!({ "protocolVersion": PROTOCOL_VERSION, "clientName": CLIENT_NAME, "clientVersion": client_version }),
-        )
+    /// The `hello` handshake; `session` is the named session this client works in.
+    pub fn hello(&mut self, client_version: &str, session: Option<&str>) -> Result<Value> {
+        let mut payload =
+            json!({ "protocolVersion": PROTOCOL_VERSION, "clientName": CLIENT_NAME, "clientVersion": client_version });
+        if let Some(name) = session {
+            payload["session"] = json!(name);
+        }
+        self.call("hello", payload)
     }
 }
 
@@ -224,8 +226,24 @@ pub fn unreachable_reason(info: &RuntimeInfo, data_dir: &Path) -> Option<String>
     }
 }
 
+/// The named session of a command line: `--session`, else `BIFURC_SESSION`; none is the default session, which the
+/// desktop app shares.
+pub fn session_name(args: &crate::args::ParsedArgs) -> Result<Option<String>> {
+    let name = match args.flag("session") {
+        Some(name) => name.to_string(),
+        None => std::env::var("BIFURC_SESSION").unwrap_or_default(),
+    };
+    let valid = (1..=40).contains(&name.len())
+        && name.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.'));
+    match (name.is_empty(), valid) {
+        (true, _) => Ok(None),
+        (false, true) => Ok(Some(name)),
+        _ => Err(CliError::usage(format!("session name \"{name}\" must be 1 to 40 letters, digits, '-', '_' or '.'"))),
+    }
+}
+
 /// Connect to the engine serving `data_dir`, found through its runtime.json, and open a session.
-pub fn connect(data_dir: &Path, client_version: &str) -> Result<EngineConnection> {
+pub fn connect(data_dir: &Path, client_version: &str, named: Option<&str>) -> Result<EngineConnection> {
     let Some(info) = find_running_engine(data_dir) else {
         return Err(CliError::engine_unreachable(format!(
             "No engine is running for {}.\nStart one with: bifurc engine start",
@@ -240,7 +258,7 @@ pub fn connect(data_dir: &Path, client_version: &str) -> Result<EngineConnection
     };
     let stream = open_stream(&info.address).map_err(|e| open_failed(e.to_string()))?;
     let mut session = Session::new(stream);
-    session.hello(client_version).map_err(|e| open_failed(e.to_string()))?;
+    session.hello(client_version, named).map_err(|e| open_failed(e.to_string()))?;
     Ok(EngineConnection { info, session })
 }
 
@@ -401,7 +419,7 @@ mod tests {
     fn hello_identifies_the_client_as_cli() {
         let stream = Scripted::new(&[json!({"id": "cli-1", "ok": true, "data": {"engineVersion": "0.4.0"}})]);
         let mut session = Session::new(stream);
-        session.hello("9.9.9").unwrap();
+        session.hello("9.9.9", None).unwrap();
         assert_eq!(
             sent(&session)[0],
             json!({"id": "cli-1", "action": "hello",
@@ -410,9 +428,26 @@ mod tests {
     }
 
     #[test]
+    fn hello_carries_the_session_when_there_is_one() {
+        let stream = Scripted::new(&[json!({"id": "cli-1", "ok": true, "data": {}})]);
+        let mut session = Session::new(stream);
+        session.hello("9.9.9", Some("frontend")).unwrap();
+        assert_eq!(sent(&session)[0]["payload"]["session"], "frontend");
+    }
+
+    #[test]
+    fn the_flag_names_the_session_and_a_bad_name_is_a_usage_error() {
+        let named = |argv: &[&str]| {
+            session_name(&crate::args::parse_args(&argv.iter().map(|a| a.to_string()).collect::<Vec<_>>()).unwrap())
+        };
+        assert_eq!(named(&["status", "--session", "back-end.1"]).unwrap().as_deref(), Some("back-end.1"));
+        assert_eq!(named(&["status", "--session", "a b"]).unwrap_err().code(), 2);
+    }
+
+    #[test]
     fn connecting_without_an_engine_says_how_to_start_one() {
         let dir = tempfile::tempdir().unwrap();
-        let err = connect(dir.path(), "t").err().unwrap();
+        let err = connect(dir.path(), "t", None).err().unwrap();
         assert_eq!(
             err.to_string(),
             format!("No engine is running for {}.\nStart one with: bifurc engine start", dir.path().display())

@@ -77,7 +77,8 @@ fn score(tool: &Tool, wanted: &[String]) -> u32 {
             let said = [word.as_str(), stem(canonical(word))];
             let found = |among: &[String]| among.iter().any(|candidate| said.contains(&candidate.as_str()));
             if found(&name) {
-                IN_NAME
+                // A name said as it is spelt beats one reached through a synonym (`vars` is not `env`).
+                IN_NAME + u32::from(name.contains(word))
             } else if found(&summary) {
                 IN_SUMMARY
             } else if found(&details) {
