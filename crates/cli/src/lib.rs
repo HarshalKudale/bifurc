@@ -4,6 +4,7 @@
 //! `<data-dir>/runtime.json`, opens a session over its socket, and turns one command line into one or a few
 //! engine commands and a printed answer. Argument parsing, formatting and engine location are pure modules.
 
+pub mod agent;
 pub mod args;
 pub mod capture;
 pub mod cli;
