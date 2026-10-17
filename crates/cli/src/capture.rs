@@ -262,6 +262,9 @@ fn request_body(entry: &Value, limit: usize) -> Vec<String> {
 
 /// `capture show <entry>`: the request line, then the response as every one-shot response prints.
 pub fn show(ctx: &mut Context) -> Result<String> {
+    if ctx.args.has("logs") {
+        return crate::logtrace::logs(ctx);
+    }
     let flags = ["body", "headers", "req-body", "req-headers", "select", "out", "max-body", "raw", "quiet"];
     ctx.accept(&[&flags[..], &["expect", "expect-status", "reveal"]].concat(), 1)?;
     let wanted = need(ctx.args.positional(2), "the entry's id (see: bifurc capture list)")?;

@@ -538,6 +538,10 @@ What went through the proxies: each exchange with its request and its response.
   show <entry> [--body] [--headers] [--req-body] [--req-headers] [--select <path>] [--max-body N]
                                          The response as `requests send` prints it (--out, --raw, --quiet,
                                          --expect* too); --req-* show the request (secrets masked)
+  show <entry> --logs [--context N] [--service <name>]
+                                         Only the dev-service log lines that carry the entry's trace id (the
+                                         proxies send it as x-bifurc-trace; settings update --traceheader); no
+                                         line has it: lines near the request mentioning its path, marked ≈
   diff <a> [<b>] [--mock <name>] [--request <name>] [--shape] [--var K=V] [--env <name>]
                                          Two sides (entries, a mock, a saved request that is sent now):
                                          + .new (number), - .gone, ~ .a 1 → 2; --shape: no values
@@ -647,10 +651,12 @@ is kept in memory, last 5000 lines. Read it with: bifurc logs <service> [--error
 (--errors: warn/error lines and stack traces, repeats as `line ×42`). Free a port with: bifurc port free <port> [--kill]
 
   list                                   Local processes listening on a port (any process, not only these)
-  define <name> --cmd <command> [--port <n>] [--cwd <dir>] [--vault <vault>] [--env KEY=VALUE]...
+  define <name> --cmd <command> [--port <n>] [--cwd <dir>] [--vault <vault>] [--env KEY=VALUE]... [--log-file <path>]
                                          Save a service; --cwd is stored as an absolute path. Do not put secrets
                                          in --env (it is a workspace file): use --vault, whose secrets are
                                          injected like `vault run` (sealed and no terminal: exit 6)
+                                         --log-file: a file the service writes; the engine follows it into the same
+                                         output (stream file) while the service runs
   up [<name>|--all] [--wait] [--timeout 30s]   Start (default: all); --wait blocks until the port listens, exit 4 on
                                          timeout with the last lines of output
   down <name>|--all                      Stop the whole process tree
@@ -659,6 +665,9 @@ is kept in memory, last 5000 lines. Read it with: bifurc logs <service> [--error
   ps                                     One line each: name, state, port, pid, uptime, health. A crashed service
                                          shows `crashed (exit 1) 12s ago` and its last 5 error lines
   show <name>                            The definition; secret-looking env values masked
+  snippet <express|fastify|next|fastapi|django|go>
+                                         A one-line middleware that logs the trace header, for
+                                         bifurc capture show <id> --logs. Unknown stack: exit 2
   --passphrase-stdin                     With up, restart: the vault passphrase from stdin";
 
 const LOGS: &str = "Usage: bifurc logs <service> [--errors] [--since 2m] [--grep x] [--last 50]
@@ -788,7 +797,7 @@ pub fn examples(group: &str) -> Option<&'static [&'static str]> {
             "bifurc capture list --status 4xx --last 5",
             "bifurc capture show #k3f9 --select .error",
             "bifurc capture list --host api.localhost --path /orders* --since 2m",
-            "bifurc capture show #k3f9 --req-body --headers",
+            "bifurc capture show #k3f9 --logs --context 5",
             r#"bifurc capture diff #k3f9 --mock "Get order" --shape"#,
         ],
         "contract" => &[
@@ -852,6 +861,7 @@ pub fn examples(group: &str) -> Option<&'static [&'static str]> {
             "bifurc services up --all --wait --timeout 60s",
             "bifurc services ps",
             "bifurc services down api",
+            "bifurc services snippet express",
         ],
         "wait" => &[
             "bifurc wait http://api.localhost/health --timeout 30s",

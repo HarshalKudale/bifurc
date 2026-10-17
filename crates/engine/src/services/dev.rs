@@ -116,6 +116,58 @@ fn pump(
     })
 }
 
+/// Follow the file at `path` into the run's ring (stream `file`) until the run ends: from its end at the start,
+/// then the appends; a file that shrinks is read again from its start.
+fn tail(path: String, run: Shared) {
+    tokio::spawn(async move {
+        use tokio::io::{AsyncReadExt, AsyncSeekExt};
+        let mut pos = tokio::fs::metadata(&path).await.map_or(0, |m| m.len());
+        let mut partial = Vec::new();
+        loop {
+            let running = lock(&run).running;
+            let len = tokio::fs::metadata(&path).await.map_or(0, |m| m.len());
+            if len < pos {
+                (pos, partial) = (0, Vec::new());
+            }
+            if len > pos
+                && let Ok(mut file) = tokio::fs::File::open(&path).await
+                && file.seek(std::io::SeekFrom::Start(pos)).await.is_ok()
+            {
+                let mut chunk = Vec::new();
+                if let Ok(read) = file.take(len - pos).read_to_end(&mut chunk).await {
+                    pos += read as u64;
+                    partial.extend_from_slice(&chunk);
+                    while let Some(end) = partial.iter().position(|b| *b == b'\n') {
+                        let line: Vec<u8> = partial.drain(..=end).collect();
+                        push(&run, "file", String::from_utf8_lossy(&line).trim_end().to_string());
+                    }
+                }
+            }
+            if !running {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(200)).await;
+        }
+    });
+}
+
+/// The lines of `lines` to show for a search: `(index, is_match)`, ascending. A match has a needle
+/// (case-insensitive) and a timestamp inside `[since, until]`; `context` lines on each side come along.
+fn select(lines: &[Line], needles: &[String], context: usize, since: i64, until: i64) -> Vec<(usize, bool)> {
+    let hit = |l: &Line| {
+        let text = l.text.to_lowercase();
+        l.ts >= since && l.ts <= until && needles.iter().any(|n| text.contains(n))
+    };
+    let hits: Vec<usize> = (0..lines.len()).filter(|i| hit(&lines[*i])).collect();
+    let mut shown = Vec::new();
+    for i in 0..lines.len() {
+        if hits.iter().any(|h| h.abs_diff(i) <= context) {
+            shown.push((i, hits.binary_search(&i).is_ok()));
+        }
+    }
+    shown
+}
+
 async fn listening(port: u64) -> bool {
     let connect = tokio::net::TcpStream::connect(("127.0.0.1", port as u16));
     matches!(tokio::time::timeout(Duration::from_millis(300), connect).await, Ok(Ok(_)))
@@ -227,6 +279,9 @@ async fn start(params: &Value) -> Result<Value> {
     .flatten()
     .collect();
     lock(&RUNS).insert((str_of(params, "workspaceId").to_string(), str_of(params, "name").to_string()), run.clone());
+    if let Some(path) = def["logFile"].as_str().filter(|p| !p.is_empty()) {
+        tail(path.to_string(), run.clone());
+    }
     let watched = run.clone();
     tokio::spawn(async move {
         let waited = tokio::select! { status = child.wait() => Some(status), _ = stopped => None };
@@ -292,7 +347,7 @@ pub fn register(registry: &mut CommandRegistry) {
             return Err(EngineError::bad_request("A service needs a command."));
         }
         let mut def = json!({ "name": name, "cmd": str_of(&params, "cmd") });
-        for key in ["port", "cwd", "vault", "env"] {
+        for key in ["port", "cwd", "vault", "env", "logFile"] {
             if !params[key].is_null() {
                 def[key] = params[key].clone();
             }
@@ -345,6 +400,40 @@ pub fn register(registry: &mut CommandRegistry) {
             lines.drain(..lines.len().saturating_sub(last as usize));
         }
         Ok(json!({ "lines": lines }))
+    });
+
+    // shortcut: no index; the rings (5000 lines per service) are scanned per query, fine until they are much bigger.
+    registry.register("devservice.grep", |params, _| async move {
+        let ws = str_of(&params, "workspaceId").to_string();
+        let lower = |key: &str| -> Vec<String> {
+            params[key].as_array().into_iter().flatten().filter_map(Value::as_str).map(str::to_lowercase).collect()
+        };
+        let (needles, probes) = (lower("needles"), lower("probes"));
+        let context = params["context"].as_u64().unwrap_or(0) as usize;
+        let (since, until) = (params["sinceTs"].as_i64().unwrap_or(0), params["untilTs"].as_i64().unwrap_or(i64::MAX));
+        let named = params["name"].as_str().filter(|n| !n.is_empty());
+        if named.is_some() {
+            definition(&params)?;
+        }
+        let mut runs: Vec<(String, Shared)> = lock(&RUNS)
+            .iter()
+            .filter(|((w, n), _)| *w == ws && named.is_none_or(|name| name == n))
+            .map(|((_, n), run)| (n.clone(), run.clone()))
+            .collect();
+        runs.sort_by(|a, b| a.0.cmp(&b.0));
+        let (mut out, mut probed) = (Vec::new(), false);
+        for (service, run) in runs {
+            let lines: Vec<Line> = lock(&run).lines.iter().map(|l| Line { ts: l.ts, stream: l.stream, text: l.text.clone() }).collect();
+            probed |= lines.iter().any(|l| {
+                let text = l.text.to_lowercase();
+                probes.iter().any(|p| text.contains(p))
+            });
+            for (i, matched) in select(&lines, &needles, context, since, until) {
+                let l = &lines[i];
+                out.push(json!({ "service": service, "seq": i, "ts": l.ts, "stream": l.stream, "text": l.text, "match": matched }));
+            }
+        }
+        Ok(json!({ "lines": out, "traced": probed }))
     });
 
     registry.register("devservice.freePort", |params, _| async move {
@@ -401,5 +490,47 @@ mod tests {
         call(&registry, "devservice.remove", json!({"workspaceId": ws, "name": "api"})).await.unwrap();
         let listed = call(&registry, "devservice.list", json!({"workspaceId": ws})).await.unwrap();
         assert!(listed["services"].as_array().unwrap().is_empty());
+    }
+
+    fn lines(texts: &[(i64, &str)]) -> Vec<Line> {
+        texts.iter().map(|(ts, text)| Line { ts: *ts, stream: "stdout", text: text.to_string() }).collect()
+    }
+
+    #[test]
+    fn select_returns_matches_with_context_and_honours_the_window() {
+        let ring = lines(&[(1, "a"), (2, "b"), (3, "id=ABC"), (4, "c"), (5, "d"), (6, "e"), (7, "get /x"), (8, "f")]);
+        let id = vec!["abc".to_string()];
+        assert_eq!(select(&ring, &id, 0, 0, i64::MAX), [(2, true)]);
+        assert_eq!(select(&ring, &id, 1, 0, i64::MAX), [(1, false), (2, true), (3, false)]);
+        let path = vec!["/x".to_string()];
+        assert_eq!(select(&ring, &path, 0, 6, 9), [(6, true)]);
+        assert!(select(&ring, &path, 0, 0, 5).is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_log_file_is_followed_from_its_end_and_survives_truncation() {
+        let _root = scratch_data_root();
+        let file = std::env::temp_dir().join(format!("bifurc-tail-{}.log", now_ms()));
+        std::fs::write(&file, "old line\n").unwrap();
+        let run: Shared = Arc::new(Mutex::new(Run {
+            pid: 0,
+            started: 0,
+            ended: 0,
+            stopping: false,
+            running: true,
+            code: 0,
+            lines: VecDeque::new(),
+            stop: None,
+        }));
+        tail(file.display().to_string(), run.clone());
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        std::fs::write(&file, "old line\nnew line\n").unwrap();
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        std::fs::write(&file, "x\n").unwrap();
+        tokio::time::sleep(Duration::from_millis(500)).await;
+        lock(&run).running = false;
+        let seen: Vec<String> = lock(&run).lines.iter().map(|l| format!("{}:{}", l.stream, l.text)).collect();
+        assert_eq!(seen, ["file:new line", "file:x"]);
+        let _ = std::fs::remove_file(&file);
     }
 }
