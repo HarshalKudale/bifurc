@@ -7,6 +7,7 @@ pub const OVERVIEW: &str = "Usage: bifurc <group> <verb> [arguments] [options]
 
 Runs requests, mocks, flows and the proxies of a Bifurc workspace; starts an engine when none runs.
 
+  agent     init [--skill]                                 Teach an AI agent this CLI: a cheat sheet in AGENTS.md / CLAUDE.md
   curl      <curl arguments> [--save <name>]               A curl command through the engine, one summary line
   requests  list | show | send | create | update | delete  Saved requests of every type
   capture   list | show | watch | mock | request | clear    Traffic the proxies captured
@@ -41,6 +42,7 @@ and enable|disable or the verb that runs it (send, run) where that applies. An i
 by its name.
 
 Groups (bifurc <group> --help shows the arguments and options of each verb)
+  agent         init                                                  A cheat sheet of this CLI for AI agents, in the repo
   workspaces    list | show | create | update | use | sync | publish | import | delete
   env           list | show | use | create | set | unset | patch | duplicate | delete
   mappings      list | show | create | update | patch | enable | disable | duplicate | delete
@@ -105,6 +107,18 @@ Exit codes
   3 a named thing was not found    4 network error of what was sent (refused, DNS, timeout)
   5 the engine is not running and could not be started or reached
   6 needs a person: a sealed vault and no terminal to ask on; vault run exits with the program's own code";
+
+const AGENT: &str = "Usage: bifurc agent init [--dir <repo>] [--target agents|claude|both] [--skill]
+
+Teaches an AI agent this CLI in one read: a short cheat sheet, then the names in the workspace (environments,
+request folders, flows), written between <!-- bifurc:begin --> and <!-- bifurc:end -->. Run it again to refresh
+the block in place; the rest of the file is not touched.
+
+  init                 Write the block into the repo's AGENTS.md and/or CLAUDE.md
+  --dir <repo>         The repo (default: the current directory)
+  --target <files>     agents, claude or both. Default: the one that exists, both when both do, AGENTS.md when none
+  --skill              Also write .claude/skills/bifurc/SKILL.md (overwritten): the same sheet as a skill
+With --no-start and no engine running, the workspace names are left out.";
 
 const CURL: &str = "Usage: bifurc curl <curl arguments> [options]
 
@@ -539,6 +553,7 @@ pub fn group_usage(group: &str) -> Option<String> {
         "proxy" => PROXY,
         "settings" => SETTINGS,
         "tls" => TLS,
+        "agent" => AGENT,
         "curl" => CURL,
         "wait" => WAIT,
         "setup" => SETUP,
@@ -551,6 +566,11 @@ pub fn group_usage(group: &str) -> Option<String> {
 /// Copy-paste examples of the groups agents use most, one command per line.
 pub fn examples(group: &str) -> Option<&'static [&'static str]> {
     Some(match canonical_group(group) {
+        "agent" => &[
+            "bifurc agent init",
+            "bifurc agent init --target both --skill",
+            "bifurc agent init --dir ../api-repo --target claude",
+        ],
         "curl" => &[
             r#"bifurc curl -X POST {{baseUrl}}/users -d '{"email":"a@b.co"}' --save "Create user" --folder auth"#,
             "bifurc curl -s http://api.localhost/users/1 --select .email",
@@ -612,37 +632,46 @@ pub fn examples(group: &str) -> Option<&'static [&'static str]> {
 }
 
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
 
     fn words(text: &str) -> Vec<&str> {
         text.split(|c: char| !c.is_alphanumeric() && c != '-').collect()
     }
 
+    /// A `bifurc …` command line parses, names a verb its group's help has, and only flags that help names.
+    pub(crate) fn check_command(line: &str) {
+        let argv = crate::curl::shell_words(line);
+        assert_eq!(argv[0], "bifurc", "{line}");
+        let group = argv[1].as_str();
+        let Some(help) = group_usage(group) else { return assert_eq!(group, "status", "{line}") };
+        let parsed = crate::args::parse_args(&argv[1..]).unwrap_or_else(|e| panic!("{line}: {e}"));
+        let verb = parsed.positional(1).unwrap_or_default();
+        assert!(group == "curl" || group == "wait" || help.contains(verb), "{line}: verb {verb}");
+        for flag in parsed.names().into_iter().filter(|f| !["json", "help"].contains(f)) {
+            let aliased = ["header", "data", "method"].contains(&flag);
+            assert!(aliased || help.contains(&format!("--{flag}")), "{line}: --{flag}");
+        }
+    }
+
     #[test]
     fn the_short_overview_is_at_most_30_lines_and_names_the_commands_agents_use() {
         assert!(OVERVIEW.lines().count() <= 30, "{} lines", OVERVIEW.lines().count());
-        for group in ["curl", "requests", "capture", "mocks", "flows", "runner", "env", "cookies", "wait", "status"] {
+        for group in
+            ["agent", "curl", "requests", "capture", "mocks", "flows", "runner", "env", "cookies", "wait", "status"]
+        {
             assert!(words(OVERVIEW).contains(&group), "{group}");
         }
     }
 
     #[test]
     fn every_example_is_a_known_group_and_verb_with_flags_its_help_names() {
-        for group in ["curl", "requests", "capture", "mocks", "flows", "runner", "env", "cookies", "wait"] {
-            let help = group_usage(group).unwrap();
+        for group in ["agent", "curl", "requests", "capture", "mocks", "flows", "runner", "env", "cookies", "wait"] {
             let list = examples(group).unwrap_or_else(|| panic!("{group} has no examples"));
             assert!((3..=5).contains(&list.len()), "{group}");
             for line in list {
-                let argv = crate::curl::shell_words(line);
-                assert_eq!((argv[0].as_str(), argv[1].as_str()), ("bifurc", group), "{line}");
-                let parsed = crate::args::parse_args(&argv[1..]).unwrap_or_else(|e| panic!("{line}: {e}"));
-                let verb = parsed.positional(1).unwrap_or_default();
-                assert!(group == "curl" || group == "wait" || help.contains(verb), "{line}: verb {verb}");
-                for flag in parsed.names().into_iter().filter(|f| !["json", "help"].contains(f)) {
-                    let aliased = ["header", "data", "method"].contains(&flag);
-                    assert!(aliased || help.contains(&format!("--{flag}")), "{line}: --{flag}");
-                }
+                assert_eq!(crate::curl::shell_words(line)[1], group, "{line}");
+                check_command(line);
             }
         }
         assert_eq!(examples("status"), None);
