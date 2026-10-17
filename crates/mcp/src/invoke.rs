@@ -430,6 +430,9 @@ mod tests {
                 ),
             ),
             ("mocks_create", with(json!({"curl": "curl http://x"}))),
+            ("mocks_scenario", with(json!({"mock": "m1", "scenario": "slow", "delay": 500}))),
+            ("mocks_status", all.clone()),
+            ("mocks_hits", with(json!({"mock": "m1", "last": 3}))),
             (
                 "mocks_update",
                 with(

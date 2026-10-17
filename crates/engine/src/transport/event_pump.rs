@@ -37,6 +37,10 @@ pub fn to_log_entry_event(payload: &Value) -> Value {
     }
     if let Some(target) = e.get("target").filter(|v| v.is_string() || v.is_null()) {
         out.insert("target".into(), target.clone());
+        // A mock's answer is logged with target `mock:<id>`.
+        if let Some(id) = target.as_str().and_then(|t| t.strip_prefix("mock:")) {
+            out.insert("mockId".into(), json!(id));
+        }
     }
     if let Some(headers) = e.get("resHeaders").and_then(Value::as_object) {
         let content_type =
