@@ -244,6 +244,26 @@
   },
   "invalid": {}
  },
+ "contract.listSnapshots": {
+  "valid": {
+   "workspaceId": "ws1"
+  },
+  "invalid": {}
+ },
+ "contract.saveSnapshots": {
+  "valid": {
+   "workspaceId": "ws1",
+   "snapshots": [
+    {
+     "requestId": "r1",
+     "status": 200
+    }
+   ]
+  },
+  "invalid": {
+   "workspaceId": "ws1"
+  }
+ },
  "cookies.clear": {
   "valid": {
    "workspaceId": "x",

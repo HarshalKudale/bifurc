@@ -260,6 +260,72 @@ pub fn diff(left: &Side, right: &Side, values: bool) -> Vec<Line> {
     out
 }
 
+/// The two merged into one when they can be one shape: objects take the union of their keys, equal scalars stay,
+/// arrays pool their elements. `None` when a key has two different types (`null` and a number, say).
+fn join(a: &Value, b: &Value) -> Option<Value> {
+    match (a, b) {
+        (Value::Object(x), Value::Object(y)) => {
+            let mut out = x.clone();
+            for (key, value) in y {
+                let joined = match out.get(key) {
+                    Some(have) => join(have, value)?,
+                    None => value.clone(),
+                };
+                out.insert(key.clone(), joined);
+            }
+            Some(Value::Object(out))
+        }
+        (Value::Array(x), Value::Array(y)) => Some(Value::Array(pooled(x.iter().chain(y).cloned()))),
+        (x, y) if kind(x) == kind(y) && !x.is_object() && !x.is_array() => Some(x.clone()),
+        _ => None,
+    }
+}
+
+fn pooled(items: impl Iterator<Item = Value>) -> Vec<Value> {
+    let mut out: Vec<Value> = Vec::new();
+    for item in items {
+        match out.iter_mut().find_map(|have| join(have, &item).map(|joined| (have, joined))) {
+            Some((have, joined)) => *have = joined,
+            None => out.push(item),
+        }
+    }
+    out
+}
+
+/// The shape of a JSON value with every real value gone: strings `""`, numbers `0`, booleans `false`, `null`
+/// kept, objects keep their keys, an array holds one merged element (more only when elements of the same key
+/// have different types). Compared in shape mode it equals the value it came from.
+pub fn skeleton(value: &Value) -> Value {
+    match value {
+        Value::Null => Value::Null,
+        Value::Bool(_) => json!(false),
+        Value::Number(_) => json!(0),
+        Value::String(_) => json!(""),
+        Value::Object(map) => Value::Object(map.iter().map(|(k, v)| (k.clone(), skeleton(v))).collect()),
+        Value::Array(items) => Value::Array(pooled(items.iter().map(skeleton))),
+    }
+}
+
+/// `mock` rewritten to the shape of `real`: a key both have with the same type keeps the mock's value (objects
+/// recurse; arrays merge each mock element against the first real one, and a mock `[]` becomes the real array);
+/// every other key takes the real value, and keys only the mock has are dropped.
+pub fn merge(mock: &Value, real: &Value) -> Value {
+    match (mock, real) {
+        (Value::Object(m), Value::Object(r)) => Value::Object(
+            r.iter()
+                .map(|(key, value)| (key.clone(), m.get(key).map_or_else(|| value.clone(), |have| merge(have, value))))
+                .collect(),
+        ),
+        (Value::Array(m), Value::Array(r)) if m.is_empty() => Value::Array(r.clone()),
+        (Value::Array(m), Value::Array(r)) => match r.first() {
+            Some(first) => Value::Array(m.iter().map(|item| merge(item, first)).collect()),
+            None => mock.clone(),
+        },
+        (have, _) if kind(have) == kind(real) => have.clone(),
+        _ => real.clone(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -379,5 +445,42 @@ mod tests {
             line.to_json(),
             json!({"kind": "~", "path": ".a", "left": "number", "right": "string", "text": "~ .a number → string"})
         );
+    }
+
+    #[test]
+    fn a_skeleton_keeps_types_and_no_values() {
+        let real = json!({"id": 7, "name": "secret", "ok": true, "n": null, "tags": ["a", "b"], "items": [{"id": 1}, {"x": "t", "id": 2}], "none": []});
+        assert_eq!(
+            skeleton(&real),
+            json!({"id": 0, "name": "", "ok": false, "n": null, "tags": [""], "items": [{"id": 0, "x": ""}], "none": []})
+        );
+        assert!(!skeleton(&real).to_string().contains("secret"));
+    }
+
+    #[test]
+    fn a_skeleton_compares_like_the_real_body() {
+        for real in [
+            json!({"items": [{"id": 1}, {"x": "t"}, {"a": null}, {"a": 3}], "m": [[1], ["s"]], "z": []}),
+            json!([{"a": [1, "x"]}, {"a": []}]),
+            json!({"deep": {"list": [{"k": [{"v": null}, {"v": true}]}]}}),
+            json!("text"),
+        ] {
+            let (a, b) = (side(200, real.clone()), side(200, skeleton(&real)));
+            assert!(diff(&a, &b, false).is_empty(), "{real}");
+            assert!(diff(&b, &a, false).is_empty(), "{real}");
+        }
+    }
+
+    #[test]
+    fn merging_keeps_mock_values_where_the_shape_stays() {
+        let mock = json!({"id": 5, "name": "Ann", "gone": 1, "n": 1, "o": {"a": "keep"}, "items": [{"id": 9, "old": 1}], "empty": []});
+        let real = json!({"id": 1, "name": "Bob", "n": "str", "o": {"a": "x", "b": true}, "items": [{"id": 2, "new": "v"}], "empty": [{"q": 1}], "added": null});
+        assert_eq!(
+            merge(&mock, &real),
+            json!({"id": 5, "name": "Ann", "n": "str", "o": {"a": "keep", "b": true}, "items": [{"id": 9, "new": "v"}], "empty": [{"q": 1}], "added": null})
+        );
+        assert_eq!(merge(&json!([1, 2]), &json!(["a"])), json!(["a", "a"]));
+        assert_eq!(merge(&json!({"a": 1}), &json!([1])), json!([1]));
+        assert_eq!(merge(&json!({"a": [1]}), &json!({"a": []})), json!({"a": [1]}));
     }
 }
