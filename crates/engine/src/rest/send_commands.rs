@@ -1,6 +1,9 @@
 //! `request.send`: the request pipeline on the wire, for an inline request or a saved one.
 
 use base64::{Engine, engine::general_purpose::STANDARD};
+use std::{collections::HashSet, sync::LazyLock};
+
+use parking_lot::Mutex;
 use serde_json::{Value, json};
 
 use super::{
@@ -8,9 +11,9 @@ use super::{
     request_body::encode_request_body,
 };
 use crate::{
-    env::{send_scoped, with_overrides},
-    kernel::CommandRegistry,
-    protocol::EngineError,
+    env::{VariableScope, send_scoped, with_overrides, with_variable_scope},
+    kernel::{CommandContext, CommandRegistry},
+    protocol::{EngineError, Result},
     utils::json::{array_of, is_truthy, opt_str, str_of},
     workspace::{config::load_entity, response_history},
 };
@@ -40,104 +43,171 @@ fn scripts_of(source: &Value, pre: &str, post: &str, test: &str) -> PipelineScri
     PipelineScripts { pre: get(pre), post: get(post), test: get(test) }
 }
 
+/// One pass of the pipeline: the send, its scripts, its history entry.
+async fn send_once(params: &Value, ctx: &CommandContext) -> Result<Value> {
+    let ws_id = str_of(params, "workspaceId").to_string();
+    let (request, scripts) = if let Some(id) = opt_str(params, "id") {
+        let entity = load_entity(&ws_id, "requests", id).ok_or_else(|| {
+            EngineError::not_found(format!("No saved requests entity \"{id}\" in workspace \"{ws_id}\"."))
+                .keyed("request.saved_not_found", json!({ "kind": "requests", "id": id, "workspace": ws_id }))
+        })?;
+        let mut scripts = scripts_of(&entity, "preScript", "postScript", "testScript");
+        for skipped in array_of(params, "skipScripts") {
+            match skipped.as_str() {
+                Some("pre") => scripts.pre = None,
+                Some("post") => scripts.post = None,
+                Some("test") => scripts.test = None,
+                _ => {}
+            }
+        }
+        (request_from_entity(&with_overrides(entity, params)), scripts)
+    } else {
+        let inline = params.get("request").cloned().unwrap_or(Value::Null);
+        let scripts = scripts_of(params.get("scripts").unwrap_or(&Value::Null), "pre", "post", "test");
+        (inline, scripts)
+    };
+
+    let jar = ws_id.clone();
+    // `jar: false` (`bifurc curl --no-jar`) sends without the workspace's cookie jar.
+    let keep_jar = params.get("jar").and_then(Value::as_bool) != Some(false);
+    let stream_id = params.get("streamId").filter(|id| id.is_string()).cloned();
+    // Resolved by `request.replay` against the app's defaults; the pipeline does not need them.
+    let settings = request.get("settings").filter(|v| v.is_object()).cloned();
+    let result = run_request_pipeline(&ws_id, &request, &scripts, |resolved| async move {
+        let encoded = encode_request_body(&resolved);
+        let mut replay = json!({
+            "method": resolved["method"],
+            "url": resolved["url"],
+            "headers": encoded.headers,
+            "body": encoded.body_base64,
+        });
+        if let Some(id) = stream_id {
+            replay["streamId"] = id;
+        }
+        if let Some(settings) = settings {
+            replay["settings"] = settings;
+        }
+        let sent = ctx.registry.invoke("request.replay", replay, ctx.clone());
+        if keep_jar { crate::cookies::scoped(&jar, sent).await } else { sent.await }
+    })
+    .await;
+    // A send stopped by `request.cancel` is an outcome the caller can tell apart from a failure.
+    let result = match result {
+        Err(error) if error.details.as_ref().is_some_and(|d| d["cancelled"] == true) => {
+            let mut cancelled = json!({ "ok": false, "cancelled": true });
+            crate::runtime::set_failure(&mut cancelled, &error);
+            return Ok(cancelled);
+        }
+        result => result,
+    };
+    if let Some(id) = response_history::entity_id(params) {
+        let sent = result.as_ref().ok().map_or(&request, |done| &done["request"]);
+        let (method, url) = (str_of(sent, "method").to_string(), str_of(sent, "url").to_string());
+        let capture = match &result {
+            Ok(done) => response_history::Capture {
+                status: done["response"]["status"].as_i64().unwrap_or(0),
+                status_text: None,
+                headers: done["response"]["headers"].clone(),
+                // `request.send` returns the bytes the upstream sent, base64-encoded.
+                body: STANDARD.decode(str_of(&done["response"], "body").trim()).unwrap_or_default(),
+                duration_ms: done["durationMs"].as_u64().unwrap_or(0),
+                error: None,
+                error_key: None,
+                method,
+                url,
+            },
+            Err(error) => response_history::failed(error, method, url),
+        };
+        response_history::record(&ws_id, id, capture);
+    }
+    let result = result?;
+
+    let mut out = json!({
+        "status": result["response"]["status"],
+        "headers": result["response"]["headers"],
+        "body": result["response"]["body"],
+        "durationMs": result["durationMs"],
+        "request": result["request"],
+        "tests": result["tests"],
+        "testLogs": result["testLogs"],
+    });
+    for key in ["preScriptError", "postScriptError"] {
+        if let Some(error) = result.get(key) {
+            out[key] = error.clone();
+        }
+    }
+    Ok(out)
+}
+
+/// Logins in progress, by workspace and session: a login that itself meets a 401 does not start another.
+static LOGGING_IN: LazyLock<Mutex<HashSet<String>>> = LazyLock::new(Default::default);
+
+struct LoginGuard(String);
+
+impl LoginGuard {
+    fn take(ws_id: &str) -> Option<Self> {
+        let key = format!("{ws_id}/{}", crate::env::session::named().unwrap_or_default());
+        LOGGING_IN.lock().insert(key.clone()).then_some(LoginGuard(key))
+    }
+}
+
+impl Drop for LoginGuard {
+    fn drop(&mut self) {
+        LOGGING_IN.lock().remove(&self.0);
+    }
+}
+
+/// The environment's login, run once. `Err` is why it failed.
+async fn run_login(ws_id: &str, login: &Value, ctx: &CommandContext) -> std::result::Result<(), String> {
+    let id = str_of(login, "id");
+    if str_of(login, "kind") == "flow" {
+        return crate::flows::run_to_end(ctx, &json!({ "workspaceId": ws_id, "id": id })).await;
+    }
+    let sent = ctx.registry.invoke("request.send", json!({ "workspaceId": ws_id, "id": id }), ctx.clone()).await;
+    let done = sent.map_err(|error| error.message)?;
+    match done["status"].as_i64() {
+        Some(200..=299) => Ok(()),
+        Some(status) => Err(format!("the login request answered {status}")),
+        None => Err(done["error"].as_str().unwrap_or("the login request did not complete").to_string()),
+    }
+}
+
+/// A 401 under an environment with `auth.retryOn401`: run its login once, then send again once.
+async fn reauthenticate(params: &Value, ctx: &CommandContext, first: Value) -> Result<Value> {
+    if first["status"] != 401 {
+        return Ok(first);
+    }
+    let ws_id = str_of(params, "workspaceId");
+    let Some(auth) = crate::env::selected_environment(ws_id).and_then(|env| env.get("auth").cloned()) else {
+        return Ok(first);
+    };
+    let login = &auth["login"];
+    // The login request itself is never retried through itself.
+    if !is_truthy(&auth["retryOn401"]) || !login.is_object() || opt_str(params, "id") == opt_str(login, "id") {
+        return Ok(first);
+    }
+    let Some(_guard) = LoginGuard::take(ws_id) else { return Ok(first) };
+    if let Err(error) = run_login(ws_id, login, ctx).await {
+        let mut out = first;
+        out["reauthentication"] = json!({ "ok": false, "error": error });
+        return Ok(out);
+    }
+    drop(_guard);
+    // Variables the login set in a named session are collected, not written: lay them over the retry.
+    let scope = VariableScope { variables: crate::env::collected_variables(), ..Default::default() };
+    let mut out = with_variable_scope(scope, send_once(params, ctx)).await?;
+    out["reauthenticated"] = json!(true);
+    Ok(out)
+}
+
 pub fn register(registry: &mut CommandRegistry) {
     registry.register("request.send", |params: Value, ctx| async move {
         // `freshJar` (`--fresh-session`): the send has a jar of its own, empty and dropped with it.
         let fresh = params.get("freshJar").and_then(Value::as_bool) == Some(true);
         let scope_params = params.clone();
         let work = send_scoped(&scope_params, async move {
-            let ws_id = str_of(&params, "workspaceId").to_string();
-            let (request, scripts) = if let Some(id) = opt_str(&params, "id") {
-                let entity = load_entity(&ws_id, "requests", id).ok_or_else(|| {
-                    EngineError::not_found(format!("No saved requests entity \"{id}\" in workspace \"{ws_id}\"."))
-                        .keyed("request.saved_not_found", json!({ "kind": "requests", "id": id, "workspace": ws_id }))
-                })?;
-                let mut scripts = scripts_of(&entity, "preScript", "postScript", "testScript");
-                for skipped in array_of(&params, "skipScripts") {
-                    match skipped.as_str() {
-                        Some("pre") => scripts.pre = None,
-                        Some("post") => scripts.post = None,
-                        Some("test") => scripts.test = None,
-                        _ => {}
-                    }
-                }
-                (request_from_entity(&with_overrides(entity, &params)), scripts)
-            } else {
-                let inline = params.get("request").cloned().unwrap_or(Value::Null);
-                let scripts = scripts_of(params.get("scripts").unwrap_or(&Value::Null), "pre", "post", "test");
-                (inline, scripts)
-            };
-
-            let jar = ws_id.clone();
-            // `jar: false` (`bifurc curl --no-jar`) sends without the workspace's cookie jar.
-            let keep_jar = params.get("jar").and_then(Value::as_bool) != Some(false);
-            let stream_id = params.get("streamId").filter(|id| id.is_string()).cloned();
-            // Resolved by `request.replay` against the app's defaults; the pipeline does not need them.
-            let settings = request.get("settings").filter(|v| v.is_object()).cloned();
-            let result = run_request_pipeline(&ws_id, &request, &scripts, |resolved| async move {
-                let encoded = encode_request_body(&resolved);
-                let mut replay = json!({
-                    "method": resolved["method"],
-                    "url": resolved["url"],
-                    "headers": encoded.headers,
-                    "body": encoded.body_base64,
-                });
-                if let Some(id) = stream_id {
-                    replay["streamId"] = id;
-                }
-                if let Some(settings) = settings {
-                    replay["settings"] = settings;
-                }
-                let sent = ctx.registry.invoke("request.replay", replay, ctx.clone());
-                if keep_jar { crate::cookies::scoped(&jar, sent).await } else { sent.await }
-            })
-            .await;
-            // A send stopped by `request.cancel` is an outcome the caller can tell apart from a failure.
-            let result = match result {
-                Err(error) if error.details.as_ref().is_some_and(|d| d["cancelled"] == true) => {
-                    let mut cancelled = json!({ "ok": false, "cancelled": true });
-                    crate::runtime::set_failure(&mut cancelled, &error);
-                    return Ok(cancelled);
-                }
-                result => result,
-            };
-            if let Some(id) = response_history::entity_id(&params) {
-                let sent = result.as_ref().ok().map_or(&request, |done| &done["request"]);
-                let (method, url) = (str_of(sent, "method").to_string(), str_of(sent, "url").to_string());
-                let capture = match &result {
-                    Ok(done) => response_history::Capture {
-                        status: done["response"]["status"].as_i64().unwrap_or(0),
-                        status_text: None,
-                        headers: done["response"]["headers"].clone(),
-                        // `request.send` returns the bytes the upstream sent, base64-encoded.
-                        body: STANDARD.decode(str_of(&done["response"], "body").trim()).unwrap_or_default(),
-                        duration_ms: done["durationMs"].as_u64().unwrap_or(0),
-                        error: None,
-                        error_key: None,
-                        method,
-                        url,
-                    },
-                    Err(error) => response_history::failed(error, method, url),
-                };
-                response_history::record(&ws_id, id, capture);
-            }
-            let result = result?;
-
-            let mut out = json!({
-                "status": result["response"]["status"],
-                "headers": result["response"]["headers"],
-                "body": result["response"]["body"],
-                "durationMs": result["durationMs"],
-                "request": result["request"],
-                "tests": result["tests"],
-                "testLogs": result["testLogs"],
-            });
-            for key in ["preScriptError", "postScriptError"] {
-                if let Some(error) = result.get(key) {
-                    out[key] = error.clone();
-                }
-            }
-            Ok(out)
+            let first = send_once(&params, &ctx).await?;
+            reauthenticate(&params, &ctx, first).await
         });
         if fresh { crate::cookies::private(&crate::utils::id::generate_id(), work).await } else { work.await }
     });
@@ -450,5 +520,83 @@ mod tests {
         }
         assert_eq!(sending.await.unwrap().unwrap()["cancelled"], true);
         assert!(history("r2").is_empty());
+    }
+
+    /// An environment `e1` with `base` (the test server) and `code`, whose login is the saved request `login`.
+    fn login_setup(root: &crate::testing::ScratchRoot, base: &str, login_url: &str, cookie: &str, auth: Value) {
+        crate::workspace::fs::write_flat_entity(
+            root.ws_id,
+            "environments",
+            "e1",
+            &json!({ "id": "e1", "name": "e1", "createdAt": 0, "workspaceId": root.ws_id, "auth": auth,
+                     "variables": [{ "id": "b", "key": "base", "value": base }, { "id": "c", "key": "code", "value": "401" }] }),
+        )
+        .unwrap();
+        for (id, url, post) in [
+            ("login", login_url, "bc.environment.set('code', '200');"),
+            ("me", &format!("{{{{base}}}}/need-cookie/{cookie}=ok"), ""),
+            ("coded", "{{base}}/status/{{code}}", ""),
+        ] {
+            write_entity(
+                root.ws_id,
+                "requests",
+                id,
+                &json!({ "id": id, "name": id, "method": "GET", "url": url.replace("{{base}}", base), "headers": {}, "body": "",
+                         "postScript": post }),
+                None,
+            )
+            .unwrap();
+        }
+    }
+
+    fn auth(retry: bool) -> Value {
+        json!({ "login": { "kind": "request", "id": "login" }, "retryOn401": retry })
+    }
+
+    #[tokio::test]
+    async fn a_401_runs_the_environments_login_once_and_sends_again() {
+        let root = scratch_data_root();
+        let base = test_server::start(HashMap::new()).await;
+        login_setup(&root, &base, &format!("{base}/set-cookie/sidA=ok"), "sidA", auth(true));
+        let send = |id: &'static str| call("request.send", json!({ "workspaceId": "ws1", "id": id }));
+        // The jar of its own, so that cookies of this test reach no other.
+        crate::cookies::private("login-test", async {
+            let first = send("me").await.unwrap();
+            assert_eq!((first["status"].clone(), first["reauthenticated"].clone()), (json!(200), json!(true)));
+            // The cookie is in the jar now: no 401, no login.
+            assert!(send("me").await.unwrap().get("reauthenticated").is_none());
+            // A variable the login's script set is used by the retry (`code` 401 -> 200).
+            login_setup(&root, &base, &format!("{base}/set-cookie/sidA=ok"), "sidA", auth(true));
+            let coded = send("coded").await.unwrap();
+            assert_eq!((coded["status"].clone(), coded["reauthenticated"].clone()), (json!(200), json!(true)));
+        })
+        .await;
+    }
+
+    #[tokio::test]
+    async fn a_failed_login_returns_the_original_401_and_says_why() {
+        let root = scratch_data_root();
+        let base = test_server::start(HashMap::new()).await;
+        login_setup(&root, &base, &format!("{base}/status/500"), "sidB", auth(true));
+        let out = call("request.send", json!({ "workspaceId": "ws1", "id": "me" })).await.unwrap();
+        assert_eq!(out["status"], 401);
+        assert!(out.get("reauthenticated").is_none());
+        assert_eq!(out["reauthentication"]["ok"], false);
+        assert!(out["reauthentication"]["error"].as_str().unwrap().contains("500"));
+    }
+
+    #[tokio::test]
+    async fn no_retry_when_it_is_off_and_no_loop_when_the_login_itself_is_refused() {
+        let root = scratch_data_root();
+        let base = test_server::start(HashMap::new()).await;
+        login_setup(&root, &base, &format!("{base}/set-cookie/sidC=ok"), "sidC", auth(false));
+        let off = call("request.send", json!({ "workspaceId": "ws1", "id": "me" })).await.unwrap();
+        assert!(off["status"] == 401 && off.get("reauthenticated").is_none() && off.get("reauthentication").is_none());
+
+        login_setup(&root, &base, &format!("{base}/status/401"), "sidC", auth(true));
+        let login = call("request.send", json!({ "workspaceId": "ws1", "id": "login" })).await.unwrap();
+        assert!(login["status"] == 401 && login.get("reauthentication").is_none());
+        let me = call("request.send", json!({ "workspaceId": "ws1", "id": "me" })).await.unwrap();
+        assert_eq!((me["status"].clone(), me["reauthentication"]["ok"].clone()), (json!(401), json!(false)));
     }
 }

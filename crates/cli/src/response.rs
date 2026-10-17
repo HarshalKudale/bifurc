@@ -38,6 +38,10 @@ pub struct Response {
     pub tests: Vec<Test>,
     /// A script error or a failed call: why the command fails whatever the status.
     pub failure: Option<String>,
+    /// The environment's login ran after a 401 and the request was sent again.
+    pub reauthenticated: bool,
+    /// The login was tried and failed: why (the response is the original 401).
+    pub reauth_error: Option<String>,
 }
 
 const GRPC_CODES: [&str; 17] = [
@@ -115,6 +119,8 @@ impl Response {
             content_type: content_type.unwrap_or_default(),
             tests: Vec::new(),
             failure: None,
+            reauthenticated: false,
+            reauth_error: None,
         }
     }
 
@@ -132,6 +138,11 @@ impl Response {
                 error: test.get("error").and_then(Value::as_str).filter(|e| !e.is_empty()).map(str::to_string),
             })
             .collect();
+        response.reauthenticated = result.get("reauthenticated").is_some_and(truthy);
+        response.reauth_error = result
+            .get("reauthentication")
+            .filter(|r| r.get("ok").is_some_and(|ok| !truthy(ok)))
+            .map(|r| js_template(r.get("error")));
         response.failure = [("preScriptError", "pre-script"), ("postScriptError", "post-script")].into_iter().find_map(
             |(key, label)| {
                 let message = result.get(key).and_then(Value::as_str).filter(|m| !m.is_empty())?;
@@ -193,6 +204,8 @@ impl Response {
             tests: Vec::new(),
             failure: (!ok)
                 .then(|| said("error").or(said("statusMessage")).unwrap_or("the gRPC call failed").to_string()),
+            reauthenticated: false,
+            reauth_error: None,
         }
     }
 }
@@ -325,6 +338,7 @@ pub fn present(ctx: &mut Context, response: &Response) -> Result<String> {
         .failure
         .clone()
         .or(failed_test)
+        .or_else(|| response.reauth_error.as_ref().map(|error| format!("re-authentication failed: {error}")))
         .or_else(|| checks.iter().find_map(|(_, result)| result.as_ref().err().cloned()))
         .or(extract_failure);
 
@@ -378,6 +392,12 @@ pub fn present(ctx: &mut Context, response: &Response) -> Result<String> {
             "body": shown.map(|(shown, _)| shown), "bodyTruncated": shown.is_some_and(|(_, left)| left > 0),
             "error": why,
         });
+        if response.reauthenticated {
+            out["reauthenticated"] = json!(true);
+        }
+        if let Some(error) = &response.reauth_error {
+            out["reauthentication"] = json!({ "ok": false, "error": error });
+        }
         if let Some(headers) = headers {
             out["headers"] = Value::Object(headers.into_iter().map(|(k, v)| (k.to_string(), json!(v))).collect());
         }
@@ -424,6 +444,9 @@ pub fn present(ctx: &mut Context, response: &Response) -> Result<String> {
                 let passed = response.tests.iter().filter(|test| test.passed).count();
                 let mark = if passed == response.tests.len() { "✓" } else { "✗" };
                 parts.push(format!("tests {passed}/{} {mark}", response.tests.len()));
+            }
+            if response.reauthenticated {
+                parts.push("↻ re-authenticated".to_string());
             }
             lines.push(parts.join(" · "));
             if let Some(why) = &why {

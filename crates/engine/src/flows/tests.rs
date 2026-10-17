@@ -1364,3 +1364,27 @@ async fn problems_are_returned_and_nothing_is_saved() {
     let (answer, _) = compile("name: [", false).await;
     assert_eq!(answer["problems"][0]["kind"], "usage");
 }
+
+#[tokio::test]
+async fn an_environments_login_flow_runs_on_a_401_in_the_same_jar() {
+    let store = store();
+    let base = test_server::start(HashMap::new()).await;
+    store.request("flow-login", format!("{base}/set-cookie/sidF=ok"), json!({}));
+    store.request("me", format!("{base}/need-cookie/sidF=ok"), json!({}));
+    store.flow(
+        "loginflow",
+        json!({ "nodes": [start(), request("l", "flow-login", json!({}))], "edges": [edge("start", "out", "l")] }),
+    );
+    write_flat_entity(
+        WS,
+        "environments",
+        "e1",
+        &json!({ "id": "e1", "name": "e1", "createdAt": 0, "workspaceId": WS, "variables": [],
+                 "auth": { "login": { "kind": "flow", "id": "loginflow" }, "retryOn401": true } }),
+    )
+    .unwrap();
+    let sent =
+        crate::cookies::private("login-flow-test", call("request.send", json!({ "workspaceId": WS, "id": "me" })))
+            .await;
+    assert_eq!((sent["status"].clone(), sent["reauthenticated"].clone()), (json!(200), json!(true)), "{sent}");
+}

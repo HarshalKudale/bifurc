@@ -789,6 +789,22 @@ pub fn start(ctx: &CommandContext, params: &Value) -> Result<Value> {
     Ok(json!({ "ok": true, "runId": run_id }))
 }
 
+/// Run a saved flow to its end in the calling task (so in its session and jar): `Ok` when it succeeded,
+/// else why not. Used by an environment's login; the run is not kept for `flow.status`.
+pub async fn run_to_end(ctx: &CommandContext, params: &Value) -> std::result::Result<(), String> {
+    let plan = match plan(params).map_err(|e| e.message)? {
+        Ok(plan) => plan,
+        Err(refusal) => return Err(str_of(&refusal, "error").to_string()),
+    };
+    let run = plan.run(ctx, None);
+    drive(run.clone(), plan.timeout).await;
+    let report = run.snapshot();
+    match str_of(&report, "status") {
+        "succeeded" => Ok(()),
+        _ => Err(report["error"].as_str().unwrap_or("the login flow did not succeed").to_string()),
+    }
+}
+
 /// What a run is made from: the saved flow, checked, and what the caller asked of the run.
 pub(super) struct Plan {
     pub ws_id: String,
