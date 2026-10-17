@@ -468,6 +468,17 @@
    "workspaceId": "ws1"
   }
  },
+ "flow.fromSteps": {
+  "valid": {
+   "workspaceId": "ws1",
+   "text": "name: F\nsteps: []",
+   "name": "F",
+   "folderId": "d1"
+  },
+  "invalid": {
+   "workspaceId": "ws1"
+  }
+ },
  "flow.loadtest.cancel": {
   "valid": {
    "workspaceId": "ws1",

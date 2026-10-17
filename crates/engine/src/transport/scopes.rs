@@ -150,6 +150,7 @@ const SCOPE_BY_COMMAND: &[(&str, Scope)] = &[
     ("grpc.send", Scope::Execute),
     ("flow.validate", Scope::Read),
     ("flow.status", Scope::Read),
+    ("flow.fromSteps", Scope::Write),
     ("flow.run", Scope::Execute),
     ("flow.cancel", Scope::Execute),
     ("flow.loadtest.start", Scope::Execute),
