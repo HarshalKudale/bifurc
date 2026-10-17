@@ -144,9 +144,10 @@ impl Expect {
         format!("expect {}", self.text)
     }
 
-    /// The check as a validate rule, when a rule can say it: no `| length`, no `| keys`.
+    /// The check as a validate rule, when a rule can say it: no `| length`, no `| keys`, no null (as in jq, null
+    /// and missing are the same, which no single rule says).
     fn rule(&self) -> Option<Value> {
-        if self.pipe.is_some() {
+        if self.pipe.is_some() || self.wanted.is_null() {
             return None;
         }
         let mut path = "input.status".to_string();
@@ -159,22 +160,16 @@ impl Expect {
                 }
             }
         }
-        let (op, value) = match (self.cmp, &self.wanted) {
-            (Cmp::Eq, Value::Null) => ("notExists", String::new()),
-            (Cmp::Ne, Value::Null) => ("exists", String::new()),
-            (cmp, wanted) => {
-                let op = match cmp {
-                    Cmp::Eq => "equals",
-                    Cmp::Ne => "notEquals",
-                    Cmp::Lt => "lessThan",
-                    Cmp::Le => "lessOrEqual",
-                    Cmp::Gt => "greaterThan",
-                    Cmp::Ge => "greaterOrEqual",
-                    Cmp::Contains => "contains",
-                };
-                (op, wanted.as_str().map_or_else(|| wanted.to_string(), str::to_string))
-            }
+        let op = match self.cmp {
+            Cmp::Eq => "equals",
+            Cmp::Ne => "notEquals",
+            Cmp::Lt => "lessThan",
+            Cmp::Le => "lessOrEqual",
+            Cmp::Gt => "greaterThan",
+            Cmp::Ge => "greaterOrEqual",
+            Cmp::Contains => "contains",
         };
+        let value = self.wanted.as_str().map_or_else(|| self.wanted.to_string(), str::to_string);
         Some(json!({ "path": path, "op": op, "value": value }))
     }
 
@@ -187,24 +182,28 @@ impl Expect {
             Some(Pipe::Keys) => "Object.keys(v)",
             None => "v",
         };
-        let holds = match self.cmp {
-            Cmp::Eq => "same(got, want)",
-            Cmp::Ne => "!same(got, want)",
-            Cmp::Lt => "got < want",
-            Cmp::Le => "got <= want",
-            Cmp::Gt => "got > want",
-            Cmp::Ge => "got >= want",
-            Cmp::Contains => {
-                "(Array.isArray(got) ? got.some(function (x) { return same(x, want); }) : \
+        let holds = match (self.cmp, &self.wanted) {
+            (Cmp::Eq, Value::Null) => "v == null",
+            (Cmp::Ne, Value::Null) => "v != null",
+            (cmp, _) => match cmp {
+                Cmp::Eq => "same(got, want)",
+                Cmp::Ne => "!same(got, want)",
+                Cmp::Lt => "got < want",
+                Cmp::Le => "got <= want",
+                Cmp::Gt => "got > want",
+                Cmp::Ge => "got >= want",
+                Cmp::Contains => {
+                    "(Array.isArray(got) ? got.some(function (x) { return same(x, want); }) : \
                  (typeof got === 'string' && typeof want === 'string' && got.indexOf(want) >= 0))"
-            }
+                }
+            },
         };
         format!(
             "(function () {{ var b = input.body; try {{ b = JSON.parse(b); }} catch (e) {{}} \
              var v = b, p = {keys}; for (var i = 0; v != null && i < p.length; i++) {{ v = v[p[i]]; }} \
              var got = v == null ? undefined : {got}, want = {want}; \
              var same = function (x, y) {{ return JSON.stringify(x) === JSON.stringify(y); }}; \
-             if (!({holds})) throw new Error({text} + ', got ' + JSON.stringify(got)); return input; }})()",
+             if (!({holds})) throw new Error({text} + ', got ' + (v === null ? 'null' : JSON.stringify(got))); return input; }})()",
             want = self.wanted,
             text = json!(self.name()),
         )
@@ -608,8 +607,9 @@ mod tests {
             rule(".items[0].name contains \"ab\""),
             Some(json!({ "path": "input.body.items[0].name", "op": "contains", "value": "ab" }))
         );
-        assert_eq!(rule(".id != null").unwrap()["op"], "exists");
-        assert_eq!(rule(".id==null").unwrap()["op"], "notExists");
+        let present = parse_expect(".id != null").unwrap();
+        assert!(present.rule().is_none() && present.expression().contains("if (!(v != null))"));
+        assert!(parse_expect(".id==null").unwrap().expression().contains("if (!(v == null))"));
         assert_eq!(rule("status >= 200").unwrap()["op"], "greaterOrEqual");
         let counted = parse_expect(".items | length == 1").unwrap();
         assert!(counted.rule().is_none() && counted.expression().contains("v.length"));
