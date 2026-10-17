@@ -52,14 +52,14 @@ pub fn flows(ctx: &mut Context, sub: Option<&str>, out: &mut dyn Write) -> Resul
             if load {
                 let instances = need(args.flag("instances"), "--instances")?;
                 let instances: u64 = instances.parse().ok().filter(|n| (1..=10_000).contains(n)).ok_or_else(|| {
-                    CliError::msg(format!("--instances must be a whole number from 1 to 10000, not \"{instances}\""))
+                    CliError::usage(format!("--instances must be a whole number from 1 to 10000, not \"{instances}\""))
                 })?;
                 payload["instances"] = json!(instances);
             }
             let mut inputs = serde_json::Map::new();
             for raw in args.flags("input") {
                 let Some((name, value)) = raw.split_once('=').filter(|(name, _)| !name.is_empty()) else {
-                    return Err(CliError::msg(format!("--input must be name=value, not \"{raw}\"")));
+                    return Err(CliError::usage(format!("--input must be name=value, not \"{raw}\"")));
                 };
                 inputs.insert(name.to_string(), json!(value));
             }
@@ -69,13 +69,13 @@ pub fn flows(ctx: &mut Context, sub: Option<&str>, out: &mut dyn Write) -> Resul
             if let Some(seconds) = args.flag("timeout") {
                 let seconds: f64 =
                     seconds.parse().ok().filter(|s: &f64| s.is_finite() && *s >= 0.0).ok_or_else(|| {
-                        CliError::msg(format!("--timeout must be a number of seconds, not \"{seconds}\""))
+                        CliError::usage(format!("--timeout must be a number of seconds, not \"{seconds}\""))
                     })?;
                 payload["timeoutMs"] = json!((seconds * 1000.0).round() as u64);
             }
             if let Some(events) = args.flag("max-events") {
                 let events: u64 = events.parse().ok().filter(|n| *n >= 1).ok_or_else(|| {
-                    CliError::msg(format!("--max-events must be a whole number of at least 1, not \"{events}\""))
+                    CliError::usage(format!("--max-events must be a whole number of at least 1, not \"{events}\""))
                 })?;
                 payload["maxEvents"] = json!(events);
             }
@@ -589,7 +589,7 @@ mod tests {
             ),
         ] {
             let (out, lines, calls) = go(&argv, engine(), vec![]);
-            assert_eq!(out.unwrap_err(), CliError::msg(message), "{argv:?}");
+            assert_eq!(out.unwrap_err(), CliError::usage(message), "{argv:?}");
             assert!(lines.is_empty() && calls.is_empty(), "{argv:?}");
         }
     }
@@ -662,7 +662,7 @@ mod tests {
             ),
         ] {
             let (out, _, calls) = go(&argv, answers.clone(), vec![]);
-            assert_eq!(out.unwrap_err(), CliError::msg(message), "{argv:?}");
+            assert_eq!(out.unwrap_err(), CliError::usage(message), "{argv:?}");
             assert!(calls.is_empty(), "{argv:?}");
         }
     }
@@ -671,7 +671,7 @@ mod tests {
     fn a_flow_that_is_not_there_is_named() {
         let argv = ["flows", "run", "nope"];
         let (out, _, calls) = go(&argv, engine(), vec![]);
-        assert_eq!(out.unwrap_err(), CliError::msg("no flow \"nope\" (see: bifurc flows list)"));
+        assert_eq!(out.unwrap_err(), CliError::not_found("no flow \"nope\" (see: bifurc flows list)"));
         assert!(payloads(&calls, "flow.run").is_empty());
     }
 }

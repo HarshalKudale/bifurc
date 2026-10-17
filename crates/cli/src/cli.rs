@@ -53,7 +53,7 @@ fn connect_existing(data_dir: &Path) -> Result<Box<dyn Engine>> {
 pub fn transport_of(args: &ParsedArgs) -> Result<&str> {
     match args.flag("transport").unwrap_or("socket") {
         transport @ ("socket" | "ws") => Ok(transport),
-        _ => Err(CliError::msg("--transport must be socket or ws")),
+        _ => Err(CliError::usage("--transport must be socket or ws")),
     }
 }
 
@@ -135,16 +135,16 @@ fn dispatch(args: &ParsedArgs, data_dir: &Path, stdout: &mut dyn Write) -> Resul
         "call" => commands::call(&mut ctx),
         "commands" => Ok(commands::commands(&ctx)),
         // gRPC requests are requests like the others.
-        "grpc" => Err(CliError::msg(
+        "grpc" => Err(CliError::usage(
             "gRPC is a type of request: bifurc requests list|create|send --type grpc, and bifurc requests reflect <address> (see: bifurc requests --help)",
         )),
         // A vault is unsealed once and then used; nothing is unlocked around one program any more.
-        "unlock" | "unlock-vault" => Err(CliError::msg(
+        "unlock" | "unlock-vault" => Err(CliError::usage(
             "a vault is no longer unlocked for one program: bifurc vault run <vault> -- <command> (see: bifurc vault --help)",
         )),
         // A group that has only verbs of the tables above.
         _ if group_usage(group).is_some() => Err(unknown_verb(group, verb)),
-        _ => Err(CliError::msg(format!("unknown command \"{group}\"\n\n{USAGE}"))),
+        _ => Err(CliError::usage(format!("unknown command \"{group}\"\n\n{USAGE}"))),
     }
 }
 
@@ -177,15 +177,15 @@ pub fn run_with_env(
             Ok(code) => code,
             Err(err) => {
                 let _ = writeln!(stderr, "{}", err.line());
-                1
+                err.code()
             }
         };
     }
     let args = match parse_args(argv) {
         Ok(args) => args,
         Err(message) => {
-            let _ = writeln!(stderr, "{}", CliError::msg(message).line());
-            return 1;
+            let _ = writeln!(stderr, "{}", CliError::usage(message).line());
+            return 2;
         }
     };
     let group = args.positional(0);
@@ -208,7 +208,7 @@ pub fn run_with_env(
         }
         Err(err) => {
             let _ = writeln!(stderr, "{}", err.line());
-            1
+            err.code()
         }
     }
 }
@@ -252,7 +252,7 @@ mod tests {
     #[test]
     fn an_unknown_command_is_an_error_followed_by_the_usage() {
         let outcome = go(&["frobnicate"]);
-        assert_eq!(outcome.code, 1);
+        assert_eq!(outcome.code, 2);
         assert_eq!(outcome.stdout, "");
         assert_eq!(outcome.stderr, format!("bifurc: unknown command \"frobnicate\"\n\n{USAGE}\n"));
     }
@@ -260,7 +260,7 @@ mod tests {
     #[test]
     fn a_flag_with_no_value_is_reported() {
         let outcome = go(&["status", "--data-dir"]);
-        assert_eq!(outcome.code, 1);
+        assert_eq!(outcome.code, 2);
         assert_eq!(outcome.stderr, "bifurc: --data-dir needs a value\n");
     }
 
@@ -320,7 +320,7 @@ mod tests {
         let dir = empty_dir();
         let outcome =
             go(&["engine", "start", "--transport", "carrier-pigeon", "--data-dir", dir.path().to_str().unwrap()]);
-        assert_eq!((outcome.code, outcome.stderr.as_str()), (1, "bifurc: --transport must be socket or ws\n"));
+        assert_eq!((outcome.code, outcome.stderr.as_str()), (2, "bifurc: --transport must be socket or ws\n"));
     }
 
     #[test]
@@ -329,7 +329,7 @@ mod tests {
         let path = dir.path().to_str().unwrap();
         for sub in ["stop", "restart"] {
             let outcome = go(&["engine", sub, "--data-dir", path]);
-            assert_eq!(outcome.code, 1);
+            assert_eq!(outcome.code, 5);
             assert_eq!(
                 outcome.stderr,
                 format!("bifurc: No engine is running for {path}.\nStart one with: bifurc engine start\n")
@@ -363,12 +363,12 @@ mod tests {
             vec!["vault", "run", "keys", "--no-start", "--data-dir", path, "--"],
         ] {
             let outcome = go(&argv);
-            assert_eq!((outcome.code, outcome.stderr.as_str()), (1, example), "{argv:?}");
+            assert_eq!((outcome.code, outcome.stderr.as_str()), (2, example), "{argv:?}");
         }
         // With a command, the vault is what is needed next, so the engine is.
         let outcome =
             go(&["vaults", "run", "keys", "--no-start", "--data-dir", path, "--", "npm", "run", "dev", "--help"]);
-        assert_eq!(outcome.code, 1);
+        assert_eq!(outcome.code, 5);
         assert!(outcome.stderr.starts_with("bifurc: No engine is running for"), "{}", outcome.stderr);
         assert_eq!(outcome.stdout, "");
     }
@@ -377,7 +377,7 @@ mod tests {
     fn unlock_is_no_longer_a_command_and_says_what_replaced_it() {
         for argv in [vec!["unlock", "keys", "--", "npm", "run", "dev"], vec!["unlock-vault", "keys"]] {
             let outcome = go(&argv);
-            assert_eq!(outcome.code, 1, "{argv:?}");
+            assert_eq!(outcome.code, 2, "{argv:?}");
             assert!(outcome.stderr.contains("bifurc vault run <vault> -- <command>"), "{}", outcome.stderr);
         }
     }
@@ -385,7 +385,7 @@ mod tests {
     #[test]
     fn grpc_is_no_longer_a_group_and_says_where_it_went() {
         let outcome = go(&["grpc", "list"]);
-        assert_eq!(outcome.code, 1);
+        assert_eq!(outcome.code, 2);
         assert!(outcome.stderr.starts_with("bifurc: gRPC is a type of request: bifurc requests"), "{}", outcome.stderr);
     }
 
@@ -393,7 +393,7 @@ mod tests {
     fn an_unknown_option_is_refused_without_starting_an_engine() {
         let dir = empty_dir();
         let outcome = go(&["mocks", "list", "--al", "x", "--data-dir", dir.path().to_str().unwrap()]);
-        assert_eq!(outcome.code, 1);
+        assert_eq!(outcome.code, 2);
         assert_eq!(outcome.stderr, "bifurc: unknown option --al for \"mocks list\" (see: bifurc mocks --help)\n");
         assert!(!dir.path().join("runtime.json").exists());
     }
@@ -415,7 +415,7 @@ mod tests {
             let mut argv = argv;
             argv.extend(["--no-start", "--data-dir", path]);
             let outcome = go(&argv);
-            assert_eq!(outcome.code, 1, "{argv:?}");
+            assert_eq!(outcome.code, 5, "{argv:?}");
             assert!(outcome.stderr.starts_with("bifurc: No engine is running for"), "{}", outcome.stderr);
         }
     }
@@ -459,5 +459,17 @@ mod tests {
             let outcome = go(&[group, "--no-start", "--data-dir", path]);
             assert!(outcome.stderr.starts_with("bifurc: No engine is running"), "{group}: {}", outcome.stderr);
         }
+    }
+
+    #[test]
+    fn exit_codes_say_what_went_wrong() {
+        let dir = empty_dir();
+        let path = dir.path().to_str().unwrap();
+        // 2: a wrong command line, found before any engine is needed.
+        assert_eq!(go(&["status", "--nmae", "x", "--no-start", "--data-dir", path]).code, 2);
+        assert_eq!(go(&["frobnicate"]).code, 2);
+        assert_eq!(go(&["requests", "frob", "--no-start", "--data-dir", path]).code, 2);
+        // 5: no engine and none to start.
+        assert_eq!(go(&["requests", "list", "--no-start", "--data-dir", path]).code, 5);
     }
 }

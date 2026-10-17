@@ -150,7 +150,7 @@ fn type_named(name: &str) -> Result<&'static RequestType> {
     TYPES
         .iter()
         .find(|ty| ty.name == wanted)
-        .ok_or_else(|| CliError::msg(format!("unknown request type \"{name}\": one of {TYPE_NAMES}")))
+        .ok_or_else(|| CliError::usage(format!("unknown request type \"{name}\": one of {TYPE_NAMES}")))
 }
 
 /// The types a command looks at: the one `--type` names, else all of them.
@@ -171,7 +171,7 @@ fn check_options(ty: &RequestType, args: &ParsedArgs, extra: &[&str]) -> Result<
             && !extra.contains(name)
     });
     match foreign {
-        Some(option) => Err(CliError::msg(format!(
+        Some(option) => Err(CliError::usage(format!(
             "--{option} is not an option of a {} request (see: bifurc requests --help)",
             ty.name
         ))),
@@ -264,7 +264,7 @@ fn grpc_method(path: &str) -> Result<(String, String)> {
         Some((service, method)) if !service.is_empty() && !method.is_empty() => {
             Ok((service.to_string(), method.to_string()))
         }
-        _ => Err(CliError::msg("the gRPC method is \"package.Service/Method\"")),
+        _ => Err(CliError::usage("the gRPC method is \"package.Service/Method\"")),
     }
 }
 
@@ -304,7 +304,7 @@ fn apply_options(ty: &RequestType, entity: &mut Value, args: &ParsedArgs) -> Res
             }
             if let Some(variables) = args.flag("variables") {
                 if !variables.trim().is_empty() && serde_json::from_str::<Value>(variables).is_err() {
-                    return Err(CliError::msg(format!("--variables is not valid JSON: {variables}")));
+                    return Err(CliError::usage(format!("--variables is not valid JSON: {variables}")));
                 }
                 set(entity, "variables", json!(variables));
             }
@@ -322,7 +322,7 @@ fn apply_options(ty: &RequestType, entity: &mut Value, args: &ParsedArgs) -> Res
                 set(entity, "requestBody", json!(body));
             }
             match (args.flag("proto").filter(|proto| !proto.is_empty()), args.has("reflection")) {
-                (Some(_), true) => return Err(CliError::msg("--proto and --reflection cannot both be given")),
+                (Some(_), true) => return Err(CliError::usage("--proto and --reflection cannot both be given")),
                 (Some(proto), false) => {
                     set(entity, "protoFileId", json!(proto));
                     set(entity, "useReflection", json!(false));
@@ -356,7 +356,7 @@ fn apply_options(ty: &RequestType, entity: &mut Value, args: &ParsedArgs) -> Res
         }
         "mcp" => match args.flag("transport") {
             Some(transport) if matches!(transport, "stdio" | "http") => set(entity, "transport", json!(transport)),
-            Some(other) => return Err(CliError::msg(format!("--transport is stdio or http, not \"{other}\""))),
+            Some(other) => return Err(CliError::usage(format!("--transport is stdio or http, not \"{other}\""))),
             // The address says which it is, when it is given or nothing has said yet.
             None if args.flag("url").is_some() || text(entity, "transport").is_empty() => {
                 entity["transport"] = json!(mcp_transport(&text(entity, "url")));
@@ -372,13 +372,13 @@ fn apply_options(ty: &RequestType, entity: &mut Value, args: &ParsedArgs) -> Res
 /// query.
 fn complete(ty: &RequestType, entity: &Value) -> Result<()> {
     if text(entity, ty.url_key).trim().is_empty() {
-        return Err(CliError::msg("missing --url"));
+        return Err(CliError::usage("missing --url"));
     }
     match ty.name {
         "grpc" if text(entity, "methodName").is_empty() => {
-            Err(CliError::msg("missing --method <package.Service/Method>"))
+            Err(CliError::usage("missing --method <package.Service/Method>"))
         }
-        "graphql" if text(entity, "query").trim().is_empty() => Err(CliError::msg("missing --query or --query-file")),
+        "graphql" if text(entity, "query").trim().is_empty() => Err(CliError::usage("missing --query or --query-file")),
         _ => Ok(()),
     }
 }
@@ -442,7 +442,7 @@ pub(crate) fn listen_seconds(args: &ParsedArgs, default: f64) -> Result<f64> {
             .parse::<f64>()
             .ok()
             .filter(|seconds| seconds.is_finite() && (0.0..=3600.0).contains(seconds))
-            .ok_or_else(|| CliError::msg(format!("--wait must be a number of seconds, not \"{raw}\""))),
+            .ok_or_else(|| CliError::usage(format!("--wait must be a number of seconds, not \"{raw}\""))),
         None => Ok(default),
     }
 }
@@ -549,7 +549,7 @@ pub fn requests(ctx: &mut Context, sub: Option<&str>) -> Result<String> {
                 // The engine reads the command and says which type of request it is.
                 Some(curl) => {
                     if args.flag("url").is_some() || args.positional(2).is_some() {
-                        return Err(CliError::msg("--curl already says where the request goes; leave out the URL"));
+                        return Err(CliError::usage("--curl already says where the request goes; leave out the URL"));
                     }
                     let built = ctx.request("curl.buildRequest", json!({ "curl": curl }))?;
                     let kind = js_template(built.get("kind"));
@@ -596,7 +596,7 @@ pub fn requests(ctx: &mut Context, sub: Option<&str>) -> Result<String> {
             let (ty, mut entity) = find(ctx, &workspace, &wanted)?;
             check_options(ty, args, &[])?;
             if !apply_options(ty, &mut entity, args)? {
-                return Err(CliError::msg(format!(
+                return Err(CliError::usage(format!(
                     "nothing to change: give at least one option of a {} request (see: bifurc requests --help)",
                     ty.name
                 )));
@@ -623,7 +623,7 @@ pub fn requests(ctx: &mut Context, sub: Option<&str>) -> Result<String> {
                         .into_iter()
                         .find(|name| *name != "type" && describing.contains(name) && !exchange.contains(name));
                     if let Some(option) = given {
-                        return Err(CliError::msg(format!(
+                        return Err(CliError::usage(format!(
                             "a saved request is sent as it is saved, without --{option}; change it with: bifurc requests update"
                         )));
                     }
@@ -641,14 +641,14 @@ pub fn requests(ctx: &mut Context, sub: Option<&str>) -> Result<String> {
                 }
                 None => {
                     if args.flag("url").is_none() {
-                        return Err(CliError::msg(
+                        return Err(CliError::usage(
                             "missing request id or name, or --url for a request that is not saved",
                         ));
                     }
                     let ty = type_named(args.flag("type").unwrap_or("rest"))?;
                     let exchange = exchange_options(ty);
                     if let Some(option) = SEND_OPTIONS.iter().find(|o| args.has(o) && !exchange.contains(o)) {
-                        return Err(CliError::msg(format!(
+                        return Err(CliError::usage(format!(
                             "--{option} is not an option of a {} request (see: bifurc requests --help)",
                             ty.name
                         )));
@@ -805,7 +805,7 @@ mod tests {
         let (out, calls) = run(&argv, saved_requests(), |c| requests(c, sub(&argv)));
         assert_eq!(
             out.unwrap_err(),
-            CliError::msg(
+            CliError::usage(
                 "unknown request type \"carrier-pigeon\": one of rest, graphql, grpc, soap, websocket, sse, socketio, mcp"
             )
         );
@@ -828,13 +828,13 @@ mod tests {
         }
         let argv = ["requests", "show", "nope"];
         let (out, _) = run(&argv, saved_requests(), |c| requests(c, sub(&argv)));
-        assert_eq!(out.unwrap_err(), CliError::msg("no request \"nope\" (see: bifurc requests list)"));
+        assert_eq!(out.unwrap_err(), CliError::not_found("no request \"nope\" (see: bifurc requests list)"));
         let argv = ["requests", "show", "Hello", "--type", "rest"];
         let (out, _) = run(&argv, saved_requests(), |c| requests(c, sub(&argv)));
-        assert_eq!(out.unwrap_err(), CliError::msg("no request \"Hello\" (see: bifurc requests list)"));
+        assert_eq!(out.unwrap_err(), CliError::not_found("no request \"Hello\" (see: bifurc requests list)"));
         let argv = ["requests", "show"];
         let (out, _) = run(&argv, vec![], |c| requests(c, sub(&argv)));
-        assert_eq!(out.unwrap_err(), CliError::msg("missing request id or name"));
+        assert_eq!(out.unwrap_err(), CliError::usage("missing request id or name"));
     }
 
     #[test]
@@ -995,7 +995,7 @@ mod tests {
             ),
         ] {
             let (out, calls) = run(&argv, saved_requests(), |c| requests(c, sub(&argv)));
-            assert_eq!(out.unwrap_err(), CliError::msg(message), "{argv:?}");
+            assert_eq!(out.unwrap_err(), CliError::usage(message), "{argv:?}");
             assert!(calls.is_empty(), "{argv:?}");
         }
         let argv = ["requests", "create", "--url", "u", "--body-file", "/definitely/not/here"];
@@ -1025,7 +1025,7 @@ mod tests {
 
         let argv = ["requests", "create", "--curl", "curl http://x", "--url", "http://y"];
         let (out, calls) = run(&argv, answers, |c| requests(c, sub(&argv)));
-        assert_eq!(out.unwrap_err(), CliError::msg("--curl already says where the request goes; leave out the URL"));
+        assert_eq!(out.unwrap_err(), CliError::usage("--curl already says where the request goes; leave out the URL"));
         assert!(calls.is_empty());
     }
 
@@ -1063,7 +1063,7 @@ mod tests {
         let (out, calls) = run(&argv, saved_requests(), |c| requests(c, sub(&argv)));
         assert_eq!(
             out.unwrap_err(),
-            CliError::msg("--query is not an option of a grpc request (see: bifurc requests --help)")
+            CliError::usage("--query is not an option of a grpc request (see: bifurc requests --help)")
         );
         assert!(payloads(&calls, "entity.update").is_empty());
 
@@ -1071,7 +1071,7 @@ mod tests {
         let (out, _) = run(&argv, saved_requests(), |c| requests(c, sub(&argv)));
         assert_eq!(
             out.unwrap_err(),
-            CliError::msg(
+            CliError::usage(
                 "nothing to change: give at least one option of a grpc request (see: bifurc requests --help)"
             )
         );
@@ -1110,7 +1110,7 @@ mod tests {
         let (out, calls) = run(&argv, saved_requests(), |c| requests(c, sub(&argv)));
         assert_eq!(
             out.unwrap_err(),
-            CliError::msg(
+            CliError::usage(
                 "a saved request is sent as it is saved, without --method; change it with: bifurc requests update"
             )
         );
@@ -1220,12 +1220,12 @@ mod tests {
         let (out, calls) = run(&argv, saved_requests(), |c| requests(c, sub(&argv)));
         assert_eq!(
             out.unwrap_err(),
-            CliError::msg("missing request id or name, or --url for a request that is not saved")
+            CliError::usage("missing request id or name, or --url for a request that is not saved")
         );
         assert!(calls.is_empty());
         let argv = ["requests", "frob"];
         let (out, _) = run(&argv, vec![], |c| requests(c, sub(&argv)));
-        assert_eq!(out.unwrap_err(), CliError::msg("unknown: requests frob (see: bifurc requests --help)"));
+        assert_eq!(out.unwrap_err(), CliError::usage("unknown: requests frob (see: bifurc requests --help)"));
     }
 
     fn socket(status: &str, messages: Value) -> Result<Value> {
@@ -1285,7 +1285,7 @@ mod tests {
 
         let argv = ["requests", "send", "k1", "--wait", "soon"];
         let (out, _) = run(&argv, saved_requests(), |c| requests(c, sub(&argv)));
-        assert_eq!(out.unwrap_err(), CliError::msg("--wait must be a number of seconds, not \"soon\""));
+        assert_eq!(out.unwrap_err(), CliError::usage("--wait must be a number of seconds, not \"soon\""));
     }
 
     #[test]
