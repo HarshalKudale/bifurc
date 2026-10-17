@@ -1137,8 +1137,9 @@ pub fn catalog() -> Vec<Tool> {
                 text("host", "host", "The host; * is a wildcard."),
                 text("path", "path", "The path; * is a wildcard."),
                 text("since", "since", "30s, 2m, 1h ago, or #tail: after that entry."),
-                typed("origin", "origin", Type::Choice(&["real", "mock", "mapped", "rule", "error"]), "Who answered."),
+                typed("origin", "origin", Type::Choice(&["real", "mock", "mapped", "rule", "error", "server"]), "Who answered."),
                 text("grep", "grep", "Text in the URL or a body."),
+                switch("pinned", "pinned", None, "Only the pinned entries (capture_pin)."),
             ],
         },
         Row {
@@ -1178,6 +1179,204 @@ pub fn catalog() -> Vec<Tool> {
             upfront: false,
             scoped: true,
             params: vec![operand("entry", "The captured entry's id (see capture_list).").required()],
+        },
+        Row {
+            name: "capture_diff",
+            words: &["capture", "diff"],
+            summary: "Compare two responses: captured entries, a mock, or a saved request sent now. Shows only the differences.",
+            details: "Give two sides: `entry` and `other`, or `entry` with `mock` or `request`. Compares status, content type, \
+                header names and the body's shape and values. Sends the saved request when `request` is given.",
+            effect: Effect::Runs,
+            upfront: false,
+            scoped: true,
+            params: vec![
+                operand("entry", "The first captured entry's id or #tail (see capture_list).").required(),
+                operand("other", "The second captured entry; leave out when mock or request is the other side."),
+                text("mock", "mock", "Compare with this mock's answer instead of a second entry."),
+                text("request", "request", "Compare with the answer of this saved request, sent now."),
+                switch("shape", "shape", None, "Keys and types only, no values."),
+                Param {
+                    name: "vars",
+                    about: "Variables for {{name}} when a request is sent.",
+                    ty: Type::TextMap,
+                    place: Place::Pairs("var", "="),
+                    required: false,
+                },
+                text("env", "env", "Environment to send the request with."),
+                switch("fresh_session", "fresh-session", None, "Send with a throwaway cookie jar."),
+            ],
+        },
+        Row {
+            name: "capture_pin",
+            words: &["capture", "pin"],
+            summary: "Pin captured entries so they are kept beyond the capture buffer limit.",
+            details: "Pinned entries do not count toward the limit (settings_update capturelimit). capture_unpin lets them age out.",
+            effect: Effect::Changes,
+            upfront: false,
+            scoped: true,
+            params: vec![Param {
+                name: "entries",
+                about: "The entries' ids or #tails (see capture_list).",
+                ty: Type::TextList,
+                place: Place::Operands,
+                required: true,
+            }],
+        },
+        Row {
+            name: "capture_unpin",
+            words: &["capture", "unpin"],
+            summary: "Unpin captured entries so they age out of the capture buffer again.",
+            details: "",
+            effect: Effect::Changes,
+            upfront: false,
+            scoped: true,
+            params: vec![Param {
+                name: "entries",
+                about: "The entries' ids or #tails (see capture_list).",
+                ty: Type::TextList,
+                place: Place::Operands,
+                required: true,
+            }],
+        },
+        Row {
+            name: "contract_check",
+            words: &["contract", "check"],
+            summary: "Check for drift: whether the mocks still match the real API (or an OpenAPI file).",
+            details: "Pairs each enabled mock with a saved request of the same method and path, sends it (POST and DELETE too) \
+                and compares status, content type and body shape, never values. Drifted rows show `+ .x (number)` \
+                (real has it, mock lacks it). The result is an error on drift.",
+            effect: Effect::Runs,
+            upfront: false,
+            scoped: true,
+            params: vec![
+                text("mock", "mock", "Only this mock (also when disabled)."),
+                text("folder", "folder", "Only the mocks in this mock folder and below."),
+                switch("all", "all", None, "Disabled mocks too."),
+                Param {
+                    name: "ignore",
+                    about: "Leave out differences whose path matches, e.g. .meta.* or .items[].debug.",
+                    ty: Type::TextList,
+                    place: Place::Each("ignore"),
+                    required: false,
+                },
+                switch("from_capture", "from-capture", None, "Compare with the newest captured real answer; sends nothing."),
+                switch("from_snapshot", "from-snapshot", None, "Compare with the stored snapshots only; sends nothing."),
+                text("openapi", "openapi", "Compare with this OpenAPI 3 or Swagger 2 file (JSON or YAML); sends nothing."),
+                Param {
+                    name: "vars",
+                    about: "Variables for {{name}} in the sent requests.",
+                    ty: Type::TextMap,
+                    place: Place::Pairs("var", "="),
+                    required: false,
+                },
+                text("env", "env", "Environment to send the requests with."),
+                switch("fresh_session", "fresh-session", None, "Send with a throwaway cookie jar."),
+            ],
+        },
+        Row {
+            name: "contract_update_mock",
+            words: &["contract", "update-mock"],
+            summary: "Fix a drifted mock: rewrite its body to the real API's shape, keeping its values where a key stays.",
+            details: "Sends the paired saved request (or reads the newest capture) and updates the mock's body and status; headers stay.",
+            effect: Effect::Runs,
+            upfront: false,
+            scoped: true,
+            params: vec![
+                operand("mock", "The mock's id or name.").required(),
+                switch("from_capture", "from-capture", None, "Use the newest captured real answer; sends nothing."),
+                Param {
+                    name: "vars",
+                    about: "Variables for {{name}} in the sent request.",
+                    ty: Type::TextMap,
+                    place: Place::Pairs("var", "="),
+                    required: false,
+                },
+                text("env", "env", "Environment to send the request with."),
+                switch("fresh_session", "fresh-session", None, "Send with a throwaway cookie jar."),
+                switch("force", "force", None, "Overwrite even if the mock changed since it was read."),
+            ],
+        },
+        Row {
+            name: "contract_snapshot",
+            words: &["contract", "snapshot"],
+            summary: "Store the body shape of each mock's real answer in the workspace, for contract_check to compare later.",
+            details: "Sends each paired request once and writes types only, never a value, to the workspace's contracts folder.",
+            effect: Effect::Runs,
+            upfront: false,
+            scoped: true,
+            params: vec![
+                text("mock", "mock", "Only this mock (also when disabled)."),
+                text("folder", "folder", "Only the mocks in this mock folder and below."),
+                switch("all", "all", None, "Disabled mocks too."),
+                Param {
+                    name: "vars",
+                    about: "Variables for {{name}} in the sent requests.",
+                    ty: Type::TextMap,
+                    place: Place::Pairs("var", "="),
+                    required: false,
+                },
+                text("env", "env", "Environment to send the requests with."),
+                switch("fresh_session", "fresh-session", None, "Send with a throwaway cookie jar."),
+            ],
+        },
+        Row {
+            name: "changes",
+            words: &["changes"],
+            summary: "What other agents or the app changed in the workspace since you last asked: a feed, oldest first.",
+            details: "Without `since` it shows what is new and moves this session's cursor past it. Your own changes are left out.",
+            effect: Effect::Reads,
+            upfront: false,
+            scoped: true,
+            params: vec![
+                text("since", "since", "A sequence number, a time ago (2m, 1h, 2d) or a UTC time; the cursor stays."),
+                switch("mine", "mine", None, "Include the changes this session made itself."),
+            ],
+        },
+        Row {
+            name: "claim",
+            words: &["claim"],
+            summary: "Claim an item you are editing (a lock for other agents) or release the claim.",
+            details: "Advisory only: nothing is blocked, but another session's update of it prints a warning. Lapses after 30 minutes.",
+            effect: Effect::Changes,
+            upfront: false,
+            scoped: true,
+            params: vec![
+                Param {
+                    name: "kind",
+                    about: "What kind of item.",
+                    ty: Type::Choice(&["request", "mock", "flow", "env"]),
+                    place: Place::Operand,
+                    required: true,
+                },
+                operand("name", "The item's name.").required(),
+                switch("release", "release", None, "Release the claim instead of taking it."),
+            ],
+        },
+        Row {
+            name: "claims",
+            words: &["claims"],
+            summary: "List the live claims: which items other agents are editing, by whom, and how long ago.",
+            details: "",
+            effect: Effect::Reads,
+            upfront: false,
+            scoped: true,
+            params: vec![],
+        },
+        Row {
+            name: "env_auth",
+            words: &["env", "auth"],
+            summary: "Set the login an environment re-authenticates with when a send answers 401, or turn it off.",
+            details: "Give `login` (a request, or a flow of that name) or `flow`, or `off`. With retry on, a 401 re-runs the login once and retries.",
+            effect: Effect::Changes,
+            upfront: false,
+            scoped: true,
+            params: vec![
+                operand("environment", "The environment's id or name.").required(),
+                text("login", "login", "The request (or flow) that logs in."),
+                text("flow", "flow", "The flow that logs in, when a request has the same name."),
+                typed("retry", "retry", Type::Choice(&["true", "false"]), "Retry the send after logging in (default true)."),
+                switch("off", "off", None, "Remove the login."),
+            ],
         },
         Row {
             name: "runner_run",
@@ -1226,6 +1425,35 @@ pub fn catalog() -> Vec<Tool> {
             "steps",
             "steps",
             "The flow as steps, the text of a YAML or JSON file (name, steps: request/inline, extract, vars, expect), instead of data.",
+        ));
+    }
+    // The update verbs refuse a write over another session's change; force overwrites it.
+    for tool in tools.iter_mut().filter(|tool| {
+        matches!(
+            tool.name,
+            "requests_update"
+                | "mocks_update"
+                | "mappings_update"
+                | "rules_update"
+                | "env_set"
+                | "env_unset"
+                | "env_auth"
+        )
+    }) {
+        tool.params.push(switch(
+            "force",
+            "force",
+            None,
+            "Overwrite even if another session changed it since it was read.",
+        ));
+    }
+    // flows_show prints the flow as a step file.
+    if let Some(tool) = tools.iter_mut().find(|tool| tool.name == "flows_show") {
+        tool.params.push(switch(
+            "steps",
+            "steps",
+            None,
+            "Print the flow as a step file (an error when it is not a line of steps).",
         ));
     }
     tools
@@ -1302,7 +1530,7 @@ mod tests {
         assert_eq!(names.len(), tools.len());
         for tool in &tools {
             assert!(tool.name.chars().all(|c| c.is_ascii_lowercase() || c == '_'), "{}", tool.name);
-            assert_eq!(tool.name, tool.words.join("_"), "a tool is named after its command");
+            assert_eq!(tool.name, tool.words.join("_").replace('-', "_"), "a tool is named after its command");
         }
     }
 
