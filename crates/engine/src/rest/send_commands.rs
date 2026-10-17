@@ -66,6 +66,8 @@ pub fn register(registry: &mut CommandRegistry) {
             };
 
             let jar = ws_id.clone();
+            // `jar: false` (`bifurc curl --no-jar`) sends without the workspace's cookie jar.
+            let keep_jar = params.get("jar").and_then(Value::as_bool) != Some(false);
             let stream_id = params.get("streamId").filter(|id| id.is_string()).cloned();
             // Resolved by `request.replay` against the app's defaults; the pipeline does not need them.
             let settings = request.get("settings").filter(|v| v.is_object()).cloned();
@@ -84,7 +86,7 @@ pub fn register(registry: &mut CommandRegistry) {
                     replay["settings"] = settings;
                 }
                 let sent = ctx.registry.invoke("request.replay", replay, ctx.clone());
-                crate::cookies::scoped(&jar, sent).await
+                if keep_jar { crate::cookies::scoped(&jar, sent).await } else { sent.await }
             })
             .await;
             // A send stopped by `request.cancel` is an outcome the caller can tell apart from a failure.
@@ -312,6 +314,22 @@ mod tests {
         assert_eq!(send(json!({ "environmentId": "staging" })).await["body"], "saved s");
         assert_eq!(send(json!({ "environmentId": "staging", "variables": { "x": "v" } })).await["body"], "saved v");
         assert_eq!(send(json!({ "overrides": { "body": "new {{x}}" } })).await["body"], "new g");
+    }
+
+    #[tokio::test]
+    async fn a_send_with_the_jar_off_neither_sends_nor_keeps_cookies() {
+        let _root = scratch_data_root();
+        let base = test_server::start(HashMap::new()).await;
+        let send = |path: &str, jar: bool| {
+            let request = json!({ "method": "GET", "url": format!("{base}{path}"), "headers": {}, "body": "" });
+            let params = json!({ "workspaceId": "ws1", "request": request, "scripts": {}, "jar": jar });
+            async move { echoed(&call("request.send", params).await.unwrap()) }
+        };
+        send("/set-cookie/sid=s1", false).await;
+        assert!(send("/x", true).await["headers"]["cookie"].is_null(), "a send with the jar off keeps nothing");
+        send("/set-cookie/sid=s1", true).await;
+        assert_eq!(send("/x", true).await["headers"]["cookie"], "sid=s1");
+        assert!(send("/x", false).await["headers"]["cookie"].is_null());
     }
 
     /// A server that accepts connections and never answers.

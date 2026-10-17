@@ -21,24 +21,24 @@ use crate::{
 };
 
 /// One type of request.
-struct RequestType {
+pub(crate) struct RequestType {
     /// What `--type` calls it.
-    name: &'static str,
+    pub(crate) name: &'static str,
     /// The entity kind its requests are stored as.
-    kind: &'static str,
+    pub(crate) kind: &'static str,
     /// The command that sends one, saved (`{ workspaceId, id }`) or not (`{ workspaceId, request }`). A
     /// WebSocket has none: it is a connection, not one exchange.
-    send: Option<&'static str>,
+    pub(crate) send: Option<&'static str>,
     /// The field `--url` sets, and the one `-H` adds to.
-    url_key: &'static str,
-    headers_key: &'static str,
+    pub(crate) url_key: &'static str,
+    pub(crate) headers_key: &'static str,
     /// The options only this type takes, beyond `--url`, `--name` and `-H`.
     options: &'static [&'static str],
     /// The fields of a request that is sent without being saved.
-    inline: &'static [&'static str],
+    pub(crate) inline: &'static [&'static str],
 }
 
-const TYPES: [RequestType; 8] = [
+pub(crate) const TYPES: [RequestType; 8] = [
     RequestType {
         name: "rest",
         kind: "requests",
@@ -182,7 +182,7 @@ fn tagged(ty: &RequestType, entity: &Value) -> Value {
     with_field(entity, "type", json!(ty.name))
 }
 
-fn text(entity: &Value, key: &str) -> String {
+pub(crate) fn text(entity: &Value, key: &str) -> String {
     entity.get(key).and_then(Value::as_str).unwrap_or_default().to_string()
 }
 
@@ -205,7 +205,7 @@ fn row(ty: &RequestType, entity: &Value) -> Value {
 }
 
 /// Every saved request of `types`, each with its type.
-fn saved(
+pub(crate) fn saved(
     ctx: &mut Context,
     workspace: &str,
     types: &[&'static RequestType],
@@ -466,7 +466,7 @@ fn refuse_overrides(ty: &RequestType, args: &ParsedArgs) -> Result<()> {
 
 /// Add `variables`, `environmentId` and, for a saved request (`saved`), `overrides` to the payload of a one-shot
 /// send, from `--var`, `--env`, `--data` and `--patch`.
-fn add_overrides(
+pub(crate) fn add_overrides(
     ctx: &mut Context,
     ty: &RequestType,
     workspace: &str,

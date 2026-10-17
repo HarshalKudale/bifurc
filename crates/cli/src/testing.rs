@@ -82,6 +82,24 @@ pub fn run_with_events(
     f: impl FnOnce(&mut Context) -> Result<String>,
 ) -> (Result<String>, Vec<(String, Value)>) {
     let args = parse_args(&argv.iter().map(|a| a.to_string()).collect::<Vec<_>>()).unwrap();
+    run_parsed_with_events(&args, answers, events, f)
+}
+
+/// [`run`] for arguments that were parsed some other way.
+pub fn run_parsed(
+    args: &crate::args::ParsedArgs,
+    answers: Vec<Answer>,
+    f: impl FnOnce(&mut Context) -> Result<String>,
+) -> (Result<String>, Vec<(String, Value)>) {
+    run_parsed_with_events(args, answers, vec![], f)
+}
+
+fn run_parsed_with_events(
+    args: &crate::args::ParsedArgs,
+    answers: Vec<Answer>,
+    events: Vec<Value>,
+    f: impl FnOnce(&mut Context) -> Result<String>,
+) -> (Result<String>, Vec<(String, Value)>) {
     let calls: Calls = Rc::default();
     let recorded = Rc::clone(&calls);
     let mut answers = Some(answers);
@@ -95,7 +113,7 @@ pub fn run_with_events(
         };
         Ok(Box::new(fake) as Box<dyn Engine>)
     });
-    let mut ctx = Context::new(&args, connector);
+    let mut ctx = Context::new(args, connector);
     let result = f(&mut ctx);
     let calls = calls.borrow().clone();
     (result, calls)

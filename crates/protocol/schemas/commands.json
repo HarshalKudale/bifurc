@@ -3062,6 +3062,9 @@
       "environmentId": {
        "type": "string"
       },
+      "jar": {
+       "type": "boolean"
+      },
       "overrides": {
        "type": "object"
       }
@@ -3196,6 +3199,9 @@
       },
       "environmentId": {
        "type": "string"
+      },
+      "jar": {
+       "type": "boolean"
       },
       "overrides": {
        "type": "object"
