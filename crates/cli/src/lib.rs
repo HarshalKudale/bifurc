@@ -7,6 +7,7 @@
 pub mod args;
 pub mod cli;
 pub mod commands;
+pub mod curl;
 pub mod direct;
 pub mod discovery;
 pub mod entities;

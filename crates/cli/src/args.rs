@@ -118,10 +118,11 @@ pub fn parse_args(argv: &[String]) -> Result<ParsedArgs, String> {
             }
         };
         i += 1;
-        // `--body` shows the body of a response when sending a request; everywhere else it is the request body,
-        // which `--data` (curl's `-d`) names.
+        // `--body` shows the body of a response when sending a request (`bifurc curl` too); everywhere else it is
+        // the request body, which `--data` (curl's `-d`) names.
         let sends = matches!(parsed.positionals.as_slice(), [group, verb, ..]
-            if matches!(group.as_str(), "requests" | "request") && verb == "send");
+            if matches!(group.as_str(), "requests" | "request") && verb == "send")
+            || parsed.positionals.first().is_some_and(|group| group == "curl");
         let name = if name == "body" && !sends { "data".to_string() } else { name };
         if BOOLEAN_FLAGS.contains(&name.as_str()) || (name == "body" && sends) {
             parsed.add(&name, "true".to_string());

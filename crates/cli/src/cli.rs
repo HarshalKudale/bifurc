@@ -12,7 +12,7 @@ use serde_json::json;
 use crate::{
     args::{ParsedArgs, parse_args},
     commands::{self, Connector, Context, unknown_verb},
-    direct,
+    curl, direct,
     discovery::{RuntimeInfo, find_running_engine, platform_default_data_dir},
     entities,
     error::{CliError, Result},
@@ -187,6 +187,22 @@ pub fn run_with_env(
             }
         };
     }
+    // `bifurc curl …`: curl's arguments, which `parse_args` would misread (`-I`, `--json <data>`).
+    if curl::at(argv).is_some() {
+        let result = curl::split(argv).and_then(|(args, call)| {
+            if args.has("help") {
+                return Ok(group_usage("curl").unwrap_or_default());
+            }
+            let data_dir = data_dir_of(&args, env_data_dir);
+            let mut ctx = context(&args, &data_dir);
+            let done = curl::run(&mut ctx, &call);
+            if let Some(raw) = ctx.raw.take() {
+                let _ = stdout.write_all(&raw);
+            }
+            done
+        });
+        return report(result, stdout, stderr);
+    }
     let args = match parse_args(argv) {
         Ok(args) => args,
         Err(message) => {
@@ -202,7 +218,13 @@ pub fn run_with_env(
         return 0;
     }
     let data_dir = data_dir_of(&args, env_data_dir);
-    match dispatch(&args, &data_dir, stdout) {
+    let done = dispatch(&args, &data_dir, stdout);
+    report(done, stdout, stderr)
+}
+
+/// Print what a command answered (or why it failed) and return the process exit code.
+fn report(done: Result<String>, stdout: &mut dyn Write, stderr: &mut dyn Write) -> i32 {
+    match done {
         Ok(text) => {
             // Nothing to print is not an empty line: `--quiet` and `--raw` print nothing after their output.
             if !text.is_empty() {
@@ -482,5 +504,22 @@ mod tests {
         assert_eq!(go(&["requests", "frob", "--no-start", "--data-dir", path]).code, 2);
         // 5: no engine and none to start.
         assert_eq!(go(&["requests", "list", "--no-start", "--data-dir", path]).code, 5);
+    }
+
+    #[test]
+    fn curl_is_checked_before_an_engine_is_needed_and_has_its_own_help() {
+        let dir = empty_dir();
+        let path = dir.path().to_str().unwrap();
+        let outcome = go(&["curl", "--proxy", "p", "http://h/", "--no-start", "--data-dir", path]);
+        assert_eq!(outcome.code, 2);
+        assert!(outcome.stderr.starts_with("bifurc: unsupported curl option --proxy"), "{}", outcome.stderr);
+        // `-I` and `--json <data>` are curl's, not the options they would be anywhere else.
+        let outcome = go(&["--no-start", "--data-dir", path, "curl", "-I", "--json", "{}", "http://h/"]);
+        assert_eq!(outcome.code, 5);
+        assert!(outcome.stderr.starts_with("bifurc: No engine is running for"), "{}", outcome.stderr);
+        for argv in [vec!["curl", "--help"], vec!["help", "curl"], vec!["curl", "-sL", "-h"]] {
+            let outcome = go(&argv);
+            assert_eq!((outcome.code, outcome.stdout), (0, format!("{}\n", group_usage("curl").unwrap())), "{argv:?}");
+        }
     }
 }

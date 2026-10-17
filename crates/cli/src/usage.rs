@@ -57,6 +57,7 @@ Engine
   update [check | skip <version>]        Whether a newer Bifurc exists and how this install gets it; check asks now
 
 Anything else
+  curl <curl arguments> [--save <name>]  Run a curl command through the engine: shared cookie jar, environments, one summary line
   call <command> [<json-payload>]        Any engine command, e.g. call server.status
   commands                               List every engine command
   --mcp                                  First argument: serve these commands as tools for an AI agent (MCP, stdio)
@@ -76,6 +77,33 @@ Exit codes
   3 a named thing was not found    4 network error of what was sent (refused, DNS, timeout)
   5 the engine is not running and could not be started or reached
   6 needs a person: a sealed vault and no terminal to ask on; vault run exits with the program's own code";
+
+const CURL: &str = "Usage: bifurc curl <curl arguments> [options]
+
+curl's own arguments, run by the engine (its cookie jar, its environments), printing the summary line of
+requests send. A leading `curl` word is ignored, and the whole command may be one quoted string.
+
+  bifurc curl -X POST https://api.localhost/users -H 'Content-Type: application/json'
+      -d '{\"email\":\"a@b.co\"}' --save \"Create user\" --folder auth   (all on one line)
+  bifurc curl -s https://api.localhost/users/1 --select .email
+
+curl options  -X -H -d/--data --data-raw --data-binary --data-ascii --data-urlencode --json -F --form-string
+              -G -u -A -e -b --url --oauth2-bearer, -k (no certificate check), -L (follow redirects),
+              -m/--max-time <seconds>. Accepted and ignored: -s -S -v --compressed --connect-timeout.
+              -c/--cookie-jar <file> is ignored too: the engine's jar keeps the cookies. -d @file, --json @file
+              and -F name=@file are read here. -i shows the headers, -I sends HEAD, -o <file> is --out,
+              -f exits 1 on a status of 400 or more. Any other curl option is refused (exit 2).
+Save          --save <name>     Save the request, then send the saved one
+              --save-only       Save without sending
+              --folder <path>   A folder of the request tree, e.g. auth/admin; missing ones are created
+              --update          Replace the request of that name (its id, folder, scripts and tests stay)
+              --no-templatize   Save as written. Otherwise a base URL, a credential or a value of the
+                                environment becomes {{variable}}; a credential nobody holds becomes {{token}}
+Output        --body --headers --select <path> --out <file> --max-body <bytes> --raw --quiet
+              --expect-status <code> --expect '<path> <op> <value>'
+              --bifurc-json     The machine-readable result (--json is curl's: data to send)
+Run           --var KEY=VALUE   A variable for this run (repeatable)    --env <name>   Another environment
+              --no-jar          Send without the workspace's cookie jar";
 
 const WORKSPACES: &str = "Usage: bifurc workspaces <verb>
 
@@ -431,6 +459,7 @@ pub fn group_usage(group: &str) -> Option<String> {
         "proxy" => PROXY,
         "settings" => SETTINGS,
         "tls" => TLS,
+        "curl" => CURL,
         _ => return None,
     };
     let rows = direct::usage(group);

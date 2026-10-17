@@ -152,8 +152,8 @@ fn headers(about: &'static str) -> Param {
 }
 
 /// The argument every tool takes: the raw answer instead of the readable one.
-fn json_switch() -> Param {
-    switch("json", "json", None, "Return the engine's raw JSON instead of the readable text.")
+fn json_switch(option: &'static str) -> Param {
+    switch("json", option, None, "Return the engine's raw JSON instead of the readable text.")
 }
 
 /// The argument of every tool that acts on one workspace.
@@ -179,7 +179,8 @@ impl Row {
         if self.scoped {
             params.push(workspace());
         }
-        params.push(json_switch());
+        // `--json` is curl's own option (data to send) in `bifurc curl`.
+        params.push(json_switch(if self.words == ["curl"] { "bifurc-json" } else { "json" }));
         Tool {
             name: self.name,
             words: self.words,
@@ -479,6 +480,30 @@ pub fn catalog() -> Vec<Tool> {
                 request_options(),
                 exchange_options(),
                 override_options(),
+                output_options(),
+            ]),
+        },
+        Row {
+            name: "curl",
+            words: &["curl"],
+            summary: "Run a curl command through Bifurc (shared cookie jar, environments), optionally saving it as a request.",
+            details: "`command` is curl's arguments as you would write them. `save` saves the request first,                 with the environment's values as {{variables}}, and sends the saved one; `save_only` does not send.",
+            effect: Effect::Runs,
+            upfront: true,
+            scoped: true,
+            params: concat(vec![
+                vec![
+                    operand(
+                        "command",
+                        "The whole curl command, e.g. curl -X POST https://api.localhost/users -d '{}'.",
+                    )
+                    .required(),
+                    text("save", "save", "Save the request under this name."),
+                    text("folder", "folder", "The folder of the saved request, e.g. auth/admin."),
+                    switch("update", "update", None, "Replace the saved request of that name."),
+                    switch("save_only", "save-only", None, "Save without sending."),
+                ],
+                override_options().into_iter().take(2).collect(),
                 output_options(),
             ]),
         },
@@ -1067,7 +1092,7 @@ fn of_verb(verb: &Verb) -> Tool {
     if verb.scope == Scope::Workspace {
         params.push(workspace());
     }
-    params.push(json_switch());
+    params.push(json_switch("json"));
     Tool {
         // The catalog is built once per server, so the name lives as long as the process.
         name: Box::leak(verb.words.join("_").into_boxed_str()),
@@ -1183,6 +1208,7 @@ mod tests {
                 "requests_list",
                 "requests_show",
                 "requests_send",
+                "curl",
                 "mocks_list",
                 "mocks_create",
                 "mappings_list",
