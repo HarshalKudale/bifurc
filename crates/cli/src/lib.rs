@@ -20,6 +20,7 @@ pub mod mcp;
 pub mod prompt;
 pub mod protocol;
 pub mod requests;
+pub mod select;
 pub mod session;
 pub mod socketio;
 pub mod stream;
