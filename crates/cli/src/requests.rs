@@ -767,6 +767,9 @@ pub fn requests(ctx: &mut Context, sub: Option<&str>) -> Result<String> {
             let wanted = need(args.positional(2), "request id or name")?;
             let workspace = workspace_id(ctx)?;
             let (ty, entity) = find(ctx, &workspace, &wanted)?;
+            // The listing carries the content but not the memory: this read tells the engine what was shown.
+            let seen = json!({ "workspaceId": workspace, "kind": ty.kind, "id": id_of(&entity) });
+            let _ = ctx.request("entity.load", seen);
             if args.has("curl") {
                 return curl_command(ctx, &workspace, ty, &entity);
             }
@@ -825,6 +828,7 @@ pub fn requests(ctx: &mut Context, sub: Option<&str>) -> Result<String> {
             Ok(ctx.print(&saved, || format!("Saved {} request {}", ty.name, id_of(&saved))))
         }
         "update" => {
+            describing.push("force");
             ctx.accept(&describing, 1)?;
             let wanted = need(args.positional(2), "request id or name")?;
             let workspace = workspace_id(ctx)?;

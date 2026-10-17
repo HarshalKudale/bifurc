@@ -35,7 +35,7 @@ use crate::{
         settings::{load_settings, save_settings},
         stamp,
         status_cache::invalidate_cache,
-        tree,
+        tree, versions,
     },
 };
 
@@ -358,7 +358,12 @@ pub fn register(registry: &mut CommandRegistry) {
         let Some(kind) = crud_kind(to_engine_kind(wire_kind)) else {
             return Err(not_routed("entity.update", wire_kind));
         };
-        update_entity_core(kind, params.get("entity").unwrap_or(&Value::Null))
+        let entity = params.get("entity").unwrap_or(&Value::Null);
+        let (ws_id, id) = (workspace_of(entity, &load_config()), str_of(entity, "id").to_string());
+        versions::check(&ws_id, kind.kind, &id, truthy(&params, "force"))?;
+        let done = update_entity_core(kind, entity)?;
+        versions::wrote(&ws_id, kind.kind, &id);
+        Ok(done)
     });
 
     registry.register("entity.delete", |params, _| async move {
@@ -423,6 +428,7 @@ mod tests {
 
     use super::*;
     use crate::{
+        env::session,
         kernel::{CommandContext, Scope, SessionIdentity},
         protocol::ErrorCode,
         testing::scratch_data_root,
@@ -492,6 +498,54 @@ mod tests {
         let details = error.details.expect("the error says why");
         assert_eq!(details["reason"], stamp::UPDATE_REQUIRED);
         details["requiredVersion"].clone()
+    }
+
+    #[tokio::test]
+    async fn an_agent_cannot_overwrite_what_another_changed_since_it_read() {
+        let _root = scratch_data_root();
+        let ctx = context();
+        let created = call(&ctx, "entity.create", json!({ "kind": "mocks", "entity": mock("/a") })).await.unwrap();
+        let id = created["id"].as_str().unwrap().to_string();
+        let load = json!({ "workspaceId": WS, "kind": "mocks", "id": id });
+        let edit = |status: i64| {
+            let mut m = created["entity"].clone();
+            m["responseStatus"] = json!(status);
+            json!({ "kind": "mocks", "entity": m })
+        };
+        let as_session = |name: &'static str, work| session::enter(WS, name, changes::as_client(Some("cli"), work));
+        let ask = |ctx: &CommandContext, action: &'static str, payload: Value| {
+            let ctx = ctx.clone();
+            async move { call(&ctx, action, payload).await }
+        };
+
+        // a reads (remembered); b changes it; a's update is refused with one line naming b.
+        as_session(
+            "a",
+            ask(&ctx, "entity.load", json!({ "workspaceId": WS, "kind": "mocks", "id": id, "remember": true })),
+        )
+        .await
+        .unwrap();
+        as_session("b", ask(&ctx, "entity.update", edit(201))).await.unwrap();
+        let refused = as_session("a", ask(&ctx, "entity.update", edit(202))).await.unwrap_err();
+        assert_eq!(refused.code, ErrorCode::Conflict);
+        assert!(!refused.message.contains('\n'));
+        assert!(refused.message.contains("responseStatus by session:b"), "{}", refused.message);
+        // A plain read (the CLI's own read-merge-write) does not refresh it.
+        as_session("a", ask(&ctx, "entity.load", load.clone())).await.unwrap();
+        assert!(as_session("a", ask(&ctx, "entity.update", edit(202))).await.is_err());
+        // --force passes; then a's own next write passes.
+        let mut forced = edit(202);
+        forced["force"] = json!(true);
+        as_session("a", ask(&ctx, "entity.update", forced)).await.unwrap();
+        as_session("a", ask(&ctx, "entity.update", edit(203))).await.unwrap();
+        // c never read it: not checked. The app is neither remembered nor checked.
+        as_session("c", ask(&ctx, "entity.update", edit(204))).await.unwrap();
+        let app = |work| changes::as_client(Some("desktop-ui"), work);
+        app(ask(&ctx, "entity.load", json!({ "workspaceId": WS, "kind": "mocks", "id": id, "remember": true })))
+            .await
+            .unwrap();
+        as_session("b", ask(&ctx, "entity.update", edit(205))).await.unwrap();
+        app(ask(&ctx, "entity.update", edit(206))).await.unwrap();
     }
 
     #[tokio::test]

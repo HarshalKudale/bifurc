@@ -44,8 +44,23 @@ impl<'a> Context<'a> {
         if self.json { json(value) } else { human() }
     }
 
-    pub(crate) fn request(&mut self, command: &str, payload: Value) -> Result<Value> {
-        self.engine()?.request(command, payload)
+    pub(crate) fn request(&mut self, command: &str, mut payload: Value) -> Result<Value> {
+        // `show` makes the engine remember what this agent saw; `--force` skips the stale-write check.
+        let verb = self.args.positional(1);
+        if command == "entity.load" && verb == Some("show") {
+            payload["remember"] = json!(true);
+        }
+        if command == "entity.update" && self.args.has("force") {
+            payload["force"] = json!(true);
+        }
+        let answer = self.engine()?.request(command, payload);
+        // A stale write is a wrong move by the caller (exit 2) with a one-line reason.
+        match answer {
+            Err(CliError::Engine { code, message }) if command == "entity.update" && code == "CONFLICT" => {
+                Err(CliError::usage(message))
+            }
+            other => other,
+        }
     }
 
     /// Refuse an option the command does not take, and more arguments than its `operands`. The command is the

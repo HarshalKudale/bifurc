@@ -71,6 +71,9 @@
       "type": "string"
      },
      "additionalProperties": {}
+    },
+    "force": {
+     "type": "boolean"
     }
    },
    "required": [
@@ -206,6 +209,9 @@
     },
     "id": {
      "type": "string"
+    },
+    "remember": {
+     "type": "boolean"
     }
    },
    "required": [
