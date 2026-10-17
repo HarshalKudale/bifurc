@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 /// Flags that take no value.
-const BOOLEAN_FLAGS: [&str; 41] = [
+const BOOLEAN_FLAGS: [&str; 42] = [
     "list",
     "mine",
     "yes",
@@ -45,6 +45,7 @@ const BOOLEAN_FLAGS: [&str; 41] = [
     "errors",
     "kill",
     "logs",
+    "as-request",
 ];
 
 /// Single-letter aliases; any other letter stands for itself.
@@ -141,12 +142,12 @@ pub fn parse_args(argv: &[String]) -> Result<ParsedArgs, String> {
             }
         };
         i += 1;
-        // `--body` shows the body of a response when sending a request (`bifurc curl` and `capture show` too); elsewhere it is
+        // `--body` shows the body of a response when sending a request (`bifurc curl`, `capture show` and `webhooks` too); elsewhere it is
         // the request body, which `--data` (curl's `-d`) names.
         let sends = matches!(parsed.positionals.as_slice(), [group, verb, ..]
             if (matches!(group.as_str(), "requests" | "request") && verb == "send")
                 || (group == "capture" && verb == "show"))
-            || parsed.positionals.first().is_some_and(|group| group == "curl");
+            || parsed.positionals.first().is_some_and(|group| matches!(group.as_str(), "curl" | "webhooks"));
         let name = if name == "body" && !sends { "data".to_string() } else { name };
         // `--curl` prints a saved request as a command there; `requests create` takes the command as its value.
         let prints_curl = name == "curl"
