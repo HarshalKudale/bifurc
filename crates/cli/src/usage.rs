@@ -122,7 +122,7 @@ Global is always applied; the selected environment overrides it; a lone extra en
 without being asked for.
 
   list
-  show                                   The merged variables a request resolves against
+  show [--reveal]                        The merged variables; secret-looking names are masked
   use <id|name>
   set <id|name> <KEY=VALUE>...           Set variables of one environment (Global is named Global), adding
                                          the ones it does not have
@@ -169,9 +169,11 @@ A mock created here is the whole response: nothing is asked of the real server.
 const REQUESTS: &str = "Usage: bifurc requests <verb>
 
 Saved requests of every type: rest (the default), graphql, grpc, soap, websocket, sse, socketio, mcp.
+A request is named by its id, its name, a unique start of its name (get -> Get order) or of its id (4+).
 
-  list [--type <type>]
-  show <id|name> [--type <type>]
+  list [--type <type>] [--folder <path>] [--grep <text>] [--ids]
+                                         One line each: folder, method, URL, name
+  show <name> [--curl] [--reveal]        Summary of a request; --curl prints it as a curl command (REST)
   create [--type <type>] --url <url> [--name <text>] [-H \"k: v\"]... <options of the type>
   create --curl <command> [--name <text>]   The request a cURL command describes, of the type it turns out to be
   update <id|name> [--type <type>] <the options of create>
@@ -353,7 +355,11 @@ What went through the proxies: each exchange with its request and its response.
 
 const COOKIES: &str = "Usage: bifurc cookies <verb>
 
-The cookies the workspace's requests were given and send back.";
+The cookies the workspace's requests were given and send back. Values print masked.
+
+  list [--domain <d>] [--reveal]         One line per cookie; --reveal shows values on a terminal
+  clear [--domain <d>]                   Forget all cookies, or one domain's
+  configure --clear true|false           Forget cookies when the engine restarts";
 
 const SYNC: &str = "Usage: bifurc sync <verb>
 

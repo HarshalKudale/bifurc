@@ -290,6 +290,6 @@ mod tests {
     fn list_shows_the_method_and_the_url() {
         let argv = ["requests", "list", "--type", "sse"];
         let (out, _) = run(&argv, engine(), |c| requests(c, sub(&argv)));
-        assert_eq!(out.unwrap(), "ID  TYPE  NAME  METHOD  URL\ne1  sse   Feed  GET     http://x/events");
+        assert_eq!(out.unwrap(), "GET  http://x/events  Feed");
     }
 }

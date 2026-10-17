@@ -451,6 +451,6 @@ mod tests {
     fn list_shows_the_transport_and_the_command() {
         let argv = ["requests", "list", "--type", "mcp"];
         let (out, _) = run(&argv, engine(), |c| requests(c, sub(&argv)));
-        assert_eq!(out.unwrap(), "ID  TYPE  NAME   METHOD  URL\nm1  mcp   Tools  stdio   npx my-server");
+        assert_eq!(out.unwrap(), "MCP  npx my-server  Tools");
     }
 }
