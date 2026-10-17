@@ -187,6 +187,26 @@ fn create_entity_core(
     Ok(new_entity)
 }
 
+/// An environment saved without `auth` (a client that does not know the field) keeps the one it has; an
+/// explicit `auth: null` removes it.
+fn keep_auth(kind: &CrudKind, ws_id: &str, id: &str, entity: &mut Value) {
+    if kind.kind != "environments" {
+        return;
+    }
+    match entity.get("auth") {
+        Some(Value::Null) => {
+            entity.as_object_mut().map(|fields| fields.shift_remove("auth"));
+        }
+        Some(_) => {}
+        None => {
+            let stored = find_entity_file(ws_id, kind.kind, id).and_then(|file| read_json(&file));
+            if let Some(auth) = stored.and_then(|stored| stored.get("auth").cloned()) {
+                entity["auth"] = auth;
+            }
+        }
+    }
+}
+
 fn update_entity_core(kind: &CrudKind, entity: &Value) -> Result<Value> {
     let ws_id = workspace_of(entity, &load_config());
     let id = opt_str(entity, "id")
@@ -202,6 +222,7 @@ fn update_entity_core(kind: &CrudKind, entity: &Value) -> Result<Value> {
     }
     let mut entity = entity.clone();
     place_in_folder(kind, &ws_id, &mut entity)?;
+    keep_auth(kind, &ws_id, &id, &mut entity);
     let mut cfg = load_config();
     if let Some(validate) = kind.validate {
         validate(&entity, &siblings_of(&cfg, kind, &ws_id, &id))?;
@@ -498,6 +519,27 @@ mod tests {
         let details = error.details.expect("the error says why");
         assert_eq!(details["reason"], stamp::UPDATE_REQUIRED);
         details["requiredVersion"].clone()
+    }
+
+    #[tokio::test]
+    async fn an_environment_saved_without_auth_keeps_it_and_null_removes_it() {
+        let _root = scratch_data_root();
+        let ctx = context();
+        let auth = json!({ "login": { "kind": "request", "id": "r" }, "retryOn401": true });
+        let env = json!({ "name": "e", "variables": [], "auth": auth });
+        let created = create(&ctx, "environments", env).await;
+        let stored = || {
+            let file = find_entity_file(WS, "environments", str_of(&created, "id")).unwrap();
+            read_json(&file).unwrap()
+        };
+        let mut plain = created.clone();
+        plain.as_object_mut().unwrap().shift_remove("auth");
+        plain["name"] = json!("renamed");
+        call(&ctx, "entity.update", json!({ "kind": "environments", "entity": plain.clone() })).await.unwrap();
+        assert_eq!((stored()["name"].clone(), stored()["auth"].clone()), (json!("renamed"), auth));
+        plain["auth"] = Value::Null;
+        call(&ctx, "entity.update", json!({ "kind": "environments", "entity": plain })).await.unwrap();
+        assert!(stored().get("auth").is_none());
     }
 
     #[tokio::test]

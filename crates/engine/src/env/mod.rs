@@ -134,6 +134,19 @@ fn selected_environment_id(ws_id: &str, environments: &[Value]) -> Option<String
     effective_environment_id(environments, load_settings().stored_environment_id(ws_id).as_deref())
 }
 
+/// The stored environment in force for `ws_id` (a scope's, else the selection), as the file holds it.
+pub fn selected_environment(ws_id: &str) -> Option<Value> {
+    let environments = read_all_entities(ws_id, "environments");
+    let id = selected_environment_id(ws_id, &environments)?;
+    environments.into_iter().find(|e| str_of(e, "id") == id)
+}
+
+/// What scripts of the running command set so far, where a scope collects them instead of writing the file
+/// (a named session's): the later part of the same command does not see these unless they are laid over.
+pub fn collected_variables() -> Vec<(String, String)> {
+    SCOPE.try_with(|scope| scope.changes.as_ref().map(|c| c.lock().set.clone())).ok().flatten().unwrap_or_default()
+}
+
 /// `active`'s variables over `global`'s, as one environment named `merged`. `None` when both are absent.
 pub fn merge_env_vars(global: Option<&Value>, active: Option<&Value>) -> Option<Value> {
     if global.is_none() && active.is_none() {
@@ -285,7 +298,13 @@ pub fn register(registry: &mut CommandRegistry) {
         Ok(json!({ "text": resolve_vars(str_of(&params, "text"), env.as_ref()) }))
     });
     registry.register_sync("env.getMerged", |params, _| {
-        Ok(load_merged_environment(str_of(&params, "workspaceId")).unwrap_or(Value::Null))
+        let ws_id = str_of(&params, "workspaceId");
+        let mut merged = load_merged_environment(ws_id).unwrap_or(Value::Null);
+        // The selected environment's login, for `env show`; resolving never reads it.
+        if let Some(auth) = selected_environment(ws_id).and_then(|env| env.get("auth").cloned()) {
+            merged["auth"] = auth;
+        }
+        Ok(merged)
     });
     registry.register_sync("env.setActive", |params, _| -> Result<Value> {
         let id = params.get("id").cloned().unwrap_or(Value::Null);

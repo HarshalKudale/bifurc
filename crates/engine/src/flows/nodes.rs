@@ -138,9 +138,12 @@ fn http_output(node: &Node, answer: &Value) -> Outcome {
     } else {
         None
     };
-    let output = json!({
+    let mut output = json!({
         "status": status, "headers": answer["headers"], "body": body, "durationMs": answer["durationMs"], "tests": tests,
     });
+    if answer["reauthenticated"] == true {
+        output["reauthenticated"] = json!(true);
+    }
     outcome(output, error)
 }
 

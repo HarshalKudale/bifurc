@@ -1814,6 +1814,28 @@ mod tests {
     }
 
     #[test]
+    fn a_reauthenticated_send_says_so_and_a_failed_login_is_the_reason() {
+        let mut ok = reply(200, json!({"content-type": "text/plain"}), b"hi", json!([]));
+        ok["reauthenticated"] = json!(true);
+        let (out, _) = send_r1(&[], ok.clone());
+        assert_eq!(out.unwrap(), "200 OK · 12ms · 2B text · ↻ re-authenticated");
+        let (out, _) = send_r1(&["--json"], ok);
+        assert_eq!(serde_json::from_str::<Value>(&out.unwrap()).unwrap()["reauthenticated"], true);
+        let mut refused = reply(401, json!({"content-type": "text/plain"}), b"no", json!([]));
+        refused["reauthentication"] = json!({"ok": false, "error": "the login request answered 500"});
+        let (out, _) = send_r1(&[], refused);
+        assert_eq!(
+            out.unwrap_err(),
+            CliError::Failed(
+                "401 Unauthorized · 12ms · 2B text
+✗ re-authentication failed: the login request answered 500
+no"
+                .into()
+            )
+        );
+    }
+
+    #[test]
     fn a_failed_test_fails_with_its_reason_and_the_body_preview() {
         let tests = json!([{"name": "is 201", "passed": false, "error": "got 200"}]);
         let (out, _) = send_r1(&[], reply(200, json!({"content-type": "text/plain"}), b"hi", tests));

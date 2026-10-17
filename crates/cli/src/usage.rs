@@ -207,7 +207,9 @@ without being asked for.
   use <id|name>
   set <id|name> <KEY=VALUE>...           Set variables of one environment (Global is named Global), adding
                                          the ones it does not have
-  unset <id|name> <KEY>...               Remove variables of one environment";
+  unset <id|name> <KEY>...               Remove variables of one environment
+  auth <id|name> --login <request|flow> [--flow <name>] [--retry true|false] | --off
+                                         Run that login once on a 401, then send again (`↻ re-authenticated`)";
 
 const MAPPINGS: &str = "Usage: bifurc mappings <verb>
 
@@ -759,7 +761,7 @@ pub fn examples(group: &str) -> Option<&'static [&'static str]> {
             "bifurc env use dev",
             "bifurc env show",
             "bifurc env set dev baseUrl=http://api.localhost token=abc",
-            "bifurc env unset dev token",
+            r#"bifurc env auth dev --login "Login as admin""#,
         ],
         "cookies" => &[
             "bifurc cookies list",
