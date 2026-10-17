@@ -10,6 +10,7 @@ use std::{
 use serde_json::json;
 
 use crate::{
+    agent,
     args::{ParsedArgs, parse_args},
     capture,
     commands::{self, Connector, Context, unknown_verb},
@@ -125,6 +126,7 @@ fn dispatch(args: &ParsedArgs, data_dir: &Path, stdout: &mut dyn Write) -> Resul
         "status" => commands::status(&mut ctx),
         "wait" => wait::wait(&mut ctx),
         "setup" => setup::setup(&mut ctx),
+        "agent" => agent::agent(&mut ctx, sub),
         "workspaces" => commands::workspaces(&mut ctx, sub),
         "account" => commands::account(&mut ctx, sub),
         "env" => commands::env(&mut ctx, sub),
@@ -209,7 +211,8 @@ pub fn run_with_env(
                 0
             }
             None => {
-                let message = "examples exist for: curl, requests, capture, mocks, flows, runner, env, cookies, wait";
+                let message =
+                    "examples exist for: agent, curl, requests, capture, mocks, flows, runner, env, cookies, wait";
                 let _ = writeln!(stderr, "{}", CliError::usage(message).line());
                 2
             }
