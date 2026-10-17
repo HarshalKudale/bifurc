@@ -20,3 +20,4 @@ pub mod settings;
 pub mod stamp;
 pub mod status_cache;
 pub mod tree;
+pub mod versions;

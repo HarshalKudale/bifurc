@@ -130,6 +130,21 @@ pub fn record(ws: &str, kind: &str, id: &str, name: &str, action: &str, fields: 
     }));
 }
 
+/// The position of the newest change.
+pub fn cursor() -> u64 {
+    LOG.lock().next
+}
+
+/// The changes to `id` after position `seq`, oldest first.
+pub fn since(ws: &str, id: &str, seq: u64) -> Vec<Value> {
+    let log = LOG.lock();
+    log.ring
+        .iter()
+        .filter(|c| c["workspaceId"] == ws && c["id"] == id && c["seq"].as_u64() > Some(seq))
+        .cloned()
+        .collect()
+}
+
 /// The named sessions that changed any of `ids` in the workspace, first change first: a commit made later (on
 /// publish) says who made what it commits.
 pub fn sessions_of(ws: &str, ids: &[String]) -> Vec<String> {

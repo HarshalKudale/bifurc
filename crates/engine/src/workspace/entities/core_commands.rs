@@ -13,7 +13,7 @@ use crate::{
         deletions::pending_entity,
         fs::{entity_lock, read_enabled_set, sync_enabled_set},
         kinds::crud_kind,
-        stamp,
+        stamp, versions,
     },
 };
 
@@ -76,6 +76,9 @@ pub fn register(registry: &mut CommandRegistry) {
             }
             return Ok(json!({ "ok": false }));
         };
+        if truthy(&params, "remember") {
+            versions::remember(ws_id, engine_kind, id);
+        }
         if ENABLED_STATE_KINDS.contains(&engine_kind) {
             let enabled = read_enabled_set(ws_id, engine_kind).is_some_and(|set| set.contains(id));
             return Ok(json!({ "ok": true, "entity": merged(&entity, &json!({ "enabled": enabled })) }));

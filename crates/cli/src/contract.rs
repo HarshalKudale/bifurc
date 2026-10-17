@@ -413,7 +413,7 @@ fn real_of(ctx: &Context) -> Real {
 /// `contract update-mock <mock> [--from-capture]`: rewrite the mock's body to the shape the real answer has,
 /// keeping the mock's values where a key stays, and its status when it differs. Headers and the rest stay.
 pub fn update_mock(ctx: &mut Context) -> Result<String> {
-    ctx.accept(&["from-capture", "var", "env", "fresh-session", "quiet"], 1)?;
+    ctx.accept(&["from-capture", "var", "env", "fresh-session", "quiet", "force"], 1)?;
     let args = ctx.args;
     let wanted = crate::commands::need(args.positionals.get(2).map(String::as_str), "a mock name")?;
     let workspace = workspace_id(ctx)?;
