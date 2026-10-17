@@ -249,6 +249,33 @@ mod tests {
     }
 
     #[test]
+    fn a_saved_send_takes_variables_an_environment_a_body_and_patches() {
+        let built = line(
+            "requests_send",
+            json!({"request": "Order", "vars": {"host": "a.test"}, "env": "staging", "body": "{}", "patch": [".a=1", ".b=2"]}),
+        );
+        assert_eq!(
+            built.unwrap(),
+            [
+                "requests",
+                "send",
+                "--data",
+                "{}",
+                "--var",
+                "host=a.test",
+                "--env",
+                "staging",
+                "--patch",
+                ".a=1",
+                "--patch",
+                ".b=2",
+                "--",
+                "Order",
+            ]
+        );
+    }
+
+    #[test]
     fn json_arguments_are_given_as_an_object_or_as_its_text() {
         for variables in [json!({"id": 1}), json!("{\"id\":1}")] {
             let built = line(
@@ -316,6 +343,10 @@ mod tests {
             ("requests_list", with(json!({"type": "grpc"}))),
             ("requests_show", with(json!({"request": "Ping", "type": "rest"}))),
             ("requests_send", with(json!({"request": "Ping", "type": "rest"}))),
+            (
+                "requests_send",
+                with(json!({"request": "Ping", "vars": {"host": "a.test"}, "env": "staging", "patch": [".qty=2"]})),
+            ),
             ("requests_send", with(json!({"url": "http://x", "method": "POST", "body": "{}", "headers": {"a": "b"}}))),
             (
                 "requests_send",

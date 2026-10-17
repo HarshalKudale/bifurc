@@ -8,6 +8,7 @@ use super::{
     request_body::encode_request_body,
 };
 use crate::{
+    env::{send_scoped, with_overrides},
     kernel::CommandRegistry,
     protocol::EngineError,
     utils::json::{array_of, is_truthy, opt_str, str_of},
@@ -41,96 +42,99 @@ fn scripts_of(source: &Value, pre: &str, post: &str, test: &str) -> PipelineScri
 
 pub fn register(registry: &mut CommandRegistry) {
     registry.register("request.send", |params: Value, ctx| async move {
-        let ws_id = str_of(&params, "workspaceId").to_string();
-        let (request, scripts) = if let Some(id) = opt_str(&params, "id") {
-            let entity = load_entity(&ws_id, "requests", id).ok_or_else(|| {
-                EngineError::not_found(format!("No saved requests entity \"{id}\" in workspace \"{ws_id}\"."))
-                    .keyed("request.saved_not_found", json!({ "kind": "requests", "id": id, "workspace": ws_id }))
-            })?;
-            let mut scripts = scripts_of(&entity, "preScript", "postScript", "testScript");
-            for skipped in array_of(&params, "skipScripts") {
-                match skipped.as_str() {
-                    Some("pre") => scripts.pre = None,
-                    Some("post") => scripts.post = None,
-                    Some("test") => scripts.test = None,
-                    _ => {}
+        send_scoped(&params.clone(), async move {
+            let ws_id = str_of(&params, "workspaceId").to_string();
+            let (request, scripts) = if let Some(id) = opt_str(&params, "id") {
+                let entity = load_entity(&ws_id, "requests", id).ok_or_else(|| {
+                    EngineError::not_found(format!("No saved requests entity \"{id}\" in workspace \"{ws_id}\"."))
+                        .keyed("request.saved_not_found", json!({ "kind": "requests", "id": id, "workspace": ws_id }))
+                })?;
+                let mut scripts = scripts_of(&entity, "preScript", "postScript", "testScript");
+                for skipped in array_of(&params, "skipScripts") {
+                    match skipped.as_str() {
+                        Some("pre") => scripts.pre = None,
+                        Some("post") => scripts.post = None,
+                        Some("test") => scripts.test = None,
+                        _ => {}
+                    }
+                }
+                (request_from_entity(&with_overrides(entity, &params)), scripts)
+            } else {
+                let inline = params.get("request").cloned().unwrap_or(Value::Null);
+                let scripts = scripts_of(params.get("scripts").unwrap_or(&Value::Null), "pre", "post", "test");
+                (inline, scripts)
+            };
+
+            let jar = ws_id.clone();
+            let stream_id = params.get("streamId").filter(|id| id.is_string()).cloned();
+            // Resolved by `request.replay` against the app's defaults; the pipeline does not need them.
+            let settings = request.get("settings").filter(|v| v.is_object()).cloned();
+            let result = run_request_pipeline(&ws_id, &request, &scripts, |resolved| async move {
+                let encoded = encode_request_body(&resolved);
+                let mut replay = json!({
+                    "method": resolved["method"],
+                    "url": resolved["url"],
+                    "headers": encoded.headers,
+                    "body": encoded.body_base64,
+                });
+                if let Some(id) = stream_id {
+                    replay["streamId"] = id;
+                }
+                if let Some(settings) = settings {
+                    replay["settings"] = settings;
+                }
+                let sent = ctx.registry.invoke("request.replay", replay, ctx.clone());
+                crate::cookies::scoped(&jar, sent).await
+            })
+            .await;
+            // A send stopped by `request.cancel` is an outcome the caller can tell apart from a failure.
+            let result = match result {
+                Err(error) if error.details.as_ref().is_some_and(|d| d["cancelled"] == true) => {
+                    let mut cancelled = json!({ "ok": false, "cancelled": true });
+                    crate::runtime::set_failure(&mut cancelled, &error);
+                    return Ok(cancelled);
+                }
+                result => result,
+            };
+            if let Some(id) = response_history::entity_id(&params) {
+                let sent = result.as_ref().ok().map_or(&request, |done| &done["request"]);
+                let (method, url) = (str_of(sent, "method").to_string(), str_of(sent, "url").to_string());
+                let capture = match &result {
+                    Ok(done) => response_history::Capture {
+                        status: done["response"]["status"].as_i64().unwrap_or(0),
+                        status_text: None,
+                        headers: done["response"]["headers"].clone(),
+                        // `request.send` returns the bytes the upstream sent, base64-encoded.
+                        body: STANDARD.decode(str_of(&done["response"], "body").trim()).unwrap_or_default(),
+                        duration_ms: done["durationMs"].as_u64().unwrap_or(0),
+                        error: None,
+                        error_key: None,
+                        method,
+                        url,
+                    },
+                    Err(error) => response_history::failed(error, method, url),
+                };
+                response_history::record(&ws_id, id, capture);
+            }
+            let result = result?;
+
+            let mut out = json!({
+                "status": result["response"]["status"],
+                "headers": result["response"]["headers"],
+                "body": result["response"]["body"],
+                "durationMs": result["durationMs"],
+                "request": result["request"],
+                "tests": result["tests"],
+                "testLogs": result["testLogs"],
+            });
+            for key in ["preScriptError", "postScriptError"] {
+                if let Some(error) = result.get(key) {
+                    out[key] = error.clone();
                 }
             }
-            (request_from_entity(&entity), scripts)
-        } else {
-            let inline = params.get("request").cloned().unwrap_or(Value::Null);
-            let scripts = scripts_of(params.get("scripts").unwrap_or(&Value::Null), "pre", "post", "test");
-            (inline, scripts)
-        };
-
-        let jar = ws_id.clone();
-        let stream_id = params.get("streamId").filter(|id| id.is_string()).cloned();
-        // Resolved by `request.replay` against the app's defaults; the pipeline does not need them.
-        let settings = request.get("settings").filter(|v| v.is_object()).cloned();
-        let result = run_request_pipeline(&ws_id, &request, &scripts, |resolved| async move {
-            let encoded = encode_request_body(&resolved);
-            let mut replay = json!({
-                "method": resolved["method"],
-                "url": resolved["url"],
-                "headers": encoded.headers,
-                "body": encoded.body_base64,
-            });
-            if let Some(id) = stream_id {
-                replay["streamId"] = id;
-            }
-            if let Some(settings) = settings {
-                replay["settings"] = settings;
-            }
-            let sent = ctx.registry.invoke("request.replay", replay, ctx.clone());
-            crate::cookies::scoped(&jar, sent).await
+            Ok(out)
         })
-        .await;
-        // A send stopped by `request.cancel` is an outcome the caller can tell apart from a failure.
-        let result = match result {
-            Err(error) if error.details.as_ref().is_some_and(|d| d["cancelled"] == true) => {
-                let mut cancelled = json!({ "ok": false, "cancelled": true });
-                crate::runtime::set_failure(&mut cancelled, &error);
-                return Ok(cancelled);
-            }
-            result => result,
-        };
-        if let Some(id) = response_history::entity_id(&params) {
-            let sent = result.as_ref().ok().map_or(&request, |done| &done["request"]);
-            let (method, url) = (str_of(sent, "method").to_string(), str_of(sent, "url").to_string());
-            let capture = match &result {
-                Ok(done) => response_history::Capture {
-                    status: done["response"]["status"].as_i64().unwrap_or(0),
-                    status_text: None,
-                    headers: done["response"]["headers"].clone(),
-                    // `request.send` returns the bytes the upstream sent, base64-encoded.
-                    body: STANDARD.decode(str_of(&done["response"], "body").trim()).unwrap_or_default(),
-                    duration_ms: done["durationMs"].as_u64().unwrap_or(0),
-                    error: None,
-                    error_key: None,
-                    method,
-                    url,
-                },
-                Err(error) => response_history::failed(error, method, url),
-            };
-            response_history::record(&ws_id, id, capture);
-        }
-        let result = result?;
-
-        let mut out = json!({
-            "status": result["response"]["status"],
-            "headers": result["response"]["headers"],
-            "body": result["response"]["body"],
-            "durationMs": result["durationMs"],
-            "request": result["request"],
-            "tests": result["tests"],
-            "testLogs": result["testLogs"],
-        });
-        for key in ["preScriptError", "postScriptError"] {
-            if let Some(error) = result.get(key) {
-                out[key] = error.clone();
-            }
-        }
-        Ok(out)
+        .await
     });
 }
 
@@ -270,6 +274,44 @@ mod tests {
             vars,
             [("k".into(), "200".into()), ("stamp".into(), "S1".into()), ("echoed".into(), "POST:{\"n\":1}".into())]
         );
+    }
+
+    fn echoed(result: &Value) -> Value {
+        serde_json::from_slice(&crate::utils::replay::decode_base64_lenient(result["body"].as_str().unwrap())).unwrap()
+    }
+
+    #[tokio::test]
+    async fn a_send_takes_variables_an_environment_and_field_overrides() {
+        let root = scratch_data_root();
+        let base = test_server::start(HashMap::new()).await;
+        write_entity(
+            root.ws_id,
+            "requests",
+            "r1",
+            &json!({ "id": "r1", "name": "r", "method": "POST", "url": "{{base}}/x", "headers": {}, "body": "saved {{x}}" }),
+            None,
+        )
+        .unwrap();
+        for (id, value) in [("__global__", "g"), ("staging", "s"), ("other", "o")] {
+            crate::workspace::fs::write_flat_entity(
+                root.ws_id,
+                "environments",
+                id,
+                &json!({ "id": id, "name": id, "createdAt": 0, "workspaceId": root.ws_id,
+                         "variables": [{ "id": "x", "key": "x", "value": value }, { "id": "b", "key": "base", "value": base }] }),
+            )
+            .unwrap();
+        }
+        let send = |extra: Value| {
+            let mut params = json!({ "workspaceId": "ws1", "id": "r1" });
+            params.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+            async move { echoed(&call("request.send", params).await.unwrap()) }
+        };
+        assert_eq!(send(json!({})).await["body"], "saved g");
+        assert_eq!(send(json!({ "variables": { "x": "v" } })).await["body"], "saved v");
+        assert_eq!(send(json!({ "environmentId": "staging" })).await["body"], "saved s");
+        assert_eq!(send(json!({ "environmentId": "staging", "variables": { "x": "v" } })).await["body"], "saved v");
+        assert_eq!(send(json!({ "overrides": { "body": "new {{x}}" } })).await["body"], "new g");
     }
 
     /// A server that accepts connections and never answers.

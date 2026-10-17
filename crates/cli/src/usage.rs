@@ -151,6 +151,10 @@ Saved requests of every type: rest (the default), graphql, grpc, soap, websocket
   send <id|name> [--type <type>]         Send a saved request; the engine resolves it and runs its scripts
   send [--type <type>] --url <url> <the options of create>
                                          Send a request that is not saved
+  --var KEY=VALUE                        Send with this variable ({{KEY}}) over the environment's; repeatable
+  --env <id|name>                        Send with this environment instead of the selected one
+  --data <text|@file>                    On a saved send: replaces its body (graphql: variables)
+  --patch '<path>=<value>'               On a saved send: sets a field of its JSON body, e.g. '.qty=2'; repeatable
   reflect <address>                      Services and methods a gRPC server reports through reflection
 
 Output of send (rest, graphql, soap, grpc): one line such as \"201 Created · 142ms · 4.2KB json · tests 3/3 ✓\";

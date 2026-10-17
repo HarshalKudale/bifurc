@@ -440,6 +440,77 @@ const OUTPUT_OPTIONS: [&str; 10] =
 /// The options only a send takes, each for the types [`exchange_options`] says.
 const SEND_OPTIONS: [&str; 7] = ["wait", "event", "ack", "tool", "prompt", "resource", "arg"];
 
+/// The options that lay values over a request that answers once: `--var` and `--env` for any such send, `--patch`
+/// for a saved one.
+const OVERRIDE_OPTIONS: [&str; 3] = ["var", "env", "patch"];
+
+/// The field of a saved request `--data` and `--patch` act on: its body, a GraphQL request's variables.
+fn body_field(ty: &RequestType) -> &'static str {
+    match ty.name {
+        "graphql" => "variables",
+        "grpc" => "requestBody",
+        _ => "body",
+    }
+}
+
+/// Refuse the override options on a send of a request that does not answer once.
+fn refuse_overrides(ty: &RequestType, args: &ParsedArgs) -> Result<()> {
+    match OVERRIDE_OPTIONS.iter().find(|option| args.has(option)) {
+        Some(option) if ty.send.is_none() => Err(CliError::usage(format!(
+            "--{option} applies to rest, graphql, soap and grpc sends, not to a {} request",
+            ty.name
+        ))),
+        _ => Ok(()),
+    }
+}
+
+/// Add `variables`, `environmentId` and, for a saved request (`saved`), `overrides` to the payload of a one-shot
+/// send, from `--var`, `--env`, `--data` and `--patch`.
+fn add_overrides(
+    ctx: &mut Context,
+    ty: &RequestType,
+    workspace: &str,
+    saved: Option<&Value>,
+    payload: &mut Value,
+) -> Result<()> {
+    let args = ctx.args;
+    let mut variables = Map::new();
+    for pair in args.flags("var") {
+        match pair.split_once('=') {
+            Some((key, value)) if !key.is_empty() => variables.insert(key.to_string(), json!(value)),
+            _ => return Err(CliError::usage(format!("--var must be KEY=VALUE, not \"{pair}\""))),
+        };
+    }
+    if !variables.is_empty() {
+        payload["variables"] = Value::Object(variables);
+    }
+    if let Some(wanted) = args.flag("env") {
+        let environments = list_entities(ctx, workspace, "environments")?;
+        payload["environmentId"] = json!(id_of(find_one(&environments, wanted, &["name"], "environment", "env")?));
+    }
+    let Some(saved) = saved else { return Ok(()) };
+    let field = body_field(ty);
+    let mut body = body_from(args)?;
+    let patches = args.flags("patch");
+    if !patches.is_empty() {
+        let source = body.unwrap_or_else(|| text(saved, field));
+        let mut parsed: Value = serde_json::from_str(&source).map_err(|_| {
+            CliError::usage(format!(
+                "--patch needs a JSON body, and the body of \"{}\" is not JSON",
+                text(saved, "name")
+            ))
+        })?;
+        for patch in patches {
+            crate::select::patch(&mut parsed, patch).map_err(CliError::usage)?;
+        }
+        body = Some(parsed.to_string());
+    }
+    if let Some(body) = body {
+        payload["overrides"] = json!({ field: body });
+    }
+    Ok(())
+}
+
 /// The options a send of this type takes beyond the ones that describe a request: a WebSocket's message and how
 /// long to listen, an SSE stream's listening time (its body is part of the request), a Socket.IO event with its
 /// arguments and whether the server is to acknowledge it, what to ask an MCP server for.
@@ -601,26 +672,32 @@ pub fn requests(ctx: &mut Context, sub: Option<&str>) -> Result<String> {
         }
         "send" => {
             describing.extend(SEND_OPTIONS);
-            ctx.accept(&[describing.as_slice(), &OUTPUT_OPTIONS].concat(), 1)?;
+            ctx.accept(&[describing.as_slice(), &OUTPUT_OPTIONS, &OVERRIDE_OPTIONS].concat(), 1)?;
             match args.positional(2) {
                 // A saved request goes by id: the engine loads it, resolves it and runs its scripts.
                 Some(wanted) => {
                     let workspace = workspace_id(ctx)?;
                     let (ty, entity) = find(ctx, &workspace, wanted)?;
                     let exchange = exchange_options(ty);
-                    let given = args
-                        .names()
-                        .into_iter()
-                        .find(|name| *name != "type" && describing.contains(name) && !exchange.contains(name));
+                    // `--data` replaces the body of what is sent once; the rest of the request stays as saved.
+                    let given = args.names().into_iter().find(|name| {
+                        *name != "type"
+                            && describing.contains(name)
+                            && !exchange.contains(name)
+                            && !(*name == "data" && ty.send.is_some())
+                    });
                     if let Some(option) = given {
                         return Err(CliError::usage(format!(
                             "a saved request is sent as it is saved, without --{option}; change it with: bifurc requests update"
                         )));
                     }
+                    refuse_overrides(ty, args)?;
                     let id = id_of(&entity);
                     match ty.send {
                         Some(command) => {
-                            let response = ctx.request(command, json!({ "workspaceId": workspace, "id": id }))?;
+                            let mut payload = json!({ "workspaceId": workspace, "id": id });
+                            add_overrides(ctx, ty, &workspace, Some(&entity), &mut payload)?;
+                            let response = ctx.request(command, payload)?;
                             sent(ctx, ty, response)
                         }
                         None if ty.name == "sse" => crate::stream::stream_exchange(ctx, &workspace, &id, None),
@@ -643,6 +720,12 @@ pub fn requests(ctx: &mut Context, sub: Option<&str>) -> Result<String> {
                             ty.name
                         )));
                     }
+                    refuse_overrides(ty, args)?;
+                    if args.has("patch") {
+                        return Err(CliError::usage(
+                            "--patch changes a saved request's body; give the body with --data",
+                        ));
+                    }
                     let entity = described(ty, args, exchange)?;
                     let workspace = workspace_id(ctx)?;
                     let request: Map<String, Value> = ty
@@ -656,6 +739,7 @@ pub fn requests(ctx: &mut Context, sub: Option<&str>) -> Result<String> {
                             if ty.name == "rest" {
                                 payload["scripts"] = json!({});
                             }
+                            add_overrides(ctx, ty, &workspace, None, &mut payload)?;
                             let response = ctx.request(command, payload)?;
                             sent(ctx, ty, response)
                         }
@@ -1105,6 +1189,118 @@ mod tests {
             )
         );
         assert!(payloads(&calls, "request.send").is_empty());
+    }
+
+    /// Send `argv` with the saved requests, the engine answering a plain 200 to `command`: the result and the
+    /// payload the engine got.
+    fn send_with(argv: &[&str], command: &'static str) -> (Result<String>, Vec<Value>) {
+        let mut answers = saved_requests();
+        answers.push(("config.get", Ok(config())));
+        answers.push((
+            "entity.list:environments",
+            listing(json!([{"id": "__global__", "name": "Global"}, {"id": "e9", "name": "Staging"}])),
+        ));
+        answers.push((command, Ok(json!({"status": 200, "durationMs": 1, "headers": {}, "body": ""}))));
+        let (out, calls) = run(argv, answers, |c| requests(c, sub(argv)));
+        (out, payloads(&calls, command))
+    }
+
+    #[test]
+    fn var_and_env_ride_along_with_a_saved_or_an_inline_send() {
+        let (out, sent) = send_with(
+            &["requests", "send", "r1", "--var", "a=1", "--var", "b=x=y", "--env", "staging"],
+            "request.send",
+        );
+        out.unwrap();
+        assert_eq!(
+            sent,
+            [json!({"workspaceId": "w1", "id": "r1", "variables": {"a": "1", "b": "x=y"}, "environmentId": "e9"})]
+        );
+        let (out, sent) =
+            send_with(&["requests", "send", "--url", "http://x", "--var", "a=", "--env", "e9"], "request.send");
+        out.unwrap();
+        assert_eq!(sent[0]["variables"], json!({"a": ""}));
+        assert_eq!(sent[0]["environmentId"], "e9");
+        assert_eq!(sent[0]["request"]["url"], "http://x");
+    }
+
+    #[test]
+    fn a_bad_var_or_an_unknown_env_is_refused() {
+        for bad in ["novalue", "=x"] {
+            let (out, sent) = send_with(&["requests", "send", "r1", "--var", bad], "request.send");
+            assert_eq!(out.unwrap_err(), CliError::usage(format!("--var must be KEY=VALUE, not \"{bad}\"")));
+            assert!(sent.is_empty());
+        }
+        let (out, sent) = send_with(&["requests", "send", "r1", "--env", "nope"], "request.send");
+        assert_eq!(out.unwrap_err(), CliError::not_found("no environment \"nope\" (see: bifurc env list)"));
+        assert!(sent.is_empty());
+    }
+
+    #[test]
+    fn data_replaces_the_saved_body_of_each_type() {
+        for (id, command, field) in [
+            ("r1", "request.send", "body"),
+            ("s1", "soap.send", "body"),
+            ("q1", "graphql.send", "variables"),
+            ("g1", "grpc.send", "requestBody"),
+        ] {
+            let (out, sent) = send_with(&["requests", "send", id, "--data", "{\"n\":1}"], command);
+            out.unwrap();
+            assert_eq!(sent, [json!({"workspaceId": "w1", "id": id, "overrides": {field: "{\"n\":1}"}})]);
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("b.json").to_string_lossy().into_owned();
+        std::fs::write(&file, "from file").unwrap();
+        let at_file = format!("@{file}");
+        let (out, sent) = send_with(&["requests", "send", "r1", "-d", at_file.as_str()], "request.send");
+        out.unwrap();
+        assert_eq!(sent[0]["overrides"], json!({"body": "from file"}));
+    }
+
+    #[test]
+    fn patch_changes_fields_of_the_saved_or_given_json_body() {
+        // The saved body of `g1` is `{}`; two patches, the second one nested.
+        let (out, sent) =
+            send_with(&["requests", "send", "g1", "--patch", ".qty=2", "--patch", ".a.b=\"x\""], "grpc.send");
+        out.unwrap();
+        let body: Value = serde_json::from_str(sent[0]["overrides"]["requestBody"].as_str().unwrap()).unwrap();
+        assert_eq!(body, json!({"qty": 2, "a": {"b": "x"}}));
+        // Over the body `--data` gives, not the saved one.
+        let (out, sent) = send_with(&["requests", "send", "r1", "-d", "{\"a\":1}", "--patch", ".a=3"], "request.send");
+        out.unwrap();
+        assert_eq!(sent[0]["overrides"], json!({"body": "{\"a\":3}"}));
+        // A body that is not JSON.
+        let (out, sent) = send_with(&["requests", "send", "s1", "--patch", ".a=1"], "soap.send");
+        assert_eq!(out.unwrap_err(), CliError::usage("--patch needs a JSON body, and the body of \"Add\" is not JSON"));
+        assert!(sent.is_empty());
+    }
+
+    #[test]
+    fn the_override_options_are_refused_where_they_do_not_apply() {
+        for (id, name) in [("k1", "websocket"), ("e1", "sse"), ("i1", "socketio"), ("m1", "mcp")] {
+            for option in [["--var", "a=1"], ["--env", "e9"], ["--patch", ".a=1"]] {
+                let (out, _) = send_with(&["requests", "send", id, option[0], option[1]], "request.send");
+                let message =
+                    format!("{} applies to rest, graphql, soap and grpc sends, not to a {name} request", option[0]);
+                assert_eq!(out.unwrap_err(), CliError::usage(message));
+            }
+        }
+        let argv = ["requests", "send", "--type", "websocket", "--url", "ws://x", "--var", "a=1"];
+        let (out, _) = run(&argv, saved_requests(), |c| requests(c, sub(&argv)));
+        assert!(out.is_err());
+        let (out, _) = send_with(&["requests", "send", "--url", "http://x", "--patch", ".a=1"], "request.send");
+        assert_eq!(
+            out.unwrap_err(),
+            CliError::usage("--patch changes a saved request's body; give the body with --data")
+        );
+        // Other describing options stay refused for a saved send.
+        let (out, _) = send_with(&["requests", "send", "r1", "--var", "a=1", "-H", "x: y"], "request.send");
+        assert_eq!(
+            out.unwrap_err(),
+            CliError::usage(
+                "a saved request is sent as it is saved, without --header; change it with: bifurc requests update"
+            )
+        );
     }
 
     #[test]
