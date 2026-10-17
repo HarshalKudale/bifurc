@@ -27,7 +27,7 @@ Groups (bifurc <group> --help shows the arguments and options of each verb)
                                                                       REST, GraphQL, gRPC, SOAP, WebSocket, SSE, Socket.IO, MCP
   folders       list | create | rename | move | delete | confirm | restore
                                                                       Folders of the request, mock, flow and rule trees
-  runner        run | status | cancel | config | configure             Send every request of a folder
+  runner        run | status | cancel | config | configure             Run a folder's requests, a line each
   flows         list | show | create | update | validate | run | loadtest | loadstatus | loadcancel | status | cancel | duplicate | delete
                                                                       Saved chains of requests
   health        list | show | create | update | run | delete          Health checks
@@ -288,13 +288,18 @@ The JSON of a flow
   list
   show <id|name>                         Inputs with their defaults, the nodes with the request each runs,
                                          and what the engine finds wrong with the flow
-  run <id|name> [--input <name=value>]... [--timeout <seconds>] [--max-events <n>]
-                                         Run it and print each node as it finishes, then a summary. Exits 1
-                                         when the run does not succeed or a test fails.
+  run <id|name> [--input <name=value>]... [--var <k=v>]... [--env <name>] [--fresh-session] [--verbose]
+      [--timeout <seconds>] [--max-events <n>] [--max-body <bytes>]
+                                         Run it; one line per request (or failed node), then `flow passed · 5
+                                         steps · 166ms` or `flow failed at step 3`. Only a failed step shows
+                                         its body (512 bytes); exits 1 when the run or a test fails.
                                          --input: a value for an input the flow declares (repeatable)
+                                         --var, --env: variables / environment over the environment's, as on a send
+                                         --fresh-session: cookies of a jar of its own, dropped at the end
+                                         --verbose: every step's body, cut at --max-body (default 2048; 0: all)
                                          --timeout: stop the run after that long (0: no limit)
                                          --max-events: stop after that many stream messages
-                                         With --json nothing is printed until the end, then the run's report
+                                         With --json nothing is printed but the run's report
   loadtest <id|name> --instances <n> [--input <name=value>]... [--timeout <seconds>] [--max-events <n>]
                                          Run it <n> times at once (1 to 10000) and print how many passed and
                                          failed, how long an instance and each node took, and what failed how
@@ -343,8 +348,11 @@ const RUNNER: &str = "Usage: bifurc runner <verb>
 
 Sends every request of a folder of the request tree, in order, with its scripts and tests.
 
-  run <folder>                           Run it and print how each request did; exits 1 when a request
-                                         fails or a test does";
+  run <folder> [--bail] [--var <k=v>]... [--env <name>] [--fresh-session] [--verbose] [--max-body <bytes>]
+                                         <folder>: id, path (auth/admin) or name. One line per request, then
+                                         `5 run · 4 passed · 1 failed · 812ms`; only a failed one shows its
+                                         body. Exits 1 when a request fails or a test does.
+                                         --bail: stop after the first failure; --verbose: every body";
 
 const CAPTURE: &str = "Usage: bifurc capture <verb>
 
