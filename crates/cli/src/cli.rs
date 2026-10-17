@@ -126,7 +126,13 @@ fn dispatch(args: &ParsedArgs, data_dir: &Path, stdout: &mut dyn Write) -> Resul
         "mappings" => entities::mappings(&mut ctx, sub),
         "rules" => entities::rules(&mut ctx, sub),
         "mocks" => entities::mocks(&mut ctx, sub),
-        "requests" => requests::requests(&mut ctx, sub),
+        "requests" => {
+            let done = requests::requests(&mut ctx, sub);
+            if let Some(raw) = ctx.raw.take() {
+                let _ = stdout.write_all(&raw);
+            }
+            done
+        }
         "health" => health::health(&mut ctx, sub),
         "flows" => flows::flows(&mut ctx, sub, stdout),
         "services" => commands::services(&mut ctx, sub),
@@ -198,12 +204,17 @@ pub fn run_with_env(
     let data_dir = data_dir_of(&args, env_data_dir);
     match dispatch(&args, &data_dir, stdout) {
         Ok(text) => {
-            let _ = writeln!(stdout, "{text}");
+            // Nothing to print is not an empty line: `--quiet` and `--raw` print nothing after their output.
+            if !text.is_empty() {
+                let _ = writeln!(stdout, "{text}");
+            }
             0
         }
         // What the command found is printed where an answer goes; only the exit code differs.
         Err(CliError::Failed(report)) => {
-            let _ = writeln!(stdout, "{report}");
+            if !report.is_empty() {
+                let _ = writeln!(stdout, "{report}");
+            }
             1
         }
         Err(err) => {

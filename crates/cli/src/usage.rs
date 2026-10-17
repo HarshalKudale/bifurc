@@ -128,11 +128,11 @@ A mock created here is the whole response: nothing is asked of the real server.
   list
   show <id|name>
   create <url-pattern> [--method GET] [--name <text>] [--status 200] [-H \"k: v\"]...
-                       [--body <text> | --body-file <f>] [--delay <ms>] [--regex] [--disabled]
+                       [-d, --data <text> | --body-file <f>] [--delay <ms>] [--regex] [--disabled]
   create --curl <command> [--name <text>] [--disabled]
                                          A mock of the call a cURL command makes, answering an empty 200
   update <id|name> [--url <pattern>] [--method <m>] [--name <text>] [--status <code>] [-H \"k: v\"]...
-                   [--body <text> | --body-file <f>] [--delay <ms>] [--regex | --no-regex]
+                   [-d, --data <text> | --body-file <f>] [--delay <ms>] [--regex | --no-regex]
                                          Only what is given changes; -H \"k:\" removes a header
   enable|disable <id|name>               Enabling a mock disables another enabled mock of the same call
 
@@ -153,22 +153,34 @@ Saved requests of every type: rest (the default), graphql, grpc, soap, websocket
                                          Send a request that is not saved
   reflect <address>                      Services and methods a gRPC server reports through reflection
 
+Output of send (rest, graphql, soap, grpc): one line such as \"201 Created · 142ms · 4.2KB json · tests 3/3 ✓\";
+a failure adds a reason line (\"✗ …\") and exits 1, and an error status shows up to 512 bytes of the body
+  --body                                 The body, up to --max-body <bytes> (default 2048; 0 = all); text only
+  --headers                              The response headers; secrets are masked (--reveal shows them on a terminal)
+  --select <path>                        Only what a jq-style path picks from the JSON body, one value per line
+  --out <file>                           Save the whole body to a file
+  --raw                                  Exactly the body bytes, nothing else
+  --quiet                                Nothing printed; the exit code says it
+  --expect-status <code>                 Exit 1 unless the status is this
+  --expect '<path> <op> <value>'         Exit 1 unless it holds, e.g. 'status < 300' or '.items | length > 0'; repeatable
+  --json                                 {schemaVersion, status, statusText, durationMs, size, contentType, tests, body, …}
+
 Options of each type
-  rest        [-X, --method GET] [-d, --body <text> | --body-file <f>]
+  rest        [-X, --method GET] [-d, --data <text|@file> | --body-file <f>]
   graphql     (--query <text> | --query-file <f>) [--variables <json>] [--operation <name>]
-  grpc        --method <pkg.Service/Method> [-d, --body <json> | --body-file <f>]
+  grpc        --method <pkg.Service/Method> [-d, --data <json|@file> | --body-file <f>]
               [--proto <protoFileId> | --reflection]
               --url is the server address; -H is metadata; a client-streaming method takes a JSON array of
               messages; without --proto the method is found through reflection
-  soap        [--action <SOAPAction>] [-d, --body <xml> | --body-file <f>]
-  websocket   send takes [-d, --body <message>] [--wait <seconds, default 2>]: it connects, sends the
+  soap        [--action <SOAPAction>] [-d, --data <xml|@file> | --body-file <f>]
+  websocket   send takes [-d, --data <message>] [--wait <seconds, default 2>]: it connects, sends the
               message, prints what was sent and received in that time, and disconnects
-  sse         [-X, --method GET] [-d, --body <text> | --body-file <f>]; send takes [--wait <seconds, default 5>]:
+  sse         [-X, --method GET] [-d, --data <text|@file> | --body-file <f>]; send takes [--wait <seconds, default 5>]:
               it opens the stream, prints the events that arrive in that time (or until the server ends it),
               and closes it
   socketio    [--namespace </ns>] [--path </socket.io>] [--auth <json object>] [--listen <event>]...;
               only the events named with --listen are printed (every event when none is named); send takes
-              [--event <name> [-d, --body <arguments>] [--ack]] [--wait <seconds, default 2>]: it connects,
+              [--event <name> [-d, --data <arguments>] [--ack]] [--wait <seconds, default 2>]: it connects,
               emits the event, prints what was emitted and received in that time, and disconnects. The
               arguments are a JSON array (one per element), any other JSON value or plain text (one argument);
               --ack asks the server to acknowledge the event
