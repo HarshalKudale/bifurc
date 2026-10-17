@@ -178,7 +178,7 @@ pub fn at(argv: &[String]) -> Option<usize> {
 }
 
 /// A shell's words: quotes, backslashes, `$'…'` with the usual escapes. For a command given as one string.
-fn shell_words(input: &str) -> Vec<String> {
+pub(crate) fn shell_words(input: &str) -> Vec<String> {
     let chars: Vec<char> = input.chars().collect();
     let (mut words, mut word, mut open, mut i) = (Vec::new(), String::new(), false, 0);
     while i < chars.len() {
