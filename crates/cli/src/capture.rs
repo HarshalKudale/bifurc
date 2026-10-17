@@ -145,7 +145,7 @@ pub(crate) fn filters(ctx: &Context) -> Result<Value> {
 }
 
 /// A whole number option.
-fn number(ctx: &Context, flag: &str) -> Result<Option<u64>> {
+pub(crate) fn number(ctx: &Context, flag: &str) -> Result<Option<u64>> {
     ctx.args
         .flag(flag)
         .map(|raw| raw.parse().map_err(|_| CliError::usage(format!("--{flag} must be a whole number, not \"{raw}\""))))
@@ -162,35 +162,38 @@ pub fn list(ctx: &mut Context) -> Result<String> {
         payload["since"] = json!(since(ctx, &workspace, raw)?);
     }
     let answer = summaries(ctx, &workspace, payload)?;
-    Ok(ctx.print(&answer, || {
-        let entries = answer["entries"].as_array().map(Vec::as_slice).unwrap_or_default();
-        if entries.is_empty() {
-            return "(none)".to_string();
-        }
-        let ids: Vec<String> = entries.iter().map(|e| js_template(e.get("id"))).collect();
-        let tails = tails(&ids.iter().map(String::as_str).collect::<Vec<_>>());
-        let rows: Vec<Vec<String>> = entries
-            .iter()
-            .zip(tails)
-            .map(|(entry, tail)| {
-                vec![
-                    format!("#{tail}"),
-                    clock(entry["timestamp"].as_i64().unwrap_or(0)),
-                    js_template(entry.get("method")),
-                    short_url(&js_template(entry.get("url"))),
-                    entry.get("status").and_then(Value::as_u64).map_or("ERR".to_string(), |s| s.to_string()),
-                    entry.get("durationMs").and_then(Value::as_i64).map_or("-".to_string(), |ms| format!("{ms}ms")),
-                    origin_word(entry).to_string(),
-                ]
-            })
-            .collect();
-        let mut text = aligned(&rows);
-        let cut = (answer["matched"].as_u64().unwrap_or(0) as usize).saturating_sub(entries.len());
-        if cut > 0 {
-            text.push_str(&format!("\n… {cut} more — use --last or a filter"));
-        }
-        text
-    }))
+    Ok(ctx.print(&answer, || lines(&answer)))
+}
+
+/// The lines `capture list` prints for an answer of [`summaries`].
+pub(crate) fn lines(answer: &Value) -> String {
+    let entries = answer["entries"].as_array().map(Vec::as_slice).unwrap_or_default();
+    if entries.is_empty() {
+        return "(none)".to_string();
+    }
+    let ids: Vec<String> = entries.iter().map(|e| js_template(e.get("id"))).collect();
+    let tails = tails(&ids.iter().map(String::as_str).collect::<Vec<_>>());
+    let rows: Vec<Vec<String>> = entries
+        .iter()
+        .zip(tails)
+        .map(|(entry, tail)| {
+            vec![
+                format!("#{tail}"),
+                clock(entry["timestamp"].as_i64().unwrap_or(0)),
+                js_template(entry.get("method")),
+                short_url(&js_template(entry.get("url"))),
+                entry.get("status").and_then(Value::as_u64).map_or("ERR".to_string(), |s| s.to_string()),
+                entry.get("durationMs").and_then(Value::as_i64).map_or("-".to_string(), |ms| format!("{ms}ms")),
+                origin_word(entry).to_string(),
+            ]
+        })
+        .collect();
+    let mut text = aligned(&rows);
+    let cut = (answer["matched"].as_u64().unwrap_or(0) as usize).saturating_sub(entries.len());
+    if cut > 0 {
+        text.push_str(&format!("\n… {cut} more — use --last or a filter"));
+    }
+    text
 }
 
 /// A request body as `> ` lines, cut at `--max-body`; a binary one is not shown.

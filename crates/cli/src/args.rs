@@ -3,7 +3,8 @@
 use std::collections::HashMap;
 
 /// Flags that take no value.
-const BOOLEAN_FLAGS: [&str; 30] = [
+const BOOLEAN_FLAGS: [&str; 31] = [
+    "list",
     "yes",
     "ack",
     "json",

@@ -99,7 +99,7 @@ fn status_matches(filter: &str, status: Option<u64>) -> bool {
 }
 
 /// The entries `capture.list` was asked for (newest first, as given) and how many matched before `last` cut them.
-/// Filters: `status`, `method`, `host` and `path` (glob), `since` (ms), `via` (one or several, comma-separated), `grep` (the URL or a decoded body).
+/// Filters: `status`, `method`, `host` and `path` (glob), `since` (ms), `via` and `mockId` (one or several, comma-separated), `grep` (the URL or a decoded body).
 fn filter_entries(entries: Vec<Value>, params: &Value) -> (Vec<Value>, usize) {
     use base64::{Engine as _, engine::general_purpose::STANDARD};
     let text_of = |entry: &Value, key: &str| {
@@ -121,6 +121,10 @@ fn filter_entries(entries: Vec<Value>, params: &Value) -> (Vec<Value>, usize) {
                 && opt_str(params, "host").is_none_or(host_ok)
                 && opt_str(params, "path").is_none_or(|p| glob(p, &path))
                 && opt_str(params, "via").is_none_or(|v| v.split(',').any(|via| via == str_of(entry, "via")))
+                && opt_str(params, "mockId").is_none_or(|ids| {
+                    let answered = str_of(entry, "target").strip_prefix("mock:").unwrap_or("");
+                    ids.split(',').any(|id| id == answered)
+                })
                 && params.get("since").and_then(Value::as_i64).is_none_or(|s| entry["ts"].as_i64().unwrap_or(0) >= s)
                 && grep.as_deref().is_none_or(|g| {
                     url.to_lowercase().contains(g)
@@ -193,6 +197,19 @@ mod tests {
         let (kept, matched) = filter_entries(all.clone(), &json!({ "status": "!2xx", "last": 2 }));
         assert_eq!((kept.len(), matched), (2, 4));
         assert_eq!(str_of(&kept[0], "id"), "e");
+    }
+
+    #[test]
+    fn list_filters_by_the_mock_that_answered_and_the_summary_names_it() {
+        let entry = |id: &str, target: Value| json!({ "id": id, "via": "mock", "target": target });
+        let all = vec![entry("c", json!("mock:m2")), entry("b", json!("proxy-target")), entry("a", json!("mock:m1"))];
+        let ids = |params: Value| -> Vec<String> {
+            filter_entries(all.clone(), &params).0.iter().map(|e| str_of(e, "id").to_string()).collect()
+        };
+        assert_eq!(ids(json!({ "mockId": "m1" })), ["a"]);
+        assert_eq!(ids(json!({ "mockId": "m1,m2" })), ["c", "a"]);
+        assert_eq!(to_log_entry_event(&all[0])["mockId"], "m2");
+        assert!(to_log_entry_event(&all[1]).get("mockId").is_none());
     }
 
     #[tokio::test]

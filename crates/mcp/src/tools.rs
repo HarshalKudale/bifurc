@@ -535,7 +535,7 @@ pub fn catalog() -> Vec<Tool> {
         summary: "Create a mock: a canned response the proxy gives to calls that match a URL pattern.",
         details: "The mock is the whole response; the real server is not asked.",
         effect: Effect::Adds,
-        upfront: true,
+        upfront: false,
         scoped: true,
         params: concat(vec![
             vec![
@@ -558,6 +558,43 @@ pub fn catalog() -> Vec<Tool> {
             vec![operand("mock", "The mock's id or name.").required(), text("url", "url", "A new URL pattern.")],
             mock_options(true),
         ]),
+    });
+    rows.push(Row {
+        name: "mocks_scenario",
+        words: &["mocks", "scenario"],
+        summary: "Switch a mock's call to another answer, or list its answers.",
+        details: "Presets, made on demand: error500, error401, notfound, empty, slow, timeout. No scenario lists them.",
+        effect: Effect::Changes,
+        upfront: true,
+        scoped: true,
+        params: vec![
+            operand("mock", "Any mock of the call: id or name.").required(),
+            operand("scenario", "default, a scenario's name or a preset."),
+            typed("delay", "delay", Type::Integer, "Milliseconds for a new slow or timeout scenario."),
+        ],
+    });
+    rows.push(Row {
+        name: "mocks_status",
+        words: &["mocks", "status"],
+        summary: "One line per mocked call: active scenario, on or off, how often the app hit it.",
+        details: "",
+        effect: Effect::Reads,
+        upfront: false,
+        scoped: true,
+        params: vec![],
+    });
+    rows.push(Row {
+        name: "mocks_hits",
+        words: &["mocks", "hits"],
+        summary: "The captured requests a mocked call answered: to tell whether the app hit the mock.",
+        details: "",
+        effect: Effect::Reads,
+        upfront: false,
+        scoped: true,
+        params: vec![
+            operand("mock", "Any mock of the call: id or name.").required(),
+            typed("last", "last", Type::Integer, "How many (default 5)."),
+        ],
     });
 
     // -- Mappings ---------------------------------------------------------------------------------------------
@@ -1315,7 +1352,7 @@ mod tests {
                 "mocks_list",
                 "mocks_enable",
                 "mocks_disable",
-                "mocks_create",
+                "mocks_scenario",
                 "flows_list",
                 "flows_run",
                 "help",
