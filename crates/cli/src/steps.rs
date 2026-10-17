@@ -8,7 +8,7 @@ use crate::{
 };
 
 /// A body of a failed step is cut here, as a one-shot response's is.
-const FAILED_BODY: usize = 512;
+const FAILED_BODY: usize = 384;
 
 /// One request a run sent.
 #[derive(Default)]
@@ -47,7 +47,7 @@ pub fn one_line(text: &str) -> String {
     text.lines().next().unwrap_or_default().trim().to_string()
 }
 
-/// The steps as aligned lines, `1 POST /login  200 · 88ms  ✓`. A failed step shows up to 512 bytes of its body
+/// The steps as aligned lines, `1 POST /login  200 · 88ms  ✓`. A failed step shows up to 384 bytes of its body
 /// under it, and with `verbose` every step shows up to `max_body` bytes (0 = all).
 pub fn lines(steps: &[Step], verbose: bool, max_body: usize) -> Vec<String> {
     let cells: Vec<Vec<String>> = steps
@@ -103,8 +103,8 @@ mod tests {
         let shown = lines(&steps, false, 2048);
         assert_eq!(shown[0], "1 GET /a  200 · 5ms  ✓");
         assert_eq!(shown[1], "2 GET /a  200 · 5ms  ✗ boom");
-        assert_eq!(shown[2].len(), "  → ".len() + 512);
-        assert_eq!(shown[3], "  … 88B truncated");
+        assert_eq!(shown[2].len(), "  → ".len() + 384);
+        assert_eq!(shown[3], "  … 216B truncated");
         assert_eq!(lines(&steps, true, 2048).len(), 4);
     }
 }

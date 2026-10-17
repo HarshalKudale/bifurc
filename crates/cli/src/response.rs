@@ -15,7 +15,7 @@ use crate::{
 };
 
 /// How much of the body a failed or error response shows when nothing asks for more.
-const FAILURE_PREVIEW: usize = 512;
+const FAILURE_PREVIEW: usize = 384;
 
 /// A test of a saved request and whether it passed.
 pub struct Test {

@@ -1707,15 +1707,15 @@ mod tests {
     }
 
     #[test]
-    fn an_error_status_adds_up_to_512_bytes_of_the_body() {
+    fn an_error_status_adds_up_to_384_bytes_of_the_body() {
         let body = format!("{{\"error\":\"{}\"}}", "x".repeat(600));
         let (out, _) =
             send_r1(&[], reply(422, json!({"content-type": "application/json"}), body.as_bytes(), json!([])));
         let out = out.unwrap();
         let lines: Vec<&str> = out.lines().collect();
         assert_eq!(lines[0], "422 Unprocessable Entity · 12ms · 612B json");
-        assert_eq!(lines[1], &body[..512]);
-        assert_eq!(lines[2], "… 100B truncated — use --out or --select");
+        assert_eq!(lines[1], &body[..384]);
+        assert_eq!(lines[2], "… 228B truncated — use --out or --select");
         assert_eq!(lines.len(), 3);
     }
 
