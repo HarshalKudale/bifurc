@@ -68,7 +68,7 @@ pub(crate) fn tails(ids: &[&str]) -> Vec<String> {
 }
 
 /// The full id `wanted` names among `ids`.
-fn entry_id(ids: &[String], wanted: &str) -> Result<String> {
+pub(crate) fn entry_id(ids: &[String], wanted: &str) -> Result<String> {
     let tail = wanted.strip_prefix('#').unwrap_or(wanted);
     if let Some(exact) = ids.iter().find(|id| *id == tail) {
         return Ok(exact.clone());
@@ -218,6 +218,11 @@ pub fn list(ctx: &mut Context) -> Result<String> {
 
 /// The lines `capture list` prints for an answer of [`summaries`].
 pub(crate) fn lines(answer: &Value) -> String {
+    lines_with(answer, |_| None)
+}
+
+/// [`lines`] with one more column, for the entries `extra` answers for.
+pub(crate) fn lines_with(answer: &Value, extra: impl Fn(&Value) -> Option<String>) -> String {
     let entries = answer["entries"].as_array().map(Vec::as_slice).unwrap_or_default();
     if entries.is_empty() {
         return "(none)".to_string();
@@ -228,7 +233,7 @@ pub(crate) fn lines(answer: &Value) -> String {
         .iter()
         .zip(tails)
         .map(|(entry, tail)| {
-            vec![
+            let mut row = vec![
                 format!("#{tail}{}", if entry["pinned"] == true { "*" } else { "" }),
                 clock(entry["timestamp"].as_i64().unwrap_or(0)),
                 js_template(entry.get("method")),
@@ -236,7 +241,9 @@ pub(crate) fn lines(answer: &Value) -> String {
                 entry.get("status").and_then(Value::as_u64).map_or("ERR".to_string(), |s| s.to_string()),
                 entry.get("durationMs").and_then(Value::as_i64).map_or("-".to_string(), |ms| format!("{ms}ms")),
                 origin_word(entry).to_string(),
-            ]
+            ];
+            row.extend(extra(entry));
+            row
         })
         .collect();
     let mut text = aligned(&rows);
