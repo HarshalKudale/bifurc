@@ -18,6 +18,7 @@ use crate::{
         json::{array_mut, array_of, opt_str, str_of, truthy},
     },
     workspace::{
+        changes,
         config::{load_config, save_config},
         deletions::{folder_subtree, pending_folders, remove_entity, sharing_kinds},
         fs::{
@@ -94,6 +95,7 @@ fn add_tree_folder(scope: Scope, kind: &str, params: &Value) -> Result<Value> {
     let folder = tree::create_folder(&ws_id, scope, str_of(params, "name"), opt_str(params, "parentId"), false)
         .map_err(tree_error)?;
     bus().emit("entity.changed", json!({ "wsId": ws_id, "kind": kind, "id": folder.id, "action": "created" }));
+    changes::record(&ws_id, "folder", &folder.id, &folder.name, "created", &[]);
     Ok(tree::folder_value(&folder, &ws_id))
 }
 
@@ -236,6 +238,7 @@ pub fn register(registry: &mut CommandRegistry) {
             "entity.changed",
             json!({ "wsId": ws_id, "kind": kind, "id": str_of(&new_folder, "id"), "action": "created" }),
         );
+        changes::record(&ws_id, "folder", str_of(&new_folder, "id"), str_of(&new_folder, "name"), "created", &[]);
         Ok(new_folder)
     });
 

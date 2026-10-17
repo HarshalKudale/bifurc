@@ -12,7 +12,7 @@ use serde_json::json;
 use crate::{
     agent,
     args::{ParsedArgs, parse_args},
-    capture,
+    capture, changes,
     commands::{self, Connector, Context, unknown_verb},
     curl, direct,
     discovery::{RuntimeInfo, find_running_engine, platform_default_data_dir},
@@ -139,6 +139,7 @@ fn dispatch(args: &ParsedArgs, data_dir: &Path, stdout: &mut dyn Write) -> Resul
         "agent" => agent::agent(&mut ctx, sub),
         "session" => named::session(&mut ctx, sub),
         "vars" => named::vars(&mut ctx, sub),
+        "changes" => changes::changes(&mut ctx),
         "workspaces" => commands::workspaces(&mut ctx, sub),
         "account" => commands::account(&mut ctx, sub),
         "env" => commands::env(&mut ctx, sub),

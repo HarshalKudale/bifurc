@@ -8,9 +8,11 @@ use crate::{
     runtime::{entity_status::emit_entity_status, instances::notify_config_changed},
     utils::json::{array_of, merged, opt_str, str_of, truthy},
     workspace::{
+        changes,
         config::{load_config, load_entity, save_config},
         deletions::pending_entity,
         fs::{entity_lock, read_enabled_set, sync_enabled_set},
+        kinds::crud_kind,
         stamp,
     },
 };
@@ -140,6 +142,11 @@ pub fn register(registry: &mut CommandRegistry) {
         }
 
         sync_enabled_set(ws_id, kind, id, enabled)?;
+        let name = crud_kind(to_engine_kind(kind))
+            .and_then(|k| array_of(&load_config(), k.config_key).iter().find(|e| str_of(e, "id") == id).cloned())
+            .map(|e| str_of(&e, "name").to_string())
+            .unwrap_or_default();
+        changes::record(ws_id, kind, id, &name, if enabled { "enabled" } else { "disabled" }, &[]);
         notify_config_changed();
         emit_entity_status(ws_id);
         Ok(json!({ "ok": true }))

@@ -3123,6 +3123,28 @@
    ],
    "additionalProperties": false
   },
+  "changes.list": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "after": {
+     "type": "integer",
+     "minimum": 0
+    },
+    "sinceTs": {
+     "type": "integer"
+    },
+    "advance": {
+     "type": "boolean"
+    },
+    "mine": {
+     "type": "boolean"
+    }
+   },
+   "additionalProperties": false
+  },
   "contract.saveSnapshots": {
    "type": "object",
    "properties": {
