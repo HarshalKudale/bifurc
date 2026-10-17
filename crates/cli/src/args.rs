@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 /// Flags that take no value.
-const BOOLEAN_FLAGS: [&str; 34] = [
+const BOOLEAN_FLAGS: [&str; 35] = [
     "list",
     "yes",
     "ack",
@@ -38,6 +38,7 @@ const BOOLEAN_FLAGS: [&str; 34] = [
     "detach",
     "stop",
     "pinned",
+    "shape",
 ];
 
 /// Single-letter aliases; any other letter stands for itself.

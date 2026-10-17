@@ -31,6 +31,7 @@ pub mod response;
 pub mod select;
 pub mod session;
 pub mod setup;
+pub mod shape;
 pub mod socketio;
 pub mod steps;
 pub mod stream;
