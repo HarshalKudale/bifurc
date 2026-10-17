@@ -6,7 +6,7 @@ use serde_json::{Map, Value, json};
 use crate::{
     args::ParsedArgs,
     error::{CliError, Result},
-    format::{describe_status, js_string, js_template, json, table, truthy},
+    format::{StatusParts, describe_status, js_string, js_template, json, table, truthy},
     protocol::{command_names, is_known_command},
     session::Engine,
 };
@@ -545,21 +545,30 @@ pub fn commands(ctx: &Context) -> String {
     ctx.print(&Value::Array(names.iter().map(|n| json!(n)).collect()), || names.join("\n"))
 }
 
-/// `status`: the engine, the proxy and the active workspace.
+/// `status`: the engine, the proxy, the active workspace, and what is on in it. A part whose command fails is left out.
 pub fn status(ctx: &mut Context) -> Result<String> {
     ctx.accept_top(&[], 0)?;
-    let server = ctx.request("server.status", json!({}))?;
-    let config = ctx.request("config.get", json!({}))?;
-    let active_id = config.get("activeWorkspaceId").cloned().unwrap_or(Value::Null);
+    let info = ctx.engine()?.info().clone();
+    let server = ctx.request("server.status", json!({})).ok();
+    let config = ctx.request("config.get", json!({})).ok();
+    let active_id = config.as_ref().and_then(|c| c.get("activeWorkspaceId")).cloned().unwrap_or(Value::Null);
     let active = config
-        .get("workspaces")
-        .and_then(Value::as_array)
+        .as_ref()
+        .and_then(|c| c.get("workspaces").and_then(Value::as_array))
         .and_then(|all| all.iter().find(|w| w.get("id") == Some(&active_id)))
         .cloned()
-        .unwrap_or(active_id);
-    let info = ctx.engine()?.info().clone();
-    let value = json!({ "engine": info.raw, "server": server, "activeWorkspace": active });
-    Ok(ctx.print(&value, || describe_status(&info, &server, &active)))
+        .unwrap_or(active_id.clone());
+    let workspace = json!({ "workspaceId": active_id });
+    let capture = ctx.request("capture.list", json!({ "workspaceId": active_id, "summary": true, "last": 0 })).ok();
+    let cookies = ctx.request("cookies.list", workspace).ok();
+    let parts = StatusParts { server, config, capture, cookies };
+    let mut value = json!({ "engine": info.raw, "server": parts.server, "activeWorkspace": active });
+    value["environment"] = parts.environment().map_or(Value::Null, |name| json!(name));
+    value["mocks"] = parts.mocks().map_or(Value::Null, |n| json!(n));
+    value["capture"] =
+        parts.capture.as_ref().map_or(Value::Null, |c| json!({ "count": c["matched"], "paused": c["paused"] }));
+    value["cookies"] = parts.cookies_domains().map_or(Value::Null, |n| json!(n));
+    Ok(ctx.print(&value, || describe_status(&info, &active, &parts)))
 }
 
 #[cfg(test)]
@@ -898,28 +907,44 @@ mod tests {
     }
 
     #[test]
-    fn status_combines_engine_proxy_and_workspace() {
+    fn status_is_two_lines_and_json_keeps_the_old_fields() {
         let argv = ["status"];
-        let answers = vec![("server.status", Ok(json!({"running": true, "port": 8080}))), ("config.get", Ok(config()))];
-        let (out, _) = run(&argv, answers, status);
+        let mut cfg = config();
+        cfg["forwardProxyPort"] = json!(8080);
+        cfg["environments"] = json!([{"id": "e2", "name": "Prod"}]);
+        cfg["mocks"] = json!([{"enabled": true}]);
+        let answers = vec![
+            ("server.status", Ok(json!({"running": true, "port": 1}))),
+            ("config.get", Ok(cfg.clone())),
+            ("capture.list", Ok(json!({"matched": 143, "paused": true}))),
+            ("cookies.list", Ok(json!({"domains": [{"domain": "a"}]}))),
+        ];
+        let (out, calls) = run(&argv, answers.clone(), status);
         assert_eq!(
             out.unwrap(),
-            "engine     pid 5, socket addr, v0.4.0\ndata dir   /d\nproxy      listening on 8080\nworkspace  Default (w1)"
+            "engine 0.4.0 · proxy :8080 on · workspace Default · env Prod
+mocks 1 on · capture 143/200 paused · cookies 1 domain"
+        );
+        assert_eq!(
+            crate::testing::payloads(&calls, "capture.list")[0],
+            json!({"workspaceId": "w1", "summary": true, "last": 0})
         );
 
-        let argv = ["status", "--json"];
-        let answers = vec![("server.status", Ok(json!({"running": false}))), ("config.get", Ok(config()))];
-        let (out, _) = run(&argv, answers, status);
+        let (out, _) = run(&["status", "--json"], answers, status);
         let parsed: Value = serde_json::from_str(&out.unwrap()).unwrap();
         assert_eq!(parsed["engine"]["pid"], 5);
-        assert_eq!(parsed["server"], json!({"running": false}));
+        assert_eq!(parsed["server"], json!({"running": true, "port": 1}));
         assert_eq!(parsed["activeWorkspace"], json!({"id": "w1", "name": "Default"}));
+        assert_eq!(
+            (&parsed["environment"], &parsed["mocks"], &parsed["cookies"]),
+            (&json!("Prod"), &json!(1), &json!(1))
+        );
+        assert_eq!(parsed["capture"], json!({"count": 143, "paused": true}));
     }
 
     #[test]
-    fn engine_errors_stop_a_command() {
-        let argv = ["status"];
-        let (out, _) = run(&argv, vec![], status);
-        assert_eq!(out.unwrap_err().line(), "bifurc: UNKNOWN_COMMAND: server.status");
+    fn a_failing_part_of_status_is_skipped() {
+        let (out, _) = run(&["status"], vec![("server.status", Ok(json!({"running": false, "port": 8080})))], status);
+        assert_eq!(out.unwrap(), "engine 0.4.0 · proxy :8080 off");
     }
 }
