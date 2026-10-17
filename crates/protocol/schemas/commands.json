@@ -3124,6 +3124,9 @@
       },
       "overrides": {
        "type": "object"
+      },
+      "freshJar": {
+       "type": "boolean"
       }
      },
      "required": [
@@ -3262,6 +3265,9 @@
       },
       "overrides": {
        "type": "object"
+      },
+      "freshJar": {
+       "type": "boolean"
       }
      },
      "required": [
@@ -4009,6 +4015,86 @@
     "workspaceId",
     "id"
    ],
+   "additionalProperties": false
+  },
+  "cookies.set": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "url": {
+     "type": "string"
+    },
+    "domain": {
+     "type": "string"
+    },
+    "name": {
+     "type": "string"
+    },
+    "value": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "workspaceId",
+    "name",
+    "value"
+   ],
+   "additionalProperties": false
+  },
+  "session.get": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    }
+   },
+   "additionalProperties": false
+  },
+  "session.setVariables": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "variables": {
+     "type": "object",
+     "propertyNames": {
+      "type": "string"
+     },
+     "additionalProperties": {
+      "type": "string"
+     }
+    }
+   },
+   "required": [
+    "variables"
+   ],
+   "additionalProperties": false
+  },
+  "session.clearVariables": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "keys": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     }
+    }
+   },
+   "additionalProperties": false
+  },
+  "session.reset": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    }
+   },
    "additionalProperties": false
   }
  }

@@ -294,7 +294,7 @@ pub async fn start_run(ctx: &CommandContext, params: &Value) -> Result<Value> {
             }
         }
     };
-    let task = tokio::spawn(work);
+    let task = tokio::spawn(crate::env::session::carry(work));
     let (ws_id, folder_id) = (ws_id.to_string(), folder_id.to_string());
     tokio::spawn(async move {
         match task.await {

@@ -312,6 +312,11 @@ pub fn present(ctx: &mut Context, response: &Response) -> Result<String> {
         checks.push((expect, result));
     }
 
+    let (extracted, extract_failure) = crate::named::evaluate(args.flags("extract"), response.status, parsed.as_ref())?;
+    if !extracted.is_empty() {
+        crate::named::store(ctx, &extracted)?;
+    }
+
     let failed_test = response.tests.iter().find(|test| !test.passed).map(|test| match &test.error {
         Some(error) => format!("test \"{}\": {error}", test.name),
         None => format!("test \"{}\"", test.name),
@@ -320,7 +325,8 @@ pub fn present(ctx: &mut Context, response: &Response) -> Result<String> {
         .failure
         .clone()
         .or(failed_test)
-        .or_else(|| checks.iter().find_map(|(_, result)| result.as_ref().err().cloned()));
+        .or_else(|| checks.iter().find_map(|(_, result)| result.as_ref().err().cloned()))
+        .or(extract_failure);
 
     let saved = match args.flag("out") {
         Some(path) => {
@@ -378,6 +384,15 @@ pub fn present(ctx: &mut Context, response: &Response) -> Result<String> {
         if let Some(values) = selected {
             out["selected"] = json!(values);
         }
+        if !extracted.is_empty() {
+            out["extracted"] = extracted
+                .iter()
+                .map(|(name, value)| {
+                    (name.clone(), json!(if is_sensitive_name(name) { mask(value) } else { value.clone() }))
+                })
+                .collect::<serde_json::Map<_, _>>()
+                .into();
+        }
         if !checks.is_empty() {
             out["expectations"] = checks
                 .iter()
@@ -415,6 +430,9 @@ pub fn present(ctx: &mut Context, response: &Response) -> Result<String> {
                 lines.push(format!("✗ {why}"));
             }
         }
+    }
+    if !extracted.is_empty() {
+        lines.push(crate::named::extracted_line(&extracted));
     }
     for (name, value) in headers.into_iter().flatten() {
         lines.push(format!("{name}: {value}"));

@@ -277,6 +277,13 @@ fn output_options() -> Vec<Param> {
             place: Place::Each("expect"),
             required: false,
         },
+        Param {
+            name: "extract",
+            about: "Keep values of the response as session variables, each 'name=<path>' (path as select, or status).",
+            ty: Type::TextList,
+            place: Place::Each("extract"),
+            required: false,
+        },
     ]
 }
 
@@ -655,6 +662,69 @@ pub fn catalog() -> Vec<Tool> {
             upfront: false,
             scoped: true,
             params: vec![operand("environment", "The environment's id or name.").required()],
+        },
+        // -- Session ------------------------------------------------------------------------------------------
+        Row {
+            name: "session_show",
+            words: &["session", "show"],
+            summary: "Show this server's session: its variables, environment and cookie domains.",
+            details: "Start the server with --session <name> (or BIFURC_SESSION) for cookies, variables and an environment of its own.",
+            effect: Effect::Reads,
+            upfront: false,
+            scoped: true,
+            params: vec![],
+        },
+        Row {
+            name: "session_reset",
+            words: &["session", "reset"],
+            summary: "Empty the session's cookie jar and variables and forget its environment.",
+            details: "",
+            effect: Effect::Changes,
+            upfront: false,
+            scoped: true,
+            params: vec![],
+        },
+        Row {
+            name: "vars_list",
+            words: &["vars", "list"],
+            summary: "List the session's runtime variables (what extract and vars_set keep); secrets are masked.",
+            details: "",
+            effect: Effect::Reads,
+            upfront: false,
+            scoped: true,
+            params: vec![],
+        },
+        Row {
+            name: "vars_set",
+            words: &["vars", "set"],
+            summary: "Set runtime variables of the session; {{name}} resolves in its requests.",
+            details: "",
+            effect: Effect::Changes,
+            upfront: false,
+            scoped: true,
+            params: vec![Param {
+                name: "variables",
+                about: "The variables, each as KEY=VALUE.",
+                ty: Type::TextList,
+                place: Place::Operands,
+                required: true,
+            }],
+        },
+        Row {
+            name: "vars_clear",
+            words: &["vars", "clear"],
+            summary: "Remove runtime variables of the session, or all of them.",
+            details: "",
+            effect: Effect::Deletes,
+            upfront: false,
+            scoped: true,
+            params: vec![Param {
+                name: "variables",
+                about: "The names to remove; none removes all.",
+                ty: Type::TextList,
+                place: Place::Operands,
+                required: false,
+            }],
         },
         // -- Health checks ------------------------------------------------------------------------------------
         Row {

@@ -15,14 +15,15 @@ Runs requests, mocks, flows and the proxies of a Bifurc workspace; starts an eng
   flows     list | show | run | validate | loadtest         Saved chains of requests
   runner    run <folder> [--bail]                          Run a folder's requests
   env       list | show | use | set | unset                Environments and their variables
-  cookies   list | clear                                   The workspace's cookie jar
+  cookies   list | set | clear                             The cookie jar (yours in a --session)
+  session   show | reset · vars list | set | clear         Your own cookies, variables and env (--session <name>)
   wait      <url|check> | --port <n> | --capture           Block until something is ready
   status                                                   Engine, proxy, mocks, capture and cookies, two lines
   Also: setup, workspaces, mappings, rules, folders, health, sync, history, export, import, vault, account, proxy,
   settings, tls, services, engine, update, call, commands
 
 Options
-  --json  --data-dir <path>  -w, --workspace <id>  --no-start  -h, --help
+  --json  --data-dir <path>  -w, --workspace <id>  --session <name> (or BIFURC_SESSION)  --no-start  -h, --help
 
   bifurc help <group>             The verbs and options of a group
   bifurc help <group> --examples  Copy-paste examples
@@ -61,7 +62,9 @@ Groups (bifurc <group> --help shows the arguments and options of each verb)
   health        list | show | create | update | run | delete          Health checks
   capture       list | show | watch | mock | request | secrets | import | remove | clear | pause | resume | cache
                                                                       Traffic the proxies captured
-  cookies       list | clear | configure                              The cookie jar of the workspace's requests
+  cookies       list | set | clear | configure                       The cookie jar of the workspace's requests
+  session       show | reset                                          Your named session: cookies, variables, environment
+  vars          list | set | clear                                    The runtime variables of the session
   sync          status | changes | pull | push | commit | diff | discard | confirm | restore
                                                                       Git: what changed, and the remote
   history       log | file | show | export                            The audit log and a file's commits
@@ -96,6 +99,8 @@ Anything else
 Options
   --data-dir <path>    Default: the desktop app's data directory (or BIFURC_DATA_DIR)
   -w, --workspace <id> Default: the active workspace
+  --session <name>     Work in a named session: its own cookie jar, runtime variables and environment (or
+                       BIFURC_SESSION). Without one you share the desktop app's jar and selected environment
   --no-start           Fail instead of starting an engine when none is running
   --json               Machine-readable output
   -h, --help
@@ -145,7 +150,8 @@ Output        --body --headers --select <path> --out <file> --max-body <bytes> -
               --expect-status <code> --expect '<path> <op> <value>'
               --bifurc-json     The machine-readable result (--json is curl's: data to send)
 Run           --var KEY=VALUE   A variable for this run (repeatable)    --env <name>   Another environment
-              --no-jar          Send without the workspace's cookie jar";
+              --no-jar          Send without the workspace's cookie jar   --fresh-session   An empty throwaway jar
+              --extract name=<path>   Keep a value of the response for later {{name}} (see: bifurc session --help)";
 
 const WAIT: &str = "Usage: bifurc wait <url|health check> [--status <code>] [--timeout 30s] [--interval 500ms]
        bifurc wait --port <n> [--host 127.0.0.1] [--timeout 30s] [--interval 500ms]
@@ -251,6 +257,9 @@ A request is named by its id, its name, a unique start of its name (get -> Get o
   send <id|name> [--type <type>]         Send a saved request; the engine resolves it and runs its scripts
   send [--type <type>] --url <url> <the options of create>
                                          Send a request that is not saved
+  --extract name=<path>                  After the send, keep the value at <path> of the JSON body (or `status`)
+                                         as the session's variable {{name}}; repeatable; exit 1 if it is absent
+  --fresh-session                        Send (rest) with an empty throwaway cookie jar
   --var KEY=VALUE                        Send with this variable ({{KEY}}) over the environment's; repeatable
   --env <id|name>                        Send with this environment instead of the selected one
   --data <text|@file>                    On a saved send: replaces its body (graphql: variables)
@@ -446,8 +455,32 @@ const COOKIES: &str = "Usage: bifurc cookies <verb>
 The cookies the workspace's requests were given and send back. Values print masked.
 
   list [--domain <d>] [--reveal]         One line per cookie; --reveal shows values on a terminal
+  set <domain|url> <name>=<value>        Seed a cookie (host-only, path /), e.g. a feature flag
   clear [--domain <d>]                   Forget all cookies, or one domain's
   configure --clear true|false           Forget cookies when the engine restarts";
+
+const SESSION: &str = "Usage: bifurc session [show | reset]
+
+A named session (--session <name> or BIFURC_SESSION) keeps its own cookie jar, runtime variables and, with
+`env use`, its own environment, so two agents (or an agent and you) never clash. Saved requests, mocks, flows
+and environments stay shared. Without a name you are the default session: the app's jar and selected
+environment. The jar and the variables live as long as the engine and are never written to disk.
+
+  show                                   `session frontend · 2 variables · env dev · cookies 1 domain`
+  reset                                  Empty the session's jar and variables and forget its environment
+                                         (the default session: only the variables --extract and vars set kept)
+Resolution: --var, then the session's variables, then the environment, then Global. A script's
+bc.environment.set in a named session stays in the session and not in the environment's file.";
+
+const VARS: &str = "Usage: bifurc vars <verb>
+
+The runtime variables of the session, in memory: what --extract name=<path> on requests send and curl stores,
+and what you set. In the default session they are the command line's own: the app never sees them.
+Name the session with --session <name> or BIFURC_SESSION.
+
+  list [--reveal]                        KEY value lines; secret-looking names print masked
+  set <KEY=VALUE>...                     Set variables; {{KEY}} resolves in the session's requests
+  clear [<KEY>...]                       Remove the named variables, or all of them";
 
 const SYNC: &str = "Usage: bifurc sync <verb>
 
@@ -546,6 +579,8 @@ pub fn group_usage(group: &str) -> Option<String> {
         "runner" => RUNNER,
         "capture" => CAPTURE,
         "cookies" => COOKIES,
+        "session" => SESSION,
+        "vars" => VARS,
         "sync" => SYNC,
         "history" => HISTORY,
         "export" => EXPORT,
@@ -621,6 +656,16 @@ pub fn examples(group: &str) -> Option<&'static [&'static str]> {
             "bifurc cookies clear --domain api.localhost",
             "bifurc cookies clear",
         ],
+        "session" => &[
+            "bifurc session show --session frontend",
+            "bifurc session reset --session frontend",
+            "bifurc session show --json",
+        ],
+        "vars" => &[
+            "bifurc vars list --session frontend",
+            "bifurc vars set userId=7 --session frontend",
+            "bifurc vars clear userId",
+        ],
         "wait" => &[
             "bifurc wait http://api.localhost/health --timeout 30s",
             "bifurc wait api-health --status 200",
@@ -657,16 +702,20 @@ pub(crate) mod tests {
     #[test]
     fn the_short_overview_is_at_most_30_lines_and_names_the_commands_agents_use() {
         assert!(OVERVIEW.lines().count() <= 30, "{} lines", OVERVIEW.lines().count());
-        for group in
-            ["agent", "curl", "requests", "capture", "mocks", "flows", "runner", "env", "cookies", "wait", "status"]
-        {
+        for group in [
+            "agent", "curl", "requests", "capture", "mocks", "flows", "runner", "env", "cookies", "session", "wait",
+            "status",
+        ] {
             assert!(words(OVERVIEW).contains(&group), "{group}");
         }
     }
 
     #[test]
     fn every_example_is_a_known_group_and_verb_with_flags_its_help_names() {
-        for group in ["agent", "curl", "requests", "capture", "mocks", "flows", "runner", "env", "cookies", "wait"] {
+        for group in [
+            "agent", "curl", "requests", "capture", "mocks", "flows", "runner", "env", "cookies", "session", "vars",
+            "wait",
+        ] {
             let list = examples(group).unwrap_or_else(|| panic!("{group} has no examples"));
             assert!((3..=5).contains(&list.len()), "{group}");
             for line in list {

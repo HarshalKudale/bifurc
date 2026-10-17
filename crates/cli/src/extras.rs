@@ -31,6 +31,7 @@ pub fn run(ctx: &mut Context, group: &str, verb: &str) -> Option<Result<String>>
     Some(match (group, verb) {
         ("folders", "list") => folders_list(ctx),
         ("cookies", "list") => cookies_list(ctx),
+        ("cookies", "set") => crate::named::cookies_set(ctx),
         ("env", "show") => env_show(ctx),
         ("env", "set") => env_variables(ctx, true),
         ("env", "unset") => env_variables(ctx, false),

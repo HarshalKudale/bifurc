@@ -780,9 +780,11 @@ pub fn start(ctx: &CommandContext, params: &Value) -> Result<Value> {
     // A fresh jar is the run's own, as a load test's instance has: what the run sets is gone with it.
     if plan.fresh_jar {
         let (owner, timeout) = (run_id.clone(), plan.timeout);
-        tokio::spawn(async move { crate::cookies::private(&owner, drive(run, timeout)).await });
+        tokio::spawn(crate::env::session::carry(
+            async move { crate::cookies::private(&owner, drive(run, timeout)).await },
+        ));
     } else {
-        tokio::spawn(drive(run, plan.timeout));
+        tokio::spawn(crate::env::session::carry(drive(run, plan.timeout)));
     }
     Ok(json!({ "ok": true, "runId": run_id }))
 }

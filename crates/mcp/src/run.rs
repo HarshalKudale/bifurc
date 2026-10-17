@@ -16,12 +16,19 @@ fn options(argv: &[String]) -> Result<(Settings, bool), (String, u8)> {
             "-V" | "--version" => return Err((format!("bifurc-mcp {}", env!("CARGO_PKG_VERSION")), 0)),
             "--no-start" => settings.no_start = true,
             "--all-tools" => all_tools = true,
+            "--session" => match rest.next() {
+                Some(name) => settings.session = Some(name.clone()),
+                None => return Err(("bifurc-mcp: --session needs a value".to_string(), 2)),
+            },
             "--data-dir" => match rest.next() {
                 Some(dir) => settings.data_dir = Some(dir.clone()),
                 None => return Err(("bifurc-mcp: --data-dir needs a value".to_string(), 2)),
             },
             other => match other.strip_prefix("--data-dir=") {
                 Some(dir) => settings.data_dir = Some(dir.to_string()),
+                None if other.starts_with("--session=") => {
+                    settings.session = Some(other["--session=".len()..].to_string())
+                }
                 None => return Err((format!("bifurc-mcp: unknown option \"{other}\"\n\n{USAGE}"), 2)),
             },
         }
