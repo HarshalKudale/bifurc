@@ -60,7 +60,7 @@ fn utc_ms(text: &str) -> Option<i64> {
 }
 
 /// `just now`, `40s ago`, `2m ago`, `3h ago`, `2d ago`.
-fn ago(ms: i64) -> String {
+pub(crate) fn ago(ms: i64) -> String {
     let s = ms.max(0) / 1000;
     match s {
         0..=4 => "just now".into(),

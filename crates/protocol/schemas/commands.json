@@ -527,6 +527,37 @@
     "folderName"
    ]
   },
+  "claims.list": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    }
+   },
+   "additionalProperties": false
+  },
+  "claims.set": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "kind": {
+     "type": "string"
+    },
+    "id": {
+     "type": "string"
+    },
+    "release": {
+     "type": "boolean"
+    }
+   },
+   "required": [
+    "kind",
+    "id"
+   ],
+   "additionalProperties": false
+  },
   "config.get": {
    "type": "object",
    "properties": {},
@@ -3167,6 +3198,18 @@
    "required": [
     "workspaceId",
     "snapshots"
+   ],
+   "additionalProperties": false
+  },
+  "contract.fromOpenApi": {
+   "type": "object",
+   "properties": {
+    "text": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "text"
    ],
    "additionalProperties": false
   },
