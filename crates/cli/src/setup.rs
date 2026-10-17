@@ -237,7 +237,10 @@ mod tests {
         let err = result.unwrap_err();
         assert_eq!(err.code(), 6);
         assert!(err.to_string().ends_with("still needed from you: --accept-privacy"), "{err}");
-        assert!(err.to_string().starts_with("setup is not finished\nterms      accepted\nprivacy    not accepted"), "{err}");
+        assert!(
+            err.to_string().starts_with("setup is not finished\nterms      accepted\nprivacy    not accepted"),
+            "{err}"
+        );
         assert_eq!(names(&calls), ["setup.getState", "setup.acceptTerms"]);
     }
 
