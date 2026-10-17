@@ -91,7 +91,7 @@ impl Host {
 fn a_host_lists_searches_and_calls_tools() {
     let mut host = Host::start(&[]);
     let names = host.tool_names();
-    assert_eq!(names.len(), 15);
+    assert_eq!(names.len(), 17);
     assert!(names.iter().any(|name| name == "requests_send") && names.iter().any(|name| name == "search_tools"));
     assert!(!names.iter().any(|name| name == "health_create"));
 
