@@ -124,8 +124,10 @@ pub(crate) fn list_entities(ctx: &mut Context, workspace: &str, kind: &str) -> R
     Ok(entities(&response))
 }
 
-/// The one row `wanted` names: by its id, else by one of `name_keys` whatever the case. `what` is the row's
-/// singular name and `group` the command group that lists them.
+/// The one row `wanted` names, trying in order: its id, an exact name, a name whatever the case, a unique name
+/// prefix, a unique id prefix (4+ characters). Several at the first step with any is a usage error that lists
+/// them; none is not-found with close names suggested. `what` is the row's singular name and `group` the
+/// command group that lists them.
 pub(crate) fn find_one<'v>(
     rows: &'v [Value],
     wanted: &str,
@@ -133,28 +135,84 @@ pub(crate) fn find_one<'v>(
     what: &str,
     group: &str,
 ) -> Result<&'v Value> {
-    if let Some(hit) = rows.iter().find(|row| row.get("id").and_then(Value::as_str) == Some(wanted)) {
-        return Ok(hit);
-    }
+    let names = |row: &Value| -> Vec<String> {
+        name_keys.iter().filter_map(|key| row.get(*key).and_then(Value::as_str)).map(str::to_string).collect()
+    };
     let lower = wanted.to_lowercase();
-    let named: Vec<&Value> = rows
-        .iter()
-        .filter(|row| {
-            name_keys.iter().any(|key| row.get(*key).and_then(Value::as_str).is_some_and(|n| n.to_lowercase() == lower))
-        })
-        .collect();
-    match named.as_slice() {
-        [one] => Ok(one),
-        [] => Err(CliError::not_found(format!("no {what} \"{wanted}\" (see: bifurc {group} list)"))),
-        many => {
-            let ids: Vec<String> = many.iter().map(|row| js_template(row.get("id"))).collect();
-            Err(CliError::usage(format!(
-                "{} {what}s are named \"{wanted}\"; use the id: {}",
-                many.len(),
-                ids.join(", ")
-            )))
+    let row_id = |row: &Value| row.get("id").and_then(Value::as_str).map(str::to_string);
+    let matches = |step: usize, row: &Value| match step {
+        0 => row_id(row).as_deref() == Some(wanted),
+        1 => names(row).iter().any(|n| n == wanted),
+        2 => names(row).iter().any(|n| n.to_lowercase() == lower),
+        3 => names(row).iter().any(|n| n.to_lowercase().starts_with(&lower)),
+        _ => wanted.chars().count() >= 4 && row_id(row).is_some_and(|id| id.starts_with(wanted)),
+    };
+    for step in 0..5 {
+        let hits: Vec<&Value> = rows.iter().filter(|row| matches(step, row)).collect();
+        match hits.as_slice() {
+            [] => continue,
+            [one] => return Ok(one),
+            many => {
+                let labels: Vec<String> =
+                    many.iter().map(|row| names(row).first().cloned().unwrap_or_default()).collect();
+                let repeated =
+                    labels.iter().any(|l| labels.iter().filter(|o| o.to_lowercase() == l.to_lowercase()).count() > 1);
+                let listed: Vec<String> = many
+                    .iter()
+                    .zip(&labels)
+                    .map(|(row, label)| {
+                        if repeated || step == 4 {
+                            format!("\"{label}\" ({})", js_template(row.get("id")))
+                        } else {
+                            format!("\"{label}\"")
+                        }
+                    })
+                    .collect();
+                let how = if step >= 3 { "start with" } else { "are named" };
+                let advice = if repeated { "use the id" } else { "use more of the name" };
+                return Err(CliError::usage(format!(
+                    "{} {what}s {how} \"{wanted}\": {} — {advice}",
+                    many.len(),
+                    listed.join(", ")
+                )));
+            }
         }
     }
+    let mut close: Vec<(usize, String)> = rows
+        .iter()
+        .flat_map(names)
+        .filter_map(|n| {
+            let l = n.to_lowercase();
+            let d = levenshtein(&l, &lower);
+            (d <= 2.max(lower.chars().count() / 4) || l.contains(&lower)).then_some((d, n))
+        })
+        .collect();
+    close.sort();
+    close.dedup_by(|a, b| a.1 == b.1);
+    close.truncate(3);
+    let hint = if close.is_empty() {
+        format!("(see: bifurc {group} list)")
+    } else {
+        let quoted: Vec<String> = close.iter().map(|(_, n)| format!("\"{n}\"")).collect();
+        format!("— did you mean {}?", quoted.join(", "))
+    };
+    Err(CliError::not_found(format!("no {what} \"{wanted}\" {hint}")))
+}
+
+/// Edit distance between two strings (insert, delete, replace), for did-you-mean.
+fn levenshtein(a: &str, b: &str) -> usize {
+    let b: Vec<char> = b.chars().collect();
+    let mut row: Vec<usize> = (0..=b.len()).collect();
+    for (i, ca) in a.chars().enumerate() {
+        let mut diag = row[0];
+        row[0] = i + 1;
+        for (j, cb) in b.iter().enumerate() {
+            let up = row[j + 1];
+            row[j + 1] = (diag + usize::from(ca != *cb)).min(up + 1).min(row[j] + 1);
+            diag = up;
+        }
+    }
+    row[b.len()]
 }
 
 /// `-H "name: value"` flags in order. An empty value (`-H "name:"`) is kept: on an update it removes the header.
@@ -395,7 +453,7 @@ pub fn account(ctx: &mut Context, sub: Option<&str>) -> Result<String> {
 /// overrides it. The selection is the engine's, so it is shared with the desktop UI.
 pub fn env(ctx: &mut Context, sub: Option<&str>) -> Result<String> {
     match sub.unwrap_or("list") {
-        "list" | "show" => ctx.accept(&[], 0)?,
+        "list" => ctx.accept(&[], 0)?,
         "use" => ctx.accept(&[], 1)?,
         other => return Err(unknown_verb("env", other)),
     }
@@ -424,10 +482,6 @@ pub fn env(ctx: &mut Context, sub: Option<&str>) -> Result<String> {
                 })
                 .collect();
             Ok(ctx.print(&Value::Array(rows.clone()), || table(&rows, &["active", "id", "name", "vars"])))
-        }
-        "show" => {
-            let merged = ctx.request("env.getMerged", json!({ "workspaceId": workspace }))?;
-            Ok(ctx.print(&merged, || json(&merged)))
         }
         "use" => {
             if !selectable {
@@ -652,19 +706,45 @@ mod tests {
     }
 
     #[test]
-    fn find_one_takes_an_id_then_a_unique_name() {
+    fn find_one_tries_id_then_name_then_prefixes() {
         let rows = vec![
-            json!({"id": "a", "name": "Ping"}),
-            json!({"id": "b", "name": "ping"}),
+            json!({"id": "abcd1", "name": "Ping"}),
+            json!({"id": "abcd2", "name": "ping"}),
             json!({"id": "c", "name": "Pong"}),
             json!({"id": "Pong", "name": "Id wins"}),
+            json!({"id": "d", "name": "Get order"}),
+            json!({"id": "e", "name": "Get orders"}),
+            json!({"id": "f", "name": "Create user"}),
         ];
         let find = |wanted: &str| find_one(&rows, wanted, &["name"], "request", "requests");
-        assert_eq!(find("a").unwrap()["name"], "Ping");
+        assert_eq!(find("abcd1").unwrap()["name"], "Ping");
         assert_eq!(find("Pong").unwrap()["name"], "Id wins");
+        assert_eq!(find("Ping").unwrap()["id"], "abcd1"); // exact name beats the other case
         assert_eq!(find("pong").unwrap()["id"], "c");
-        assert_eq!(find("PING").unwrap_err(), CliError::usage("2 requests are named \"PING\"; use the id: a, b"));
-        assert_eq!(find("zip").unwrap_err(), CliError::not_found("no request \"zip\" (see: bifurc requests list)"));
+        assert_eq!(
+            find("PING").unwrap_err(),
+            CliError::usage("2 requests are named \"PING\": \"Ping\" (abcd1), \"ping\" (abcd2) — use the id")
+        );
+        assert_eq!(find("create").unwrap()["id"], "f"); // unique name prefix
+        assert_eq!(find("get order").unwrap()["id"], "d"); // exact (any case) name before prefix
+        assert_eq!(
+            find("get").unwrap_err(),
+            CliError::usage("2 requests start with \"get\": \"Get order\", \"Get orders\" — use more of the name")
+        );
+        assert_eq!(find("abcd").unwrap_err().code(), 2); // id prefix shared by two
+        let rows = vec![json!({"id": "mvbzxzympjvgk", "name": "Login"})];
+        assert_eq!(find_one(&rows, "mvbz", &["name"], "request", "requests").unwrap()["name"], "Login");
+        assert!(find_one(&rows, "mvb", &["name"], "request", "requests").is_err()); // under 4 characters
+    }
+
+    #[test]
+    fn find_one_not_found_suggests_close_names() {
+        let rows = vec![json!({"id": "a", "name": "Create user"}), json!({"id": "b", "name": "Login"})];
+        let err = find_one(&rows, "Create usr", &["name"], "request", "requests").unwrap_err();
+        assert_eq!(err, CliError::not_found("no request \"Create usr\" — did you mean \"Create user\"?"));
+        let err = find_one(&rows, "zip", &["name"], "request", "requests").unwrap_err();
+        assert_eq!(err, CliError::not_found("no request \"zip\" (see: bifurc requests list)"));
+        assert_eq!(levenshtein("kitten", "sitting"), 3);
     }
 
     #[test]
@@ -702,15 +782,6 @@ mod tests {
         let (out, calls) = run(&argv, answers, |c| env(c, sub(&argv)));
         assert!(!out.unwrap().contains('*'));
         assert_eq!(calls[1].1["workspaceId"], "w2");
-    }
-
-    #[test]
-    fn env_show_prints_the_merged_variables() {
-        let argv = ["env", "show"];
-        let answers = vec![("config.get", Ok(config())), ("env.getMerged", Ok(json!({"a": "1"})))];
-        let (out, calls) = run(&argv, answers, |c| env(c, sub(&argv)));
-        assert_eq!(out.unwrap(), "{\n  \"a\": \"1\"\n}");
-        assert_eq!(calls[1].1, json!({"workspaceId": "w1"}));
     }
 
     #[test]
