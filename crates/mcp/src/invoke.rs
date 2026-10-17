@@ -553,6 +553,7 @@ mod tests {
                     "req_headers": true, "max_body": 100,
                 })),
             ),
+            ("capture_show", with(json!({"entry": "k3f9", "logs": true, "context": 2, "service": "api"}))),
             ("capture_mock", with(json!({"entry": "c1"}))),
             ("capture_request", with(json!({"entry": "c1"}))),
             (
@@ -595,7 +596,7 @@ mod tests {
             ),
             (
                 "services",
-                with(json!({"verb": "define", "name": "api", "cmd": "npm run dev", "port": 3000, "cwd": ".", "vault": "dev", "env": {"A": "b"}})),
+                with(json!({"verb": "define", "name": "api", "cmd": "npm run dev", "port": 3000, "cwd": ".", "vault": "dev", "env": {"A": "b"}, "log_file": "app.log"})),
             ),
             ("services", with(json!({"verb": "up", "all": true, "wait": true, "timeout": "30s"}))),
             ("logs", with(json!({"name": "api", "errors": true, "since": "2m", "grep": "x", "last": 20}))),

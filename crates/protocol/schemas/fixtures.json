@@ -354,6 +354,7 @@
    "name": "api",
    "cmd": "npm run dev",
    "port": 3000,
+   "logFile": "/tmp/api.log",
    "env": {
     "A": "1"
    }
@@ -371,6 +372,22 @@
   "valid": {
    "port": 3000,
    "kill": true
+  },
+  "invalid": {}
+ },
+ "devservice.grep": {
+  "valid": {
+   "workspaceId": "ws1",
+   "needles": [
+    "abc123"
+   ],
+   "probes": [
+    "x-bifurc-trace"
+   ],
+   "context": 2,
+   "name": "api",
+   "sinceTs": 1,
+   "untilTs": 2
   },
   "invalid": {}
  },

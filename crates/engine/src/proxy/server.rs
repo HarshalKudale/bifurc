@@ -22,7 +22,7 @@ use super::{
 };
 use crate::{
     certificates::{apply_settings, clear_cert_cache, is_ca_loaded, listener_server_config},
-    kernel::traffic::{Headers, RequestLogEntry, emit_log},
+    kernel::traffic::{Headers, RequestLogEntry, emit_log, forwarded_headers},
     runtime::instances::Listener,
     utils::{
         cache_policy::strip_cache_headers,
@@ -201,6 +201,7 @@ fn base_entry(
         method: head.method.clone(),
         url,
         host,
+        trace_id: crate::kernel::traffic::traceparent_trace_id(&headers),
         req_headers: headers,
         req_body: req_body.clone(),
         workspace_id: Some(workspace_id.to_string()),
@@ -236,6 +237,7 @@ async fn dispatch<W: AsyncRead + AsyncWrite + Unpin>(shared: &Shared, out: &mut 
         if raw_target.starts_with("http") { raw_target.to_string() } else { format!("http://{host_header}{req_path}") };
     let (base, req_body_b64) =
         base_entry(id, t0, head, url.clone(), host.clone(), headers.clone(), body, &routing.workspace_id);
+    let forwarded = forwarded_headers(&headers, &base.id);
 
     if absolute {
         let exchange = Exchange {
@@ -244,7 +246,7 @@ async fn dispatch<W: AsyncRead + AsyncWrite + Unpin>(shared: &Shared, out: &mut 
             url: &url,
             rule_match_target: raw_target,
             req_path: &req_path,
-            headers: &headers,
+            headers: &forwarded,
             body,
             req_body_b64: &req_body_b64,
             base: &base,
@@ -254,7 +256,7 @@ async fn dispatch<W: AsyncRead + AsyncWrite + Unpin>(shared: &Shared, out: &mut 
             return;
         }
         let outcome =
-            passthrough_to_upstream(out, &head.method, raw_target, &req_path, &headers, body, Some(&base.id)).await;
+            passthrough_to_upstream(out, &head.method, raw_target, &req_path, &forwarded, body, Some(&base.id)).await;
         if let Some(outcome) = outcome {
             log_outcome(&base, "proxy", Some(host), outcome);
         }
@@ -293,6 +295,7 @@ pub(super) async fn dispatch_https<W: AsyncRead + AsyncWrite + Unpin>(
     let url = format!("https://{hostname}{port_suffix}{req_path}");
     let (base, req_body_b64) =
         base_entry(id, t0, head, url.clone(), hostname.to_string(), headers.clone(), body, &routing.workspace_id);
+    let forwarded = forwarded_headers(&headers, &base.id);
 
     let exchange = Exchange {
         routing,
@@ -300,7 +303,7 @@ pub(super) async fn dispatch_https<W: AsyncRead + AsyncWrite + Unpin>(
         url: &url,
         rule_match_target: &url,
         req_path: &req_path,
-        headers: &headers,
+        headers: &forwarded,
         body,
         req_body_b64: &req_body_b64,
         base: &base,
@@ -310,7 +313,7 @@ pub(super) async fn dispatch_https<W: AsyncRead + AsyncWrite + Unpin>(
         return;
     }
     let outcome =
-        passthrough_to_upstream_https(out, &head.method, hostname, port, &req_path, &headers, body, Some(&base.id))
+        passthrough_to_upstream_https(out, &head.method, hostname, port, &req_path, &forwarded, body, Some(&base.id))
             .await;
     if let Some(outcome) = outcome {
         log_outcome(&base, "proxy", Some(hostname.to_string()), outcome);
