@@ -153,12 +153,12 @@ fn headers(about: &'static str) -> Param {
 
 /// The argument every tool takes: the raw answer instead of the readable one.
 fn json_switch(option: &'static str) -> Param {
-    switch("json", option, None, "Return the engine's raw JSON instead of the readable text.")
+    switch("json", option, None, "Also return structured JSON.")
 }
 
 /// The argument of every tool that acts on one workspace.
 fn workspace() -> Param {
-    text("workspace", "workspace", "Workspace id. Default: the active workspace.")
+    text("workspace", "workspace", "Workspace id (default: active).")
 }
 
 struct Row {
@@ -195,63 +195,32 @@ impl Row {
 
 const REQUEST_TYPES: &[&str] = &["rest", "graphql", "grpc", "soap", "websocket", "sse", "socketio", "mcp"];
 
-const TYPE_ABOUT: &str = "The type of request. Default: rest. For a saved request it is only needed to tell apart two \
-    requests of different types with the same name.";
+const TYPE_ABOUT: &str = "Request type (default rest); for a saved request, only to tell same-named ones apart.";
 
 /// The options that describe a request of some type: what `requests create`, `update` and an unsaved `send` take.
 fn request_options() -> Vec<Param> {
     vec![
-        text(
-            "url",
-            "url",
-            "Where the request goes: a URL; a gRPC server address; for mcp the command line that starts \
-            the server (stdio) or the address of its endpoint (http). May hold {{variables}}.",
-        ),
-        headers(
-            "Headers by name (gRPC: metadata; an mcp program: environment variables). On an update an empty \
-            value removes the header.",
-        ),
-        text(
-            "method",
-            "method",
-            "rest and sse: the HTTP method (default GET). grpc: the method to call, as \
-            pkg.Service/Method.",
-        ),
-        text(
-            "body",
-            "data",
-            "rest, soap and sse: the request body. grpc: the message as JSON (a client-streaming \
-            method takes a JSON array of messages).",
-        ),
-        text("query", "query", "graphql: the query or mutation."),
-        typed("variables", "variables", Type::Json, "graphql: the variables, a JSON object."),
-        text("operation", "operation", "graphql: the name of the operation to run."),
-        text("proto", "proto", "grpc: the id of the saved .proto file that declares the method."),
-        switch(
-            "reflection",
-            "reflection",
-            None,
-            "grpc: find the method through the server's reflection (what happens \
-            when no proto is given).",
-        ),
+        text("url", "url", "Where it goes: a URL, a gRPC address, or for mcp the server's command line or endpoint."),
+        headers("Headers by name; an empty value removes one on update."),
+        text("method", "method", "HTTP method (default GET); grpc: pkg.Service/Method."),
+        text("body", "data", "The request body; grpc: the message as JSON."),
+        text("query", "query", "graphql: the query."),
+        typed("variables", "variables", Type::Json, "graphql: the variables."),
+        text("operation", "operation", "graphql: the operation name."),
+        text("proto", "proto", "grpc: the saved .proto file id."),
+        switch("reflection", "reflection", None, "grpc: use server reflection."),
         text("action", "action", "soap: the SOAPAction."),
-        text("namespace", "namespace", "socketio: the namespace, e.g. /chat."),
-        text("path", "path", "socketio: the path of the Socket.IO endpoint. Default: /socket.io."),
-        typed("auth", "auth", Type::Json, "socketio: the auth payload, a JSON object."),
+        text("namespace", "namespace", "socketio: the namespace."),
+        text("path", "path", "socketio: the endpoint path."),
+        typed("auth", "auth", Type::Json, "socketio: the auth payload."),
         Param {
             name: "listen",
-            about: "socketio: the events to log when the server sends them. Default: every event.",
+            about: "socketio: the events to log (default all).",
             ty: Type::TextList,
             place: Place::Each("listen"),
             required: false,
         },
-        typed(
-            "transport",
-            "transport",
-            Type::Choice(&["stdio", "http"]),
-            "mcp: how the server is reached. Default: \
-            what the url looks like.",
-        ),
+        typed("transport", "transport", Type::Choice(&["stdio", "http"]), "mcp: how the server is reached."),
     ]
 }
 
@@ -260,19 +229,15 @@ fn override_options() -> Vec<Param> {
     vec![
         Param {
             name: "vars",
-            about: "rest, graphql, soap, grpc: variables for {{name}}, by name, over the environment's.",
+            about: "Variables for {{name}}, over the environment's.",
             ty: Type::TextMap,
             place: Place::Pairs("var", "="),
             required: false,
         },
-        text(
-            "env",
-            "env",
-            "rest, graphql, soap, grpc: the id or name of the environment to use instead of the selected one.",
-        ),
+        text("env", "env", "Environment to use instead of the selected one."),
         Param {
             name: "patch",
-            about: "A saved request: set a field of its JSON body (or of body), each '<path>=<value>' like '.qty=2'.",
+            about: "Set JSON body fields, each '<path>=<value>'.",
             ty: Type::TextList,
             place: Place::Each("patch"),
             required: false,
@@ -285,29 +250,29 @@ fn run_options() -> Vec<Param> {
     vec![
         Param {
             name: "vars",
-            about: "Variables for {{name}}, by name, over the environment's.",
+            about: "Variables for {{name}}, over the environment's.",
             ty: Type::TextMap,
             place: Place::Pairs("var", "="),
             required: false,
         },
-        text("env", "env", "The id or name of the environment to use instead of the selected one."),
-        switch("fresh_session", "fresh-session", None, "Run with cookies of a jar of its own, dropped at the end."),
-        switch("verbose", "verbose", None, "Include the body of every request, not only of a failed one."),
-        typed("max_body", "max-body", Type::Integer, "Bytes of body returned with verbose (default 2048; 0 = all)."),
+        text("env", "env", "Environment to use instead of the selected one."),
+        switch("fresh_session", "fresh-session", None, "Run with a throwaway cookie jar."),
+        switch("verbose", "verbose", None, "Include every request's body."),
+        typed("max_body", "max-body", Type::Integer, "Body byte limit (default 2048; 0 = all)."),
     ]
 }
 
 /// What a send of a request that answers once returns; the response is a summary line unless asked for more.
 fn output_options() -> Vec<Param> {
     vec![
-        text("select", "select", "A jq-style path into the JSON body: return only the values it picks."),
-        switch("show_body", "body", None, "Include the response body (text only), cut at max_body."),
-        switch("show_headers", "headers", None, "Include the response headers; secrets are masked."),
-        typed("max_body", "max-body", Type::Integer, "Bytes of body returned with show_body (default 2048; 0 = all)."),
-        typed("expect_status", "expect-status", Type::Integer, "Fail unless the response has this status."),
+        text("select", "select", "jq-style path into the JSON body: return only those values."),
+        switch("show_body", "body", None, "Include the response body."),
+        switch("show_headers", "headers", None, "Include the response headers."),
+        typed("max_body", "max-body", Type::Integer, "Body byte limit (default 2048; 0 = all)."),
+        typed("expect_status", "expect-status", Type::Integer, "Fail unless the status matches."),
         Param {
             name: "expect",
-            about: "Fail unless each '<path> <op> <value>' holds, e.g. 'status < 300' or '.id != null'.",
+            about: "Fail unless each '<path> <op> <value>' holds.",
             ty: Type::TextList,
             place: Place::Each("expect"),
             required: false,
@@ -318,26 +283,15 @@ fn output_options() -> Vec<Param> {
 /// The options only a send takes.
 fn exchange_options() -> Vec<Param> {
     vec![
-        typed(
-            "wait",
-            "wait",
-            Type::Number,
-            "websocket, sse, socketio: how many seconds to listen (default 2; sse 5). \
-            mcp: how many seconds to wait for the answer (default 60).",
-        ),
-        text(
-            "event",
-            "event",
-            "socketio: the event to emit; its arguments go in body (a JSON array is one argument \
-            per element).",
-        ),
-        switch("ack", "ack", None, "socketio: ask the server to acknowledge the event."),
+        typed("wait", "wait", Type::Number, "websocket, sse, socketio, mcp: seconds to listen or wait."),
+        text("event", "event", "socketio: the event to emit, its arguments in body."),
+        switch("ack", "ack", None, "socketio: ask for an acknowledgement."),
         text("tool", "tool", "mcp: the tool to call."),
         text("prompt", "prompt", "mcp: the prompt to get."),
-        text("resource", "resource", "mcp: the URI of the resource to read."),
+        text("resource", "resource", "mcp: the resource URI to read."),
         Param {
             name: "arguments",
-            about: "mcp: the arguments of the tool or the prompt, by name.",
+            about: "mcp: the tool or prompt arguments.",
             ty: Type::AnyMap,
             place: Place::Pairs("arg", "="),
             required: false,
@@ -398,21 +352,27 @@ fn group_rows(group: &'static str) -> [Row; 4] {
         scoped: true,
         params: vec![operand(group_item(group), item).required()],
     };
-    [
+    let mut rows = [
         Row {
             name: names[0],
             words: words[0],
             summary: list,
             details: "",
             effect: Effect::Reads,
-            upfront: group != "rules",
+            upfront: group == "mocks",
             scoped: true,
             params: vec![],
         },
         one(names[1], words[1], show, Effect::Reads),
         one(names[2], words[2], enable, Effect::Changes),
         one(names[3], words[3], disable, Effect::Changes),
-    ]
+    ];
+    // Agents switch mocks on and off often.
+    if group == "mocks" {
+        rows[2].upfront = true;
+        rows[3].upfront = true;
+    }
+    rows
 }
 
 /// The name of the argument that names one item of a group.
@@ -427,10 +387,10 @@ fn group_item(group: &str) -> &'static str {
 /// The options of a mock's response, shared by `mocks create` and `mocks update`.
 fn mock_options(regex_off: bool) -> Vec<Param> {
     vec![
-        text("method", "method", "The HTTP method it answers; * for any. Default: GET."),
+        text("method", "method", "HTTP method it answers; * for any (default GET)."),
         text("name", "name", "A name for the mock."),
-        typed("status", "status", Type::Integer, "The response status. Default: 200."),
-        headers("Response headers by name. On an update an empty value removes the header."),
+        typed("status", "status", Type::Integer, "Response status (default 200)."),
+        headers("Response headers by name."),
         text("body", "body", "The response body."),
         typed("delay", "delay", Type::Integer, "Milliseconds to wait before answering."),
         switch("regex", "regex", regex_off.then_some("no-regex"), "Whether the URL pattern is a regular expression."),
@@ -443,7 +403,7 @@ pub fn catalog() -> Vec<Tool> {
         Row {
             name: "status",
             words: &["status"],
-            summary: "Show the Bifurc engine, proxy, workspace, environment, mocks, capture and cookies in two lines.",
+            summary: "Show the engine, proxy, workspace and mock state in two lines.",
             details: "",
             effect: Effect::Reads,
             upfront: true,
@@ -454,7 +414,7 @@ pub fn catalog() -> Vec<Tool> {
         Row {
             name: "requests_list",
             words: &["requests", "list"],
-            summary: "List the saved requests of every type (REST, GraphQL, gRPC, SOAP, WebSocket, SSE, Socket.IO, MCP).",
+            summary: "List the saved requests of every type.",
             details: "",
             effect: Effect::Reads,
             upfront: true,
@@ -477,21 +437,14 @@ pub fn catalog() -> Vec<Tool> {
         Row {
             name: "requests_send",
             words: &["requests", "send"],
-            summary: "Send a saved request, or one described here without saving it, and return the response.",
-            details: "Give `request` to send a saved one as it is saved: the engine resolves its {{variables}} and \
-                runs its scripts and tests. Otherwise give `url` and the options of the type. A websocket, sse or \
-                socketio request connects, listens for `wait` seconds and returns what went by. An mcp request \
-                returns the tools, prompts and resources the server declares, or the answer to one `tool`, `prompt` \
-                or `resource`. The result is an error when a test fails or the call does.",
+            summary: "Send a saved request, or an unsaved one described here.",
+            details: "Give `request` for a saved one, else `url` and the type's options.",
             effect: Effect::Runs,
             upfront: true,
             scoped: true,
             params: concat(vec![
                 vec![
-                    operand(
-                        "request",
-                        "The id or name of a saved request. Leave out to send the one described by url.",
-                    ),
+                    operand("request", "Saved request id or name."),
                     typed("type", "type", Type::Choice(REQUEST_TYPES), TYPE_ABOUT),
                 ],
                 request_options(),
@@ -503,21 +456,17 @@ pub fn catalog() -> Vec<Tool> {
         Row {
             name: "curl",
             words: &["curl"],
-            summary: "Run a curl command through Bifurc (shared cookie jar, environments), optionally saving it as a request.",
-            details: "`command` is curl's arguments as you would write them. `save` saves the request first,                 with the environment's values as {{variables}}, and sends the saved one; `save_only` does not send.",
+            summary: "Run a curl command through Bifurc, optionally saving it as a request.",
+            details: "",
             effect: Effect::Runs,
             upfront: true,
             scoped: true,
             params: concat(vec![
                 vec![
-                    operand(
-                        "command",
-                        "The whole curl command, e.g. curl -X POST https://api.localhost/users -d '{}'.",
-                    )
-                    .required(),
+                    operand("command", "The whole curl command.").required(),
                     text("save", "save", "Save the request under this name."),
-                    text("folder", "folder", "The folder of the saved request, e.g. auth/admin."),
-                    switch("update", "update", None, "Replace the saved request of that name."),
+                    text("folder", "folder", "Folder of the saved request."),
+                    switch("update", "update", None, "Replace the saved request."),
                     switch("save_only", "save-only", None, "Save without sending."),
                 ],
                 override_options().into_iter().take(2).collect(),
@@ -577,14 +526,13 @@ pub fn catalog() -> Vec<Tool> {
         name: "mocks_create",
         words: &["mocks", "create"],
         summary: "Create a mock: a canned response the proxy gives to calls that match a URL pattern.",
-        details: "The mock is the whole response; nothing is asked of the real server. Give `url`, or `curl` to mock \
-            the call a cURL command makes (answering an empty 200 until told otherwise).",
+        details: "The mock is the whole response; the real server is not asked.",
         effect: Effect::Adds,
         upfront: true,
         scoped: true,
         params: concat(vec![
             vec![
-                text("url", "url", "The URL pattern it answers, e.g. https://api.example.com/users."),
+                text("url", "url", "The URL pattern it answers."),
                 text("curl", "curl", "A whole cURL command; the mock answers the call it makes. Leave out url."),
             ],
             mock_options(false),
@@ -613,7 +561,7 @@ pub fn catalog() -> Vec<Tool> {
         summary: "Map a <sub>.localhost domain to a local target, so the proxy serves it from there.",
         details: "",
         effect: Effect::Adds,
-        upfront: true,
+        upfront: false,
         scoped: true,
         params: vec![
             operand("domain", "The subdomain or the whole domain, e.g. api or api.localhost.").required(),
@@ -792,9 +740,8 @@ pub fn catalog() -> Vec<Tool> {
         Row {
             name: "flows_run",
             words: &["flows", "run"],
-            summary: "Run a flow: one line per request (status, time, pass or the first failure), then the total.",
-            details: "Only a failed step shows its body (512 bytes). The result is an error when the run fails or a \
-                test does. A run is stopped after `timeout` seconds (default 120).",
+            summary: "Run a flow: one line per request, then the total.",
+            details: "An error when a step or test fails.",
             effect: Effect::Runs,
             upfront: true,
             scoped: true,
@@ -802,7 +749,7 @@ pub fn catalog() -> Vec<Tool> {
                 operand("flow", "The flow's id or name.").required(),
                 Param {
                     name: "inputs",
-                    about: "Values for the inputs the flow declares, by name.",
+                    about: "Values for the flow's inputs.",
                     ty: Type::TextMap,
                     place: Place::Pairs("input", "="),
                     required: false,
@@ -957,7 +904,7 @@ pub fn catalog() -> Vec<Tool> {
             summary: "List the local processes listening on a port: what a mapping can be pointed at.",
             details: "",
             effect: Effect::Reads,
-            upfront: true,
+            upfront: false,
             scoped: false,
             params: vec![],
         },
@@ -1047,33 +994,33 @@ pub fn catalog() -> Vec<Tool> {
             name: "capture_list",
             words: &["capture", "list"],
             summary: "List the traffic the proxies captured, newest first, one line per exchange.",
-            details: "Each line starts with #tail, the entry's id for capture_show. Entries beyond `last` are only counted, in a last line.",
+            details: "Each line starts with #tail, the id for capture_show.",
             effect: Effect::Reads,
             upfront: true,
             scoped: true,
             params: vec![
                 typed("last", "last", Type::Integer, "How many entries (default 20)."),
-                text("status", "status", "422, 4xx, !2xx or a list like 4xx,5xx."),
+                text("status", "status", "E.g. 422, 4xx, !2xx."),
                 text("method", "method", "The HTTP method."),
-                text("host", "host", "The host; * matches any run of characters."),
-                text("path", "path", "The path without the query; * matches any run of characters."),
+                text("host", "host", "The host; * is a wildcard."),
+                text("path", "path", "The path; * is a wildcard."),
                 text("since", "since", "30s, 2m, 1h ago, or #tail: after that entry."),
                 typed("origin", "origin", Type::Choice(&["real", "mock", "mapped", "rule", "error"]), "Who answered."),
-                text("grep", "grep", "Case-insensitive text in the URL or a request or response body."),
+                text("grep", "grep", "Text in the URL or a body."),
             ],
         },
         Row {
             name: "capture_show",
             words: &["capture", "show"],
             summary: "Show one captured exchange: the request line, then the response summary.",
-            details: "Like a request's response: a summary line, and only what show_body, show_headers, select, req_body asks for.",
+            details: "",
             effect: Effect::Reads,
             upfront: true,
             scoped: true,
             params: vec![
                 operand("entry", "The entry's id, or its #tail as capture_list prints it.").required(),
-                text("select", "select", "A jq-style path into the JSON response body: return only the values it picks."),
-                switch("show_body", "body", None, "Include the response body (text only), cut at max_body."),
+                text("select", "select", "jq-style path into the JSON body: return only those values."),
+                switch("show_body", "body", None, "Include the response body."),
                 switch("show_headers", "headers", None, "Include the response headers; secrets are masked."),
                 switch("req_body", "req-body", None, "Include the request body (text only), cut at max_body."),
                 switch("req_headers", "req-headers", None, "Include the request headers; secrets are masked."),
@@ -1296,12 +1243,11 @@ mod tests {
                 "requests_send",
                 "curl",
                 "mocks_list",
+                "mocks_enable",
+                "mocks_disable",
                 "mocks_create",
-                "mappings_list",
-                "mappings_create",
                 "flows_list",
                 "flows_run",
-                "services_list",
                 "help",
                 "capture_list",
                 "capture_show",

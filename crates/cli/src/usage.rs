@@ -258,7 +258,7 @@ A request is named by its id, its name, a unique start of its name (get -> Get o
   reflect <address>                      Services and methods a gRPC server reports through reflection
 
 Output of send (rest, graphql, soap, grpc): one line such as \"201 Created · 142ms · 4.2KB json · tests 3/3 ✓\";
-a failure adds a reason line (\"✗ …\") and exits 1, and an error status shows up to 512 bytes of the body
+a failure adds a reason line (\"✗ …\") and exits 1, and an error status shows up to 384 bytes of the body
   --body                                 The body, up to --max-body <bytes> (default 2048; 0 = all); text only
   --headers                              The response headers; secrets are masked (--reveal shows them on a terminal)
   --select <path>                        Only what a jq-style path picks from the JSON body, one value per line
@@ -362,7 +362,7 @@ The JSON of a flow
       [--timeout <seconds>] [--max-events <n>] [--max-body <bytes>]
                                          Run it; one line per request (or failed node), then `flow passed · 5
                                          steps · 166ms` or `flow failed at step 3`. Only a failed step shows
-                                         its body (512 bytes); exits 1 when the run or a test fails.
+                                         its body (384 bytes); exits 1 when the run or a test fails.
                                          --input: a value for an input the flow declares (repeatable)
                                          --var, --env: variables / environment over the environment's, as on a send
                                          --fresh-session: cookies of a jar of its own, dropped at the end
