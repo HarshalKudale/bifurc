@@ -12,6 +12,7 @@ use crate::{
     error::{CliError, Result},
     format::{aligned, js_template, json, table},
     response::{is_sensitive_name, mask, revealed},
+    steps::{Step, lines, max_body, one_line, path_of},
 };
 
 /// The tree of each folder kind, as the engine's snapshot names its folders.
@@ -202,16 +203,71 @@ fn capture_save(ctx: &mut Context, kind: &str) -> Result<String> {
     Ok(ctx.print(&saved, || format!("Saved {field} {}", id_of(&saved))))
 }
 
-/// `runner run <folder>`: send every request of a folder in order and wait for the report.
+/// The id of the request folder `wanted` names: its id, a path (`auth/admin`) or a unique name. Nothing is created.
+fn request_folder(ctx: &mut Context, workspace: &str, wanted: &str) -> Result<String> {
+    let config = ctx.request("config.get", json!({}))?;
+    if config.get("activeWorkspaceId").and_then(Value::as_str).is_some_and(|active| active != workspace) {
+        return Err(CliError::msg(
+            "a folder is looked up in the active workspace: run bifurc workspaces use <workspace>",
+        ));
+    }
+    let folders: Vec<Value> = config
+        .get("requestFolders")
+        .and_then(Value::as_array)
+        .map(|all| all.iter().filter(|f| f.get("deleted") != Some(&json!(true))).cloned().collect())
+        .unwrap_or_default();
+    if !wanted.contains('/') {
+        return Ok(id_of(find_one(&folders, wanted, &["name"], "folder", "folders")?));
+    }
+    let mut parent: Option<String> = None;
+    for part in wanted.split('/').filter(|part| !part.is_empty()) {
+        let hit = folders.iter().find(|f| {
+            js_template(f.get("name")).eq_ignore_ascii_case(part)
+                && f.get("parentId").and_then(Value::as_str) == parent.as_deref()
+        });
+        parent = Some(id_of(hit.ok_or_else(|| {
+            CliError::not_found(format!("no folder \"{wanted}\" (see: bifurc folders list --tree request)"))
+        })?));
+    }
+    parent.ok_or_else(|| CliError::usage("a folder path needs a name"))
+}
+
+/// The failure of one result of a run, `None` when it passed: a request that was not sent, a script that threw or
+/// a test that did not pass.
+fn failure_of(result: &Value) -> Option<String> {
+    let text = |key: &str| result.get(key).and_then(Value::as_str).filter(|text| !text.is_empty());
+    if let Some(error) = text("error") {
+        return Some(one_line(error));
+    }
+    if let Some(error) = text("preScriptError").or(text("postScriptError")) {
+        return Some(format!("script: {}", one_line(error)));
+    }
+    let tests = result.get("tests").and_then(Value::as_array).map(Vec::as_slice).unwrap_or_default();
+    let failed = tests.iter().find(|test| test.get("passed") != Some(&json!(true)))?;
+    let error = failed.get("error").and_then(Value::as_str).map(|e| format!(": {}", one_line(e))).unwrap_or_default();
+    Some(format!("test {}{error}", js_template(failed.get("name"))))
+}
+
+/// `runner run <folder> [--bail] [--var k=v] [--env e] [--fresh-session] [--verbose]`: send every request of a
+/// folder in order and print a line for each, then the totals. Exit 1 when a request or a test failed.
 fn runner_run(ctx: &mut Context) -> Result<String> {
-    ctx.accept(&[], 1)?;
-    let folder = need(ctx.args.positional(2), "the folder's id (see: bifurc folders list --tree request)")?;
+    ctx.accept(&["bail", "var", "env", "fresh-session", "verbose", "max-body"], 1)?;
+    let wanted =
+        need(ctx.args.positional(2), "the folder's id, path or name (see: bifurc folders list --tree request)")?;
+    let max_body = max_body(ctx.args)?;
     let workspace = workspace_id(ctx)?;
-    let run = json!({ "workspaceId": workspace, "folderId": folder });
-    refused(ctx.request("runner.start", run.clone())?)?;
+    let mut run = json!({ "workspaceId": workspace, "folderId": request_folder(ctx, &workspace, &wanted)? });
+    crate::requests::add_scope(ctx, &workspace, &mut run)?;
+    for (flag, key) in [("bail", "bail"), ("fresh-session", "freshJar")] {
+        if ctx.args.has(flag) {
+            run[key] = json!(true);
+        }
+    }
+    let status_request = json!({ "workspaceId": workspace, "folderId": run["folderId"] });
+    refused(ctx.request("runner.start", run)?)?;
     let finished = loop {
         std::thread::sleep(RUN_POLL);
-        let status = ctx.request("runner.status", run.clone())?;
+        let status = ctx.request("runner.status", status_request.clone())?;
         if status.get("running") != Some(&json!(true)) {
             break status;
         }
@@ -219,32 +275,38 @@ fn runner_run(ctx: &mut Context) -> Result<String> {
     if let Some(error) = finished.get("error").and_then(Value::as_str) {
         return Err(CliError::msg(format!("the run stopped: {error}")));
     }
-    let report = finished.get("report").cloned().unwrap_or(finished);
-    let count = |key: &str| report.get(key).and_then(Value::as_u64).unwrap_or(0);
+    let report = finished.get("report").cloned().unwrap_or_else(|| finished.clone());
     let results = report.get("results").and_then(Value::as_array).map(Vec::as_slice).unwrap_or_default();
-    let errors = results.iter().filter(|result| result.get("error").is_some_and(|error| !error.is_null())).count();
+    let steps: Vec<Step> = results
+        .iter()
+        .map(|result| Step {
+            label: format!("{} {}", js_template(result.get("method")), path_of(&js_template(result.get("url")))),
+            status: result.get("status").filter(|status| !status.is_null()).map(|status| js_template(Some(status))),
+            ms: result.get("responseTime").and_then(Value::as_u64),
+            failure: failure_of(result),
+            body: result.get("responseBody").and_then(Value::as_str).map(str::to_string),
+        })
+        .collect();
     let text = ctx.print(&report, || {
-        let rows: Vec<Value> = results
-            .iter()
-            .map(|result| {
-                let tests = result.get("tests").and_then(Value::as_array).map(Vec::as_slice).unwrap_or_default();
-                let failed = tests.iter().filter(|test| test.get("passed") != Some(&json!(true))).count();
-                json!({
-                    "request": result.get("requestName"), "status": result.get("status"),
-                    "ms": result.get("responseTime"), "tests": tests.len(), "failed": failed,
-                    "error": result.get("error").filter(|error| !error.is_null()).map_or(String::new(), |e| js_template(Some(e))),
-                })
-            })
-            .collect();
-        format!(
-            "{}\n{} requests, {} tests passed, {} failed",
-            table(&rows, &["request", "status", "ms", "tests", "failed", "error"]),
-            count("totalRequests"),
-            count("passedTests"),
-            count("failedTests"),
+        let failed = steps.iter().filter(|step| step.failure.is_some()).count();
+        let all = finished.get("total").and_then(Value::as_u64).unwrap_or(0) as usize;
+        let ran =
+            if steps.len() < all { format!("{} of {all} run", steps.len()) } else { format!("{} run", steps.len()) };
+        let took = match (
+            report.get("startedAt").and_then(Value::as_i64),
+            report.get("completedAt").and_then(Value::as_i64),
+        ) {
+            (Some(start), Some(end)) => format!(" · {}ms", (end - start).max(0)),
+            _ => String::new(),
+        };
+        let mut lines = lines(&steps, ctx.args.has("verbose"), max_body);
+        lines.push(format!("{ran} · {} passed · {failed} failed{took}", steps.len() - failed));
+        lines.join(
+            "
+",
         )
     });
-    if count("failedTests") == 0 && errors == 0 { Ok(text) } else { Err(CliError::Failed(text)) }
+    if results.iter().all(|result| failure_of(result).is_none()) { Ok(text) } else { Err(CliError::Failed(text)) }
 }
 
 /// `settings show`: the engine's ports and switches.
@@ -319,31 +381,120 @@ mod tests {
         assert_eq!(calls[3].1, json!({"kind": "mocks", "workspaceId": "w1", "entity": {"urlPattern": "http://a/"}}));
     }
 
+    fn row(name: &str, method: &str, url: &str, status: u64, ms: u64, tests: Value, body: &str) -> Value {
+        json!({"requestName": name, "method": method, "url": url, "status": status, "responseTime": ms, "error": null,
+               "tests": tests, "responseBody": body})
+    }
+
+    /// The runner's status of a finished run of `results`, out of `total` requests.
+    fn finished(results: Vec<Value>, total: u64) -> Value {
+        json!({"running": false, "total": total, "report": {"startedAt": 1000, "completedAt": 1812,
+            "totalRequests": results.len(), "results": results}})
+    }
+
+    fn runner(status: Value) -> Vec<Answer> {
+        let mut snapshot = config();
+        snapshot["requestFolders"] = json!([
+            {"id": "f1", "name": "auth", "parentId": null},
+            {"id": "f2", "name": "admin", "parentId": "f1"},
+            {"id": "f3", "name": "admin", "parentId": null},
+            {"id": "f4", "name": "gone", "parentId": null, "deleted": true},
+        ]);
+        vec![
+            ("config.get", Ok(snapshot)),
+            ("entity.list:environments", Ok(json!({"entities": [{"id": "e1", "name": "Dev"}]}))),
+            ("runner.start", Ok(json!({"ok": true, "total": 3}))),
+            ("runner.status", Ok(status)),
+        ]
+    }
+
     #[test]
-    fn a_folder_run_waits_for_its_report_and_fails_when_a_test_does() {
-        let report = |failed: u64| {
-            json!({"running": false, "report": {
-                "totalRequests": 1, "passedTests": 1 - failed, "failedTests": failed,
-                "results": [{"requestName": "Ping", "status": 200, "responseTime": 7, "error": null,
-                             "tests": [{"name": "ok", "passed": failed == 0}]}],
-            }})
-        };
-        let answers = |failed| {
+    fn a_folder_run_prints_a_line_per_request_and_the_totals() {
+        let pass = json!([{"name": "ok", "passed": true}]);
+        let status = finished(
             vec![
-                ("config.get", Ok(config())),
-                ("runner.start", Ok(json!({"ok": true, "total": 1}))),
-                ("runner.status", Ok(report(failed))),
-            ]
-        };
-        let (out, _) = go(&["runner", "run", "f1"], answers(0));
+                row("Login", "POST", "http://127.0.0.1:80/login", 200, 88, pass.clone(), "{\"token\":1}"),
+                row("Carts", "POST", "{{baseUrl}}/carts", 201, 41, pass, "{}"),
+            ],
+            2,
+        );
+        let (out, calls) = go(&["runner", "run", "f1"], runner(status));
         assert_eq!(
             out.unwrap(),
-            "REQUEST  STATUS  MS  TESTS  FAILED  ERROR\nPing     200     7   1      0\n1 requests, 1 tests passed, 0 failed"
+            "1 POST /login  200 · 88ms  ✓\n2 POST /carts  201 · 41ms  ✓\n2 run · 2 passed · 0 failed · 812ms"
         );
-        let (out, _) = go(&["runner", "run", "f1"], answers(1));
-        assert!(matches!(out, Err(CliError::Failed(text)) if text.ends_with("0 tests passed, 1 failed")));
-        let busy =
-            vec![("config.get", Ok(config())), ("runner.start", Ok(json!({"ok": false, "error": "already running"})))];
+        assert_eq!(payloads(&calls, "runner.start"), [json!({"workspaceId": "w1", "folderId": "f1"})]);
+    }
+
+    #[test]
+    fn a_failed_test_shows_its_reason_and_body_and_fails_the_command() {
+        let fail = json!([{"name": "created", "passed": false, "error": "expected 422 to equal 201"}]);
+        let mut sent = row("Cart", "POST", "http://x/carts/c_91", 422, 37, fail, "{\"error\":\"qty must be ≤ 1\"}");
+        let mut unsent = row("Down", "GET", "http://x/down", 0, 0, json!([]), "");
+        unsent["status"] = Value::Null;
+        unsent["error"] = json!("connection refused");
+        sent["preScriptError"] = Value::Null;
+        let (out, _) = go(&["runner", "run", "f1"], runner(finished(vec![sent, unsent], 2)));
+        let CliError::Failed(text) = out.unwrap_err() else { panic!("a failed test is a failed command") };
+        assert_eq!(
+            text,
+            "1 POST /carts/c_91  422 · 37ms  ✗ test created: expected 422 to equal 201\n\
+             \x20 → {\"error\":\"qty must be ≤ 1\"}\n\
+             2 GET /down         - · 0ms     ✗ connection refused\n\
+             2 run · 0 passed · 2 failed · 812ms"
+        );
+        // A script that threw fails the step too.
+        let mut threw = row("S", "GET", "http://x/s", 200, 5, json!([]), "");
+        threw["postScriptError"] = json!("x is not defined");
+        let (out, _) = go(&["runner", "run", "f1", "--verbose"], runner(finished(vec![threw], 1)));
+        assert!(
+            matches!(out, Err(CliError::Failed(text)) if text.starts_with("1 GET /s  200 · 5ms  ✗ script: x is not"))
+        );
+    }
+
+    #[test]
+    fn flags_ride_along_and_a_bailed_run_says_how_far_it_got() {
+        let fail = json!([{"name": "t", "passed": false}]);
+        let status = finished(vec![row("A", "GET", "http://x/a", 500, 9, fail, "")], 3);
+        let argv = ["runner", "run", "auth/admin", "--bail", "--var", "a=b", "--env", "dev", "--fresh-session"];
+        let (out, calls) = go(&argv, runner(status));
+        let CliError::Failed(text) = out.unwrap_err() else { panic!("a failed test is a failed command") };
+        assert!(text.ends_with("1 of 3 run · 0 passed · 1 failed · 812ms"), "{text}");
+        assert_eq!(
+            payloads(&calls, "runner.start"),
+            [json!({"workspaceId": "w1", "folderId": "f2", "bail": true, "variables": {"a": "b"},
+                    "environmentId": "e1", "freshJar": true})]
+        );
+        assert_eq!(payloads(&calls, "runner.status"), [json!({"workspaceId": "w1", "folderId": "f2"})]);
+    }
+
+    #[test]
+    fn a_folder_is_found_by_id_path_or_unique_name_and_never_made() {
+        let status = || finished(vec![row("A", "GET", "http://x/a", 200, 1, json!([]), "")], 1);
+        let folder = |wanted: &str| {
+            let (out, calls) = go(&["runner", "run", wanted], runner(status()));
+            (out, payloads(&calls, "runner.start").first().map(|p| p["folderId"].clone()))
+        };
+        assert_eq!(folder("f3").1, Some(json!("f3")));
+        assert_eq!(folder("AUTH/admin").1, Some(json!("f2")));
+        assert_eq!(folder("/admin/").1, Some(json!("f3")));
+        assert_eq!(folder("auth").1, Some(json!("f1")));
+        let (out, started) = folder("admin");
+        assert!(out.unwrap_err().line().contains("2 folders are named \"admin\""));
+        assert_eq!(started, None);
+        let (out, started) = folder("auth/nope");
+        assert_eq!(out.unwrap_err().code(), 3);
+        assert_eq!(started, None);
+        assert_eq!(folder("gone").0.unwrap_err().code(), 3);
+    }
+
+    #[test]
+    fn json_is_the_engines_report_and_a_busy_folder_is_refused() {
+        let status = finished(vec![row("A", "GET", "http://x/a", 200, 1, json!([]), "")], 1);
+        let (out, _) = go(&["runner", "run", "f1", "--json"], runner(status.clone()));
+        assert_eq!(serde_json::from_str::<Value>(&out.unwrap()).unwrap(), status["report"]);
+        let mut busy = runner(status);
+        busy.insert(0, ("runner.start", Ok(json!({"ok": false, "error": "already running"}))));
         assert_eq!(go(&["runner", "run", "f1"], busy).0.unwrap_err().line(), "bifurc: already running");
     }
 

@@ -373,6 +373,45 @@ async fn what_a_script_sets_stays_in_the_run_unless_the_flow_keeps_it() {
 }
 
 #[tokio::test]
+async fn a_run_takes_variables_an_environment_and_a_jar_of_its_own() {
+    let store = store();
+    let base = test_server::start(HashMap::new()).await;
+    for (id, value) in [("__global__", "g"), ("staging", "s"), ("other", "o")] {
+        write_flat_entity(
+            WS,
+            "environments",
+            id,
+            &json!({ "id": id, "name": id, "createdAt": 0, "workspaceId": WS,
+                     "variables": [{ "id": "x", "key": "x", "value": value }, { "id": "b", "key": "base", "value": base }] }),
+        )
+        .unwrap();
+    }
+    store.request("r-who", "{{base}}/me".to_string(), json!({ "headers": { "X-Who": "{{x}}" } }));
+    store.flow(
+        "who",
+        json!({ "nodes": [start(), request("me", "r-who", json!({}))], "edges": [edge("start", "out", "me")] }),
+    );
+    let who = |report: Value| echoed(&report, "me")["headers"]["x-who"].clone();
+    assert_eq!(who(run("who").await), "g");
+    assert_eq!(who(run_with("who", json!({ "variables": { "x": "v" } })).await), "v");
+    assert_eq!(who(run_with("who", json!({ "environmentId": "staging" })).await), "s");
+    assert_eq!(who(run_with("who", json!({ "environmentId": "staging", "variables": { "x": "v" } })).await), "v");
+
+    store.request("r-sign-in", format!("{base}/set-cookie/flow_sid=1"), json!({}));
+    store.flow(
+        "sign-in",
+        json!({ "nodes": [start(), request("in", "r-sign-in", json!({}))], "edges": [edge("start", "out", "in")] }),
+    );
+    run_with("sign-in", json!({ "freshJar": true })).await;
+    assert!(crate::cookies::for_url(WS, &base).get("flow_sid").is_none(), "the run's cookies were its own");
+    run("sign-in").await;
+    assert!(
+        crate::cookies::for_url(WS, &base).get("flow_sid").is_some(),
+        "without freshJar they reach the workspace's jar"
+    );
+}
+
+#[tokio::test]
 async fn a_node_says_whether_its_requests_scripts_and_tests_run() {
     let store = store();
     let canned =

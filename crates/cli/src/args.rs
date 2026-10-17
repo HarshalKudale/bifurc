@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 /// Flags that take no value.
-const BOOLEAN_FLAGS: [&str; 21] = [
+const BOOLEAN_FLAGS: [&str; 24] = [
     "yes",
     "ack",
     "json",
@@ -25,6 +25,9 @@ const BOOLEAN_FLAGS: [&str; 21] = [
     "ids",
     "req-body",
     "req-headers",
+    "bail",
+    "verbose",
+    "fresh-session",
 ];
 
 /// Single-letter aliases; any other letter stands for itself.
