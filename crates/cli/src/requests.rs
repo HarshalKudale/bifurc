@@ -447,15 +447,9 @@ fn refuse_overrides(ty: &RequestType, args: &ParsedArgs) -> Result<()> {
     }
 }
 
-/// Add `variables`, `environmentId` and, for a saved request (`saved`), `overrides` to the payload of a one-shot
-/// send, from `--var`, `--env`, `--data` and `--patch`.
-pub(crate) fn add_overrides(
-    ctx: &mut Context,
-    ty: &RequestType,
-    workspace: &str,
-    saved: Option<&Value>,
-    payload: &mut Value,
-) -> Result<()> {
+/// Add `variables` and `environmentId` to the payload of a send, a run of a folder or a run of a flow, from
+/// `--var` and `--env`.
+pub(crate) fn add_scope(ctx: &mut Context, workspace: &str, payload: &mut Value) -> Result<()> {
     let args = ctx.args;
     let mut variables = Map::new();
     for pair in args.flags("var") {
@@ -471,6 +465,20 @@ pub(crate) fn add_overrides(
         let environments = list_entities(ctx, workspace, "environments")?;
         payload["environmentId"] = json!(id_of(find_one(&environments, wanted, &["name"], "environment", "env")?));
     }
+    Ok(())
+}
+
+/// Add `variables`, `environmentId` and, for a saved request (`saved`), `overrides` to the payload of a one-shot
+/// send, from `--var`, `--env`, `--data` and `--patch`.
+pub(crate) fn add_overrides(
+    ctx: &mut Context,
+    ty: &RequestType,
+    workspace: &str,
+    saved: Option<&Value>,
+    payload: &mut Value,
+) -> Result<()> {
+    add_scope(ctx, workspace, payload)?;
+    let args = ctx.args;
     let Some(saved) = saved else { return Ok(()) };
     let field = body_field(ty);
     let mut body = body_from(args)?;

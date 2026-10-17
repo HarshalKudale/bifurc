@@ -467,7 +467,11 @@ mod tests {
             ("health_run", with(json!({"check": "h1"}))),
             ("flows_list", all.clone()),
             ("flows_show", with(json!({"flow": "f1"}))),
-            ("flows_run", with(json!({"flow": "f1", "inputs": {"user": "bob"}, "timeout": 30, "max_events": 5}))),
+            (
+                "flows_run",
+                with(json!({"flow": "f1", "inputs": {"user": "bob"}, "timeout": 30, "max_events": 5, "vars": {"a": "b"},
+                            "env": "dev", "fresh_session": true, "verbose": true, "max_body": 100})),
+            ),
             ("flows_loadtest", with(json!({"flow": "f1", "instances": 5, "inputs": {"user": "bob"}, "timeout": 30}))),
             ("workspaces_list", json!({"json": true})),
             ("workspaces_show", json!({"workspace": "w1", "json": true})),
@@ -498,7 +502,11 @@ mod tests {
             ),
             ("capture_mock", with(json!({"entry": "c1"}))),
             ("capture_request", with(json!({"entry": "c1"}))),
-            ("runner_run", with(json!({"folder": "f1"}))),
+            (
+                "runner_run",
+                with(json!({"folder": "f1", "bail": true, "vars": {"a": "b"}, "env": "dev", "fresh_session": true,
+                            "verbose": true, "max_body": 100})),
+            ),
             ("settings_show", json!({"json": true})),
             ("health_delete", with(json!({"check": "h1"}))),
         ]

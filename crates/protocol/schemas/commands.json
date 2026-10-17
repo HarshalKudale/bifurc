@@ -1261,6 +1261,24 @@
     },
     "folderId": {
      "type": "string"
+    },
+    "variables": {
+     "type": "object",
+     "propertyNames": {
+      "type": "string"
+     },
+     "additionalProperties": {
+      "type": "string"
+     }
+    },
+    "environmentId": {
+     "type": "string"
+    },
+    "freshJar": {
+     "type": "boolean"
+    },
+    "bail": {
+     "type": "boolean"
     }
    },
    "required": [
@@ -1379,6 +1397,21 @@
     "maxEvents": {
      "type": "integer",
      "minimum": 1
+    },
+    "variables": {
+     "type": "object",
+     "propertyNames": {
+      "type": "string"
+     },
+     "additionalProperties": {
+      "type": "string"
+     }
+    },
+    "environmentId": {
+     "type": "string"
+    },
+    "freshJar": {
+     "type": "boolean"
     }
    },
    "required": [
