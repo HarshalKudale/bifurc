@@ -75,9 +75,7 @@ pub fn register(registry: &mut CommandRegistry) {
         Ok(Value::Array(folder_ids(str_of(&params, "workspaceId"))))
     });
 
-    registry.register("runner.start", |params: Value, ctx| async move {
-        start_run(&ctx, str_of(&params, "workspaceId"), str_of(&params, "folderId")).await
-    });
+    registry.register("runner.start", |params: Value, ctx| async move { start_run(&ctx, &params).await });
 
     registry.register_sync("runner.cancel", |params, _| {
         Ok(cancel_run(str_of(&params, "workspaceId"), str_of(&params, "folderId")))
@@ -231,5 +229,74 @@ mod tests {
         assert!(row["responseHeaders"].is_object());
         assert!(row["responseBody"].is_string());
         assert!(row["requestHeaders"].is_object() || row["requestHeaders"].is_array());
+    }
+
+    /// Run folder `F` of `requests` (id, url, testScript) to its end with the extra `start` params.
+    async fn run_folder(requests: &[(&str, String, &str)], extra: Value) -> Value {
+        runs::reset_runs();
+        let folder = crate::workspace::fs::create_folder(WS, "requests", "F", None, false).unwrap().0;
+        let f1 = folder.as_str();
+        for (name, url, test) in requests {
+            let id = format!("{name}-{f1}");
+            write_entity(
+                WS,
+                "requests",
+                &id,
+                &json!({ "id": id, "name": name, "method": "GET", "url": url, "headers": { "X-Who": "{{x}}" }, "body": "",
+                         "folderId": f1, "workspaceId": WS, "createdAt": 0, "testScript": test }),
+                Some(f1),
+            )
+            .unwrap();
+        }
+        let mut params = json!({ "workspaceId": WS, "folderId": f1 });
+        params.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
+        call("runner.start", params).await.unwrap();
+        for _ in 0..200 {
+            let status = call("runner.status", json!({ "workspaceId": WS, "folderId": f1 })).await.unwrap();
+            if status["running"] == false {
+                return status;
+            }
+            tokio::time::sleep(Duration::from_millis(25)).await;
+        }
+        panic!("the run did not finish");
+    }
+
+    #[tokio::test]
+    async fn a_run_can_bail_take_variables_an_environment_and_a_jar_of_its_own() {
+        let _root = scratch_data_root();
+        let base = test_server::start(HashMap::new()).await;
+        let fails = "bc.test('no', () => { bc.expect(bc.response.status).to.equal(201); });";
+        let url = |path: &str| format!("{base}{path}");
+
+        // Without bail every request runs; with it the run stops after the first that failed.
+        let all = run_folder(&[("a", url("/a"), fails), ("b", url("/b"), "")], json!({})).await;
+        assert_eq!(all["completed"], 2);
+        let bailed = run_folder(&[("a", url("/a"), fails), ("b", url("/b"), "")], json!({ "bail": true })).await;
+        assert_eq!(bailed["completed"], 1);
+        assert_eq!(bailed["report"]["totalRequests"], 1);
+
+        // The scope reaches the spawned run.
+        for (id, value) in [("__global__", "g"), ("staging", "s"), ("other", "o")] {
+            crate::workspace::fs::write_flat_entity(
+                WS,
+                "environments",
+                id,
+                &json!({ "id": id, "name": id, "createdAt": 0, "workspaceId": WS,
+                         "variables": [{ "id": "x", "key": "x", "value": value }] }),
+            )
+            .unwrap();
+        }
+        let who = |status: Value| status["results"][0]["responseBody"].as_str().unwrap().to_string();
+        assert!(who(run_folder(&[("a", url("/a"), "")], json!({})).await).contains("\"x-who\":\"g\""));
+        let staged = run_folder(&[("a", url("/a"), "")], json!({ "environmentId": "staging" })).await;
+        assert!(who(staged).contains("\"x-who\":\"s\""));
+        let set =
+            run_folder(&[("a", url("/a"), "")], json!({ "environmentId": "staging", "variables": { "x": "v" } })).await;
+        assert!(who(set).contains("\"x-who\":\"v\""));
+
+        run_folder(&[("a", url("/set-cookie/runner_sid=1"), "")], json!({ "freshJar": true })).await;
+        assert!(crate::cookies::for_url(WS, &base).get("runner_sid").is_none(), "the run's cookies were its own");
+        run_folder(&[("a", url("/set-cookie/runner_sid=1"), "")], json!({})).await;
+        assert!(crate::cookies::for_url(WS, &base).get("runner_sid").is_some());
     }
 }

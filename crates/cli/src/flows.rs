@@ -4,7 +4,7 @@
 //! A run is the engine's: `flow.run` starts it and the engine reports its progress as events, which this
 //! command prints until the run is finished.
 
-use std::{collections::HashMap, io::Write};
+use std::io::Write;
 
 use serde_json::{Value, json};
 
@@ -12,6 +12,7 @@ use crate::{
     commands::{Context, find_one, list_entities, need, unknown_verb, workspace_id},
     error::{CliError, Result},
     format::{js_template, json, table},
+    steps::{Step, lines, max_body, one_line, path_of},
 };
 
 /// The events a run reports through.
@@ -20,7 +21,7 @@ const EVENTS: [&str; 2] = ["event.flow.progress", "event.flow.finished"];
 /// The events a load test reports through.
 const LOAD_EVENTS: [&str; 2] = ["event.flow.loadtest.progress", "event.flow.loadtest.finished"];
 
-/// `flows list|show|run`. A run writes a line to `out` as each node finishes: a flow can take minutes, and
+/// `flows list|show|run|loadtest`. A load test writes a line to `out` as it goes: it can take minutes, and
 /// what it has done so far should not wait for its end.
 pub fn flows(ctx: &mut Context, sub: Option<&str>, out: &mut dyn Write) -> Result<String> {
     let args = ctx.args;
@@ -46,7 +47,12 @@ pub fn flows(ctx: &mut Context, sub: Option<&str>, out: &mut dyn Write) -> Resul
         }
         verb @ ("run" | "loadtest") => {
             let load = verb == "loadtest";
-            ctx.accept(&["input", "timeout", "max-events", "instances"][..if load { 4 } else { 3 }], 1)?;
+            let flags: &[&str] = if load {
+                &["input", "timeout", "max-events", "instances"]
+            } else {
+                &["input", "timeout", "max-events", "var", "env", "fresh-session", "verbose", "max-body"]
+            };
+            ctx.accept(flags, 1)?;
             let wanted = need(args.positional(2), "flow id or name")?;
             let mut payload = json!({});
             if load {
@@ -79,11 +85,20 @@ pub fn flows(ctx: &mut Context, sub: Option<&str>, out: &mut dyn Write) -> Resul
                 })?;
                 payload["maxEvents"] = json!(events);
             }
+            let verbose = args.has("verbose");
+            let max_body = max_body(args)?;
             let workspace = workspace_id(ctx)?;
             let id = find_flow(ctx, &workspace, &wanted)?;
             payload["workspaceId"] = json!(workspace);
             payload["id"] = json!(id);
-            if load { load_test(ctx, payload, out) } else { run_flow(ctx, payload, out) }
+            if load {
+                return load_test(ctx, payload, out);
+            }
+            crate::requests::add_scope(ctx, &workspace, &mut payload)?;
+            if args.has("fresh-session") {
+                payload["freshJar"] = json!(true);
+            }
+            run_flow(ctx, payload, verbose, max_body)
         }
         other => Err(unknown_verb("flows", other)),
     }
@@ -145,24 +160,6 @@ fn problem_line(problem: &Value) -> String {
         .next()
         .unwrap_or("flow");
     format!("  {} {at}: {}", js_template(problem.get("severity")), js_template(problem.get("message")))
-}
-
-/// One line for a node that finished, `None` for one that has not.
-fn node_line(node: &Value) -> Option<String> {
-    let name = js_template(node.get("name"));
-    let runs = node.get("runs").and_then(Value::as_u64).unwrap_or(0);
-    let again = if runs > 1 { format!(" [run {runs}]") } else { String::new() };
-    match node.get("status").and_then(Value::as_str)? {
-        "succeeded" => {
-            let took = node.get("durationMs").and_then(Value::as_u64).map(|ms| format!(" ({ms} ms)"));
-            Some(format!("  ok   {name}{again}{}", took.unwrap_or_default()))
-        }
-        "failed" => {
-            let error = node.get("error").and_then(Value::as_str).filter(|e| !e.is_empty()).unwrap_or("failed");
-            Some(format!("  FAIL {name}{again}: {error}"))
-        }
-        _ => None,
-    }
 }
 
 /// The engine's answer to a start it refused, as the command's failure: the error and the flow's problems.
@@ -267,8 +264,59 @@ fn summarize_load(report: &Value) -> String {
     lines.join("\n")
 }
 
-/// Start the run `payload` asks for and follow it to its end; the summary is the answer.
-fn run_flow(ctx: &mut Context, payload: Value, out: &mut dyn Write) -> Result<String> {
+/// The first failed test of a node as a reason: `test is 200: got 503`.
+fn failed_test(node: &Value) -> Option<String> {
+    let tests = node.get("tests").and_then(Value::as_array).map(Vec::as_slice).unwrap_or_default();
+    let test = tests.iter().find(|test| test.get("passed").and_then(Value::as_bool) == Some(false))?;
+    let error = test.get("error").and_then(Value::as_str).map(|e| format!(": {}", one_line(e))).unwrap_or_default();
+    Some(format!("test {}{error}", js_template(test.get("name"))))
+}
+
+/// The steps of a finished run, in the order the nodes finished: the nodes that sent something (`described` is
+/// what `flow.validate` says each node runs) and any node that failed.
+fn steps_of(report: &Value, described: &Value, order: &[String]) -> Vec<Step> {
+    let nodes = report.get("nodes").and_then(Value::as_array).map(Vec::as_slice).unwrap_or_default();
+    let id_of = |node: &Value| js_template(node.get("id"));
+    let first = order.iter().filter_map(|id| nodes.iter().find(|node| &id_of(node) == id));
+    let rest = nodes.iter().filter(|node| !order.contains(&id_of(node)));
+    first
+        .chain(rest)
+        .filter_map(|node| {
+            let status = node.get("status").and_then(Value::as_str)?;
+            let request = described.get(id_of(node)).and_then(|n| n.get("request")).filter(|r| r.is_object());
+            let failure = failed_test(node).or_else(|| {
+                let error = node.get("error").and_then(Value::as_str).filter(|e| !e.is_empty());
+                error.map(one_line).or_else(|| (status == "failed").then(|| "failed".to_string()))
+            });
+            if !matches!(status, "succeeded" | "failed") || (request.is_none() && failure.is_none()) {
+                return None;
+            }
+            let label = match request {
+                Some(r) => format!("{} {}", js_template(r.get("method")), path_of(&js_template(r.get("address"))))
+                    .trim_start()
+                    .to_string(),
+                None => js_template(node.get("name")),
+            };
+            let output = node.get("output").unwrap_or(&Value::Null);
+            Some(Step {
+                label,
+                status: output.get("status").filter(|s| !s.is_null()).map(|s| js_template(Some(s))),
+                ms: node.get("durationMs").and_then(Value::as_u64),
+                failure,
+                body: output.get("body").and_then(Value::as_str).map(str::to_string),
+            })
+        })
+        .collect()
+}
+
+/// Start the run `payload` asks for and follow it to its end: a line for each step, then how the flow did.
+fn run_flow(ctx: &mut Context, payload: Value, verbose: bool, max_body: usize) -> Result<String> {
+    // What each node runs; a flow that cannot be described is run all the same.
+    let described = ctx
+        .request("flow.validate", json!({ "workspaceId": payload["workspaceId"], "id": payload["id"] }))
+        .ok()
+        .and_then(|checked| checked.get("nodes").cloned())
+        .unwrap_or(Value::Null);
     // Subscribe first: the run's events are not replayed to a session that comes late.
     ctx.request("subscribe", json!({ "events": EVENTS }))?;
     let started = ctx.request("flow.run", payload.clone())?;
@@ -282,25 +330,8 @@ fn run_flow(ctx: &mut Context, payload: Value, out: &mut dyn Write) -> Result<St
             .all(|(key, want)| p.get(*key) == Some(want))
     };
 
-    // A node that keeps running (after a stream) is reported again; it is printed when its runs or status changed.
-    let mut printed: HashMap<String, (u64, String)> = HashMap::new();
-    let mut show = |ctx: &Context, nodes: Option<&Value>, out: &mut dyn Write| {
-        for node in nodes.and_then(Value::as_array).into_iter().flatten() {
-            let seen = (
-                node.get("runs").and_then(Value::as_u64).unwrap_or(0),
-                node.get("status").and_then(Value::as_str).unwrap_or_default().to_string(),
-            );
-            let id = js_template(node.get("id"));
-            let line = node_line(node).filter(|_| printed.get(&id) != Some(&seen));
-            if let Some(line) = line {
-                if !ctx.json {
-                    let _ = writeln!(out, "{line}");
-                }
-                printed.insert(id, seen);
-            }
-        }
-    };
-
+    // The order the nodes finished in; the report has the rest.
+    let mut order: Vec<String> = Vec::new();
     let report = loop {
         let event = match ctx.engine()?.next_event() {
             Ok(Some(event)) => event,
@@ -318,47 +349,48 @@ fn run_flow(ctx: &mut Context, payload: Value, out: &mut dyn Write) -> Result<St
             continue;
         }
         match event.get("event").and_then(Value::as_str) {
-            Some("event.flow.progress") => show(ctx, event.pointer("/payload/nodes"), out),
+            Some("event.flow.progress") => {
+                for node in event.pointer("/payload/nodes").and_then(Value::as_array).into_iter().flatten() {
+                    let id = js_template(node.get("id"));
+                    let done = matches!(node.get("status").and_then(Value::as_str), Some("succeeded" | "failed"));
+                    if done && !order.contains(&id) {
+                        order.push(id);
+                    }
+                }
+            }
             Some("event.flow.finished") => break event.pointer("/payload/report").cloned().unwrap_or(Value::Null),
             _ => {}
         }
     };
-    // The last progress report may have been left out to keep to the rate; the report has every node.
-    show(ctx, report.get("nodes"), out);
 
     let succeeded = report.get("status").and_then(Value::as_str) == Some("succeeded");
     let failed_tests = report.get("failedTests").and_then(Value::as_u64).unwrap_or(0);
-    let summary = ctx.print(&report, || summarize(&report));
-    if succeeded && failed_tests == 0 { Ok(summary) } else { Err(CliError::Failed(summary)) }
-}
-
-/// The end of a run: its status, how much ran, the failed tests and the error.
-fn summarize(report: &Value) -> String {
-    let count = |key: &str| report.get(key).and_then(Value::as_u64).unwrap_or(0);
-    let mut lines = vec![format!(
-        "{}: {}  ({} node runs, {} tests passed, {} failed)",
-        js_template(report.get("flowName")),
-        js_template(report.get("status")),
-        count("nodeRuns"),
-        count("passedTests"),
-        count("failedTests"),
-    )];
-    for node in report.get("nodes").and_then(Value::as_array).into_iter().flatten() {
-        for test in node.get("tests").and_then(Value::as_array).into_iter().flatten() {
-            if test.get("passed").and_then(Value::as_bool) == Some(false) {
-                let error = test.get("error").and_then(Value::as_str).map(|e| format!(": {e}")).unwrap_or_default();
-                lines.push(format!(
-                    "  FAIL {} / {}{error}",
-                    js_template(node.get("name")),
-                    js_template(test.get("name"))
-                ));
+    let steps = steps_of(&report, &described, &order);
+    // A step that failed fails the run for the caller even when the flow routed its error on (a capture-built
+    // flow sends it to a display node): the request did not do what it was meant to.
+    let passed = succeeded && failed_tests == 0 && steps.iter().all(|step| step.failure.is_none());
+    let summary = ctx.print(&report, || {
+        let mut out = lines(&steps, verbose, max_body);
+        let at = |key: &str| report.get(key).and_then(Value::as_i64);
+        let took =
+            at("startedAt").zip(at("finishedAt")).map_or(String::new(), |(a, b)| format!(" · {}ms", (b - a).max(0)));
+        if passed {
+            out.push(format!("flow passed · {} step{}{took}", steps.len(), if steps.len() == 1 { "" } else { "s" }));
+        } else {
+            match steps.iter().position(|step| step.failure.is_some()) {
+                Some(at) => out.push(format!("flow failed at step {}{took}", at + 1)),
+                None => out.push(format!("flow {}{took}", js_template(report.get("status")))),
+            }
+            if let Some(error) = report.get("error").and_then(Value::as_str).filter(|e| !e.is_empty()) {
+                out.push(format!("error: {error}"));
             }
         }
-    }
-    if let Some(error) = report.get("error").and_then(Value::as_str).filter(|e| !e.is_empty()) {
-        lines.push(format!("error: {error}"));
-    }
-    lines.join("\n")
+        out.join(
+            "
+",
+        )
+    });
+    if passed { Ok(summary) } else { Err(CliError::Failed(summary)) }
 }
 
 #[cfg(test)]
@@ -408,15 +440,6 @@ mod tests {
         event("event.flow.progress", run_id, json!({"status": "running", "nodes": nodes, "edges": []}))
     }
 
-    fn finished(status: &str, error: &str, failed_tests: u64, runs: u64) -> Value {
-        let report = json!({"flowName": "Checkout", "runId": "run1", "status": status, "error": error,
-            "nodeRuns": 2, "totalTests": 2, "passedTests": 2 - failed_tests, "failedTests": failed_tests,
-            "nodes": [
-                {"id": "n2", "name": "Login", "status": "succeeded", "runs": runs, "durationMs": 35,
-                 "tests": [{"name": "is 200", "passed": failed_tests == 0, "error": "got 503"}]}]});
-        event("event.flow.finished", "run1", json!({"status": status, "error": error, "report": report}))
-    }
-
     fn go(
         argv: &[&str],
         answers: Vec<Answer>,
@@ -459,21 +482,73 @@ mod tests {
         assert_eq!(serde_json::from_str::<Value>(&out.unwrap()).unwrap()["nodes"][1]["requestId"], "r1");
     }
 
+    /// A node as the finished report holds it: a request that answered `status` with `body`.
+    fn answered(id: &str, status: &str, took: u64, output: Value, tests: Value) -> Value {
+        json!({"id": id, "name": id, "status": status, "runs": 1, "durationMs": took, "output": output, "tests": tests,
+               "error": null})
+    }
+
+    fn ok_login(passed: bool) -> Value {
+        answered(
+            "n2",
+            "succeeded",
+            35,
+            json!({"status": 200, "body": "{\"ok\":true}"}),
+            json!([{"name": "is 200", "passed": passed, "error": "got 503"}]),
+        )
+    }
+
+    fn start_node() -> Value {
+        json!({"id": "n1", "name": "Start", "status": "succeeded", "runs": 1, "durationMs": 0, "output": {}})
+    }
+
+    fn finished_nodes(status: &str, error: &str, failed_tests: u64, nodes: Value) -> Value {
+        let report = json!({"flowName": "Checkout", "runId": "run1", "status": status, "error": error,
+            "startedAt": 1000, "finishedAt": 1166, "nodeRuns": 3, "totalTests": 2, "passedTests": 2 - failed_tests,
+            "failedTests": failed_tests, "nodes": nodes});
+        event("event.flow.finished", "run1", json!({"status": status, "error": error, "report": report}))
+    }
+
+    fn finished(status: &str, error: &str, failed_tests: u64) -> Value {
+        finished_nodes(status, error, failed_tests, json!([start_node(), ok_login(failed_tests == 0)]))
+    }
+
+    fn get_user(status: &str, code: u64, body: &str, error: Value) -> Value {
+        let mut node = answered("n3", status, 12, json!({"status": code, "body": body}), json!([]));
+        node["error"] = error;
+        node
+    }
+
+    fn with_get_user(mut answers: Vec<Answer>) -> Vec<Answer> {
+        answers.retain(|(name, _)| *name != "flow.validate");
+        answers.push((
+            "flow.validate",
+            Ok(json!({"ok": true, "problems": [], "nodes": {
+                "n1": {"request": null},
+                "n2": {"request": {"name": "Login", "method": "POST", "address": "{{baseUrl}}/login"}},
+                "n3": {"request": {"name": "Get user", "method": "GET", "address": "http://x:80/users/1?a=1"}}}})),
+        ));
+        answers.push(("entity.list:environments", listing(json!([{"id": "e1", "name": "dev"}]))));
+        answers
+    }
+
     #[test]
-    fn run_prints_each_node_once_and_a_summary() {
+    fn run_prints_one_line_per_request_in_the_order_they_finished_and_a_total() {
+        let finishing = |id: &str, status: &str| {
+            progress("run1", json!([{"id": id, "name": id, "status": status, "runs": 1, "durationMs": 3}]))
+        };
         let events = vec![
             progress("other", json!([{"id": "n9", "name": "Not mine", "status": "failed", "runs": 1}])),
-            progress("run1", json!([{"id": "n2", "name": "Login", "status": "running", "runs": 1}])),
-            progress(
-                "run1",
-                json!([{"id": "n2", "name": "Login", "status": "succeeded", "runs": 1, "durationMs": 35}]),
+            finishing("n1", "succeeded"),
+            finishing("n3", "running"),
+            finishing("n3", "succeeded"),
+            finishing("n2", "succeeded"),
+            finished_nodes(
+                "succeeded",
+                "",
+                0,
+                json!([start_node(), ok_login(true), get_user("succeeded", 200, "{\"id\":1}", Value::Null)]),
             ),
-            progress(
-                "run1",
-                json!([{"id": "n2", "name": "Login", "status": "succeeded", "runs": 1, "durationMs": 35}]),
-            ),
-            progress("run1", json!([{"id": "n2", "name": "Login", "status": "succeeded", "runs": 2, "durationMs": 9}])),
-            finished("succeeded", "", 0, 2),
         ];
         let argv = [
             "flows",
@@ -481,57 +556,92 @@ mod tests {
             "Checkout",
             "--input",
             "user=bob=1",
-            "--input",
-            "x=",
             "--timeout",
             "1.5",
             "--max-events",
             "10",
+            "--var",
+            "a=b",
+            "--env",
+            "dev",
+            "--fresh-session",
         ];
-        let (out, lines, calls) = go(&argv, engine(), events);
-        assert_eq!(lines, ["  ok   Login (35 ms)", "  ok   Login [run 2] (9 ms)"]);
-        assert_eq!(out.unwrap(), "Checkout: succeeded  (2 node runs, 2 tests passed, 0 failed)");
+        let (out, lines, calls) = go(&argv, with_get_user(engine()), events.clone());
+        assert!(lines.is_empty(), "nothing is written while the run goes");
+        assert_eq!(
+            out.unwrap(),
+            "1 GET /users/1?a=1  200 · 12ms  ✓\n2 POST /login       200 · 35ms  ✓\nflow passed · 2 steps · 166ms"
+        );
         assert_eq!(
             payloads(&calls, "flow.run"),
-            [json!({"workspaceId": "w1", "id": "f1", "inputs": {"user": "bob=1", "x": ""}, "timeoutMs": 1500,
-                    "maxEvents": 10})]
+            [json!({"workspaceId": "w1", "id": "f1", "inputs": {"user": "bob=1"}, "timeoutMs": 1500, "maxEvents": 10,
+                    "variables": {"a": "b"}, "environmentId": "e1", "freshJar": true})]
         );
         assert_eq!(payloads(&calls, "subscribe"), [json!({"events": EVENTS})]);
+
+        // A passing step shows its body only with --verbose, cut at --max-body.
+        let argv = ["flows", "run", "f1", "--verbose", "--max-body", "4"];
+        let (out, _, _) = go(&argv, with_get_user(engine()), events);
+        assert_eq!(
+            out.unwrap(),
+            "1 GET /users/1?a=1  200 · 12ms  ✓\n  → {\"id\n  … 4B truncated\n\
+             2 POST /login       200 · 35ms  ✓\n  → {\"ok\n  … 7B truncated\nflow passed · 2 steps · 166ms"
+        );
     }
 
     #[test]
-    fn a_failed_run_or_failed_test_fails_the_command_with_the_report() {
-        let events = vec![
-            progress(
-                "run1",
-                json!([{"id": "n2", "name": "Get user", "status": "failed", "runs": 1, "error": "HTTP 503"}]),
-            ),
-            finished("failed", "Get user: HTTP 503", 1, 1),
-        ];
+    fn a_failed_step_fails_the_command_even_when_the_flow_handled_its_error() {
+        let down = get_user("failed", 503, "{\"error\":\"down\"}", json!("HTTP 503"));
+        let events = vec![finished_nodes("succeeded", "", 0, json!([start_node(), down]))];
+        let (out, _, _) = go(&["flows", "run", "f1"], with_get_user(engine()), events);
+        let CliError::Failed(text) = out.unwrap_err() else { panic!("a failed step is a failed command") };
+        assert!(text.ends_with("✗ HTTP 503\n  → {\"error\":\"down\"}\nflow failed at step 1 · 166ms"), "{text}");
+    }
+
+    #[test]
+    fn a_failed_node_or_failed_test_fails_the_command_with_the_step_and_its_body() {
+        let down = get_user("failed", 503, "{\"error\":\"down\"}", json!("HTTP 503"));
+        let events = vec![finished_nodes("failed", "Get user: HTTP 503", 0, json!([start_node(), down]))];
         let argv = ["flows", "run", "f1"];
-        let (out, lines, _) = go(&argv, engine(), events);
-        assert_eq!(lines, ["  FAIL Get user: HTTP 503", "  ok   Login (35 ms)"]);
-        let CliError::Failed(report) = out.unwrap_err() else { panic!("a failed run is a failed command") };
+        let (out, _, _) = go(&argv, with_get_user(engine()), events);
+        let CliError::Failed(text) = out.unwrap_err() else { panic!("a failed run is a failed command") };
         assert_eq!(
-            report,
-            "Checkout: failed  (2 node runs, 1 tests passed, 1 failed)\n  FAIL Login / is 200: got 503\nerror: Get user: HTTP 503"
+            text,
+            "1 GET /users/1?a=1  503 · 12ms  ✗ HTTP 503\n  → {\"error\":\"down\"}\n\
+             flow failed at step 1 · 166ms\nerror: Get user: HTTP 503"
         );
 
-        // A passed run with a failed test still exits 1.
-        let (out, _, _) = go(&argv, engine(), vec![finished("succeeded", "", 1, 1)]);
-        assert!(matches!(out.unwrap_err(), CliError::Failed(_)));
+        // A passed run with a failed test still exits 1, and says which test.
+        let (out, _, _) = go(&argv, with_get_user(engine()), vec![finished("succeeded", "", 1)]);
+        let CliError::Failed(text) = out.unwrap_err() else { panic!("a failed test is a failed command") };
+        assert_eq!(
+            text,
+            "1 POST /login  200 · 35ms  ✗ test is 200: got 503\n  → {\"ok\":true}\nflow failed at step 1 · 166ms"
+        );
+
+        // A node that is no request is a step only when it failed.
+        let evaluate =
+            json!({"id": "n5", "name": "Pick", "status": "failed", "error": "boom\nat line 2", "output": {}});
+        let (out, _, _) = go(
+            &argv,
+            with_get_user(engine()),
+            vec![finished_nodes("failed", "Pick: boom", 0, json!([start_node(), evaluate]))],
+        );
+        let CliError::Failed(text) = out.unwrap_err() else { panic!("a failed node is a failed command") };
+        assert_eq!(text, "1 Pick  -  ✗ boom\nflow failed at step 1 · 166ms\nerror: Pick: boom");
     }
 
     #[test]
-    fn run_with_json_prints_nothing_while_running_and_the_report_at_the_end() {
+    fn run_with_json_prints_the_report_unchanged() {
         let argv = ["flows", "run", "f1", "--json"];
         let events = vec![
             progress("run1", json!([{"id": "n2", "name": "Login", "status": "succeeded", "runs": 1}])),
-            finished("succeeded", "", 0, 1),
+            finished("succeeded", "", 0),
         ];
         let (out, lines, _) = go(&argv, engine(), events);
         assert!(lines.is_empty());
-        assert_eq!(serde_json::from_str::<Value>(&out.unwrap()).unwrap()["runId"], "run1");
+        let report: Value = serde_json::from_str(&out.unwrap()).unwrap();
+        assert_eq!((&report["runId"], &report["nodes"][1]["output"]["status"]), (&json!("run1"), &json!(200)));
     }
 
     #[test]
@@ -555,12 +665,12 @@ mod tests {
         answers.push((
             "flow.status",
             Ok(json!({"flowName": "Checkout", "runId": "run1", "status": "succeeded", "nodeRuns": 1, "passedTests": 0,
-                      "failedTests": 0, "nodes": [{"id": "n2", "name": "Login", "status": "succeeded", "runs": 1}]})),
+                      "failedTests": 0, "nodes": [{"id": "n2", "name": "Login", "status": "succeeded", "runs": 1,
+                      "durationMs": 7, "output": {"status": 204}}]})),
         ));
         let argv = ["flows", "run", "f1"];
-        let (out, lines, _) = go(&argv, answers, vec![]);
-        assert_eq!(lines, ["  ok   Login"]);
-        assert_eq!(out.unwrap(), "Checkout: succeeded  (1 node runs, 0 tests passed, 0 failed)");
+        let (out, _, _) = go(&argv, answers, vec![]);
+        assert_eq!(out.unwrap(), "1 POST /login  204 · 7ms  ✓\nflow passed · 1 step");
 
         // The latest report of another run is no answer.
         let mut answers = engine();

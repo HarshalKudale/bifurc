@@ -26,6 +26,7 @@ pub mod response;
 pub mod select;
 pub mod session;
 pub mod socketio;
+pub mod steps;
 pub mod stream;
 pub mod supervisor;
 #[cfg(test)]

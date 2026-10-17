@@ -280,6 +280,23 @@ fn override_options() -> Vec<Param> {
     ]
 }
 
+/// What a run of many requests (a folder, a flow) can lay over them and how much it prints.
+fn run_options() -> Vec<Param> {
+    vec![
+        Param {
+            name: "vars",
+            about: "Variables for {{name}}, by name, over the environment's.",
+            ty: Type::TextMap,
+            place: Place::Pairs("var", "="),
+            required: false,
+        },
+        text("env", "env", "The id or name of the environment to use instead of the selected one."),
+        switch("fresh_session", "fresh-session", None, "Run with cookies of a jar of its own, dropped at the end."),
+        switch("verbose", "verbose", None, "Include the body of every request, not only of a failed one."),
+        typed("max_body", "max-body", Type::Integer, "Bytes of body returned with verbose (default 2048; 0 = all)."),
+    ]
+}
+
 /// What a send of a request that answers once returns; the response is a summary line unless asked for more.
 fn output_options() -> Vec<Param> {
     vec![
@@ -775,9 +792,9 @@ pub fn catalog() -> Vec<Tool> {
         Row {
             name: "flows_run",
             words: &["flows", "run"],
-            summary: "Run a flow and return how each node did, the tests that failed and the run's status.",
-            details: "The result is an error when the run fails or a test does. A run is stopped after `timeout` \
-                seconds (default 120).",
+            summary: "Run a flow: one line per request (status, time, pass or the first failure), then the total.",
+            details: "Only a failed step shows its body (512 bytes). The result is an error when the run fails or a \
+                test does. A run is stopped after `timeout` seconds (default 120).",
             effect: Effect::Runs,
             upfront: true,
             scoped: true,
@@ -798,7 +815,10 @@ pub fn catalog() -> Vec<Tool> {
                     required: false,
                 },
                 typed("max_events", "max-events", Type::Integer, "Stop after this many messages of a stream node."),
-            ],
+            ]
+            .into_iter()
+            .chain(run_options())
+            .collect(),
         },
         Row {
             name: "flows_loadtest",
@@ -1061,12 +1081,19 @@ pub fn catalog() -> Vec<Tool> {
         Row {
             name: "runner_run",
             words: &["runner", "run"],
-            summary: "Send every request of a folder in order, with scripts and tests, and return how each did.",
-            details: "The result is an error when a request fails or a test does.",
+            summary: "Send every request of a folder in order, with scripts and tests: one line per request, then the total.",
+            details: "The folder is an id, a path like auth/admin or a unique name. Only a failed request shows its \
+                body (512 bytes). The result is an error when a request fails or a test does.",
             effect: Effect::Runs,
             upfront: false,
             scoped: true,
-            params: vec![operand("folder", "The id of a folder of the request tree (see folders_list).").required()],
+            params: [
+                operand("folder", "The id, path (auth/admin) or name of a folder of the request tree.").required(),
+                switch("bail", "bail", None, "Stop after the first request that fails."),
+            ]
+            .into_iter()
+            .chain(run_options())
+            .collect(),
         },
         Row {
             name: "settings_show",
