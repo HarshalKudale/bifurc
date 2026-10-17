@@ -85,7 +85,7 @@ fn default_name(group: &[Value]) -> String {
 }
 
 /// Every mock of the workspace with whether it is enabled.
-fn all_mocks(ctx: &mut Context, workspace: &str) -> Result<Vec<Value>> {
+pub(crate) fn all_mocks(ctx: &mut Context, workspace: &str) -> Result<Vec<Value>> {
     let mut mocks = Vec::new();
     for row in list_entities(ctx, workspace, MOCKS.kind)? {
         mocks.push(load(ctx, &MOCKS, workspace, &id_of(&row))?);

@@ -11,6 +11,7 @@ mod budget;
 pub mod capture;
 pub mod cli;
 pub mod commands;
+pub mod contract;
 pub mod curl;
 pub mod direct;
 pub mod discovery;

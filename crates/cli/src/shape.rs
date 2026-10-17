@@ -29,6 +29,7 @@ const VOLATILE: [&str; 13] = [
 ];
 
 /// One response as the comparison sees it.
+#[derive(Clone)]
 pub struct Side {
     pub status: u16,
     /// The short type of the body (json, html, text, binary, ...).

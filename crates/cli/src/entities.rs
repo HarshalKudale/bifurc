@@ -17,6 +17,7 @@ use crate::{
 };
 
 mod scenarios;
+pub(crate) use scenarios::all_mocks;
 mod serve;
 
 pub use serve::serve;
