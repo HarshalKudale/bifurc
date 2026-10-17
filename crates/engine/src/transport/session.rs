@@ -449,6 +449,7 @@ impl Session {
         self.inner.pump.close();
         if let Some(identity) = &identity {
             crate::mocks::stop_owned_by(&identity.session_id);
+            crate::webhook::stop_owned_by(&identity.session_id);
         }
         if let (Some(identity), Some(hook)) = (identity, &self.inner.opts.on_session_end) {
             hook(&identity);

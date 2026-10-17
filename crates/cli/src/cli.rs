@@ -26,7 +26,7 @@ use crate::{
     supervisor::{RESTART_TIMEOUT, START_TIMEOUT, STOP_TIMEOUT, restart_engine, start_engine, stop_engine},
     update,
     usage::{OVERVIEW, USAGE, canonical_group, examples, group_usage},
-    vault, wait,
+    vault, wait, webhooks,
 };
 
 /// The version this client reports in the handshake.
@@ -162,6 +162,7 @@ fn dispatch(args: &ParsedArgs, data_dir: &Path, stdout: &mut dyn Write) -> Resul
         "services" => devservices::services(&mut ctx, sub),
         "logs" => devservices::logs(&mut ctx),
         "mail" => mail::mail(&mut ctx, sub),
+        "webhooks" => webhooks::webhooks(&mut ctx, sub, stdout),
         "port" => devservices::port(&mut ctx, sub),
         "vault" => vault::vaults(&mut ctx, sub),
         "update" => update::update(&mut ctx, sub),
@@ -230,7 +231,7 @@ pub fn run_with_env(
                 0
             }
             None => {
-                let message = "examples exist for: agent, curl, requests, capture, mocks, flows, runner, env, cookies, wait, services, mail";
+                let message = "examples exist for: agent, curl, requests, capture, mocks, flows, runner, env, cookies, wait, services, mail, webhooks";
                 let _ = writeln!(stderr, "{}", CliError::usage(message).line());
                 2
             }

@@ -589,7 +589,8 @@ pub fn status(ctx: &mut Context) -> Result<String> {
     let cookies = ctx.request("cookies.list", workspace).ok();
     let mock_servers = ctx.request("mocks.serveStatus", json!({})).ok();
     let mail = ctx.request("mail.status", json!({})).ok();
-    let mut parts = StatusParts { server, config, capture, cookies, mock_servers, mail };
+    let webhooks = ctx.request("webhook.list", json!({})).ok();
+    let mut parts = StatusParts { server, config, capture, cookies, mock_servers, mail, webhooks };
     // In a named session the environment is the session's own, when it chose one.
     let session = crate::session::session_name(ctx.args)?;
     if session.is_some()
@@ -608,6 +609,7 @@ pub fn status(ctx: &mut Context) -> Result<String> {
     value["cookies"] = parts.cookies_domains().map_or(Value::Null, |n| json!(n));
     value["mockServers"] = parts.mock_servers.as_ref().map_or(Value::Null, |s| s["servers"].clone());
     value["mail"] = parts.mail.clone().unwrap_or(Value::Null);
+    value["webhooks"] = parts.webhooks.as_ref().map_or(Value::Null, |w| w["listeners"].clone());
     Ok(ctx.print(&value, || {
         let text = describe_status(&info, &active, &parts);
         match (&session, text.split_once('\n')) {
