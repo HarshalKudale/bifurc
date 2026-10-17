@@ -17,7 +17,7 @@ Runs requests, mocks, flows and the proxies of a Bifurc workspace; starts an eng
   cookies   list | clear                                   The workspace's cookie jar
   wait      <url|check> | --port <n> | --capture           Block until something is ready
   status                                                   Engine, proxy, mocks, capture and cookies, two lines
-  Also: workspaces, mappings, rules, folders, health, sync, history, export, import, vault, account, proxy,
+  Also: setup, workspaces, mappings, rules, folders, health, sync, history, export, import, vault, account, proxy,
   settings, tls, services, engine, update, call, commands
 
 Options
@@ -81,6 +81,7 @@ Engine
   engine status                          Where it runs, without opening a session
   status                                 Engine, proxy, workspace, environment, mocks, capture and cookies in two lines
   wait <url|check> | --port <n> | --capture   Block until a URL answers, a port accepts, or a request is captured
+  setup [--accept-terms --accept-privacy] [--workspace <name>]   First-run setup without the app (see: bifurc help setup)
   update [check | skip <version>]        Whether a newer Bifurc exists and how this install gets it; check asks now
 
 Anything else
@@ -144,6 +145,21 @@ exits 0. After --timeout it exits 4 and says why the last attempt failed.
   --port      Ready when a TCP connection is accepted. Needs no engine.
   --capture   Ready when a new request that matches the filters of capture list is captured.
 Durations are 500ms, 30s, 2m or a number of seconds.";
+
+const SETUP: &str =
+    "Usage: bifurc setup [--accept-terms --accept-privacy] [--workspace <name>] [--port <n> --proxy-port <n>]
+
+The app's first-run setup, for a machine that has no app (a container, CI). Every other command is refused
+until it is done. Never run implicitly.
+  (no flags)        Print the state and the URLs of the terms and the privacy policy; exit 0 when the setup is
+                    finished, 6 when it is not.
+  --accept-terms --accept-privacy
+                    Record that YOU accept the terms of service and the privacy policy at the URLs it prints.
+                    Both are required; with one, that one is recorded and the other is named (exit 6).
+  --workspace       Name of the first workspace (default Default); made only when there is none.
+  --port            Reverse proxy port (default 80)    --proxy-port   Forward proxy port (default 8080)
+Order, as in the app: accept terms, accept privacy, start the proxies, create the workspace, complete.
+Run again when finished, it only prints the state.";
 
 const WORKSPACES: &str = "Usage: bifurc workspaces <verb>
 
@@ -525,6 +541,7 @@ pub fn group_usage(group: &str) -> Option<String> {
         "tls" => TLS,
         "curl" => CURL,
         "wait" => WAIT,
+        "setup" => SETUP,
         _ => return None,
     };
     let rows = direct::usage(group);
