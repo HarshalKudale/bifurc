@@ -139,7 +139,7 @@ fn describing_options() -> Vec<&'static str> {
 
 const TYPE_NAMES: &str = "rest, graphql, grpc, soap, websocket, sse, socketio, mcp";
 
-fn type_named(name: &str) -> Result<&'static RequestType> {
+pub(crate) fn type_named(name: &str) -> Result<&'static RequestType> {
     let wanted = match name.to_lowercase().as_str() {
         "ws" => "websocket".to_string(),
         "http" => "rest".to_string(),

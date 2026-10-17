@@ -432,7 +432,7 @@ mod tests {
         for argv in [vec!["help", "curl", "--examples"], vec!["curl", "--help", "--examples"]] {
             assert_eq!(go(&argv).stdout, want, "{argv:?}");
         }
-        assert_eq!(go(&["help", "mock", "--examples"]).stdout.lines().count(), 4);
+        assert_eq!(go(&["help", "mock", "--examples"]).stdout.lines().count(), 5);
         assert_eq!(go(&["help", "status", "--examples"]).code, 2);
     }
 
