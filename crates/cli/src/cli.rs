@@ -283,6 +283,12 @@ fn report(done: Result<String>, stdout: &mut dyn Write, stderr: &mut dyn Write) 
             }
             1
         }
+        Err(CliError::Reported(code, report)) => {
+            if !report.is_empty() {
+                let _ = writeln!(stdout, "{report}");
+            }
+            code
+        }
         Err(err) => {
             let _ = writeln!(stderr, "{}", err.line());
             err.code()

@@ -152,6 +152,9 @@ pub fn parse_args(argv: &[String]) -> Result<ParsedArgs, String> {
         // `flows show --steps` prints the step file; `flows create --steps <file>` reads one.
         let prints_steps = name == "steps"
             && matches!(parsed.positionals.as_slice(), [group, verb, ..] if group == "flows" && verb == "show");
+        // `contract check --all` and `--from-capture` are switches (`mocks create --from-capture` takes an entry).
+        let contract_switch = matches!(name.as_str(), "all" | "from-capture")
+            && parsed.positionals.first().is_some_and(|group| group == "contract");
         // `--keep-all` alone, or with the `true` or `false` that the table of verbs writes after a switch.
         if name == "keep-all" {
             let value = match (inline_value, argv.get(i).map(String::as_str)) {
@@ -170,6 +173,7 @@ pub fn parse_args(argv: &[String]) -> Result<ParsedArgs, String> {
             || prints_curl
             || asks_status
             || prints_steps
+            || contract_switch
         {
             parsed.add(&name, "true".to_string());
             continue;

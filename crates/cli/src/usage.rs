@@ -14,6 +14,7 @@ Runs requests, mocks, flows and the proxies of a Bifurc workspace; starts an eng
   mocks     list | show | create | update | enable | disable | scenario | status | hits | serve
   flows     list | show | run | validate | loadtest         Saved chains of requests
   runner    run <folder> [--bail]                          Run a folder's requests
+  contract  check [--mock <n>] [--from-capture]            Do the mocks still match the real API? Sends requests
   env       list | show | use | set | unset                Environments and their variables
   cookies   list | set | clear                             The cookie jar (yours in a --session)
   session   show | reset · vars list | set | clear         Your own cookies, variables and env (--session <name>)
@@ -57,6 +58,7 @@ Groups (bifurc <group> --help shows the arguments and options of each verb)
   folders       list | create | rename | move | delete | confirm | restore
                                                                       Folders of the request, mock, flow and rule trees
   runner        run | status | cancel | config | configure             Run a folder's requests, a line each
+  contract      check                                                 Compare mocks with what the real API answers
   flows         list | show | create | update | validate | run | loadtest | loadstatus | loadcancel | status | cancel | duplicate | delete
                                                                       Saved chains of requests
   health        list | show | create | update | run | delete          Health checks
@@ -476,6 +478,29 @@ Sends every request of a folder of the request tree, in order, with its scripts 
                                          body. Exits 1 when a request fails or a test does.
                                          --bail: stop after the first failure; --verbose: every body";
 
+const CONTRACT: &str = "Usage: bifurc contract check [options]
+
+Do the mocks the frontend relies on still match what the backend really answers? Each enabled mock is paired
+with a saved REST request of the same method and path ({{var}} segments match any one segment, query and host
+are ignored). The request is sent, and status, content type and body shape (keys, types, array elements; never
+values or headers) are compared.
+
+  check                                  One line per paired mock, the differences under a drifted one, then a count
+  --mock <name>                          Only this mock (also when disabled); its reason is shown when unpaired
+  --folder <mock folder>                 Only the mocks in this folder and below
+  --all                                  Disabled mocks too
+  --ignore <glob>                        Leave out differences whose path matches; * is any run of characters,
+                                         e.g. '.meta.*' or '.items[].debug'. Repeatable
+  --from-capture                         Compare with the newest captured real answer (not a mock's) instead
+  --var k=v  --env <name>  --fresh-session   As for requests send
+  --json  --quiet                        Machine-readable; or nothing but the exit code
+
+check SENDS the paired real requests (POST, DELETE and the like too); --from-capture sends nothing. A send is
+never answered by a mock. Left is the mock, right the real answer: `+ .items[].discount (number)` means the real
+API has it and the mock lacks it, `- .x` the reverse, `~ status 201 → 200` mock then real.
+Mocks with no single saved request (none, several, or a regex pattern) are counted as unpaired; --json lists them.
+Exit: 1 any drift, else 4 a real request failed, else 0.";
+
 const CAPTURE: &str = "Usage: bifurc capture <verb>
 
 What went through the proxies: each exchange with its request and its response.
@@ -616,6 +641,7 @@ pub fn group_usage(group: &str) -> Option<String> {
         "mappings" => MAPPINGS,
         "rules" => RULES,
         "mocks" => MOCKS,
+        "contract" => CONTRACT,
         "requests" => REQUESTS,
         "health" => HEALTH,
         "flows" => FLOWS,
@@ -674,6 +700,12 @@ pub fn examples(group: &str) -> Option<&'static [&'static str]> {
             "bifurc capture list --host api.localhost --path /orders* --since 2m",
             "bifurc capture show #k3f9 --req-body --headers",
             r#"bifurc capture diff #k3f9 --mock "Get order" --shape"#,
+        ],
+        "contract" => &[
+            "bifurc contract check",
+            r#"bifurc contract check --mock "Get orders" --ignore '.meta.*'"#,
+            "bifurc contract check --folder shop --env staging --json",
+            "bifurc contract check --from-capture --all",
         ],
         "mocks" => &[
             r#"bifurc mocks create http://api.localhost/users/1 --status 200 -d '{"id":1}' -H "Content-Type: application/json""#,
@@ -763,8 +795,8 @@ pub(crate) mod tests {
     #[test]
     fn every_example_is_a_known_group_and_verb_with_flags_its_help_names() {
         for group in [
-            "agent", "curl", "requests", "capture", "mocks", "flows", "runner", "env", "cookies", "session", "vars",
-            "wait",
+            "agent", "curl", "requests", "capture", "mocks", "contract", "flows", "runner", "env", "cookies",
+            "session", "vars", "wait",
         ] {
             let list = examples(group).unwrap_or_else(|| panic!("{group} has no examples"));
             assert!((3..=5).contains(&list.len()), "{group}");
