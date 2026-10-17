@@ -395,7 +395,8 @@ pub fn present(ctx: &mut Context, response: &Response) -> Result<String> {
     }
     match shown {
         Some((shown, left)) => {
-            lines.push(shown.to_string());
+            // The line break that ends most bodies would print as an empty line.
+            lines.push(shown.trim_end_matches(['\r', '\n']).to_string());
             if left > 0 {
                 lines.push(format!("… {} truncated — use --out or --select", size(left)));
             }
