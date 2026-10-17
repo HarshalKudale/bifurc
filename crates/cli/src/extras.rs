@@ -152,7 +152,7 @@ fn env_show(ctx: &mut Context) -> Result<String> {
 
 /// `env set <env> KEY=VALUE...` and `env unset <env> KEY...`: change some variables and leave the others.
 fn env_variables(ctx: &mut Context, set: bool) -> Result<String> {
-    ctx.accept(&[], 1000)?;
+    ctx.accept(&["force"], 1000)?;
     let args = ctx.args;
     let wanted = need(args.positional(2), "environment id or name")?;
     let given = args.positionals.get(3..).unwrap_or_default();
