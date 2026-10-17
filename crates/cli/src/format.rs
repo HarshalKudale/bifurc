@@ -266,6 +266,8 @@ pub struct StatusParts {
     pub cookies: Option<Value>,
     /// `mocks.serveStatus`: the local mock servers that run.
     pub mock_servers: Option<Value>,
+    /// `mail.status`: the local mail sink.
+    pub mail: Option<Value>,
 }
 
 impl StatusParts {
@@ -320,6 +322,14 @@ pub fn describe_status(engine: &RuntimeInfo, active_workspace: &Value, parts: &S
         .collect();
     if !ports.is_empty() {
         second.push(format!("mock server {}", ports.join(",")));
+    }
+    if let Some(mail) = &parts.mail {
+        let port = js_template(mail.get("port"));
+        second.push(match (mail.get("running").is_some_and(truthy), mail.get("error").and_then(Value::as_str)) {
+            (true, _) => format!("mail :{port} ({})", js_template(mail.get("count"))),
+            (false, Some(reason)) => format!("mail :{port} off ({reason})"),
+            (false, None) => format!("mail :{port} off"),
+        });
     }
     if let Some(capture) = &parts.capture {
         let limit = capture.get("limit").and_then(Value::as_u64).unwrap_or(MAX_CAPTURE);
@@ -522,11 +532,12 @@ boom"
             capture: Some(json!({"matched": 143, "paused": false})),
             cookies: Some(json!({"domains": [{}, {}, {}]})),
             mock_servers: Some(json!({"servers": [{"port": 4010}]})),
+            mail: Some(json!({"port": 1025, "running": true, "count": 3})),
         };
         assert_eq!(
             describe_status(&info, &workspace, &parts),
             "engine 0.6.0 · proxy :8080 on · workspace smoke · env dev
-mocks 2 on · mock server :4010 · capture 143/200 · cookies 3 domains"
+mocks 2 on · mock server :4010 · mail :1025 (3) · capture 143/200 · cookies 3 domains"
         );
         let parts = StatusParts {
             server: Some(json!({"running": false, "port": 9})),
@@ -534,11 +545,12 @@ mocks 2 on · mock server :4010 · capture 143/200 · cookies 3 domains"
             capture: Some(json!({"matched": 0, "paused": true})),
             cookies: None,
             mock_servers: None,
+            mail: Some(json!({"port": 1025, "running": false, "error": "Port 1025 is already in use", "count": 0})),
         };
         assert_eq!(
             describe_status(&info, &json!(null), &parts),
             "engine 0.6.0 · proxy :9 off
-capture 0/200 paused"
+mail :1025 off (Port 1025 is already in use) · capture 0/200 paused"
         );
         let none = StatusParts {
             server: None,
@@ -546,6 +558,7 @@ capture 0/200 paused"
             capture: None,
             cookies: None,
             mock_servers: None,
+            mail: None,
         };
         assert_eq!(describe_status(&info, &workspace, &none), "engine 0.6.0 · workspace smoke · env none");
     }
