@@ -30,7 +30,7 @@ Bifurc sends the API calls of the user's workspace (shared cookies, environments
 - Mocks: `bifurc mocks list`, `bifurc mocks create http://api.localhost/users/1 --status 200 -d '{"id":1}'`, `bifurc mocks disable "Get user"`
 - Mock states: `bifurc mocks scenario "Get user" error500` (also empty, slow, timeout, notfound; default returns), `bifurc mocks status`
 - Flows: `bifurc flows create --steps checkout.yaml`; `bifurc flows run "Checkout"`. A folder of requests: `bifurc runner run auth --bail`
-- Variables: `bifurc env show`; a send takes `--env <name>`.
+- Variables: `bifurc env show`; a send takes `--env <name>`; `bifurc env auth dev --login Login` re-logs in on a 401.
 - Set BIFURC_SESSION=<your role> (e.g. frontend) so your cookies, variables and env never clash with another agent or the user; `--extract id=.id` keeps a value for later {{id}}. `bifurc changes` lists what others changed since you last asked.
 - Cookies: `bifurc cookies list`, `bifurc cookies clear --domain api.localhost`
 - Wait for a service: `bifurc wait http://api.localhost/health`, `bifurc wait --port 3000`. What is on: `bifurc status`

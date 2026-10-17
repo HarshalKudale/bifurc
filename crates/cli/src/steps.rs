@@ -21,6 +21,8 @@ pub struct Step {
     /// Why it failed; `None` when it did not.
     pub failure: Option<String>,
     pub body: Option<String>,
+    /// The environment's login ran after a 401 and the step was sent again.
+    pub reauthenticated: bool,
 }
 
 /// `--max-body`: how many bytes of a body `--verbose` shows (default 2048; 0 = all).
@@ -59,7 +61,12 @@ pub fn lines(steps: &[Step], verbose: bool, max_body: usize) -> Vec<String> {
                 Some(why) => format!("✗ {why}"),
                 None => "✓".to_string(),
             };
-            vec![format!("{} {}", at + 1, step.label), format!("{}{took}", step.status.as_deref().unwrap_or("-")), mark]
+            let again = if step.reauthenticated { " · ↻ re-authenticated" } else { "" };
+            vec![
+                format!("{} {}", at + 1, step.label),
+                format!("{}{took}{again}", step.status.as_deref().unwrap_or("-")),
+                mark,
+            ]
         })
         .collect();
     let mut out = Vec::new();
@@ -98,10 +105,13 @@ mod tests {
             ms: Some(5),
             failure: failure.map(str::to_string),
             body: Some(body.into()),
+            ..Default::default()
         };
         let steps = [step(None, "{\"a\":1}"), step(Some("boom"), &"x".repeat(600))];
         let shown = lines(&steps, false, 2048);
         assert_eq!(shown[0], "1 GET /a  200 · 5ms  ✓");
+        let again = Step { reauthenticated: true, ..step(None, "") };
+        assert_eq!(lines(&[again], false, 0)[0], "1 GET /a  200 · 5ms · ↻ re-authenticated  ✓");
         assert_eq!(shown[1], "2 GET /a  200 · 5ms  ✗ boom");
         assert_eq!(shown[2].len(), "  → ".len() + 384);
         assert_eq!(shown[3], "  … 216B truncated");

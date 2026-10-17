@@ -415,6 +415,7 @@ fn steps_of(report: &Value, described: &Value, order: &[String]) -> Vec<Step> {
                 ms: node.get("durationMs").and_then(Value::as_u64),
                 failure,
                 body: output.get("body").and_then(Value::as_str).map(str::to_string),
+                reauthenticated: output.get("reauthenticated").and_then(Value::as_bool) == Some(true),
             })
         })
         .fold(Vec::new(), |mut steps: Vec<Step>, step| {
