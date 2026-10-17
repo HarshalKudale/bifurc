@@ -5,6 +5,7 @@
 //! engine commands and a printed answer. Argument parsing, formatting and engine location are pure modules.
 
 pub mod args;
+pub mod capture;
 pub mod cli;
 pub mod commands;
 pub mod curl;
