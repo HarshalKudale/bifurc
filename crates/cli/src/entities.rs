@@ -13,7 +13,7 @@ use crate::{
         unknown_verb, with_field, workspace_id,
     },
     error::{CliError, Result},
-    format::{js_template, json, table, truthy},
+    format::{aligned, js_template, json, table, truthy},
 };
 
 mod scenarios;
@@ -86,7 +86,16 @@ fn resolve(ctx: &mut Context, kind: &Kind) -> Result<(String, Value)> {
 fn list(
     ctx: &mut Context,
     kind: &Kind,
+    column: impl FnMut(&mut Context, &str, Value) -> Result<Value>,
+) -> Result<String> {
+    list_as(ctx, kind, column, |rows| table(rows, kind.columns))
+}
+
+fn list_as(
+    ctx: &mut Context,
+    kind: &Kind,
     mut column: impl FnMut(&mut Context, &str, Value) -> Result<Value>,
+    human: impl FnOnce(&[Value]) -> String,
 ) -> Result<String> {
     ctx.accept(&[], 0)?;
     let workspace = workspace_id(ctx)?;
@@ -95,7 +104,7 @@ fn list(
         let entity = load(ctx, kind, &workspace, &id_of(&row))?;
         rows.push(column(ctx, &workspace, entity)?);
     }
-    Ok(ctx.print(&Value::Array(rows.clone()), || table(&rows, kind.columns)))
+    Ok(ctx.print(&Value::Array(rows.clone()), || human(&rows)))
 }
 
 fn show(ctx: &mut Context, kind: &Kind) -> Result<String> {
@@ -400,14 +409,35 @@ fn default_content_type(mock: &mut Value) {
 const MOCK_RESPONSE_OPTIONS: [&str; 9] =
     ["method", "name", "status", "header", "data", "body-file", "delay", "regex", "no-regex"];
 
+/// `mocks list` for people: method, URL pattern, status and name, and `off` after a disabled mock.
+fn mock_rows(mocks: &[Value]) -> String {
+    if mocks.is_empty() {
+        return "(none)".to_string();
+    }
+    let cells: Vec<Vec<String>> = mocks
+        .iter()
+        .map(|mock| {
+            let field = |key: &str| js_template(mock.get(key));
+            let off = if mock.get("enabled").is_some_and(truthy) { "" } else { "off" };
+            vec![field("method").to_uppercase(), field("urlPattern"), field("status"), field("name"), off.into()]
+        })
+        .collect();
+    aligned(&cells)
+}
+
 /// `mocks list|show|create|update|enable|disable|scenario|status|hits`.
 pub fn mocks(ctx: &mut Context, sub: Option<&str>) -> Result<String> {
     let args = ctx.args;
     match sub.unwrap_or("list") {
-        "list" => list(ctx, &MOCKS, |_, _, mock| {
-            let status = mock.get("responseStatus").cloned().unwrap_or(Value::Null);
-            Ok(with_field(&mock, "status", status))
-        }),
+        "list" => list_as(
+            ctx,
+            &MOCKS,
+            |_, _, mock| {
+                let status = mock.get("responseStatus").cloned().unwrap_or(Value::Null);
+                Ok(with_field(&mock, "status", status))
+            },
+            mock_rows,
+        ),
         "show" => show(ctx, &MOCKS),
         "scenario" => scenarios::scenario(ctx),
         "status" => scenarios::status(ctx),
@@ -725,14 +755,16 @@ mod tests {
     }
 
     #[test]
-    fn mocks_list_is_a_table() {
+    fn mocks_list_is_compact() {
         let argv = ["mocks", "list"];
         let (out, _) = run(&argv, one_mock(), |c| mocks(c, sub(&argv)));
-        assert_eq!(
-            out.unwrap(),
-            "ID  ENABLED  METHOD  NAME   URLPATTERN              STATUS\n\
-             k1  true     GET     Users  https://api.test/users  200"
-        );
+        assert_eq!(out.unwrap(), "GET  https://api.test/users  200  Users");
+    }
+
+    #[test]
+    fn a_disabled_mock_is_marked_off_in_the_list() {
+        let off = with_field(&with_field(&mock(), "enabled", json!(false)), "status", json!(200));
+        assert_eq!(mock_rows(&[off]), "GET  https://api.test/users  200  Users  off");
     }
 
     #[test]

@@ -497,11 +497,15 @@ fn run_flow(ctx: &mut Context, payload: Value, verbose: bool, max_body: usize) -
         if passed {
             out.push(format!("flow passed · {} step{}{took}", steps.len(), if steps.len() == 1 { "" } else { "s" }));
         } else {
-            match steps.iter().position(|step| step.failure.is_some()) {
+            let first = steps.iter().position(|step| step.failure.is_some());
+            match first {
                 Some(at) => out.push(format!("flow failed at step {}{took}", at + 1)),
                 None => out.push(format!("flow {}{took}", js_template(report.get("status")))),
             }
-            if let Some(error) = report.get("error").and_then(Value::as_str).filter(|e| !e.is_empty()) {
+            // The error is left out when the failed step's line already says it.
+            let said = first.and_then(|at| steps[at].failure.as_deref());
+            let error = report.get("error").and_then(Value::as_str).filter(|e| !e.is_empty());
+            if let Some(error) = error.filter(|e| !said.is_some_and(|why| e.contains(why))) {
                 out.push(format!("error: {error}"));
             }
         }
@@ -892,7 +896,7 @@ mod tests {
         assert_eq!(
             text,
             "1 GET /users/1?a=1  503 · 12ms  ✗ HTTP 503\n  → {\"error\":\"down\"}\n\
-             flow failed at step 1 · 166ms\nerror: Get user: HTTP 503"
+             flow failed at step 1 · 166ms"
         );
 
         // A passed run with a failed test still exits 1, and says which test.
@@ -912,7 +916,7 @@ mod tests {
             vec![finished_nodes("failed", "Pick: boom", 0, json!([start_node(), evaluate]))],
         );
         let CliError::Failed(text) = out.unwrap_err() else { panic!("a failed node is a failed command") };
-        assert_eq!(text, "1 Pick  -  ✗ boom\nflow failed at step 1 · 166ms\nerror: Pick: boom");
+        assert_eq!(text, "1 Pick  -  ✗ boom\nflow failed at step 1 · 166ms");
     }
 
     #[test]
@@ -924,7 +928,8 @@ mod tests {
             "error": "1 of 1 checks failed", "tests": [{"name": "input.status Equals 201", "passed": false}]});
         let argv = ["flows", "run", "f1"];
         for (check, said) in [(evaluate, "expect .items | length == 1, got 2"), (validate, "expect status == 201")] {
-            let events = vec![finished_nodes("failed", "x", 0, json!([start_node(), ok.clone(), check]))];
+            let events =
+                vec![finished_nodes("failed", &format!("{said}: failed"), 0, json!([start_node(), ok.clone(), check]))];
             let (out, _, _) = go(&argv, with_get_user(engine()), events);
             let CliError::Failed(text) = out.unwrap_err() else { panic!("a failed expectation fails the command") };
             assert_eq!(
@@ -932,8 +937,7 @@ mod tests {
                 format!(
                     "1 GET /users/1?a=1  200 · 12ms  ✗ {said}
   → {{\"items\":[1,2]}}
-flow failed at step 1 · 166ms
-error: x"
+flow failed at step 1 · 166ms"
                 )
             );
         }
