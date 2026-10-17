@@ -254,6 +254,31 @@ fn request_options() -> Vec<Param> {
     ]
 }
 
+/// What a send of a request that answers once can lay over the request and the environment.
+fn override_options() -> Vec<Param> {
+    vec![
+        Param {
+            name: "vars",
+            about: "rest, graphql, soap, grpc: variables for {{name}}, by name, over the environment's.",
+            ty: Type::TextMap,
+            place: Place::Pairs("var", "="),
+            required: false,
+        },
+        text(
+            "env",
+            "env",
+            "rest, graphql, soap, grpc: the id or name of the environment to use instead of the selected one.",
+        ),
+        Param {
+            name: "patch",
+            about: "A saved request: set a field of its JSON body (or of body), each '<path>=<value>' like '.qty=2'.",
+            ty: Type::TextList,
+            place: Place::Each("patch"),
+            required: false,
+        },
+    ]
+}
+
 /// What a send of a request that answers once returns; the response is a summary line unless asked for more.
 fn output_options() -> Vec<Param> {
     vec![
@@ -453,6 +478,7 @@ pub fn catalog() -> Vec<Tool> {
                 ],
                 request_options(),
                 exchange_options(),
+                override_options(),
                 output_options(),
             ]),
         },
@@ -1141,6 +1167,9 @@ mod tests {
         assert_eq!(schema["properties"]["type"]["enum"], json!(REQUEST_TYPES));
         assert_eq!(schema["properties"]["headers"]["additionalProperties"]["type"], "string");
         assert_eq!(schema["properties"]["listen"]["items"]["type"], "string");
+        assert_eq!(schema["properties"]["vars"]["additionalProperties"]["type"], "string");
+        assert_eq!(schema["properties"]["patch"]["items"]["type"], "string");
+        assert_eq!(schema["properties"]["env"]["type"], "string");
         assert_eq!(schema["properties"]["workspace"]["type"], "string");
     }
 

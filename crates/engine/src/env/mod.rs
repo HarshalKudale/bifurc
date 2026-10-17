@@ -17,7 +17,7 @@ use crate::{
     protocol::Result,
     runtime::instances::notify_config_changed,
     utils::{
-        json::{array_of, str_of, truthy},
+        json::{array_of, opt_str, str_of, truthy},
         randomizer::resolve_randomizers,
     },
     workspace::{
@@ -41,6 +41,9 @@ pub struct VariableChanges {
 pub struct VariableScope {
     /// Later pairs win over earlier ones, and all of them over the environment.
     pub variables: Vec<(String, String)>,
+    /// The environment to merge under Global instead of the stored selected one (and where script writes go).
+    /// An id that names no environment merges Global alone: the CLI resolves names first. `None` keeps the selection.
+    pub environment_id: Option<String>,
     /// Where the variables a script sets go instead of the environment's file. `None` writes the file as usual.
     pub changes: Option<Arc<Mutex<VariableChanges>>>,
 }
@@ -53,6 +56,31 @@ tokio::task_local! {
 /// a command only while that command resolves its variables before spawning anything.
 pub async fn with_variable_scope<F: Future>(scope: VariableScope, future: F) -> F::Output {
     SCOPE.scope(scope, future).await
+}
+
+/// Run `work` under the `variables` (object of text) and `environmentId` a one-shot send command was given;
+/// without either it runs as it is, so an enclosing scope (a flow node's) stays in force.
+pub async fn send_scoped<F: Future>(params: &Value, work: F) -> F::Output {
+    let variables: Vec<(String, String)> = params
+        .get("variables")
+        .and_then(Value::as_object)
+        .into_iter()
+        .flatten()
+        .filter_map(|(key, value)| Some((key.clone(), value.as_str()?.to_string())))
+        .collect();
+    let environment_id = opt_str(params, "environmentId").map(str::to_string);
+    if variables.is_empty() && environment_id.is_none() {
+        return work.await;
+    }
+    with_variable_scope(VariableScope { variables, environment_id, changes: None }, work).await
+}
+
+/// `entity` with the fields of the send's `overrides` object laid over its own.
+pub fn with_overrides(mut entity: Value, params: &Value) -> Value {
+    for (field, value) in params.get("overrides").and_then(Value::as_object).into_iter().flatten() {
+        entity[field] = value.clone();
+    }
+    entity
 }
 
 fn lay_over(env: &mut Value, variables: &[(String, String)]) {
@@ -88,6 +116,14 @@ pub fn effective_environment_id(environments: &[Value], stored_id: Option<&str>)
     }
 }
 
+/// The environment in force for `ws_id`: a [`VariableScope`]'s, else the stored selection's.
+fn selected_environment_id(ws_id: &str, environments: &[Value]) -> Option<String> {
+    if let Ok(Some(id)) = SCOPE.try_with(|scope| scope.environment_id.clone()) {
+        return Some(id);
+    }
+    effective_environment_id(environments, load_settings().stored_environment_id(ws_id).as_deref())
+}
+
 /// `active`'s variables over `global`'s, as one environment named `merged`. `None` when both are absent.
 pub fn merge_env_vars(global: Option<&Value>, active: Option<&Value>) -> Option<Value> {
     if global.is_none() && active.is_none() {
@@ -111,7 +147,7 @@ pub fn merge_env_vars(global: Option<&Value>, active: Option<&Value>) -> Option<
 pub fn load_merged_environment(ws_id: &str) -> Option<Value> {
     let environments = read_all_entities(ws_id, "environments");
     let find = |id: &str| environments.iter().find(|e| str_of(e, "id") == id);
-    let active_id = effective_environment_id(&environments, load_settings().stored_environment_id(ws_id).as_deref());
+    let active_id = selected_environment_id(ws_id, &environments);
     let mut merged = merge_env_vars(find(GLOBAL_ENV_ID), active_id.as_deref().and_then(find))
         .unwrap_or_else(|| json!({ "id": "merged", "name": "merged", "variables": [], "createdAt": 0 }));
     merged["workspaceId"] = json!(ws_id);
@@ -132,8 +168,8 @@ pub fn apply_variable_changes(ws_id: &str, set: &[(String, String)], removed: &[
         return false;
     }
     let environments = read_all_entities(ws_id, "environments");
-    let active_id = effective_environment_id(&environments, load_settings().stored_environment_id(ws_id).as_deref())
-        .unwrap_or_else(|| GLOBAL_ENV_ID.to_string());
+    // Script writes follow the environment a send was told to use, so a run against `staging` never edits `dev`.
+    let active_id = selected_environment_id(ws_id, &environments).unwrap_or_else(|| GLOBAL_ENV_ID.to_string());
     let mut wrote = false;
     for env in environments {
         let id = str_of(&env, "id").to_string();
