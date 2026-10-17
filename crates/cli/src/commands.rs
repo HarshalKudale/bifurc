@@ -19,6 +19,8 @@ pub struct Context<'a> {
     pub args: &'a ParsedArgs,
     /// `--json`: print values as JSON instead of their human rendering.
     pub json: bool,
+    /// `--raw`: the bytes the caller writes to stdout as they are, with nothing after them.
+    pub(crate) raw: Option<Vec<u8>>,
     connector: Connector<'a>,
     engine: Option<Box<dyn Engine>>,
 }
@@ -26,7 +28,7 @@ pub struct Context<'a> {
 impl<'a> Context<'a> {
     /// A context whose session is opened by `connector` on first use.
     pub fn new(args: &'a ParsedArgs, connector: Connector<'a>) -> Self {
-        Self { args, json: args.has("json"), connector, engine: None }
+        Self { args, json: args.has("json"), raw: None, connector, engine: None }
     }
 
     /// The engine session, opened if this is the first use.
@@ -177,9 +179,14 @@ pub(crate) fn merge_headers(headers: &mut Map<String, Value>, flags: &[(String, 
     }
 }
 
-/// `--body-file <f>` or `--body <text>`, when either is given.
+/// `--body-file <f>` or `--data <text>` (`-d`; `--data @<f>` reads a file, as curl does), when either is given.
 pub(crate) fn body_from(args: &ParsedArgs) -> Result<Option<String>> {
-    text_from(args, "body", "body-file")
+    match args.flag("data").and_then(|data| data.strip_prefix('@')) {
+        Some(file) if !args.has("body-file") => {
+            std::fs::read_to_string(file).map(Some).map_err(|e| CliError::msg(format!("cannot read {file}: {e}")))
+        }
+        _ => text_from(args, "data", "body-file"),
+    }
 }
 
 /// The text of `--<flag>`, or of the file `--<file_flag>` names, when either is given. The file wins.
