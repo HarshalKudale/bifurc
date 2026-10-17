@@ -37,6 +37,8 @@ pub fn run(ctx: &mut Context, group: &str, verb: &str) -> Option<Result<String>>
         ("env", "unset") => env_variables(ctx, false),
         ("capture", "list") => capture::list(ctx),
         ("capture", "show") => capture::show(ctx),
+        ("capture", "pin") => capture::pin(ctx, true),
+        ("capture", "unpin") => capture::pin(ctx, false),
         ("capture", "mock") => capture_save(ctx, "mocks"),
         ("capture", "request") => capture_save(ctx, "requests"),
         ("runner", "run") => runner_run(ctx),
@@ -316,6 +318,13 @@ fn settings_show(ctx: &mut Context) -> Result<String> {
     let config = ctx.request("config.get", json!({}))?;
     let settings: Map<String, Value> =
         SETTINGS.iter().filter_map(|key| config.get(*key).map(|value| (key.to_string(), value.clone()))).collect();
+    let mut settings = settings;
+    // The capture limit is not in the snapshot: the buffer reports it.
+    if let Ok(workspace) = workspace_id(ctx)
+        && let Ok(buffer) = ctx.request("capture.list", json!({ "workspaceId": workspace, "summary": true, "last": 0 }))
+    {
+        settings.insert("captureLimit".into(), buffer["limit"].clone());
+    }
     let settings = Value::Object(settings);
     Ok(ctx.print(&settings, || json(&settings)))
 }

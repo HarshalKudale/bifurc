@@ -559,6 +559,11 @@
      "minimum": 1,
      "maximum": 65535
     },
+    "captureLimit": {
+     "type": "integer",
+     "minimum": 10,
+     "maximum": 10000
+    },
     "minimizeToTray": {
      "type": "boolean"
     },
@@ -3007,6 +3012,9 @@
     "mockId": {
      "type": "string"
     },
+    "pinned": {
+     "type": "boolean"
+    },
     "grep": {
      "type": "string"
     }
@@ -3084,6 +3092,29 @@
      "items": {
       "type": "string"
      }
+    }
+   },
+   "required": [
+    "workspaceId",
+    "ids"
+   ],
+   "additionalProperties": false
+  },
+  "capture.pin": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "ids": {
+     "minItems": 1,
+     "type": "array",
+     "items": {
+      "type": "string"
+     }
+    },
+    "pinned": {
+     "type": "boolean"
     }
    },
    "required": [
