@@ -286,7 +286,7 @@
   "vault.rekey_unreadable": "Some secrets in this vault do not open with its key; not re-encrypting.",
   "kernel.unknown_command": "Unknown command \"{action}\".",
   "kernel.invalid_payload": "Invalid payload for command \"{action}\": {reason}",
-  "engine.setup_required": "Bifurc has not been set up yet. Finish the first-run setup in the Bifurc app, then run this command again.",
+  "engine.setup_required": "Bifurc has not been set up yet. Finish the first-run setup in the Bifurc app, or run: bifurc setup --accept-terms --accept-privacy",
   "engine.already_running": "an engine (pid {pid}) is already serving {dir} over {transport} at {address} — connect to it, or stop it first",
   "engine.not_running": "no engine is running in this process",
   "engine.no_free_port": "No free companion port within {limit} of {base} — set a different base in Settings → Ports.",
