@@ -36,11 +36,13 @@ impl Engine for Fake {
 
     fn request(&mut self, command: &str, payload: Value) -> Result<Value> {
         let of_kind = format!("{command}:{}", payload.get("kind").and_then(Value::as_str).unwrap_or_default());
+        let of_id = format!("{of_kind}:{}", payload.get("id").and_then(Value::as_str).unwrap_or_default());
         self.calls.borrow_mut().push((command.to_string(), payload));
         let answer = self
             .answers
             .iter()
-            .find(|(name, _)| *name == of_kind)
+            .find(|(name, _)| *name == of_id)
+            .or_else(|| self.answers.iter().find(|(name, _)| *name == of_kind))
             .or_else(|| self.answers.iter().find(|(name, _)| *name == command));
         match answer {
             Some((_, answer)) => answer.clone(),

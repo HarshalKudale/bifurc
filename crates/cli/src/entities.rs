@@ -16,6 +16,8 @@ use crate::{
     format::{js_template, json, table, truthy},
 };
 
+mod scenarios;
+
 /// One kind of item that can be switched on and off.
 struct Kind {
     /// The command group, which is also what `(see: bifurc <group> list)` names.
@@ -99,14 +101,19 @@ fn show(ctx: &mut Context, kind: &Kind) -> Result<String> {
     Ok(ctx.print(&entity, || json(&entity)))
 }
 
-fn set_enabled(ctx: &mut Context, kind: &Kind, enabled: bool) -> Result<String> {
-    ctx.accept(&[], 1)?;
-    let (workspace, entity) = resolve(ctx, kind)?;
-    let id = id_of(&entity);
+fn set_enabled_by_id(ctx: &mut Context, kind: &Kind, workspace: &str, id: &str, enabled: bool) -> Result<()> {
     ctx.request(
         "entity.setEnabled",
         json!({ "workspaceId": workspace, "kind": kind.toggle_kind, "id": id, "enabled": enabled }),
     )?;
+    Ok(())
+}
+
+fn set_enabled(ctx: &mut Context, kind: &Kind, enabled: bool) -> Result<String> {
+    ctx.accept(&[], 1)?;
+    let (workspace, entity) = resolve(ctx, kind)?;
+    let id = id_of(&entity);
+    set_enabled_by_id(ctx, kind, &workspace, &id, enabled)?;
     let entity = with_field(&entity, "enabled", json!(enabled));
     Ok(ctx.print(&entity, || format!("{} {} {id}", if enabled { "Enabled" } else { "Disabled" }, kind.what)))
 }
@@ -390,7 +397,7 @@ fn default_content_type(mock: &mut Value) {
 const MOCK_RESPONSE_OPTIONS: [&str; 9] =
     ["method", "name", "status", "header", "data", "body-file", "delay", "regex", "no-regex"];
 
-/// `mocks list|show|create|update|enable|disable`.
+/// `mocks list|show|create|update|enable|disable|scenario|status|hits`.
 pub fn mocks(ctx: &mut Context, sub: Option<&str>) -> Result<String> {
     let args = ctx.args;
     match sub.unwrap_or("list") {
@@ -399,6 +406,10 @@ pub fn mocks(ctx: &mut Context, sub: Option<&str>) -> Result<String> {
             Ok(with_field(&mock, "status", status))
         }),
         "show" => show(ctx, &MOCKS),
+        "scenario" => scenarios::scenario(ctx),
+        "status" => scenarios::status(ctx),
+        "hits" => scenarios::hits(ctx),
+        "create" | "add" if args.has("from-request") || args.has("from-capture") => scenarios::create_from(ctx),
         "create" | "add" => {
             let mut options = MOCK_RESPONSE_OPTIONS.to_vec();
             options.extend(["curl", "url", "disabled"]);

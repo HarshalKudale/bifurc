@@ -11,7 +11,7 @@ Runs requests, mocks, flows and the proxies of a Bifurc workspace; starts an eng
   curl      <curl arguments> [--save <name>]               A curl command through the engine, one summary line
   requests  list | show | send | create | update | delete  Saved requests of every type
   capture   list | show | watch | mock | request | clear    Traffic the proxies captured
-  mocks     list | show | create | update | enable | disable
+  mocks     list | show | create | update | enable | disable | scenario | status | hits
   flows     list | show | run | validate | loadtest         Saved chains of requests
   runner    run <folder> [--bail]                          Run a folder's requests
   env       list | show | use | set | unset                Environments and their variables
@@ -50,7 +50,7 @@ Groups (bifurc <group> --help shows the arguments and options of each verb)
                                                                       <sub>.localhost → target
   rules         list | show | create | update | patch | enable | disable | duplicate | delete
                                                                       Forward-proxy rules
-  mocks         list | show | create | update | patch | enable | disable | duplicate | delete
+  mocks         list | show | create | update | patch | enable | disable | scenario | status | hits | duplicate | delete
                                                                       Mocked responses
   requests      list | show | create | update | patch | send | reflect | duplicate | delete
                                                                       REST, GraphQL, gRPC, SOAP, WebSocket, SSE, Socket.IO, MCP
@@ -235,12 +235,26 @@ A mock created here is the whole response: nothing is asked of the real server.
                        [-d, --data <text> | --body-file <f>] [--delay <ms>] [--regex] [--disabled]
   create --curl <command> [--name <text>] [--disabled]
                                          A mock of the call a cURL command makes, answering an empty 200
+  create --from-request <request> [--name <text>] [--var k=v]... [--env <name>] [--disabled]
+                                         Send the saved REST request once and mock the answer it got
+  create --from-capture <entry> [--name <text>] [--disabled]
+                                         Mock a captured exchange (same as: capture mock <entry>)
   update <id|name> [--url <pattern>] [--method <m>] [--name <text>] [--status <code>] [-H \"k: v\"]...
                    [-d, --data <text> | --body-file <f>] [--delay <ms>] [--regex | --no-regex]
                                          Only what is given changes; -H \"k:\" removes a header
   enable|disable <id|name>               Enabling a mock disables another enabled mock of the same call
+  scenario <mock> [<scenario>] [--list] [--delay <ms>]
+                                         Switch a call between its answers; no scenario (or --list) lists them
+  status                                 A line per call: name, method, pattern, active scenario, on/off, hits
+  hits <mock> [--last 5]                 Captured requests this call's mocks answered: did the app hit the mock?
 
---method takes * for any method.";
+--method takes * for any method.
+
+Scenarios: the mocks of one call (same method and URL pattern) are the answers of that call, one enabled.
+The one named plainly is `default`; a scenario is named \"<default name> · <scenario>\" (Get orders · empty).
+A scenario that does not exist and is a preset is created from the default mock, then switched on:
+  error500 (500) | error401 (401) | notfound (404) | empty (200 [] or {}) | slow (default answer + --delay,
+  3000 ms) | timeout (default answer + a 60000 ms delay, longer than common client timeouts)";
 
 const REQUESTS: &str = "Usage: bifurc requests <verb>
 
@@ -627,10 +641,11 @@ pub fn examples(group: &str) -> Option<&'static [&'static str]> {
             "bifurc capture mock #k3f9",
         ],
         "mocks" => &[
-            "bifurc mocks list",
             r#"bifurc mocks create http://api.localhost/users/1 --status 200 -d '{"id":1}' -H "Content-Type: application/json""#,
-            r#"bifurc mocks update "Get user" --status 500 --delay 800"#,
-            r#"bifurc mocks disable "Get user""#,
+            r#"bifurc mocks scenario "Get user" error500"#,
+            "bifurc mocks status",
+            r#"bifurc mocks hits "Get user" --last 5"#,
+            r#"bifurc mocks create --from-request "Get user" --name "Get user""#,
         ],
         "flows" => &[
             "bifurc flows list",

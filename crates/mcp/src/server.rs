@@ -363,7 +363,7 @@ mod tests {
                 "mocks_list",
                 "mocks_enable",
                 "mocks_disable",
-                "mocks_create",
+                "mocks_scenario",
                 "flows_list",
                 "flows_run",
                 "help",
