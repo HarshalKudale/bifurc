@@ -17,7 +17,7 @@ use tokio_rustls::TlsAcceptor;
 use super::pages::{build_home_page, build_not_mapped_page, build_unserved_page};
 use crate::{
     certificates::{apply_settings, listener_server_config},
-    kernel::traffic::{RequestLogEntry, emit_log},
+    kernel::traffic::{RequestLogEntry, emit_log, forwarded_headers, traceparent_trace_id},
     mocks::{
         UpstreamResponse, is_fully_mocked, is_streaming_mock, match_mock, merge_mock_with_upstream,
         resolve_mock_only_response, serve_mock, serve_resolved_response,
@@ -165,6 +165,7 @@ async fn route<W: AsyncRead + AsyncWrite + Unpin>(
         req_headers: headers.clone(),
         req_body,
         origin: Some("reverse".to_string()),
+        trace_id: traceparent_trace_id(&headers),
         ..Default::default()
     };
     let Some(cfg) = cfg else {
@@ -172,6 +173,7 @@ async fn route<W: AsyncRead + AsyncWrite + Unpin>(
         return;
     };
     base.workspace_id = Some(str_of(&cfg, "activeWorkspaceId").to_string());
+    let forwarded = forwarded_headers(&headers, &base.id);
 
     let routing = Routing::from_cfg(&cfg);
     let env = routing.env.as_ref();
@@ -224,7 +226,7 @@ async fn route<W: AsyncRead + AsyncWrite + Unpin>(
         };
         let target = mapping.target.as_deref().unwrap_or("");
         let upstream: Result<UpstreamResponse, String> =
-            crate::proxy::fetch_upstream_response(method, target, req_path, &headers, body, None, "").await;
+            crate::proxy::fetch_upstream_response(method, target, req_path, &forwarded, body, None, "").await;
         match upstream {
             Ok(upstream) => {
                 let merged = merge_mock_with_upstream(mock, &upstream, env);
@@ -256,7 +258,7 @@ async fn route<W: AsyncRead + AsyncWrite + Unpin>(
         Some(mapping) => {
             let target = mapping.target.as_deref().unwrap_or("");
             let via = if is_localhost_domain { "rfc6761" } else { "mapping" };
-            let outcome = proxy_to_upstream(out, method, target, req_path, &headers, body, Some(&base.id)).await;
+            let outcome = proxy_to_upstream(out, method, target, req_path, &forwarded, body, Some(&base.id)).await;
             if let Some(outcome) = outcome {
                 log_outcome(&base, via, Some(target.to_string()), outcome);
             }

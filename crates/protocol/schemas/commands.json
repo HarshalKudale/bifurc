@@ -601,6 +601,10 @@
      "minimum": 10,
      "maximum": 10000
     },
+    "traceHeader": {
+     "type": "string",
+     "maxLength": 64
+    },
     "minimizeToTray": {
      "type": "boolean"
     },
@@ -4331,6 +4335,9 @@
      "additionalProperties": {
       "type": "string"
      }
+    },
+    "logFile": {
+     "type": "string"
     }
    },
    "required": [
@@ -4426,6 +4433,44 @@
    "required": [
     "workspaceId",
     "name"
+   ],
+   "additionalProperties": false
+  },
+  "devservice.grep": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "needles": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     }
+    },
+    "probes": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     }
+    },
+    "context": {
+     "type": "integer",
+     "minimum": 0
+    },
+    "name": {
+     "type": "string"
+    },
+    "sinceTs": {
+     "type": "integer"
+    },
+    "untilTs": {
+     "type": "integer"
+    }
+   },
+   "required": [
+    "workspaceId",
+    "needles"
    ],
    "additionalProperties": false
   },

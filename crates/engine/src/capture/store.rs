@@ -50,6 +50,8 @@ struct Store {
     paused: HashSet<String>,
     /// The unpinned entries kept per workspace; read from the settings on first use, refreshed when they change.
     limit: Option<usize>,
+    /// The trace header name (`None` = off); outer `None` = not read yet.
+    trace_header: Option<Option<String>>,
 }
 
 static STORE: Mutex<Option<Store>> = Mutex::new(None);
@@ -95,6 +97,7 @@ pub fn refresh_capture_limit() {
     with_store(|store| {
         let limit = load_settings().capture_limit();
         store.limit = Some(limit);
+        store.trace_header = Some(load_settings().trace_header());
         let shrunk: Vec<String> = store
             .entries
             .iter_mut()
@@ -108,6 +111,11 @@ pub fn refresh_capture_limit() {
             schedule_write(store, &ws_id);
         }
     });
+}
+
+/// The header the proxies stamp the capture id into (`None` = off); cached like the limit.
+pub fn trace_header() -> Option<String> {
+    with_store(|store| store.trace_header.get_or_insert_with(|| load_settings().trace_header()).clone())
 }
 
 /// The limit in force.

@@ -82,6 +82,7 @@ const SCOPE_BY_COMMAND: &[(&str, Scope)] = &[
     ("devservice.remove", Scope::Write),
     ("devservice.list", Scope::Read),
     ("devservice.logs", Scope::Read),
+    ("devservice.grep", Scope::Read),
     ("devservice.up", Scope::Execute),
     ("devservice.down", Scope::Execute),
     ("devservice.freePort", Scope::Execute),
