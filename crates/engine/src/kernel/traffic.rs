@@ -23,7 +23,7 @@ pub struct RequestLogEntry {
     pub req_body: String,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub workspace_id: Option<String>,
-    /// `forward` | `reverse`
+    /// `forward` | `reverse` | `server` (the local mock server)
     #[serde(skip_serializing_if = "Option::is_none")]
     pub origin: Option<String>,
     pub status: Option<u16>,

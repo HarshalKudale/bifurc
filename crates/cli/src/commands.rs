@@ -561,7 +561,8 @@ pub fn status(ctx: &mut Context) -> Result<String> {
     let workspace = json!({ "workspaceId": active_id });
     let capture = ctx.request("capture.list", json!({ "workspaceId": active_id, "summary": true, "last": 0 })).ok();
     let cookies = ctx.request("cookies.list", workspace).ok();
-    let mut parts = StatusParts { server, config, capture, cookies };
+    let mock_servers = ctx.request("mocks.serveStatus", json!({})).ok();
+    let mut parts = StatusParts { server, config, capture, cookies, mock_servers };
     // In a named session the environment is the session's own, when it chose one.
     let session = crate::session::session_name(ctx.args)?;
     if session.is_some()
@@ -935,12 +936,13 @@ mod tests {
             ("config.get", Ok(cfg.clone())),
             ("capture.list", Ok(json!({"matched": 143, "paused": true}))),
             ("cookies.list", Ok(json!({"domains": [{"domain": "a"}]}))),
+            ("mocks.serveStatus", Ok(json!({"servers": [{"port": 4010}]}))),
         ];
         let (out, calls) = run(&argv, answers.clone(), status);
         assert_eq!(
             out.unwrap(),
             "engine 0.4.0 · proxy :8080 on · workspace Default · env Prod
-mocks 1 on · capture 143/200 paused · cookies 1 domain"
+mocks 1 on · mock server :4010 · capture 143/200 paused · cookies 1 domain"
         );
         assert_eq!(
             crate::testing::payloads(&calls, "capture.list")[0],

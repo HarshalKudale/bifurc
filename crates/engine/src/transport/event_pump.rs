@@ -31,7 +31,7 @@ pub fn to_log_entry_event(payload: &Value) -> Value {
         }
     }
     if let Some(origin) = e.get("origin").and_then(Value::as_str)
-        && (origin == "forward" || origin == "reverse")
+        && (origin == "forward" || origin == "reverse" || origin == "server")
     {
         out.insert("origin".into(), json!(origin));
     }

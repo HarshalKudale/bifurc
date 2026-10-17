@@ -597,6 +597,31 @@ pub fn catalog() -> Vec<Tool> {
         ],
     });
 
+    rows.push(Row {
+        name: "mocks_serve",
+        words: &["mocks", "serve"],
+        summary: "Serve the enabled mocks over plain HTTP on a local port, for clients that ignore proxy settings.",
+        details: "Runs until mocks_serve_stop or the engine exits. The host part of a mock's pattern is ignored. Unmatched requests get a 404 listing the closest mocks, or go to fallthrough.",
+        effect: Effect::Changes,
+        upfront: false,
+        scoped: true,
+        params: vec![
+            typed("port", "port", Type::Integer, "Port (default 4010; 0 picks a free one)."),
+            text("host", "host", "Address to listen on (default 127.0.0.1)."),
+            text("fallthrough", "fallthrough", "Base URL that unmatched requests go to, e.g. http://localhost:3000."),
+        ],
+    });
+    rows.push(Row {
+        name: "mocks_serve_stop",
+        words: &["mocks", "serve", "stop"],
+        summary: "Stop the local mock server (every one without a port).",
+        details: "",
+        effect: Effect::Changes,
+        upfront: false,
+        scoped: false,
+        params: vec![typed("port", "port", Type::Integer, "The server's port.")],
+    });
+
     // -- Mappings ---------------------------------------------------------------------------------------------
     rows.extend(group_rows("mappings"));
     rows.push(Row {

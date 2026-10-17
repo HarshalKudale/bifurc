@@ -99,7 +99,7 @@ fn status_matches(filter: &str, status: Option<u64>) -> bool {
 }
 
 /// The entries `capture.list` was asked for (newest first, as given) and how many matched before `last` cut them.
-/// Filters: `status`, `method`, `host` and `path` (glob), `since` (ms), `via` and `mockId` (one or several, comma-separated), `grep` (the URL or a decoded body).
+/// Filters: `status`, `method`, `host` and `path` (glob), `since` (ms), `origin`, `via` and `mockId` (one or several, comma-separated), `grep` (the URL or a decoded body).
 fn filter_entries(entries: Vec<Value>, params: &Value) -> (Vec<Value>, usize) {
     use base64::{Engine as _, engine::general_purpose::STANDARD};
     let text_of = |entry: &Value, key: &str| {
@@ -121,6 +121,7 @@ fn filter_entries(entries: Vec<Value>, params: &Value) -> (Vec<Value>, usize) {
                 && opt_str(params, "host").is_none_or(host_ok)
                 && opt_str(params, "path").is_none_or(|p| glob(p, &path))
                 && opt_str(params, "via").is_none_or(|v| v.split(',').any(|via| via == str_of(entry, "via")))
+                && opt_str(params, "origin").is_none_or(|o| str_of(entry, "origin") == o)
                 && opt_str(params, "mockId").is_none_or(|ids| {
                     let answered = str_of(entry, "target").strip_prefix("mock:").unwrap_or("");
                     ids.split(',').any(|id| id == answered)
@@ -210,6 +211,9 @@ mod tests {
         assert_eq!(ids(json!({ "mockId": "m1,m2" })), ["c", "a"]);
         assert_eq!(to_log_entry_event(&all[0])["mockId"], "m2");
         assert!(to_log_entry_event(&all[1]).get("mockId").is_none());
+        let sourced = vec![json!({ "id": "a", "origin": "server" }), json!({ "id": "b", "origin": "forward" })];
+        assert_eq!(filter_entries(sourced.clone(), &json!({ "origin": "server" })).0.len(), 1);
+        assert_eq!(to_log_entry_event(&sourced[0])["origin"], "server");
     }
 
     #[tokio::test]
