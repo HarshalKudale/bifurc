@@ -445,6 +445,9 @@ impl Session {
             state.identity.clone()
         };
         self.inner.pump.close();
+        if let Some(identity) = &identity {
+            crate::mocks::stop_owned_by(&identity.session_id);
+        }
         if let (Some(identity), Some(hook)) = (identity, &self.inner.opts.on_session_end) {
             hook(&identity);
         }
@@ -461,6 +464,7 @@ mod tests {
         let bus: &'static EngineEventBus = Box::leak(Box::new(EngineEventBus::new()));
         let mut registry = CommandRegistry::new();
         registry.register_sync("proxy.status", |_, _| Ok(json!({ "running": false })));
+        crate::mocks::register(&mut registry);
         let (tx, rx) = unbounded_channel();
         let opts = SessionOptions {
             registry: Arc::new(registry),
@@ -560,6 +564,22 @@ mod tests {
             Outbound::FrameThenClose(frame) => assert_eq!(frame["error"]["code"], "UNAUTHORIZED"),
             other => panic!("{other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn a_mock_server_started_in_a_session_stops_when_the_session_ends() {
+        let _root = crate::testing::scratch_data_root();
+        let (session, mut rx, _) = session();
+        session.handle_frame(hello());
+        frame(&mut rx).await;
+        session.handle_frame(
+            json!({ "id": "1", "action": "mocks.serve", "payload": { "workspaceId": "ws1", "port": 0 } }),
+        );
+        let port = frame(&mut rx).await["data"]["port"].as_u64().unwrap() as u16;
+        assert!(tokio::net::TcpStream::connect(("127.0.0.1", port)).await.is_ok());
+        session.close();
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        assert!(tokio::net::TcpStream::connect(("127.0.0.1", port)).await.is_err());
     }
 
     #[tokio::test]

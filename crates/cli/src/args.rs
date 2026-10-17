@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 /// Flags that take no value.
-const BOOLEAN_FLAGS: [&str; 31] = [
+const BOOLEAN_FLAGS: [&str; 33] = [
     "list",
     "yes",
     "ack",
@@ -35,6 +35,8 @@ const BOOLEAN_FLAGS: [&str; 31] = [
     "accept-terms",
     "accept-privacy",
     "skill",
+    "detach",
+    "stop",
 ];
 
 /// Single-letter aliases; any other letter stands for itself.
@@ -142,7 +144,10 @@ pub fn parse_args(argv: &[String]) -> Result<ParsedArgs, String> {
         let prints_curl = name == "curl"
             && matches!(parsed.positionals.as_slice(), [group, verb, ..]
                 if matches!(group.as_str(), "requests" | "request") && verb == "show");
-        if BOOLEAN_FLAGS.contains(&name.as_str()) || (name == "body" && sends) || prints_curl {
+        // `--status` is a status filter or a status code everywhere but `mocks serve --status`.
+        let asks_status = name == "status"
+            && matches!(parsed.positionals.as_slice(), [group, verb] if group == "mocks" && verb == "serve");
+        if BOOLEAN_FLAGS.contains(&name.as_str()) || (name == "body" && sends) || prints_curl || asks_status {
             parsed.add(&name, "true".to_string());
             continue;
         }

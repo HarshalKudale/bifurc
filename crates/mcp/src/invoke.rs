@@ -115,6 +115,10 @@ pub fn command_line(tool: &Tool, arguments: &Map<String, Value>) -> Result<Vec<S
             }
         }
     }
+    // An MCP call cannot block, so the mock server is always detached.
+    if tool.name == "mocks_serve" {
+        line.push("--detach".to_string());
+    }
     // After `--` nothing is an option, so an operand may start with a dash.
     if !operands.is_empty() {
         line.push("--".to_string());
@@ -292,6 +296,13 @@ mod tests {
     }
 
     #[test]
+    fn the_mock_server_tools_are_always_detached_or_stopping() {
+        let built = line("mocks_serve", json!({"port": 4010})).unwrap();
+        assert_eq!(built, ["mocks", "serve", "--port", "4010", "--detach"]);
+        assert_eq!(line("mocks_serve_stop", json!({})).unwrap(), ["mocks", "serve", "stop"]);
+    }
+
+    #[test]
     fn numbers_are_written_as_the_command_line_reads_them() {
         let built = line("mocks_update", json!({"mock": "m1", "status": 404, "delay": "250"})).unwrap();
         assert_eq!(built, ["mocks", "update", "--status", "404", "--delay", "250", "--", "m1"]);
@@ -433,6 +444,8 @@ mod tests {
             ("mocks_scenario", with(json!({"mock": "m1", "scenario": "slow", "delay": 500}))),
             ("mocks_status", all.clone()),
             ("mocks_hits", with(json!({"mock": "m1", "last": 3}))),
+            ("mocks_serve", with(json!({"port": 0, "host": "127.0.0.1", "fallthrough": "http://localhost:3000"}))),
+            ("mocks_serve_stop", with(json!({"port": 4010}))),
             (
                 "mocks_update",
                 with(

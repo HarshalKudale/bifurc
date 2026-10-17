@@ -140,6 +140,7 @@ fn dispatch(args: &ParsedArgs, data_dir: &Path, stdout: &mut dyn Write) -> Resul
         "env" => commands::env(&mut ctx, sub),
         "mappings" => entities::mappings(&mut ctx, sub),
         "rules" => entities::rules(&mut ctx, sub),
+        "mocks" if verb == "serve" => entities::serve(&mut ctx, stdout),
         "mocks" => entities::mocks(&mut ctx, sub),
         "requests" => {
             let done = requests::requests(&mut ctx, sub);
