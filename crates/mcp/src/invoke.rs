@@ -601,6 +601,13 @@ mod tests {
             ("services", with(json!({"verb": "up", "all": true, "wait": true, "timeout": "30s"}))),
             ("logs", with(json!({"name": "api", "errors": true, "since": "2m", "grep": "x", "last": 20}))),
             ("port_free", with(json!({"port": 3000, "kill": true}))),
+            (
+                "mail",
+                json!({"verb": "last", "to": "a@b.co", "link": true, "link_match": "/verify", "wait": "30s", "json": true}),
+            ),
+            ("mail", json!({"verb": "last", "otp": true})),
+            ("mail", json!({"verb": "list", "to": "a@b.co", "last": 5})),
+            ("mail", json!({"verb": "show", "id": "#k3f9", "html": true, "text": false})),
             ("changes", with(json!({"since": "2m", "mine": true}))),
             ("claim", with(json!({"kind": "mock", "name": "M", "release": true}))),
             ("claims", all.clone()),

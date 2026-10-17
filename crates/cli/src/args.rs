@@ -164,6 +164,9 @@ pub fn parse_args(argv: &[String]) -> Result<ParsedArgs, String> {
         // `services up --all` and `--wait` are switches (`--wait` takes a time on `requests send`).
         let services_switch = matches!(name.as_str(), "all" | "wait")
             && parsed.positionals.first().is_some_and(|group| matches!(group.as_str(), "services" | "service"));
+        // `mail show --html|--text`, `mail last --otp|--link` are switches.
+        let mail_switch = matches!(name.as_str(), "html" | "text" | "otp" | "link")
+            && parsed.positionals.first().is_some_and(|group| group == "mail");
         // `env auth <env> --off` is a switch (`--off` elsewhere takes true or false).
         let auth_off = name == "off"
             && matches!(parsed.positionals.as_slice(), [group, verb, ..] if group == "env" && verb == "auth");
@@ -187,6 +190,7 @@ pub fn parse_args(argv: &[String]) -> Result<ParsedArgs, String> {
             || prints_steps
             || contract_switch
             || services_switch
+            || mail_switch
             || auth_off
         {
             parsed.add(&name, "true".to_string());

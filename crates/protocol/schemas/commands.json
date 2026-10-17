@@ -605,6 +605,11 @@
      "type": "string",
      "maxLength": 64
     },
+    "mailPort": {
+     "type": "integer",
+     "minimum": 1,
+     "maximum": 65535
+    },
     "minimizeToTray": {
      "type": "boolean"
     },
@@ -4489,6 +4494,67 @@
    "required": [
     "port"
    ],
+   "additionalProperties": false
+  },
+  "mail.status": {
+   "type": "object",
+   "properties": {},
+   "additionalProperties": false
+  },
+  "mail.list": {
+   "type": "object",
+   "properties": {
+    "to": {
+     "type": "string"
+    },
+    "last": {
+     "type": "integer",
+     "minimum": 0
+    }
+   },
+   "additionalProperties": false
+  },
+  "mail.get": {
+   "type": "object",
+   "properties": {
+    "id": {
+     "type": "string"
+    },
+    "linkMatch": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "id"
+   ],
+   "additionalProperties": false
+  },
+  "mail.wait": {
+   "type": "object",
+   "properties": {
+    "to": {
+     "type": "string"
+    },
+    "sinceTs": {
+     "type": "integer"
+    },
+    "timeoutMs": {
+     "type": "integer",
+     "minimum": 0,
+     "maximum": 600000
+    },
+    "linkMatch": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "timeoutMs"
+   ],
+   "additionalProperties": false
+  },
+  "mail.clear": {
+   "type": "object",
+   "properties": {},
    "additionalProperties": false
   }
  }

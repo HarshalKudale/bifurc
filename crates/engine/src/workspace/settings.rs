@@ -15,6 +15,8 @@ pub const DEFAULT_FORWARD_PROXY_PORT: u16 = 8080;
 pub const DEFAULT_COMPANION_PORT: u16 = 4747;
 /// How many unpinned captured exchanges a workspace keeps, unless `captureLimit` says otherwise.
 pub const DEFAULT_CAPTURE_LIMIT: usize = 200;
+/// The SMTP port of the local mail sink, unless `mailPort` says otherwise.
+pub const DEFAULT_MAIL_PORT: u16 = 1025;
 /// The header that carries the capture id to the upstream, unless `traceHeader` says otherwise.
 pub const DEFAULT_TRACE_HEADER: &str = "x-bifurc-trace";
 /// Where the terms of service a first run asks the user to accept are published.
@@ -57,6 +59,11 @@ impl AppSettings {
 
     pub fn companion_port(&self) -> u16 {
         self.port_field("companionPort", DEFAULT_COMPANION_PORT)
+    }
+
+    /// The port of the local mail sink (`mailPort`, not written into the defaults).
+    pub fn mail_port(&self) -> u16 {
+        self.port_field("mailPort", DEFAULT_MAIL_PORT)
     }
 
     /// How many unpinned captured exchanges a workspace keeps (10 to 10000; anything else is the default).
