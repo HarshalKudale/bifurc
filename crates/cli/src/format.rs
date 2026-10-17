@@ -66,6 +66,22 @@ pub fn table(rows: &[Value], columns: &[&str]) -> String {
     lines.join("\n")
 }
 
+/// Rows of cells as columns padded to the widest cell, two spaces apart, with no heading.
+pub fn aligned(cells: &[Vec<String>]) -> String {
+    let columns = cells.iter().map(Vec::len).max().unwrap_or(0);
+    let widths: Vec<usize> =
+        (0..columns).map(|i| cells.iter().filter_map(|row| row.get(i)).map(|c| width(c)).max().unwrap_or(0)).collect();
+    let lines: Vec<String> = cells
+        .iter()
+        .map(|row| {
+            let padded: Vec<String> =
+                row.iter().enumerate().map(|(i, c)| format!("{c}{}", " ".repeat(widths[i] - width(c)))).collect();
+            padded.join("  ").trim_end().to_string()
+        })
+        .collect();
+    lines.join("\n")
+}
+
 /// A WebSocket connection as printed by `requests send`: its state, then what was sent (`>`) and received (`<`).
 pub fn describe_socket(snapshot: &Value) -> String {
     let mut lines =

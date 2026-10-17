@@ -191,22 +191,33 @@ pub fn size(bytes: usize) -> String {
     }
 }
 
-/// Whether a header of this name holds a secret that is not printed.
-fn sensitive(name: &str) -> bool {
-    let name = name.to_ascii_lowercase();
+/// Whether something of this name (a header, a variable) holds a secret that is not printed.
+pub fn is_sensitive_name(name: &str) -> bool {
+    // `API_KEY` and `api-key` are the same name.
+    let name = name.to_ascii_lowercase().replace('_', "-");
     ["authorization", "proxy-authorization", "cookie", "set-cookie", "x-api-key", "x-auth-token"]
         .contains(&name.as_str())
-        || ["token", "secret", "api-key", "apikey", "session"].iter().any(|word| name.contains(word))
+        || ["token", "secret", "api-key", "apikey", "session", "password"].iter().any(|word| name.contains(word))
+}
+
+/// `••••(<length>)`: a secret as it is printed.
+pub fn mask(value: &str) -> String {
+    format!("••••({})", value.chars().count())
 }
 
 /// `value`, or `••••(<length>)` when a header of this name holds a secret.
 pub fn mask_header(name: &str, value: &str) -> String {
-    if sensitive(name) { format!("••••({})", value.chars().count()) } else { value.to_string() }
+    if is_sensitive_name(name) { mask(value) } else { value.to_string() }
+}
+
+/// Whether `--reveal` was given where a person reads: secrets never go to a pipe.
+pub fn revealed(args: &crate::args::ParsedArgs) -> bool {
+    args.has("reveal") && std::io::stdout().is_terminal()
 }
 
 /// The short name of a body's type: json, html, xml, text, js, css, form, binary or the subtype; with no
 /// content type it is guessed from the body ("" for an empty one).
-fn short_type(content_type: &str, body: &[u8]) -> String {
+pub(crate) fn short_type(content_type: &str, body: &[u8]) -> String {
     let essence = content_type.split(';').next().unwrap_or_default().trim().to_ascii_lowercase();
     let binary_type = ["image/", "audio/", "video/", "font/"].iter().any(|prefix| essence.starts_with(prefix))
         || matches!(essence.as_str(), "application/octet-stream" | "application/pdf" | "application/zip");
@@ -329,7 +340,7 @@ pub fn present(ctx: &mut Context, response: &Response) -> Result<String> {
         (Some(limit), Some(text)) if !text.is_empty() => Some(preview(text, limit)),
         _ => None,
     };
-    let reveal = args.has("reveal") && std::io::stdout().is_terminal();
+    let reveal = revealed(args);
     let headers: Option<Vec<(&str, String)>> = args.has("headers").then(|| {
         let shown = |name: &str, value: &str| if reveal { value.to_string() } else { mask_header(name, value) };
         response.headers.iter().map(|(name, value)| (name.as_str(), shown(name, value))).collect()

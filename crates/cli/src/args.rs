@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 /// Flags that take no value.
-const BOOLEAN_FLAGS: [&str; 18] = [
+const BOOLEAN_FLAGS: [&str; 19] = [
     "yes",
     "ack",
     "json",
@@ -22,6 +22,7 @@ const BOOLEAN_FLAGS: [&str; 18] = [
     "raw",
     "quiet",
     "reveal",
+    "ids",
 ];
 
 /// Single-letter aliases; any other letter stands for itself.
@@ -124,7 +125,11 @@ pub fn parse_args(argv: &[String]) -> Result<ParsedArgs, String> {
             if matches!(group.as_str(), "requests" | "request") && verb == "send")
             || parsed.positionals.first().is_some_and(|group| group == "curl");
         let name = if name == "body" && !sends { "data".to_string() } else { name };
-        if BOOLEAN_FLAGS.contains(&name.as_str()) || (name == "body" && sends) {
+        // `--curl` prints a saved request as a command there; `requests create` takes the command as its value.
+        let prints_curl = name == "curl"
+            && matches!(parsed.positionals.as_slice(), [group, verb, ..]
+                if matches!(group.as_str(), "requests" | "request") && verb == "show");
+        if BOOLEAN_FLAGS.contains(&name.as_str()) || (name == "body" && sends) || prints_curl {
             parsed.add(&name, "true".to_string());
             continue;
         }

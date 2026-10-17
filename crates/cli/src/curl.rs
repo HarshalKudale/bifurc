@@ -296,7 +296,7 @@ pub fn split(argv: &[String]) -> Result<(ParsedArgs, Curl)> {
 
 /// `value` as one word of a POSIX shell: single quotes (`'` as `'\''`), or `$'…'` when it holds a control
 /// character, so the command stays on one line.
-fn quote(value: &str) -> String {
+pub(crate) fn quote(value: &str) -> String {
     if !value.is_empty() && value.chars().all(|c| c.is_ascii_alphanumeric() || "_@%+=:,./-".contains(c)) {
         return value.to_string();
     }

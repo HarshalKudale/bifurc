@@ -15,9 +15,10 @@ use crate::{
         Context, body_from, created, find_one, header_flags, id_of, list_entities, merge_headers, need, refused,
         text_from, unknown_verb, with_field, workspace_id,
     },
+    curl::quote,
     error::{CliError, Result},
-    format::{describe_reflection, describe_socket, js_template, json, table},
-    response::{Response, present},
+    format::{aligned, describe_reflection, describe_socket, js_template, json},
+    response::{Response, mask_header, present, revealed, short_type, size},
 };
 
 /// One type of request.
@@ -184,24 +185,6 @@ fn tagged(ty: &RequestType, entity: &Value) -> Value {
 
 pub(crate) fn text(entity: &Value, key: &str) -> String {
     entity.get(key).and_then(Value::as_str).unwrap_or_default().to_string()
-}
-
-/// What the table shows of a request: the same columns whatever its type.
-fn row(ty: &RequestType, entity: &Value) -> Value {
-    let method = match ty.name {
-        "rest" => text(entity, "method"),
-        "graphql" => text(entity, "operationName"),
-        "grpc" => format!("{}/{}", text(entity, "serviceName"), text(entity, "methodName")),
-        "soap" => text(entity, "soapAction"),
-        "sse" => text(entity, "method"),
-        "socketio" => text(entity, "namespace"),
-        "mcp" => text(entity, "transport"),
-        _ => String::new(),
-    };
-    json!({
-        "id": entity.get("id"), "type": ty.name, "name": entity.get("name"), "method": method,
-        "url": text(entity, ty.url_key),
-    })
 }
 
 /// Every saved request of `types`, each with its type.
@@ -581,27 +564,184 @@ fn socket_exchange(ctx: &mut Context, workspace: &str, socket_id: &str, target: 
 }
 
 /// `requests list|show|create|update|send|reflect`.
+/// What the list's second column says of a request: its method, else its type in capitals.
+fn kind_label(ty: &RequestType, entity: &Value) -> String {
+    match ty.name {
+        "rest" | "sse" => text(entity, "method").to_uppercase(),
+        "soap" => "SOAP".into(),
+        "websocket" => "WS".into(),
+        "socketio" => "SIO".into(),
+        other => other.to_uppercase(),
+    }
+}
+
+/// What the list's third column says of a request: its URL without a leading `{{variable}}`, a gRPC
+/// request's `service/method`.
+fn list_url(ty: &RequestType, entity: &Value) -> String {
+    if ty.name == "grpc" {
+        return format!("{}/{}", text(entity, "serviceName"), text(entity, "methodName"));
+    }
+    let url = text(entity, ty.url_key);
+    match url.strip_prefix("{{").and_then(|rest| rest.split_once("}}")) {
+        Some((_, rest)) if !rest.is_empty() => rest.to_string(),
+        _ => url,
+    }
+}
+
+/// The path (`a/b/`) of every request folder by id, from the engine's folder tree.
+fn folder_paths(ctx: &mut Context) -> Result<std::collections::HashMap<String, String>> {
+    let config = ctx.request("config.get", json!({}))?;
+    let folders = config.get("requestFolders").and_then(Value::as_array).cloned().unwrap_or_default();
+    let by_id: std::collections::HashMap<String, &Value> = folders.iter().map(|f| (text(f, "id"), f)).collect();
+    Ok(by_id
+        .keys()
+        .map(|id| {
+            let (mut names, mut at) = (Vec::new(), Some(id.as_str()));
+            // The depth cap stops a parent loop in a damaged tree.
+            while let Some(folder) = at.and_then(|id| by_id.get(id)).filter(|_| names.len() < 32) {
+                names.push(text(folder, "name"));
+                at = folder.get("parentId").and_then(Value::as_str);
+            }
+            names.reverse();
+            (id.clone(), format!("{}/", names.join("/")))
+        })
+        .collect())
+}
+
+/// `requests show` for people: the line a request sends, where it is saved, then what it holds.
+fn describe(ty: &RequestType, entity: &Value, folder: &str) -> String {
+    let mut first = vec![kind_label(ty, entity), text(entity, ty.url_key)];
+    match ty.name {
+        "grpc" => first.push(format!("{}/{}", text(entity, "serviceName"), text(entity, "methodName"))),
+        "graphql" if !text(entity, "operationName").is_empty() => first.push(text(entity, "operationName")),
+        _ => {}
+    }
+    let place = if folder.is_empty() { String::new() } else { format!(" · {folder}") };
+    let mut lines = vec![first.join(" "), format!("{}{place} · id {}", ty.name, id_of(entity))];
+    let headers = entity.get(ty.headers_key).and_then(Value::as_object);
+    let names: Vec<&str> = headers.map(|h| h.keys().map(String::as_str).collect()).unwrap_or_default();
+    if !names.is_empty() {
+        lines.push(format!("headers  {}", names.join(", ")));
+    }
+    let body = text(entity, body_field(ty));
+    if !body.is_empty() && !matches!(body.trim(), "{}" | "null") {
+        let content_type = headers
+            .and_then(|h| h.iter().find(|(name, _)| name.eq_ignore_ascii_case("content-type")))
+            .map(|(_, value)| js_template(Some(value)))
+            .unwrap_or_default();
+        let kind = short_type(&content_type, body.as_bytes());
+        lines.push(format!("body     {} {kind}", size(body.len())).trim_end().to_string());
+    }
+    let scripts: Vec<&str> = [("preScript", "pre"), ("postScript", "post"), ("testScript", "test")]
+        .iter()
+        .filter(|(key, _)| !text(entity, key).trim().is_empty())
+        .map(|(_, name)| *name)
+        .collect();
+    if !scripts.is_empty() {
+        lines.push(format!("scripts  {}", scripts.join(", ")));
+    }
+    lines.join("\n")
+}
+
+/// `requests show --curl`: a REST request as a curl command, its variables resolved by the engine and its
+/// secret header values masked unless `--reveal` is given at a terminal.
+fn curl_command(ctx: &mut Context, workspace: &str, ty: &RequestType, entity: &Value) -> Result<String> {
+    if ty.name != "rest" {
+        return Err(CliError::usage("only REST requests print as curl"));
+    }
+    let reveal = revealed(ctx.args);
+    let mut resolve = |text: &str| -> Result<String> {
+        let answer = ctx.request("env.resolveText", json!({ "workspaceId": workspace, "text": text }))?;
+        Ok(answer.get("text").and_then(Value::as_str).unwrap_or(text).to_string())
+    };
+    let method = text(entity, "method").to_uppercase();
+    let mut words = vec!["curl".to_string()];
+    if !method.is_empty() && method != "GET" {
+        words.extend(["-X".to_string(), method]);
+    }
+    words.push(quote(&resolve(&text(entity, "url"))?));
+    for (name, value) in entity.get("headers").and_then(Value::as_object).into_iter().flatten() {
+        let value = resolve(&js_template(Some(value)))?;
+        let value = if reveal { value } else { mask_header(name, &value) };
+        words.extend(["-H".to_string(), quote(&format!("{name}: {value}"))]);
+    }
+    let body = text(entity, "body");
+    if !body.is_empty() {
+        words.extend(["--data-raw".to_string(), quote(&resolve(&body)?)]);
+    }
+    Ok(words.join(" "))
+}
+
 pub fn requests(ctx: &mut Context, sub: Option<&str>) -> Result<String> {
     let args = ctx.args;
     let mut describing = describing_options();
     describing.push("type");
     match sub.unwrap_or("list") {
         "list" => {
-            ctx.accept(&["type"], 0)?;
+            ctx.accept(&["type", "folder", "grep", "ids"], 0)?;
             let types = types_of(args)?;
             let workspace = workspace_id(ctx)?;
             let all = saved(ctx, &workspace, &types)?;
-            let entities: Vec<Value> = all.iter().map(|(ty, entity)| tagged(ty, entity)).collect();
-            let rows: Vec<Value> = all.iter().map(|(ty, entity)| row(ty, entity)).collect();
-            Ok(ctx.print(&Value::Array(entities), || table(&rows, &["id", "type", "name", "method", "url"])))
+            let folders = folder_paths(ctx)?;
+            let folder = args.flag("folder").map(|f| f.trim_matches('/').to_lowercase());
+            let grep = args.flag("grep").map(str::to_lowercase);
+            let mut kept: Vec<(String, &RequestType, &Value)> = all
+                .iter()
+                .map(|(ty, entity)| (folders.get(&text(entity, "folderId")).cloned().unwrap_or_default(), *ty, entity))
+                .filter(|(path, ty, entity)| {
+                    let path = path.to_lowercase();
+                    let in_folder = folder
+                        .as_deref()
+                        .is_none_or(|f| path.trim_end_matches('/') == f || path.starts_with(&format!("{f}/")));
+                    let found = grep.as_deref().is_none_or(|g| {
+                        [text(entity, "name"), text(entity, ty.url_key), kind_label(ty, entity)]
+                            .iter()
+                            .any(|field| field.to_lowercase().contains(g))
+                    });
+                    in_folder && found
+                })
+                .collect();
+            kept.sort_by_cached_key(|(path, _, entity)| (path.to_lowercase(), text(entity, "name").to_lowercase()));
+            let entities: Vec<Value> = kept
+                .iter()
+                .map(|(path, ty, entity)| with_field(&tagged(ty, entity), "folderPath", json!(path)))
+                .collect();
+            Ok(ctx.print(&Value::Array(entities), || {
+                if kept.is_empty() {
+                    return "(none)".to_string();
+                }
+                // With no folder anywhere the first column would only be blank space.
+                let folderless = kept.iter().all(|(path, ..)| path.is_empty());
+                let cells: Vec<Vec<String>> = kept
+                    .iter()
+                    .map(|(path, ty, entity)| {
+                        let mut cells = vec![kind_label(ty, entity), list_url(ty, entity), text(entity, "name")];
+                        if !folderless {
+                            cells.insert(0, path.clone());
+                        }
+                        if args.has("ids") {
+                            cells.insert(0, id_of(entity));
+                        }
+                        cells
+                    })
+                    .collect();
+                aligned(&cells)
+            }))
         }
         "show" => {
-            ctx.accept(&["type"], 1)?;
+            ctx.accept(&["type", "curl", "reveal"], 1)?;
             let wanted = need(args.positional(2), "request id or name")?;
             let workspace = workspace_id(ctx)?;
             let (ty, entity) = find(ctx, &workspace, &wanted)?;
+            if args.has("curl") {
+                return curl_command(ctx, &workspace, ty, &entity);
+            }
             let entity = tagged(ty, &entity);
-            Ok(ctx.print(&entity, || json(&entity)))
+            if ctx.json {
+                return Ok(json(&entity));
+            }
+            let folders = folder_paths(ctx)?;
+            Ok(describe(ty, &entity, folders.get(&text(&entity, "folderId")).map_or("", String::as_str)))
         }
         "create" | "add" => {
             describing.push("curl");
@@ -846,21 +986,71 @@ mod tests {
     }
 
     #[test]
-    fn list_shows_every_type_in_the_same_columns() {
+    fn list_shows_every_type_in_the_same_columns_sorted_by_name() {
         let argv = ["requests"];
         let (out, _) = run(&argv, saved_requests(), |c| requests(c, None));
         assert_eq!(
             out.unwrap(),
-            "ID  TYPE       NAME    METHOD                URL\n\
-             r1  rest       Ping    GET                   http://x/ping\n\
-             q1  graphql    Viewer  Viewer                http://x/graphql\n\
-             g1  grpc       Hello   pkg.Greeter/SayHello  localhost:50051\n\
-             s1  soap       Add     urn:Add               http://x/soap\n\
-             k1  websocket  Feed                          ws://x/feed\n\
-             e1  sse        Events  GET                   http://x/events\n\
-             i1  socketio   Chat    /chat                 http://x\n\
-             m1  mcp        Tools   stdio                 npx my-server"
+            "SOAP     http://x/soap         Add\n\
+             SIO      http://x              Chat\n\
+             GET      http://x/events       Events\n\
+             WS       ws://x/feed           Feed\n\
+             GRPC     pkg.Greeter/SayHello  Hello\n\
+             GET      http://x/ping         Ping\n\
+             MCP      npx my-server         Tools\n\
+             GRAPHQL  http://x/graphql      Viewer"
         );
+    }
+
+    /// Requests in folders `auth/`, `auth/admin/`, `orders/` and the root.
+    fn foldered() -> Vec<Answer> {
+        let mut answers = saved_requests();
+        answers[0] = (
+            "config.get",
+            Ok(json!({"activeWorkspaceId": "w1", "requestFolders": [
+                {"id": "f1", "name": "auth", "parentId": null},
+                {"id": "f2", "name": "admin", "parentId": "f1"},
+                {"id": "f3", "name": "orders", "parentId": null}]})),
+        );
+        answers[1] = (
+            "entity.list:requests",
+            listing(json!([
+                {"id": "a", "name": "Login", "method": "POST", "url": "{{baseUrl}}/login", "folderId": "f1"},
+                {"id": "b", "name": "Create user", "method": "POST", "url": "{{baseUrl}}/users", "folderId": "f1"},
+                {"id": "c", "name": "Get order", "method": "GET", "url": "{{baseUrl}}/orders/{{id}}", "folderId": "f3"},
+                {"id": "d", "name": "Ban", "method": "DELETE", "url": "http://x/ban", "folderId": "f2"},
+                {"id": "e", "name": "Root one", "method": "GET", "url": "{{baseUrl}}"}])),
+        );
+        answers
+    }
+
+    fn list_of(extra: &[&str]) -> String {
+        let argv = [&["requests", "list", "--type", "rest"], extra].concat();
+        run(&argv, foldered(), |c| requests(c, sub(&argv))).0.unwrap()
+    }
+
+    #[test]
+    fn list_has_the_folder_method_url_without_a_leading_variable_and_name() {
+        let want = [
+            "             GET     {{baseUrl}}     Root one",
+            "auth/        POST    /users          Create user",
+            "auth/        POST    /login          Login",
+            "auth/admin/  DELETE  http://x/ban    Ban",
+            "orders/      GET     /orders/{{id}}  Get order",
+        ];
+        assert_eq!(list_of(&[]), want.join("\n"));
+    }
+
+    #[test]
+    fn list_filters_by_folder_and_text_and_can_show_ids() {
+        assert_eq!(list_of(&["--folder", "AUTH/"]).lines().count(), 3);
+        assert_eq!(list_of(&["--folder", "auth/admin"]), "auth/admin/  DELETE  http://x/ban  Ban");
+        assert_eq!(list_of(&["--folder", "adm"]), "(none)");
+        assert_eq!(list_of(&["--grep", "LOGIN"]), "auth/  POST  /login  Login");
+        assert_eq!(list_of(&["--grep", "delete"]), "auth/admin/  DELETE  http://x/ban  Ban");
+        assert_eq!(list_of(&["--grep", "/orders", "--ids"]), "c  orders/  GET  /orders/{{id}}  Get order");
+        let json: Value = serde_json::from_str(&list_of(&["--json", "--folder", "orders"])).unwrap();
+        assert_eq!(json[0]["folderPath"], "orders/");
     }
 
     #[test]
@@ -868,12 +1058,13 @@ mod tests {
         let argv = ["requests", "list", "--type", "grpc", "--json"];
         let (out, calls) = run(&argv, saved_requests(), |c| requests(c, sub(&argv)));
         let listed: Value = serde_json::from_str(&out.unwrap()).unwrap();
-        assert_eq!(listed, json!([with_field(&grpc(), "type", json!("grpc"))]));
+        let want = with_field(&with_field(&grpc(), "type", json!("grpc")), "folderPath", json!(""));
+        assert_eq!(listed, json!([want]));
         assert_eq!(payloads(&calls, "entity.list"), [json!({"workspaceId": "w1", "kind": "grpcRequests"})]);
 
         let argv = ["requests", "list", "-t", "ws"];
         let (out, _) = run(&argv, saved_requests(), |c| requests(c, sub(&argv)));
-        assert_eq!(out.unwrap(), "ID  TYPE       NAME  METHOD  URL\nk1  websocket  Feed          ws://x/feed");
+        assert_eq!(out.unwrap(), "WS  ws://x/feed  Feed");
 
         let argv = ["requests", "list", "--type", "carrier-pigeon"];
         let (out, calls) = run(&argv, saved_requests(), |c| requests(c, sub(&argv)));
@@ -896,7 +1087,7 @@ mod tests {
             ("chat", "socketio"),
             ("tools", "mcp"),
         ] {
-            let argv = ["requests", "show", wanted];
+            let argv = ["requests", "show", wanted, "--json"];
             let (out, _) = run(&argv, saved_requests(), |c| requests(c, sub(&argv)));
             assert_eq!(serde_json::from_str::<Value>(&out.unwrap()).unwrap()["type"], ty, "{wanted}");
         }
@@ -909,6 +1100,58 @@ mod tests {
         let argv = ["requests", "show"];
         let (out, _) = run(&argv, vec![], |c| requests(c, sub(&argv)));
         assert_eq!(out.unwrap_err(), CliError::usage("missing request id or name"));
+    }
+
+    #[test]
+    fn a_misspelt_name_suggests_the_close_ones() {
+        let argv = ["requests", "show", "Logn"];
+        let (out, _) = run(&argv, foldered(), |c| requests(c, sub(&argv)));
+        assert_eq!(out.unwrap_err(), CliError::not_found("no request \"Logn\" — did you mean \"Login\"?"));
+    }
+
+    fn show_of(wanted: &str, extra: &[&str]) -> (Result<String>, Vec<(String, Value)>) {
+        let mut answers = foldered();
+        answers[1] = (
+            "entity.list:requests",
+            listing(json!([{"id": "mvbzxzympjvgk", "name": "Get orders", "method": "GET", "folderId": "f3",
+                "url": "{{baseUrl}}/orders.json",
+                "headers": {"Authorization": "Bearer abcdef", "Content-Type": "application/json"},
+                "body": "{\"a\":1,\"b\":\"two\",\"c\":[1,2,3]}", "preScript": "x", "testScript": "y"}])),
+        );
+        answers.push(("env.resolveText", Ok(json!({"text": "resolved"}))));
+        let argv = [&["requests", "show", wanted], extra].concat();
+        run(&argv, answers, |c| requests(c, sub(&argv)))
+    }
+
+    #[test]
+    fn show_is_a_compact_summary_of_what_applies() {
+        assert_eq!(
+            show_of("get orders", &[]).0.unwrap(),
+            "GET {{baseUrl}}/orders.json\n\
+             rest · orders/ · id mvbzxzympjvgk\n\
+             headers  Authorization, Content-Type\n\
+             body     29B json\n\
+             scripts  pre, test"
+        );
+        let argv = ["requests", "show", "Feed"];
+        let (out, _) = run(&argv, saved_requests(), |c| requests(c, sub(&argv)));
+        assert_eq!(out.unwrap(), "WS ws://x/feed\nwebsocket · id k1");
+    }
+
+    #[test]
+    fn show_curl_resolves_variables_masks_secrets_and_is_for_rest_only() {
+        let (out, calls) = show_of("Get orders", &["--curl"]);
+        assert_eq!(
+            out.unwrap(),
+            "curl resolved -H 'Authorization: ••••(8)' -H 'Content-Type: resolved' --data-raw resolved"
+        );
+        assert_eq!(
+            payloads(&calls, "env.resolveText")[0],
+            json!({"workspaceId": "w1", "text": "{{baseUrl}}/orders.json"})
+        );
+        let argv = ["requests", "show", "Hello", "--curl"];
+        let (out, _) = run(&argv, saved_requests(), |c| requests(c, sub(&argv)));
+        assert_eq!(out.unwrap_err(), CliError::usage("only REST requests print as curl"));
     }
 
     #[test]
