@@ -13,6 +13,8 @@ use crate::utils::json::{read_json, write_json_pretty};
 pub const DEFAULT_REVERSE_PROXY_PORT: u16 = 80;
 pub const DEFAULT_FORWARD_PROXY_PORT: u16 = 8080;
 pub const DEFAULT_COMPANION_PORT: u16 = 4747;
+/// How many unpinned captured exchanges a workspace keeps, unless `captureLimit` says otherwise.
+pub const DEFAULT_CAPTURE_LIMIT: usize = 200;
 /// Where the terms of service a first run asks the user to accept are published.
 pub const TERMS_OF_SERVICE_URL: &str = "https://bifurc.app/tos";
 /// Where the privacy policy a first run asks the user to accept is published.
@@ -53,6 +55,12 @@ impl AppSettings {
 
     pub fn companion_port(&self) -> u16 {
         self.port_field("companionPort", DEFAULT_COMPANION_PORT)
+    }
+
+    /// How many unpinned captured exchanges a workspace keeps (10 to 10000; anything else is the default).
+    pub fn capture_limit(&self) -> usize {
+        let limit = self.0.get("captureLimit").and_then(Value::as_u64).and_then(|n| usize::try_from(n).ok());
+        limit.filter(|n| (10..=10_000).contains(n)).unwrap_or(DEFAULT_CAPTURE_LIMIT)
     }
 
     pub fn tls_enabled(&self) -> bool {

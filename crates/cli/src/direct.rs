@@ -686,6 +686,7 @@ pub fn verbs() -> Vec<Verb> {
             option("port", "port", Take::Int, "The reverse proxy's port, where <sub>.localhost is served."),
             option("forwardport", "forwardProxyPort", Take::Int, "The forward proxy's port."),
             option("companionport", "companionPort", Take::Int, "The port the browser extension connects to."),
+            option("capturelimit", "captureLimit", Take::Int, "How many unpinned captured requests are kept (10-10000)."),
             option(
                 "https",
                 "tlsEnabled",
@@ -1065,7 +1066,7 @@ mod tests {
                 }
                 for arg in row.args.iter().filter(|arg| all || arg.required) {
                     let value = match arg.take {
-                        Take::Int => json!(1),
+                        Take::Int => json!(10),
                         Take::Bool => json!(true),
                         Take::Choice(words) => json!(words[0]),
                         Take::Json => json!({"name": "x"}),
