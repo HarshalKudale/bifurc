@@ -464,6 +464,168 @@ fn parse_openapi(source: &ImportSource) -> Result<Collection, String> {
     Ok(out)
 }
 
+// ── OpenAPI as a contract source ───────────────────────────────────────────────────────────────────────
+
+/// The path prefix the spec's server (OpenAPI 3) or `basePath` (Swagger 2) puts before its paths.
+fn base_path(spec: &Value) -> String {
+    let base = base_url(spec);
+    let rest = base.strip_prefix("{{baseUrl}}").map(str::to_string).unwrap_or_else(|| {
+        let after = base.split_once("://").map_or(base.as_str(), |(_, rest)| rest);
+        after.find('/').map_or(String::new(), |at| after[at..].to_string())
+    });
+    rest.trim_end_matches('/').to_string()
+}
+
+/// The skeleton of a JSON value that fits `schema`: strings `""`, numbers `0`, booleans `false`, arrays
+/// `[element]`, objects of their properties; `None` when the schema says nothing (the key is then left out).
+/// Rule: an object with a `required` list is held to those properties only (a mock may omit an optional one);
+/// without a `required` list every property counts. allOf is merged, oneOf/anyOf take the first branch, a `$ref`
+/// is followed within the document and a cycle stops at the reference that closes it.
+fn skeleton_of(spec: &Value, schema: &Value, at: &mut At) -> Option<Value> {
+    if at.stack.len() > 12 || !schema.is_object() {
+        return None;
+    }
+    let reference = opt_str(schema, "$ref").map(str::to_string);
+    if let Some(r) = &reference {
+        if at.stack.contains(r) {
+            return None;
+        }
+        at.stack.push(r.clone());
+    }
+    let out = skeleton_body(spec, resolve(spec, schema), at);
+    if reference.is_some() {
+        at.stack.pop();
+    }
+    out
+}
+
+/// Where `skeleton_of` is: the `$ref`s being followed, the path as the CLI's shape diff prints it, and the
+/// declared-but-not-required properties met so far (a mock may carry those, so a `-` line for them is no drift).
+#[derive(Default)]
+struct At {
+    stack: Vec<String>,
+    path: String,
+    optional: Vec<String>,
+}
+
+/// A key appended to a shape path, as `cli/src/shape.rs` writes it.
+fn key_path(path: &str, key: &str) -> String {
+    let bare = !key.is_empty() && !key.chars().any(|c| c.is_whitespace() || ".[]|=!<>\"".contains(c));
+    if bare { format!("{path}.{key}") } else { format!("{path}.[{}]", Value::String(key.into())) }
+}
+
+fn skeleton_body(spec: &Value, schema: &Value, at: &mut At) -> Option<Value> {
+    let types: Vec<&str> = match schema.get("type") {
+        Some(Value::String(t)) => vec![t.as_str()],
+        Some(Value::Array(list)) => list.iter().filter_map(Value::as_str).collect(),
+        _ => Vec::new(),
+    };
+    let mut fields = Map::new();
+    let mut is_object = types.contains(&"object") || schema.get("properties").is_some();
+    if let Some(parts) = schema.get("allOf").and_then(Value::as_array) {
+        for part in parts {
+            if let Some(Value::Object(inner)) = skeleton_of(spec, part, at) {
+                is_object = true;
+                fields.extend(inner);
+            }
+        }
+    }
+    if is_object {
+        let required: Option<Vec<&str>> =
+            schema.get("required").and_then(Value::as_array).map(|r| r.iter().filter_map(Value::as_str).collect());
+        for (name, property) in schema.get("properties").and_then(Value::as_object).into_iter().flatten() {
+            if required.as_ref().is_some_and(|r| !r.contains(&name.as_str())) {
+                at.optional.push(key_path(&at.path, name));
+                continue;
+            }
+            let inner = key_path(&at.path, name);
+            let outer = std::mem::replace(&mut at.path, inner);
+            let value = skeleton_of(spec, property, at);
+            at.path = outer;
+            if let Some(value) = value {
+                fields.insert(name.clone(), value);
+            }
+        }
+        return Some(Value::Object(fields));
+    }
+    if let Some(first) = ["oneOf", "anyOf"].iter().find_map(|key| schema.get(key).and_then(|list| list.get(0))) {
+        return skeleton_of(spec, first, at);
+    }
+    // No type: an `items` is an array, an enum is typed by its first value.
+    let ty = types.iter().find(|t| **t != "null").copied().or_else(|| {
+        if schema.get("items").is_some() {
+            Some("array")
+        } else {
+            schema.get("enum").and_then(|e| e.get(0)).map(|v| match v {
+                Value::String(_) => "string",
+                Value::Bool(_) => "boolean",
+                _ => "number",
+            })
+        }
+    });
+    match ty {
+        Some("string") => Some(json!("")),
+        Some("number" | "integer") => Some(json!(0)),
+        Some("boolean") => Some(json!(false)),
+        Some("array") => {
+            let inner = format!("{}[]", at.path);
+            let outer = std::mem::replace(&mut at.path, inner);
+            let element = schema.get("items").and_then(|items| skeleton_of(spec, items, at));
+            at.path = outer;
+            Some(Value::Array(element.into_iter().collect()))
+        }
+        None if types == ["null"] => Some(Value::Null),
+        _ => None,
+    }
+}
+
+/// Every 2xx response of every operation as `{method, path, status, contentType, body}`: `path` as the spec writes
+/// it (`/orders/{id}`, without the base path), `contentType` the media type of the JSON body or else the first
+/// one (empty when none), `body` its skeleton (null when there is no JSON schema), `optional` the shape paths of the properties the
+/// schema declares but does not require (left out of the skeleton).
+pub fn contract_operations(text: &str) -> Result<Value, String> {
+    let spec = parse_any(text)?;
+    if !spec.get("openapi").is_some_and(is_truthy) && !spec.get("swagger").is_some_and(is_truthy) {
+        return Err(NOT_OPENAPI.to_string());
+    }
+    let mut operations = Vec::new();
+    for (path, item) in spec.get("paths").and_then(Value::as_object).into_iter().flatten() {
+        for method in OPEN_API_METHODS {
+            let Some(responses) = item.get(method).and_then(|op| op.get("responses")).and_then(Value::as_object) else {
+                continue;
+            };
+            for (code, response) in responses {
+                let status = match code.as_bytes() {
+                    [b'2', rest @ ..] if rest.len() == 2 && rest.iter().all(u8::is_ascii_digit) => {
+                        code.parse().unwrap_or(200)
+                    }
+                    [b'2', b'X' | b'x', b'X' | b'x'] => 200,
+                    _ => continue,
+                };
+                let response = resolve(&spec, response);
+                // Swagger 2 has the schema on the response, OpenAPI 3 under each media type.
+                let (media, schema) = match response.get("content").and_then(Value::as_object) {
+                    Some(content) => match content.keys().find(|k| k.contains("json")).or(content.keys().next()) {
+                        Some(key) => (key.clone(), content[key].get("schema").cloned()),
+                        None => (String::new(), None),
+                    },
+                    None => (String::new(), response.get("schema").cloned()),
+                };
+                let media = if media.is_empty() && schema.is_some() { "application/json".into() } else { media };
+                let mut at = At::default();
+                let body = schema
+                    .filter(|_| media.contains("json"))
+                    .and_then(|s| skeleton_of(&spec, &s, &mut at))
+                    .unwrap_or(Value::Null);
+                operations.push(json!({
+                    "method": method.to_uppercase(), "path": path, "status": status, "contentType": media, "body": body, "optional": at.optional,
+                }));
+            }
+        }
+    }
+    Ok(json!({ "basePath": base_path(&spec), "operations": operations }))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -718,5 +880,57 @@ mod tests {
             json_preflight(&ws, &source("{\"schema\":\"x\"}", "r.json")).err().unwrap(),
             "Error: Not a valid lp-requests-v1 file"
         );
+    }
+
+    fn ops(yaml: &str) -> Value {
+        contract_operations(yaml).unwrap()
+    }
+
+    #[test]
+    fn contract_skeletons_follow_refs_allof_required_and_stop_at_cycles() {
+        let spec = "openapi: 3.0.0\nservers:\n  - url: https://h.test/v1\npaths:\n  /orders/{id}:\n    get:\n      responses:\n        '404':\n          description: no\n        '200':\n          description: ok\n          content:\n            application/json:\n              schema:\n                $ref: '#/components/schemas/Order'\n  /tree:\n    get:\n      responses:\n        200:\n          content:\n            application/problem+json:\n              schema:\n                $ref: '#/components/schemas/Node'\n  /pets:\n    get:\n      responses:\n        2XX:\n          content:\n            application/json:\n              schema:\n                oneOf:\n                  - type: array\n                    items: {type: object, properties: {n: {type: integer}, flag: {type: boolean}}}\n                  - type: string\n  /empty:\n    delete:\n      responses:\n        204:\n          description: none\ncomponents:\n  schemas:\n    Base:\n      type: object\n      properties:\n        id: {type: integer}\n    Order:\n      allOf:\n        - $ref: '#/components/schemas/Base'\n        - type: object\n          required: [total, note]\n          properties:\n            total: {type: number}\n            note: {type: string, nullable: true}\n            optional: {type: string}\n            gone: {type: 'null'}\n            anything: {}\n    Node:\n      type: object\n      properties:\n        name: {type: string}\n        children:\n          type: array\n          items:\n            $ref: '#/components/schemas/Node'\n";
+        let got = ops(spec);
+        assert_eq!(got["basePath"], "/v1");
+        let list = got["operations"].as_array().unwrap();
+        let find = |path: &str| list.iter().find(|o| o["path"] == path).unwrap().clone();
+        // allOf merged, `required` keeps total and note only (not the optional, not the untyped one).
+        assert_eq!(find("/orders/{id}")["body"], json!({"id": 0, "total": 0, "note": ""}));
+        assert_eq!(find("/orders/{id}")["status"], 200);
+        assert_eq!(find("/orders/{id}")["optional"], json!([".optional", ".gone", ".anything"]));
+        assert_eq!(find("/tree")["body"], json!({"name": "", "children": []}));
+        assert_eq!(find("/tree")["contentType"], "application/problem+json");
+        assert_eq!(find("/pets")["body"], json!([{"n": 0, "flag": false}]));
+        assert_eq!(find("/pets")["status"], 200);
+        let empty = find("/empty");
+        assert_eq!(
+            (empty["status"].clone(), empty["body"].clone(), empty["contentType"].clone()),
+            (json!(204), Value::Null, json!(""))
+        );
+        // A null-only type is null; `required` absent keeps every property.
+        let only_null = ops(
+            "openapi: 3.0.0\npaths:\n  /a:\n    get:\n      responses:\n        200:\n          content:\n            application/json:\n              schema: {type: object, properties: {a: {type: 'null'}, b: {type: [string, 'null']}}}\n",
+        );
+        assert_eq!(only_null["operations"][0]["body"], json!({"a": null, "b": ""}));
+        assert_eq!(only_null["basePath"], "");
+    }
+
+    #[test]
+    fn contract_operations_read_swagger_2_and_refuse_other_files() {
+        let swagger = ops(
+            "swagger: '2.0'\nbasePath: /api\npaths:\n  /x:\n    get:\n      responses:\n        200:\n          schema:\n            $ref: '#/definitions/X'\ndefinitions:\n  X:\n    type: object\n    properties:\n      n: {type: integer}\n",
+        );
+        assert_eq!(swagger["basePath"], "/api");
+        assert_eq!(swagger["operations"][0]["body"], json!({"n": 0}));
+        assert_eq!(contract_operations("{\"a\":1}").unwrap_err(), "Not a valid OpenAPI specification");
+    }
+
+    #[test]
+    fn optional_paths_cover_nested_objects_array_elements_and_refs() {
+        let got = ops(
+            "openapi: 3.0.0\npaths:\n  /a:\n    get:\n      responses:\n        200:\n          content:\n            application/json:\n              schema:\n                type: array\n                items:\n                  $ref: '#/components/schemas/Item'\ncomponents:\n  schemas:\n    Item:\n      type: object\n      required: [id, meta]\n      properties:\n        id: {type: integer}\n        note: {type: string}\n        x.y: {type: string}\n        meta:\n          type: object\n          required: [a]\n          properties:\n            a: {type: string}\n            b: {type: string}\n",
+        );
+        let op = &got["operations"][0];
+        assert_eq!(op["body"], json!([{"id": 0, "meta": {"a": ""}}]));
+        assert_eq!(op["optional"], json!(["[].note", "[].[\"x.y\"]", "[].meta.b"]));
     }
 }

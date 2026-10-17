@@ -10,6 +10,7 @@ pub mod args;
 mod budget;
 pub mod capture;
 pub mod changes;
+pub mod claims;
 pub mod cli;
 pub mod commands;
 pub mod contract;
