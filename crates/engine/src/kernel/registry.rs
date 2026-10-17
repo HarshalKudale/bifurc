@@ -42,6 +42,8 @@ pub struct SessionIdentity {
     pub peer: Option<String>,
     /// What the client said about itself in its handshake (`clientInfo`), already sanitized.
     pub client_info: Option<Value>,
+    /// The named session the client asked for (`session` in its handshake); `None` is the default session.
+    pub session: Option<String>,
     pub scopes: Option<HashSet<Scope>>,
 }
 

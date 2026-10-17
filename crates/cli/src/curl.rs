@@ -15,10 +15,35 @@ use crate::{
 };
 
 /// Our options that take a value, and the ones that do not. `workspace` and `data-dir` are the global ones.
-const OURS_VALUE: [&str; 11] =
-    ["save", "folder", "select", "max-body", "expect-status", "expect", "var", "env", "out", "data-dir", "workspace"];
-const OURS_SWITCH: [&str; 11] =
-    ["save-only", "update", "no-templatize", "no-jar", "body", "headers", "raw", "quiet", "reveal", "no-start", "help"];
+const OURS_VALUE: [&str; 13] = [
+    "save",
+    "folder",
+    "select",
+    "max-body",
+    "expect-status",
+    "expect",
+    "var",
+    "env",
+    "out",
+    "extract",
+    "session",
+    "data-dir",
+    "workspace",
+];
+const OURS_SWITCH: [&str; 12] = [
+    "save-only",
+    "update",
+    "no-templatize",
+    "no-jar",
+    "fresh-session",
+    "body",
+    "headers",
+    "raw",
+    "quiet",
+    "reveal",
+    "no-start",
+    "help",
+];
 
 /// curl's options the engine reads (each takes a value).
 const CURL_VALUE: [&str; 16] = [

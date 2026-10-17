@@ -15,6 +15,8 @@ pub struct Settings {
     pub data_dir: Option<String>,
     /// `--no-start`: fail instead of starting an engine when none is running.
     pub no_start: bool,
+    /// `--session`: the named session every tool call works in (else `BIFURC_SESSION`, which the CLI reads itself).
+    pub session: Option<String>,
     /// The value of `BIFURC_DATA_DIR`.
     pub env_data_dir: Option<OsString>,
 }
@@ -137,6 +139,9 @@ pub fn run(tool: &Tool, arguments: &Map<String, Value>, settings: &Settings) -> 
     let mut ours = Vec::new();
     if let Some(dir) = &settings.data_dir {
         ours.extend(["--data-dir".to_string(), dir.clone()]);
+    }
+    if let Some(name) = &settings.session {
+        ours.extend(["--session".to_string(), name.clone()]);
     }
     if settings.no_start {
         ours.push("--no-start".to_string());
@@ -348,6 +353,11 @@ mod tests {
             ("status", json!({"json": true})),
             ("requests_list", with(json!({"type": "grpc"}))),
             ("requests_show", with(json!({"request": "Ping", "type": "rest"}))),
+            ("session_show", all.clone()),
+            ("session_reset", all.clone()),
+            ("vars_list", all.clone()),
+            ("vars_set", with(json!({"variables": ["a=1"]}))),
+            ("vars_clear", with(json!({"variables": ["a"]}))),
             ("requests_send", with(json!({"request": "Ping", "type": "rest"}))),
             (
                 "requests_send",
@@ -357,7 +367,7 @@ mod tests {
             (
                 "requests_send",
                 with(
-                    json!({"url": "http://x", "select": ".a", "show_body": true, "show_headers": true, "max_body": 10, "expect_status": 200, "expect": ["status < 300", ".a == 1"]}),
+                    json!({"url": "http://x", "select": ".a", "show_body": true, "show_headers": true, "max_body": 10, "expect_status": 200, "expect": ["status < 300", ".a == 1"], "extract": ["id=.id"]}),
                 ),
             ),
             (
@@ -453,7 +463,7 @@ mod tests {
                 "curl",
                 with(json!({
                     "command": "curl -X POST http://x/u -d '{}'", "save": "Create", "folder": "auth", "update": true,
-                    "save_only": true, "vars": {"a": "b"}, "env": "dev", "select": ".id", "show_body": true,
+                    "save_only": true, "vars": {"a": "b"}, "env": "dev", "extract": ["id=.id"], "select": ".id", "show_body": true,
                     "show_headers": true, "max_body": 100, "expect_status": 201, "expect": ["status == 201"],
                 })),
             ),
@@ -550,8 +560,12 @@ mod tests {
     #[test]
     fn help_is_the_manual_of_the_command_line_and_needs_no_engine() {
         let dir = tempfile::tempdir().unwrap();
-        let settings =
-            Settings { data_dir: Some(dir.path().to_string_lossy().into_owned()), no_start: true, env_data_dir: None };
+        let settings = Settings {
+            data_dir: Some(dir.path().to_string_lossy().into_owned()),
+            no_start: true,
+            session: None,
+            env_data_dir: None,
+        };
         let overview = run(&tool("help"), &Map::new(), &settings);
         assert!(!overview.failed && overview.text.starts_with("Usage: bifurc <group> <verb>"), "{}", overview.text);
         let flows = run(&tool("help"), json!({"group": "flows", "json": true}).as_object().unwrap(), &settings);
@@ -576,8 +590,12 @@ mod tests {
     #[test]
     fn the_command_line_accepts_what_every_tool_writes() {
         let dir = tempfile::tempdir().unwrap();
-        let settings =
-            Settings { data_dir: Some(dir.path().to_string_lossy().into_owned()), no_start: true, env_data_dir: None };
+        let settings = Settings {
+            data_dir: Some(dir.path().to_string_lossy().into_owned()),
+            no_start: true,
+            session: None,
+            env_data_dir: None,
+        };
         for (name, arguments) in examples() {
             // Waiting for a port needs no engine: it tries the port.
             if arguments.get("port").is_some() {
@@ -593,8 +611,12 @@ mod tests {
     #[test]
     fn what_the_command_line_refuses_is_the_tools_error() {
         let dir = tempfile::tempdir().unwrap();
-        let settings =
-            Settings { data_dir: Some(dir.path().to_string_lossy().into_owned()), no_start: true, env_data_dir: None };
+        let settings = Settings {
+            data_dir: Some(dir.path().to_string_lossy().into_owned()),
+            no_start: true,
+            session: None,
+            env_data_dir: None,
+        };
         let arguments = json!({"type": "rest", "url": "http://x", "query": "{a}"});
         let outcome = run(&tool("requests_create"), arguments.as_object().unwrap(), &settings);
         assert_eq!(

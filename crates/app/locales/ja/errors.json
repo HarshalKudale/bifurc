@@ -306,6 +306,7 @@
   "entity.deleted_revert": "削除されています。変更するには削除を元に戻してください。",
   "env.cannot_delete_global": "グローバル環境は削除できません。",
   "env.cannot_activate_global": "グローバルは常に有効です。別の環境を選んでください。",
+  "session.none": "Session commands are for the command line: this connection has no session.",
   "folder.kind_unknown": "不明なフォルダーの種類 \"{kind}\" です。",
   "folder.failed": "フォルダーを変更できませんでした: {detail}",
   "github.rejected": "GitHub はこのサインインを受け付けなくなりました。もう一度サインインしてください。",

@@ -306,6 +306,7 @@
   "entity.deleted_revert": "It is deleted. Revert the delete to change it.",
   "env.cannot_delete_global": "The global environment cannot be deleted.",
   "env.cannot_activate_global": "Global is always active; pick another environment.",
+  "session.none": "Session commands are for the command line: this connection has no session.",
   "folder.kind_unknown": "Unknown folder kind \"{kind}\".",
   "folder.failed": "The folder could not be changed: {detail}",
   "github.rejected": "GitHub no longer accepts this sign-in. Sign in again.",

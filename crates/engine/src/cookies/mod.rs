@@ -25,6 +25,7 @@ use url::Url;
 
 use crate::{
     kernel::{CommandRegistry, bus::bus},
+    protocol::EngineError,
     utils::json::{opt_str, str_of},
     workspace::{
         paths::data_dir,
@@ -55,13 +56,28 @@ pub async fn private<F: Future>(owner: &str, work: F) -> F::Output {
     out
 }
 
-/// The jar a request of `ws_id` sent from this task uses: the workspace's, or the task's own under
-/// [`private`]. A task spawned to send takes it along, as it takes the workspace: `scoped(&jar_of(ws_id), …)`.
+/// The jar a request of `ws_id` sent from this task uses: the workspace's, the task's own under [`private`], or
+/// that of the named session the command runs in (kept until `session.reset`, never saved or announced). A task
+/// spawned to send takes it along, as it takes the workspace: `scoped(&jar_of(ws_id), …)`.
 pub fn jar_of(ws_id: &str) -> String {
-    match PRIVATE.try_with(String::clone) {
-        Ok(owner) if !is_private(ws_id) => format!("{ws_id}#{owner}"),
+    if is_private(ws_id) {
+        return ws_id.to_string();
+    }
+    match (PRIVATE.try_with(String::clone), crate::env::session::named()) {
+        (Ok(owner), _) => format!("{ws_id}#{owner}"),
+        (_, Some(name)) => format!("{ws_id}#session:{name}"),
         _ => ws_id.to_string(),
     }
+}
+
+/// Empty the jar of the named session `name` in `ws_id`.
+pub fn reset_session(ws_id: &str, name: &str) {
+    JARS.lock().remove(&format!("{ws_id}#session:{name}"));
+}
+
+/// How many domains the current jar holds cookies for.
+pub fn domain_count(ws_id: &str) -> usize {
+    list(ws_id)["domains"].as_array().map_or(0, Vec::len)
 }
 
 fn is_private(jar: &str) -> bool {
@@ -272,6 +288,21 @@ pub fn register(registry: &mut CommandRegistry) {
             save(ws_id, jar);
         });
         changed(ws_id);
+        Ok(json!({ "ok": true }))
+    });
+
+    // Seeds one cookie, host-only on the site of `url` (or of `domain`), in the jar this session uses.
+    registry.register_sync("cookies.set", |params, _| {
+        let target = match (opt_str(&params, "url"), opt_str(&params, "domain")) {
+            (Some(url), _) => url.to_string(),
+            (None, Some(domain)) => format!("http://{}/", domain.trim_start_matches('.')),
+            _ => return Err(EngineError::bad_request("cookies.set needs a url or a domain")),
+        };
+        if request_url(&target).is_none_or(|url| url.host_str().is_none()) {
+            return Err(EngineError::bad_request(format!("\"{target}\" is not an address or a domain")));
+        }
+        let op = json!({ "op": "set", "name": str_of(&params, "name"), "value": str_of(&params, "value") });
+        apply(str_of(&params, "workspaceId"), &target, &json!([op]));
         Ok(json!({ "ok": true }))
     });
 

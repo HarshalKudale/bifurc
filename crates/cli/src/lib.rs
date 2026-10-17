@@ -22,6 +22,7 @@ pub mod format;
 pub mod health;
 pub mod locate;
 pub mod mcp;
+pub mod named;
 pub mod prompt;
 pub mod protocol;
 pub mod requests;
