@@ -310,6 +310,8 @@ mod tests {
                 "flows_run",
                 "services_list",
                 "help",
+                "capture_list",
+                "capture_show",
                 "search_tools",
                 "describe_tool",
                 "call_tool",

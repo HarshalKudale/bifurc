@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 /// Flags that take no value.
-const BOOLEAN_FLAGS: [&str; 19] = [
+const BOOLEAN_FLAGS: [&str; 21] = [
     "yes",
     "ack",
     "json",
@@ -23,6 +23,8 @@ const BOOLEAN_FLAGS: [&str; 19] = [
     "quiet",
     "reveal",
     "ids",
+    "req-body",
+    "req-headers",
 ];
 
 /// Single-letter aliases; any other letter stands for itself.
@@ -119,10 +121,11 @@ pub fn parse_args(argv: &[String]) -> Result<ParsedArgs, String> {
             }
         };
         i += 1;
-        // `--body` shows the body of a response when sending a request (`bifurc curl` too); everywhere else it is
+        // `--body` shows the body of a response when sending a request (`bifurc curl` and `capture show` too); elsewhere it is
         // the request body, which `--data` (curl's `-d`) names.
         let sends = matches!(parsed.positionals.as_slice(), [group, verb, ..]
-            if matches!(group.as_str(), "requests" | "request") && verb == "send")
+            if (matches!(group.as_str(), "requests" | "request") && verb == "send")
+                || (group == "capture" && verb == "show"))
             || parsed.positionals.first().is_some_and(|group| group == "curl");
         let name = if name == "body" && !sends { "data".to_string() } else { name };
         // `--curl` prints a saved request as a command there; `requests create` takes the command as its value.
@@ -182,6 +185,9 @@ mod tests {
         assert_eq!(a.flag("data"), Some("x"));
         let a = ok(&["request", "send", "r1", "--body"]);
         assert_eq!(a.flag("body"), Some("true"));
+        let a = ok(&["capture", "show", "k3f9", "--body", "--req-body", "--req-headers"]);
+        assert!(a.has("body") && a.has("req-body") && a.has("req-headers"));
+        assert_eq!(a.positionals, ["capture", "show", "k3f9"]);
         for argv in [["requests", "create", "--body", "{}"], ["mocks", "create", "--body", "{}"]] {
             let a = ok(&argv);
             assert_eq!((a.flag("data"), a.has("body")), (Some("{}"), false), "{argv:?}");

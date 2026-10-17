@@ -11,6 +11,7 @@ use serde_json::json;
 
 use crate::{
     args::{ParsedArgs, parse_args},
+    capture,
     commands::{self, Connector, Context, unknown_verb},
     curl, direct,
     discovery::{RuntimeInfo, find_running_engine, platform_default_data_dir},
@@ -136,6 +137,7 @@ fn dispatch(args: &ParsedArgs, data_dir: &Path, stdout: &mut dyn Write) -> Resul
         }
         "health" => health::health(&mut ctx, sub),
         "flows" => flows::flows(&mut ctx, sub, stdout),
+        "capture" if verb == "watch" => capture::watch(&mut ctx, stdout),
         "services" => commands::services(&mut ctx, sub),
         "vault" => vault::vaults(&mut ctx, sub),
         "update" => update::update(&mut ctx, sub),

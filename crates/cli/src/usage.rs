@@ -31,7 +31,7 @@ Groups (bifurc <group> --help shows the arguments and options of each verb)
   flows         list | show | create | update | validate | run | loadtest | loadstatus | loadcancel | status | cancel | duplicate | delete
                                                                       Saved chains of requests
   health        list | show | create | update | run | delete          Health checks
-  capture       list | show | mock | request | secrets | import | remove | clear | pause | resume | cache
+  capture       list | show | watch | mock | request | secrets | import | remove | clear | pause | resume | cache
                                                                       Traffic the proxies captured
   cookies       list | clear | configure                              The cookie jar of the workspace's requests
   sync          status | changes | pull | push | commit | diff | discard | confirm | restore
@@ -350,6 +350,16 @@ const CAPTURE: &str = "Usage: bifurc capture <verb>
 
 What went through the proxies: each exchange with its request and its response.
 
+  list [--last N] [--status 4xx|422|!2xx] [--method M] [--host H] [--path P*] [--since 2m|1h|#id]
+       [--origin real|mock|mapped|rule] [--grep text]
+                                         One line per entry, newest first (default 20): #id time method
+                                         host/path status duration origin. Times are UTC.
+  show <entry> [--body] [--headers] [--req-body] [--req-headers] [--select <path>] [--max-body N]
+                                         The response as `requests send` prints it (--out, --raw, --quiet,
+                                         --expect* too); --req-* show the request (secrets masked)
+  watch [filters] [--count N] [--timeout S]
+                                         One JSON line per new matching entry until stopped
+  An <entry> is a full id, #tail or tail (the end of the id, as `list` prints it).
   mock <entry>                           Save a mock that answers as the captured exchange did
   request <entry>                        Save a request like the captured one";
 

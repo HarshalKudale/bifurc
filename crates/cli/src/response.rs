@@ -92,6 +92,12 @@ fn millis(result: &Value) -> u64 {
     result.get("durationMs").and_then(Value::as_f64).map_or(0, |ms| ms.round() as u64)
 }
 
+/// The bytes of a base64 string, with or without padding; none when it is not one.
+pub(crate) fn decode_base64(text: Option<&Value>) -> Vec<u8> {
+    let text = text.and_then(Value::as_str).unwrap_or_default();
+    base64::engine::general_purpose::STANDARD_NO_PAD.decode(text.trim_end_matches('=')).unwrap_or_default()
+}
+
 impl Response {
     /// The HTTP result of the engine, whose body is `body` already decoded.
     fn http(result: &Value, body: Vec<u8>) -> Self {
@@ -114,10 +120,7 @@ impl Response {
 
     /// `request.send`: a base64 body, tests and scripts.
     pub fn from_rest(result: &Value) -> Self {
-        let body = result.get("body").and_then(Value::as_str).unwrap_or_default();
-        let decoded =
-            base64::engine::general_purpose::STANDARD_NO_PAD.decode(body.trim_end_matches('=')).unwrap_or_default();
-        let mut response = Self::http(result, decoded);
+        let mut response = Self::http(result, decode_base64(result.get("body")));
         response.tests = result
             .get("tests")
             .and_then(Value::as_array)
@@ -135,6 +138,18 @@ impl Response {
                 Some(format!("{label} error: {message}"))
             },
         );
+        response
+    }
+
+    /// A captured exchange (`capture.get`): the response the proxy saw. One that got no response is a failure.
+    pub fn from_capture(entry: &Value) -> Self {
+        let status = entry.get("resStatus").filter(|v| !v.is_null()).or(entry.get("status"));
+        let result =
+            json!({ "status": status, "headers": entry.get("resHeaders"), "durationMs": entry.get("durationMs") });
+        let mut response = Self::http(&result, decode_base64(entry.get("resBody")));
+        if response.status == 0 {
+            response.failure = Some(format!("no response ({})", js_template(entry.get("via"))));
+        }
         response
     }
 
@@ -242,7 +257,7 @@ pub(crate) fn short_type(content_type: &str, body: &[u8]) -> String {
 }
 
 /// The first `limit` bytes of `text` (all of it when `limit` is 0), cut at a character, and how many bytes are left.
-fn preview(text: &str, limit: usize) -> (&str, usize) {
+pub(crate) fn preview(text: &str, limit: usize) -> (&str, usize) {
     if limit == 0 || text.len() <= limit {
         return (text, 0);
     }

@@ -2882,6 +2882,30 @@
     },
     "summary": {
      "type": "boolean"
+    },
+    "last": {
+     "type": "integer"
+    },
+    "status": {
+     "type": "string"
+    },
+    "method": {
+     "type": "string"
+    },
+    "host": {
+     "type": "string"
+    },
+    "path": {
+     "type": "string"
+    },
+    "since": {
+     "type": "integer"
+    },
+    "via": {
+     "type": "string"
+    },
+    "grep": {
+     "type": "string"
     }
    },
    "required": [
