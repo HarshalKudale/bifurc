@@ -87,7 +87,7 @@ Groups (bifurc <group> --help shows the arguments and options of each verb)
   logs          <service> [--errors] [--since 2m] [--grep x] [--last 50]   A dev server's output, filtered
   port          free <port> [--kill]                                  What holds a port, and stopping it
   mail          list | show | last | clear                            Mail the local SMTP sink caught; codes and links
-  webhooks      listen | stop                                         Receive webhooks locally, optionally forward them
+  webhooks      listen | stop | list | show | replay | save           Receive webhooks locally, optionally forward them
 
 Engine
   engine start [--transport socket|ws] [--no-tray]   Start a standalone engine in the background
@@ -702,7 +702,17 @@ body (origin webhook), so a signature check still passes when it is sent again. 
                                          to the URL's path) and the upstream's answer comes back; refused: 502.
                                          Blocks and prints a line per request until Ctrl+C or the end of the
                                          command; --detach keeps it running under the engine. No --port: a free one
-  stop [<name|port>]                     Stop that listener, or every one";
+  stop [<name|port>]                     Stop that listener, or every one
+  list [--name x] [--last 20]            #id, time, method, URL, status, origin, listener; newest first
+  show <id> [capture show flags]         As `capture show`, for a webhook only (--req-body, --req-headers, ...)
+  replay <id> [--to <url>] [output flags]
+                                         Send it again with its method, exact headers and raw body, to where it
+                                         was forwarded (else its own URL). --to replaces scheme, host and port
+                                         and keeps the path and query, unless it has a path of its own. Prints
+                                         the response as `requests send` does (--body, --headers, --select,
+                                         --expect-status ...); refused: exit 4
+  save <id> --as-request [--name x] [--folder f]
+                                         Save it as a request";
 
 const MAIL: &str = "Usage: bifurc mail <verb>
 
@@ -909,6 +919,8 @@ pub fn examples(group: &str) -> Option<&'static [&'static str]> {
             "bifurc webhooks listen --name stripe --forward http://api.localhost/webhooks/stripe --detach",
             "bifurc webhooks listen --port 4020",
             "bifurc webhooks stop stripe",
+            "bifurc webhooks list --name stripe --last 5",
+            "bifurc webhooks replay k3f9 --to http://localhost:3000 --expect-status 200",
         ],
         "mail" => &[
             "bifurc mail clear",
