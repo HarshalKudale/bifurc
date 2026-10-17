@@ -14,6 +14,8 @@ pub enum CliError {
     Failed(String),
     /// A failure with a meaning of its own, shown like a message: the exit code is the one given (see [`CliError::code`]).
     Exit(i32, String),
+    /// [`CliError::Failed`] with an exit code of its own: the report is printed as an answer, the code is the one given.
+    Reported(i32, String),
 }
 
 /// The exit codes beyond 0 (ok) and 1 (the command ran and what it reports failed).
@@ -60,7 +62,7 @@ impl CliError {
     /// The process exit code of this error.
     pub fn code(&self) -> i32 {
         match self {
-            CliError::Exit(code, _) => *code,
+            CliError::Exit(code, _) | CliError::Reported(code, _) => *code,
             CliError::Engine { code, .. } => match code.as_str() {
                 "NOT_FOUND" => NOT_FOUND,
                 "TIMEOUT" | "UPSTREAM_FAILED" => NETWORK,
@@ -79,7 +81,10 @@ impl CliError {
 impl fmt::Display for CliError {
     fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
         match self {
-            CliError::Message(message) | CliError::Failed(message) | CliError::Exit(_, message) => f.write_str(message),
+            CliError::Message(message)
+            | CliError::Failed(message)
+            | CliError::Exit(_, message)
+            | CliError::Reported(_, message) => f.write_str(message),
             CliError::Engine { code, message } => write!(f, "{code}: {message}"),
         }
     }

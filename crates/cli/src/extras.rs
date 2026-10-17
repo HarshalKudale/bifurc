@@ -43,6 +43,7 @@ pub fn run(ctx: &mut Context, group: &str, verb: &str) -> Option<Result<String>>
         ("capture", "mock") => capture_save(ctx, "mocks"),
         ("capture", "request") => capture_save(ctx, "requests"),
         ("runner", "run") => runner_run(ctx),
+        ("contract", "check") => crate::contract::check(ctx),
         ("settings", "show") => settings_show(ctx),
         _ => return None,
     })
