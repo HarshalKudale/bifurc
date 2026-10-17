@@ -9,6 +9,7 @@ pub mod args;
 #[cfg(test)]
 mod budget;
 pub mod capture;
+pub mod changes;
 pub mod cli;
 pub mod commands;
 pub mod contract;

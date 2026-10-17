@@ -61,6 +61,30 @@ mod tests {
     };
 
     #[tokio::test]
+    async fn a_commit_made_in_a_named_session_carries_its_name() {
+        if !check_git_installed().await {
+            return;
+        }
+        let _root = scratch_data_root();
+        init_workspace_repo("ws1").await.unwrap();
+        write_entity("ws1", "mocks", "m1", &json!({ "id": "m1", "name": "First" }), None).unwrap();
+        let commit = CommitMutation {
+            action: "create",
+            entity: "mock",
+            entity_id: "m1",
+            entity_name: "First",
+            workspace_id: "ws1",
+            rel_path: "mocks/m1.json",
+            actor: Some("tester"),
+            changed_fields: &[],
+        };
+        crate::env::session::enter("ws1", "backend", commit_mutation(commit)).await.unwrap();
+        let (entries, _) = query_log(&QueryLogOptions { workspace_id: "ws1".into(), ..Default::default() }).await;
+        assert_eq!((entries[0]["session"].as_str(), entries[0]["actor"].as_str()), (Some("backend"), Some("tester")));
+        assert!(entries[1].get("session").is_none());
+    }
+
+    #[tokio::test]
     async fn the_audit_log_is_listed_filtered_and_paged() {
         if !check_git_installed().await {
             return;
