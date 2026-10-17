@@ -86,6 +86,7 @@ Groups (bifurc <group> --help shows the arguments and options of each verb)
   services      list | define | up | down | restart | remove | ps | show   Dev servers the engine runs; local ports
   logs          <service> [--errors] [--since 2m] [--grep x] [--last 50]   A dev server's output, filtered
   port          free <port> [--kill]                                  What holds a port, and stopping it
+  mail          list | show | last | clear                            Mail the local SMTP sink caught; codes and links
 
 Engine
   engine start [--transport socket|ws] [--no-tray]   Start a standalone engine in the background
@@ -369,6 +370,8 @@ Steps (YAML or JSON), compiled into the graph; `flows show` prints a line flow b
       expect: [ status == 201, .items | length == 1 ]   == != < <= > >= contains; a miss fails the run
                                      in [ ], quote one with an index: '.items[0].qty == 2'
     - inline: POST {{baseUrl}}/orders      a request made here, saved as <flow> · <n>; headers:, body:
+    - mail: { to: \"{{email}}\", timeout: 30s, extract: { otp: otp } }   wait for mail in the local sink (bifurc
+                                       mail); extract takes otp, link, subject, id; saved as an inline request
 
 The JSON of a flow
   {\"name\": \"Login then list\", \"folderId\": \"<folder of the flow tree, optional>\",
@@ -686,6 +689,27 @@ Who holds a TCP port on this machine: `3000 held by node (pid 4242)`, or `free` 
   free <port>                            Show the process holding the port
   free <port> --kill                     Stop it with everything it started";
 
+const MAIL: &str = "Usage: bifurc mail <verb>
+
+The engine runs an SMTP server on 127.0.0.1:1025 (settings update --mailport), no login, no TLS: point the
+app under test at it and read what it \"sent\". The last 200 mails are kept in memory (gone when the engine
+stops). `status` shows `mail :1025 (3)`; `off (reason)` when the port could not be bound.
+
+  list [--to <address>] [--last 20]      #id, time, recipient, subject; newest first. --to is a whole address,
+                                         or part of one when it has no @
+  show <id> [--html|--text]              From, To, Subject and the text; with a flag only that body. <id> is
+                                         the #tail that list shows
+  last [--to <address>] [--wait 30s]     The newest mail (as show). Exit 3 when there is none; --wait holds on
+                                         for one (exit 3 after the time). A mail from before the command
+                                         counts: run `mail clear` before the app sends
+      --otp                              Print only the first standalone 4-8 digit code (subject, then text,
+                                         then html); exit 1 when the mail has none
+      --link [--link-match <text>]       Print only the first http(s) link, or the first containing the text;
+                                         exit 1 when there is none
+  clear                                  Drop every mail
+
+A flow waits for mail with a step: - mail: { to: \"{{email}}\", timeout: 30s, extract: { otp: otp, link: link } }";
+
 const ENGINE: &str = "Usage: bifurc engine <verb>
 
   start [--transport socket|ws] [--no-tray]   Start a standalone engine in the background
@@ -745,6 +769,7 @@ pub fn group_usage(group: &str) -> Option<String> {
         "services" => SERVICES,
         "logs" => LOGS,
         "port" => PORT,
+        "mail" => MAIL,
         "engine" => ENGINE,
         "update" => UPDATE,
         "folders" => FOLDERS,
@@ -863,6 +888,13 @@ pub fn examples(group: &str) -> Option<&'static [&'static str]> {
             "bifurc services down api",
             "bifurc services snippet express",
         ],
+        "mail" => &[
+            "bifurc mail clear",
+            "bifurc mail list --to dana@x.test --last 5",
+            "bifurc mail last --to dana@x.test --otp --wait 30s",
+            "bifurc mail last --link --link-match /verify --wait 30s",
+            "bifurc mail show #k3f9 --html",
+        ],
         "wait" => &[
             "bifurc wait http://api.localhost/health --timeout 30s",
             "bifurc wait api-health --status 200",
@@ -911,7 +943,7 @@ pub(crate) mod tests {
     fn every_example_is_a_known_group_and_verb_with_flags_its_help_names() {
         for group in [
             "agent", "curl", "requests", "capture", "mocks", "contract", "flows", "runner", "env", "cookies",
-            "session", "vars", "changes", "claim", "wait", "services",
+            "session", "vars", "changes", "claim", "wait", "services", "mail",
         ] {
             let list = examples(group).unwrap_or_else(|| panic!("{group} has no examples"));
             assert!((3..=5).contains(&list.len()), "{group}");

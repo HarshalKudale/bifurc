@@ -79,6 +79,7 @@ pub fn rebind_runtime_ports(incoming: &AppSettings, prev: &AppSettings) {
     {
         proxy.start(incoming.forward_proxy_port());
     }
+    crate::mail::ensure(incoming);
 }
 
 /// After a settings patch: restart only a listener whose own settings changed, and only if it was running
@@ -96,6 +97,7 @@ pub fn rebind_changed_listeners(next: &AppSettings, prev: &AppSettings) {
             proxy.start(next.forward_proxy_port());
         }
     }
+    crate::mail::rebind(next, prev);
 }
 
 fn listener_status(listener: &dyn Listener) -> Value {
@@ -121,6 +123,7 @@ pub fn start_listeners(settings: &AppSettings) -> Value {
         }
         listener_status(proxy.as_ref())
     });
+    crate::mail::ensure(settings);
     serde_json::json!({ "forward": forward, "reverse": reverse })
 }
 

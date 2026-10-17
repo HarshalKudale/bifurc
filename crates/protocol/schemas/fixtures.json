@@ -1000,6 +1000,41 @@
    "blobId": "blob_test"
   }
  },
+ "mail.clear": {
+  "valid": {},
+  "invalid": {
+   "x": 1
+  }
+ },
+ "mail.get": {
+  "valid": {
+   "id": "abc"
+  },
+  "invalid": {}
+ },
+ "mail.list": {
+  "valid": {
+   "to": "a@b.co",
+   "last": 5
+  },
+  "invalid": {
+   "last": -1
+  }
+ },
+ "mail.status": {
+  "valid": {},
+  "invalid": {
+   "x": 1
+  }
+ },
+ "mail.wait": {
+  "valid": {
+   "to": "a@b.co",
+   "sinceTs": 1,
+   "timeoutMs": 1000
+  },
+  "invalid": {}
+ },
  "mcp.call": {
   "valid": {
    "workspaceId": "ws1",
