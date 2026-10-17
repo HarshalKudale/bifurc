@@ -3123,6 +3123,37 @@
    ],
    "additionalProperties": false
   },
+  "contract.saveSnapshots": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "snapshots": {
+     "type": "array",
+     "items": {
+      "type": "object"
+     }
+    }
+   },
+   "required": [
+    "workspaceId",
+    "snapshots"
+   ],
+   "additionalProperties": false
+  },
+  "contract.listSnapshots": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "workspaceId"
+   ],
+   "additionalProperties": false
+  },
   "capture.inspectImport": {
    "type": "object",
    "properties": {

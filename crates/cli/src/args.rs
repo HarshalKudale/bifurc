@@ -153,7 +153,7 @@ pub fn parse_args(argv: &[String]) -> Result<ParsedArgs, String> {
         let prints_steps = name == "steps"
             && matches!(parsed.positionals.as_slice(), [group, verb, ..] if group == "flows" && verb == "show");
         // `contract check --all` and `--from-capture` are switches (`mocks create --from-capture` takes an entry).
-        let contract_switch = matches!(name.as_str(), "all" | "from-capture")
+        let contract_switch = matches!(name.as_str(), "all" | "from-capture" | "from-snapshot")
             && parsed.positionals.first().is_some_and(|group| group == "contract");
         // `--keep-all` alone, or with the `true` or `false` that the table of verbs writes after a switch.
         if name == "keep-all" {
