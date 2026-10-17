@@ -622,10 +622,10 @@ fn list_url(ty: &RequestType, entity: &Value) -> String {
     }
 }
 
-/// The path (`a/b/`) of every request folder by id, from the engine's folder tree.
-fn folder_paths(ctx: &mut Context) -> Result<std::collections::HashMap<String, String>> {
+/// The path (`a/b/`) of every folder of a tree (`requestFolders`, `mockFolders`) by id, from the engine's folder tree.
+pub(crate) fn folder_paths(ctx: &mut Context, tree: &str) -> Result<std::collections::HashMap<String, String>> {
     let config = ctx.request("config.get", json!({}))?;
-    let folders = config.get("requestFolders").and_then(Value::as_array).cloned().unwrap_or_default();
+    let folders = config.get(tree).and_then(Value::as_array).cloned().unwrap_or_default();
     let by_id: std::collections::HashMap<String, &Value> = folders.iter().map(|f| (text(f, "id"), f)).collect();
     Ok(by_id
         .keys()
@@ -716,7 +716,7 @@ pub fn requests(ctx: &mut Context, sub: Option<&str>) -> Result<String> {
             let types = types_of(args)?;
             let workspace = workspace_id(ctx)?;
             let all = saved(ctx, &workspace, &types)?;
-            let folders = folder_paths(ctx)?;
+            let folders = folder_paths(ctx, "requestFolders")?;
             let folder = args.flag("folder").map(|f| f.trim_matches('/').to_lowercase());
             let grep = args.flag("grep").map(str::to_lowercase);
             let mut kept: Vec<(String, &RequestType, &Value)> = all
@@ -774,7 +774,7 @@ pub fn requests(ctx: &mut Context, sub: Option<&str>) -> Result<String> {
             if ctx.json {
                 return Ok(json(&entity));
             }
-            let folders = folder_paths(ctx)?;
+            let folders = folder_paths(ctx, "requestFolders")?;
             Ok(describe(ty, &entity, folders.get(&text(&entity, "folderId")).map_or("", String::as_str)))
         }
         "create" | "add" => {

@@ -312,7 +312,7 @@ pub fn show(ctx: &mut Context) -> Result<String> {
 }
 
 /// A mock's answer as one side of a comparison.
-fn mock_side(mock: &Value) -> Side {
+pub(crate) fn mock_side(mock: &Value) -> Side {
     let headers: Vec<(String, String)> = mock
         .get("responseHeaders")
         .and_then(Value::as_object)
@@ -330,7 +330,7 @@ fn mock_side(mock: &Value) -> Side {
     Side::new(status, content_type, &headers, raw)
 }
 
-fn response_side(response: &Response) -> Side {
+pub(crate) fn response_side(response: &Response) -> Side {
     Side::new(response.status, &response.content_type, &response.headers, response.body.clone())
 }
 
