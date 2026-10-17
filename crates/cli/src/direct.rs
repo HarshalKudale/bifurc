@@ -471,6 +471,12 @@ pub fn verbs() -> Vec<Verb> {
             option("jar", "cookiesToJar", Take::Bool, "true: move cookies into the cookie jar."),
             option("flow", "flow", Take::Bool, "true: also build a flow that sends them in the captured order."),
             option("folder", "folderName", Take::Text, "The name of the new folder (and flow). Default: Captured."),
+            option(
+                "keep-all",
+                "keepAll",
+                Take::Bool,
+                "true: also save preflights, static assets and analytics calls, which are left out by default.",
+            ),
         ]),
         verb(&["capture", "clear"], "capture.clear", Effect::Deletes, "Remove every captured entry of the workspace."),
         verb(&["capture", "pause"], "capture.setPaused", Effect::Changes, "Stop capturing traffic.")
@@ -1004,6 +1010,9 @@ pub fn run(ctx: &mut Context, verb: &Verb) -> Result<String> {
     if verb.out {
         return save(ctx, &response, workspace.as_deref());
     }
+    if command == "capture import" && !ctx.json {
+        return Ok(crate::capture::imported(ctx, workspace.as_deref().unwrap_or_default(), &response));
+    }
     Ok(ctx.print(&response, || json(&response)))
 }
 
@@ -1032,7 +1041,7 @@ mod tests {
             let word = |text: &str| !text.is_empty() && text.chars().all(|c| c.is_ascii_lowercase());
             assert!(row.words.iter().all(|w| word(w)), "{name}");
             for arg in &row.args {
-                assert!(word(arg.name) && !arg.about.is_empty(), "{name} {}", arg.name);
+                assert!(arg.name.split('-').all(word) && !arg.about.is_empty(), "{name} {}", arg.name);
                 // An item is looked up in a workspace; a list has to be the last operand.
                 let looked_up = matches!(arg.take, Take::Item(_) | Take::Named(_) | Take::Vault);
                 assert!(!looked_up || row.scope != Scope::Engine, "{name}");

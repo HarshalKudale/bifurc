@@ -343,8 +343,20 @@ A health check is a URL, with {{variables}}, that answers or does not.
 
 const FLOWS: &str = "Usage: bifurc flows <verb>
 
-A flow is a saved graph of nodes: each node's output is the next one's input. It is written as JSON
-(create, update) and checked with validate, which names every problem and the ports of each node.
+A flow is a saved graph of nodes: each node's output is the next one's input. A straight line of requests
+is written as steps (create --steps); any graph as JSON (create, update). validate names every problem and
+the ports of each node.
+
+Steps (YAML or JSON), compiled into the graph; `flows show` prints a line flow back as steps
+  name: Checkout happy path
+  steps:
+    - request: Login as admin        a saved request by name: exact, any case or a unique prefix
+    - request: Create cart
+      extract: { cartId: .id }       later steps can use {{cartId}} in the URL, headers and body
+    - request: Add item
+      vars: { qty: 2 }               variables for this step only
+      expect: [ status == 201, .items | length == 1 ]   == != < <= > >= contains; a miss fails the run
+    - inline: POST {{baseUrl}}/orders      a request made here, saved as <flow> · <n>; headers:, body:
 
 The JSON of a flow
   {\"name\": \"Login then list\", \"folderId\": \"<folder of the flow tree, optional>\",
@@ -387,8 +399,16 @@ The JSON of a flow
   (what an earlier node did), {{flow.<input>}} (an input of the run) and {{variables}} of the environment.
 
   list
-  show <id|name>                         Inputs with their defaults, the nodes with the request each runs,
-                                         and what the engine finds wrong with the flow
+  create --steps <file|-> [--name <text>] [--folder <path>]
+                                         Compile a step file into a new flow (`-` reads stdin); prints one line
+                                         per step, then `saved flow \"Checkout\" · 4 steps`. A problem (exit 2
+                                         for a bad step, 3 for an unknown request) saves nothing.
+  update <id|name> --steps <file> [--name <text>]
+                                         Compile the file again into that flow, keeping its id and inputs
+  show <id|name> [--steps]               Inputs with their defaults, a line flow as steps
+                                         (`2 POST /carts  Create cart  extract cartId=.id`) or else the nodes
+                                         with the request each runs, and what the engine finds wrong.
+                                         --steps prints the step file (exit 2 when the flow is not a line)
   run <id|name> [--input <name=value>]... [--var <k=v>]... [--env <name>] [--fresh-session] [--verbose]
       [--timeout <seconds>] [--max-events <n>] [--max-body <bytes>]
                                          Run it; one line per request (or failed node), then `flow passed · 5

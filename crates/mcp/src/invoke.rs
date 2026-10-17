@@ -493,6 +493,9 @@ mod tests {
             ("health_run", with(json!({"check": "h1"}))),
             ("flows_list", all.clone()),
             ("flows_show", with(json!({"flow": "f1"}))),
+            // A flow is written as JSON (the table's example) or as the text of a step file.
+            ("flows_create", with(json!({"steps": "name: A\nsteps: []"}))),
+            ("flows_update", with(json!({"flow": "f1", "steps": "name: A\nsteps: []"}))),
             (
                 "flows_run",
                 with(json!({"flow": "f1", "inputs": {"user": "bob"}, "timeout": 30, "max_events": 5, "vars": {"a": "b"},
@@ -566,8 +569,12 @@ mod tests {
             .into_iter()
             .filter(|tool| verbs.iter().any(|verb| verb.words == tool.words))
             .map(|tool| {
-                let arguments: Map<String, Value> =
-                    tool.params.iter().map(|param| (param.name.to_string(), example(param.ty))).collect();
+                let arguments: Map<String, Value> = tool
+                    .params
+                    .iter()
+                    .filter(|param| param.name != "steps")
+                    .map(|param| (param.name.to_string(), example(param.ty)))
+                    .collect();
                 (tool.name, Value::Object(arguments))
             })
             .collect()

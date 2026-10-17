@@ -147,7 +147,28 @@ pub fn parse_args(argv: &[String]) -> Result<ParsedArgs, String> {
         // `--status` is a status filter or a status code everywhere but `mocks serve --status`.
         let asks_status = name == "status"
             && matches!(parsed.positionals.as_slice(), [group, verb] if group == "mocks" && verb == "serve");
-        if BOOLEAN_FLAGS.contains(&name.as_str()) || (name == "body" && sends) || prints_curl || asks_status {
+        // `flows show --steps` prints the step file; `flows create --steps <file>` reads one.
+        let prints_steps = name == "steps"
+            && matches!(parsed.positionals.as_slice(), [group, verb, ..] if group == "flows" && verb == "show");
+        // `--keep-all` alone, or with the `true` or `false` that the table of verbs writes after a switch.
+        if name == "keep-all" {
+            let value = match (inline_value, argv.get(i).map(String::as_str)) {
+                (Some(value), _) => value,
+                (None, Some(next @ ("true" | "false"))) => {
+                    i += 1;
+                    next.to_string()
+                }
+                _ => "true".to_string(),
+            };
+            parsed.add(&name, value);
+            continue;
+        }
+        if BOOLEAN_FLAGS.contains(&name.as_str())
+            || (name == "body" && sends)
+            || prints_curl
+            || asks_status
+            || prints_steps
+        {
             parsed.add(&name, "true".to_string());
             continue;
         }
@@ -293,5 +314,17 @@ mod tests {
         assert!(!a.has("json"));
         assert_eq!(a.positional(0), Some("status"));
         assert_eq!(a.positional(1), None);
+    }
+
+    #[test]
+    fn steps_is_a_switch_of_flows_show_and_a_file_elsewhere_and_keep_all_takes_an_optional_truth() {
+        let a = ok(&["flows", "show", "Checkout", "--steps", "--json"]);
+        assert_eq!((a.positionals.len(), a.flag("steps")), (3, Some("true")));
+        let a = ok(&["flows", "create", "--steps", "checkout.yaml"]);
+        assert_eq!((a.positionals.len(), a.flag("steps")), (2, Some("checkout.yaml")));
+        assert_eq!(ok(&["capture", "import", "k1", "--keep-all"]).flag("keep-all"), Some("true"));
+        let a = ok(&["capture", "import", "k1", "--keep-all", "false", "k2"]);
+        assert_eq!((a.flag("keep-all"), a.positionals.len()), (Some("false"), 4));
+        assert_eq!(ok(&["capture", "import", "--keep-all=true", "k1"]).flag("keep-all"), Some("true"));
     }
 }

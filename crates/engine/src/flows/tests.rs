@@ -1201,3 +1201,166 @@ async fn a_socketio_connection_hands_on_each_event_and_emits_the_nodes_message()
     );
     assert_eq!(echoed(&report, "item")["path"], "/items/echo-ping", "the event's name and its first argument");
 }
+
+/// Compile `text` (as `flow.fromSteps` does) and, when nothing is wrong, save the flow; returns the answer and the
+/// saved flow's id.
+async fn compile(text: &str, save: bool) -> (Value, Option<String>) {
+    let mut registry = CommandRegistry::new();
+    super::register(&mut registry);
+    crate::workspace::entities::register(&mut registry);
+    let registry = Arc::new(registry);
+    let ctx = CommandContext::internal(registry.clone());
+    let answer =
+        registry.invoke("flow.fromSteps", json!({ "workspaceId": WS, "text": text }), ctx.clone()).await.unwrap();
+    if !save || !array_of(&answer, "problems").is_empty() {
+        return (answer, None);
+    }
+    let payload = json!({ "kind": "flows", "workspaceId": WS, "entity": answer["flow"] });
+    let id = str_of(&registry.invoke("entity.create", payload, ctx).await.unwrap(), "id").to_string();
+    (answer, Some(id))
+}
+
+fn inline_requests() -> Vec<Value> {
+    crate::workspace::fs::read_all_entities(WS, "requests")
+        .into_iter()
+        .filter(|row| str_of(row, "name").starts_with("Checkout · "))
+        .collect()
+}
+
+#[tokio::test]
+async fn steps_compile_into_a_chain_that_runs_with_extracts_and_expectations() {
+    let store = store();
+    let canned = HashMap::from([(
+        "/carts".to_string(),
+        ("application/json".to_string(), r#"{"id":"c_91","items":[1]}"#.to_string()),
+    )]);
+    let base = test_server::start(canned).await;
+    store.request("r-login", format!("{base}/login"), json!({}));
+    store.request("r-cart", format!("{base}/carts"), json!({ "method": "POST" }));
+    store.request("r-add", format!("{base}/carts/{{{{cartId}}}}/items?qty={{{{qty}}}}"), json!({}));
+    let text = format!(
+        r#"
+name: Checkout
+steps:
+  - request: R-LOGIN
+  - request: r-cart
+    extract: {{ cartId: .id }}
+    expect: [ status == 200, .items | length == 1 ]
+  - request: r-add
+    vars: {{ qty: 2 }}
+    expect: [ .path == "/carts/c_91/items?qty=2", .headers | keys contains host ]
+  - inline: POST {base}/orders
+    body: {{ cartId: "{{{{cartId}}}}" }}
+    expect: [ .body contains c_91 ]
+"#
+    );
+    let (answer, id) = compile(&text, true).await;
+    assert!(array_of(&answer, "problems").is_empty(), "{answer}");
+    let lines: Vec<&str> = array_of(&answer, "steps").iter().filter_map(Value::as_str).collect();
+    assert_eq!(lines[0], "1 GET /login  r-login");
+    assert_eq!(lines[1], "2 POST /carts  r-cart  extract cartId=.id  expect status == 200, .items | length == 1");
+    assert_eq!(
+        lines[2],
+        "3 GET /carts/{{cartId}}/items?qty={{qty}}  r-add  vars qty=2  expect .path == \"/carts/c_91/items?qty=2\", .headers | keys contains host"
+    );
+    assert_eq!(lines[3], "4 POST /orders  Checkout · 4  expect .body contains c_91");
+
+    // A tidy chain, left to right, with a validate node for what a rule says and an evaluate node for the rest.
+    let flow = &answer["flow"];
+    let nodes = array_of(flow, "nodes");
+    let kinds: Vec<&str> = nodes.iter().map(|node| str_of(node, "type")).collect();
+    assert_eq!(
+        kinds,
+        [
+            "start", "request", "request", "validate", "evaluate", "request", "validate", "evaluate", "request",
+            "validate", "display"
+        ]
+    );
+    let xs: Vec<f64> = nodes.iter().map(|node| node["x"].as_f64().unwrap()).collect();
+    assert!(xs.windows(2).all(|pair| pair[1] - pair[0] == 360.0), "{xs:?}");
+    let wires: Vec<(&str, &str)> = array_of(flow, "edges")
+        .iter()
+        .filter(|edge| edge.get("input").is_some())
+        .map(|edge| (str_of(edge, "to"), str_of(edge, "input")))
+        .collect();
+    assert_eq!(wires, [("s3", "var:cartId"), ("s4", "var:cartId")]);
+
+    let report = run(&id.unwrap()).await;
+    assert_eq!(report["status"], "succeeded", "{report}");
+    assert_eq!(echoed(&report, "s3")["path"], "/carts/c_91/items?qty=2");
+    assert_eq!(echoed(&report, "s4")["body"], r#"{"cartId":"c_91"}"#);
+    assert_eq!(node(&report, "s2_x1")["tests"][0]["passed"], true);
+}
+
+#[tokio::test]
+async fn a_failed_expectation_fails_the_run_naming_it() {
+    let store = store();
+    let canned = HashMap::from([(
+        "/carts".to_string(),
+        ("application/json".to_string(), r#"{"id":"c_91","items":[1]}"#.to_string()),
+    )]);
+    let base = test_server::start(canned).await;
+    store.request("cart", format!("{base}/carts"), json!({}));
+    for (expect, said) in [
+        ("status == 201", "expect status == 201: 1 of 1 checks failed"),
+        (".items | length == 2", "expect .items | length == 2, got 1"),
+    ] {
+        let text = format!("name: {expect}\nsteps:\n  - request: cart\n    expect: [ {expect} ]\n");
+        let (answer, id) = compile(&text, true).await;
+        assert!(array_of(&answer, "problems").is_empty(), "{answer}");
+        let report = run(&id.unwrap()).await;
+        assert_eq!(report["status"], "failed", "{report}");
+        assert!(str_of(&report, "error").contains(said), "{report}");
+        assert_eq!(node(&report, "s1")["status"], "succeeded");
+    }
+}
+
+#[tokio::test]
+async fn inline_requests_are_reused_when_the_steps_are_compiled_again() {
+    let _store = store();
+    let text = |body: &str| {
+        format!(
+            "name: Checkout\nsteps:\n  - inline: POST http://x.test/orders\n    body: \"{body}\"\n  - inline: GET http://x.test/a\n"
+        )
+    };
+    let (first, _) = compile(&text("one"), false).await;
+    assert!(array_of(&first, "problems").is_empty(), "{first}");
+    let saved = inline_requests();
+    assert_eq!(saved.len(), 2);
+    assert_eq!(saved[0]["body"].as_str().into_iter().chain(saved[1]["body"].as_str()).collect::<String>(), "one");
+
+    compile(&text("two"), false).await;
+    let again = inline_requests();
+    assert_eq!(again.len(), 2, "recompiling does not pile up requests");
+    let ids = |rows: &[Value]| -> Vec<String> {
+        let mut ids: Vec<String> = rows.iter().map(|row| str_of(row, "id").to_string()).collect();
+        ids.sort();
+        ids
+    };
+    assert_eq!(ids(&saved), ids(&again));
+    assert!(again.iter().any(|row| row["body"] == "two" && row["method"] == "POST"));
+}
+
+#[tokio::test]
+async fn problems_are_returned_and_nothing_is_saved() {
+    let store = store();
+    store.request("login", "http://x.test/login".into(), json!({}));
+    store.request("login-2", "http://x.test/login2".into(), json!({}));
+    let (answer, _) = compile(
+        "name: Checkout\nsteps:\n  - inline: GET http://x.test/a\n  - request: nope\n  - request: login\n    expect: [ status ~ 1 ]\n  - request: log\n  - foo: 1\n",
+        true,
+    )
+    .await;
+    assert!(answer["flow"].is_null());
+    let problems: Vec<(u64, &str)> =
+        array_of(&answer, "problems").iter().map(|p| (p["step"].as_u64().unwrap(), str_of(p, "kind"))).collect();
+    assert_eq!(problems, [(2, "notFound"), (3, "usage"), (4, "usage"), (5, "usage")]);
+    assert!(str_of(&array_of(&answer, "problems")[1], "message").contains("expectation 'status ~ 1'"), "{answer}");
+    assert!(str_of(&array_of(&answer, "problems")[2], "message").contains("2 requests start with \"log\""), "{answer}");
+    assert!(inline_requests().is_empty(), "a flow with problems saves no request");
+
+    let (answer, _) = compile("steps:\n  - request: login\n", false).await;
+    assert_eq!(answer["problems"][0]["kind"], "usage");
+    let (answer, _) = compile("name: [", false).await;
+    assert_eq!(answer["problems"][0]["kind"], "usage");
+}
