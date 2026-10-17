@@ -1002,6 +1002,43 @@ pub fn catalog() -> Vec<Tool> {
             ],
         },
         Row {
+            name: "capture_list",
+            words: &["capture", "list"],
+            summary: "List the traffic the proxies captured, newest first, one line per exchange.",
+            details: "Each line starts with #tail, the entry's id for capture_show. Entries beyond `last` are only counted, in a last line.",
+            effect: Effect::Reads,
+            upfront: true,
+            scoped: true,
+            params: vec![
+                typed("last", "last", Type::Integer, "How many entries (default 20)."),
+                text("status", "status", "422, 4xx, !2xx or a list like 4xx,5xx."),
+                text("method", "method", "The HTTP method."),
+                text("host", "host", "The host; * matches any run of characters."),
+                text("path", "path", "The path without the query; * matches any run of characters."),
+                text("since", "since", "30s, 2m, 1h ago, or #tail: after that entry."),
+                typed("origin", "origin", Type::Choice(&["real", "mock", "mapped", "rule", "error"]), "Who answered."),
+                text("grep", "grep", "Case-insensitive text in the URL or a request or response body."),
+            ],
+        },
+        Row {
+            name: "capture_show",
+            words: &["capture", "show"],
+            summary: "Show one captured exchange: the request line, then the response summary.",
+            details: "Like a request's response: a summary line, and only what show_body, show_headers, select, req_body asks for.",
+            effect: Effect::Reads,
+            upfront: true,
+            scoped: true,
+            params: vec![
+                operand("entry", "The entry's id, or its #tail as capture_list prints it.").required(),
+                text("select", "select", "A jq-style path into the JSON response body: return only the values it picks."),
+                switch("show_body", "body", None, "Include the response body (text only), cut at max_body."),
+                switch("show_headers", "headers", None, "Include the response headers; secrets are masked."),
+                switch("req_body", "req-body", None, "Include the request body (text only), cut at max_body."),
+                switch("req_headers", "req-headers", None, "Include the request headers; secrets are masked."),
+                typed("max_body", "max-body", Type::Integer, "Bytes of body returned (default 2048; 0 = all)."),
+            ],
+        },
+        Row {
             name: "capture_mock",
             words: &["capture", "mock"],
             summary: "Save a mock that answers as a captured exchange did.",
@@ -1217,6 +1254,8 @@ mod tests {
                 "flows_run",
                 "services_list",
                 "help",
+                "capture_list",
+                "capture_show",
             ]
         );
     }

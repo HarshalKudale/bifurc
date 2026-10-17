@@ -482,6 +482,20 @@ mod tests {
             ("folders_list", json!({"tree": "mock", "json": true})),
             ("env_set", with(json!({"environment": "Dev", "variables": ["HOST=http://x"]}))),
             ("env_unset", with(json!({"environment": "Dev", "variables": ["HOST"]}))),
+            (
+                "capture_list",
+                with(json!({
+                    "last": 5, "status": "4xx", "method": "POST", "host": "api.*", "path": "/orders*",
+                    "since": "2m", "origin": "mock", "grep": "qty",
+                })),
+            ),
+            (
+                "capture_show",
+                with(json!({
+                    "entry": "k3f9", "select": ".id", "show_body": true, "show_headers": true, "req_body": true,
+                    "req_headers": true, "max_body": 100,
+                })),
+            ),
             ("capture_mock", with(json!({"entry": "c1"}))),
             ("capture_request", with(json!({"entry": "c1"}))),
             ("runner_run", with(json!({"folder": "f1"}))),
