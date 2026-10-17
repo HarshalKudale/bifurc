@@ -330,6 +330,12 @@ mod tests {
         assert_eq!(err, "requests_send: \"listen\" must be a list of text");
     }
 
+    #[test]
+    fn curl_takes_the_whole_command_after_the_double_dash_and_its_json_is_ours() {
+        let built = line("curl", json!({"command": "curl -s http://x/u", "save": "S", "json": true})).unwrap();
+        assert_eq!(built, ["curl", "--save", "S", "--bifurc-json", "--", "curl -s http://x/u"]);
+    }
+
     /// Arguments that use every parameter of every tool at least once, in sets the command line accepts.
     fn examples() -> Vec<(&'static str, Value)> {
         let all = json!({"workspace": "w1", "json": true});
@@ -443,6 +449,14 @@ mod tests {
                 with(json!({"rule": "r1", "pattern": "b.com", "regex": false, "mapping": "api", "name": "N"})),
             ),
             ("rules_update", with(json!({"rule": "r1", "target": "http://x"}))),
+            (
+                "curl",
+                with(json!({
+                    "command": "curl -X POST http://x/u -d '{}'", "save": "Create", "folder": "auth", "update": true,
+                    "save_only": true, "vars": {"a": "b"}, "env": "dev", "select": ".id", "show_body": true,
+                    "show_headers": true, "max_body": 100, "expect_status": 201, "expect": ["status == 201"],
+                })),
+            ),
             ("env_list", all.clone()),
             ("env_show", all.clone()),
             ("env_use", with(json!({"environment": "Dev"}))),

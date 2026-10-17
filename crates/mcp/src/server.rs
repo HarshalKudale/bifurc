@@ -301,6 +301,7 @@ mod tests {
                 "requests_list",
                 "requests_show",
                 "requests_send",
+                "curl",
                 "mocks_list",
                 "mocks_create",
                 "mappings_list",
