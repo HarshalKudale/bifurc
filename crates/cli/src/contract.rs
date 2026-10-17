@@ -2,6 +2,10 @@
 //! saved request of the same method and path, the request is sent (or the newest capture of that call is
 //! taken), and status, content type and body shape are compared (never values, never headers).
 //!
+//! `contract update-mock` rewrites a mock's body to the real shape; `contract snapshot` stores the shape of what
+//! each paired request answers (never a value) in the workspace, and `check` falls back to it when the backend
+//! cannot be reached.
+//!
 //! Mocks answer proxied traffic and `mocks serve`, never `request.send`, so a send here always reaches the real
 //! server.
 
@@ -11,7 +15,7 @@ use serde_json::{Value, json};
 
 use crate::{
     capture::{self, mock_side, response_side},
-    commands::{Context, find_one, id_of, list_entities, workspace_id},
+    commands::{Context, find_one, id_of, list_entities, refused, workspace_id},
     error::{CliError, Result},
     format::aligned,
     requests::{self, TYPES, folder_paths, saved, text},
@@ -180,20 +184,21 @@ struct Check<'a> {
     mock: &'a Value,
     request: &'a Req,
     result: Outcome,
+    /// Compared with a stored snapshot, not a live answer.
+    snapshot: bool,
 }
 
 fn one_line(error: &str) -> String {
     error.lines().next().unwrap_or_default().trim().trim_start_matches("ENGINE_ERROR: ").to_string()
 }
 
-/// `contract check [--mock <name>] [--folder <folder>] [--all] [--ignore <glob>]... [--from-capture]`.
-pub fn check(ctx: &mut Context) -> Result<String> {
-    ctx.accept(&["mock", "folder", "all", "ignore", "from-capture", "var", "env", "fresh-session", "quiet"], 0)?;
+/// The mocks a command works on (`--mock`, `--folder`, `--all`: enabled ones by default) and the saved requests
+/// they can be paired with.
+fn selection(ctx: &mut Context, workspace: &str) -> Result<(Vec<Value>, Vec<Req>)> {
     let args = ctx.args;
-    let workspace = workspace_id(ctx)?;
-    let mut mocks = crate::entities::all_mocks(ctx, &workspace)?;
+    let mut mocks = crate::entities::all_mocks(ctx, workspace)?;
     if let Some(wanted) = args.flag("mock") {
-        let rows = list_entities(ctx, &workspace, "mocks")?;
+        let rows = list_entities(ctx, workspace, "mocks")?;
         let id = id_of(find_one(&rows, wanted, &["name"], "mock", "mocks")?);
         mocks.retain(|mock| id_of(mock) == id);
     } else if !args.has("all") {
@@ -207,7 +212,11 @@ pub fn check(ctx: &mut Context) -> Result<String> {
             path.trim_end_matches('/') == wanted || path.starts_with(&format!("{wanted}/"))
         });
     }
-    let reqs: Vec<Req> = saved(ctx, &workspace, &[&TYPES[0]])?
+    Ok((mocks, saved_requests(ctx, workspace)?))
+}
+
+fn saved_requests(ctx: &mut Context, workspace: &str) -> Result<Vec<Req>> {
+    Ok(saved(ctx, workspace, &[&TYPES[0]])?
         .into_iter()
         .map(|(_, r)| Req {
             id: id_of(&r),
@@ -215,9 +224,50 @@ pub fn check(ctx: &mut Context) -> Result<String> {
             method: text(&r, "method"),
             path: path_of(&text(&r, "url")),
         })
-        .collect();
+        .collect())
+}
+
+/// What a snapshot stores of a response: status, short content type and the skeleton of a JSON body.
+fn snapshot_of(request: &Req, side: &Side) -> Value {
+    json!({
+        "requestId": request.id, "method": request.method.to_uppercase(), "path": request.path,
+        "status": side.status, "contentType": side.content_type,
+        "body": side.body.as_ref().map_or(Value::Null, shape::skeleton),
+    })
+}
+
+/// A stored snapshot as one side of a comparison.
+fn snapshot_side(snapshot: &Value) -> Side {
+    let content_type = text(snapshot, "contentType");
+    let body = snapshot.get("body").filter(|b| !b.is_null() && content_type == "json").cloned();
+    let status = snapshot.get("status").and_then(Value::as_u64).unwrap_or(0) as u16;
+    Side { status, content_type, headers: Vec::new(), body, raw: Vec::new() }
+}
+
+/// The stored snapshots by request id, read once.
+fn snapshots(ctx: &mut Context, workspace: &str, cache: &mut Option<HashMap<String, Value>>) -> Result<()> {
+    if cache.is_none() {
+        let listed = ctx.request("contract.listSnapshots", json!({ "workspaceId": workspace }))?;
+        let rows = listed["snapshots"].as_array().cloned().unwrap_or_default();
+        *cache = Some(rows.into_iter().map(|row| (text(&row, "requestId"), row)).collect());
+    }
+    Ok(())
+}
+
+/// `contract check [--mock <name>] [--folder <folder>] [--all] [--ignore <glob>]... [--from-capture]
+/// [--from-snapshot]`.
+pub fn check(ctx: &mut Context) -> Result<String> {
+    ctx.accept(
+        &["mock", "folder", "all", "ignore", "from-capture", "from-snapshot", "var", "env", "fresh-session", "quiet"],
+        0,
+    )?;
+    let args = ctx.args;
+    let workspace = workspace_id(ctx)?;
+    let (mocks, reqs) = selection(ctx, &workspace)?;
+    let from_snapshot = args.has("from-snapshot");
+    let mut stored: Option<HashMap<String, Value>> = None;
     let ignore = args.flags("ignore");
-    let mut real = Real { from_capture: args.has("from-capture"), entries: None, cache: HashMap::new() };
+    let mut real = real_of(ctx);
     let (mut checks, mut unpaired): (Vec<Check>, Vec<(&Value, String)>) = (Vec::new(), Vec::new());
     for mock in &mocks {
         let request = match pair_of(mock, &reqs) {
@@ -227,11 +277,37 @@ pub fn check(ctx: &mut Context) -> Result<String> {
                 continue;
             }
         };
-        let result = match real.side(ctx, &workspace, request)? {
-            Err(reason) if reason == "no real capture" => {
-                unpaired.push((mock, reason));
-                continue;
+        let mut snapshot = from_snapshot;
+        let right = if from_snapshot {
+            snapshots(ctx, &workspace, &mut stored)?;
+            match stored.iter().flatten().find(|(id, _)| **id == request.id) {
+                Some((_, row)) => Ok(snapshot_side(row)),
+                None => {
+                    unpaired.push((mock, "no snapshot".into()));
+                    continue;
+                }
             }
+        } else {
+            match real.side(ctx, &workspace, request)? {
+                Err(reason) if reason == "no real capture" => {
+                    unpaired.push((mock, reason));
+                    continue;
+                }
+                // The backend cannot be reached: the stored shape stands in for it.
+                Err(reason) => {
+                    snapshots(ctx, &workspace, &mut stored)?;
+                    match stored.iter().flatten().find(|(id, _)| **id == request.id) {
+                        Some((_, row)) => {
+                            snapshot = true;
+                            Ok(snapshot_side(row))
+                        }
+                        None => Err(reason),
+                    }
+                }
+                Ok(side) => Ok(side),
+            }
+        };
+        let result = match right {
             Err(reason) => Outcome::Failed(reason),
             Ok(mut right) => {
                 let mut left = mock_side(mock);
@@ -242,7 +318,7 @@ pub fn check(ctx: &mut Context) -> Result<String> {
                 Outcome::Drift(lines, more)
             }
         };
-        checks.push(Check { mock, request, result });
+        checks.push(Check { mock, request, result, snapshot });
     }
     let drifted =
         checks.iter().filter(|c| matches!(&c.result, Outcome::Drift(l, m) if !l.is_empty() || *m > 0)).count();
@@ -254,6 +330,7 @@ pub fn check(ctx: &mut Context) -> Result<String> {
             let mut row = json!({
                 "mock": text(c.mock, "name"), "mockId": id_of(c.mock), "method": text(c.mock, "method").to_uppercase(),
                 "path": path_of(&text(c.mock, "urlPattern")), "request": c.request.name,
+                "source": if c.snapshot { "snapshot" } else { "real" },
             });
             match &c.result {
                 Outcome::Drift(lines, more) => {
@@ -282,6 +359,7 @@ pub fn check(ctx: &mut Context) -> Result<String> {
                     Outcome::Drift(l, m) if !l.is_empty() || *m > 0 => "✗".to_string(),
                     Outcome::Drift(..) => "✓".to_string(),
                 };
+                let mark = if c.snapshot && !mark.contains("failed") { format!("{mark} (snapshot)") } else { mark };
                 vec![
                     text(c.mock, "method").to_uppercase(),
                     path_of(&text(c.mock, "urlPattern")),
@@ -323,6 +401,137 @@ pub fn check(ctx: &mut Context) -> Result<String> {
     };
     let printed = ctx.print(&out, human);
     finish(ctx, printed, drifted, failed)
+}
+
+/// A name and why (or what went wrong).
+type Pair = (String, String);
+
+fn real_of(ctx: &Context) -> Real {
+    Real { from_capture: ctx.args.has("from-capture"), entries: None, cache: HashMap::new() }
+}
+
+/// `contract update-mock <mock> [--from-capture]`: rewrite the mock's body to the shape the real answer has,
+/// keeping the mock's values where a key stays, and its status when it differs. Headers and the rest stay.
+pub fn update_mock(ctx: &mut Context) -> Result<String> {
+    ctx.accept(&["from-capture", "var", "env", "fresh-session", "quiet"], 1)?;
+    let args = ctx.args;
+    let wanted = crate::commands::need(args.positionals.get(2).map(String::as_str), "a mock name")?;
+    let workspace = workspace_id(ctx)?;
+    let mocks = crate::entities::all_mocks(ctx, &workspace)?;
+    let mock = find_one(&mocks, &wanted, &["name"], "mock", "mocks")?;
+    let name = text(mock, "name");
+    let reqs = saved_requests(ctx, &workspace)?;
+    let request = pair_of(mock, &reqs)
+        .map_err(|why| CliError::not_found(format!("\"{name}\" has no saved request to compare with ({why})")))?;
+    let mut right = match real_of(ctx).side(ctx, &workspace, request)? {
+        Ok(side) => side,
+        Err(reason) if reason == "no real capture" => {
+            return Err(CliError::not_found(format!("\"{name}\" has no captured answer to compare with ({reason})")));
+        }
+        Err(reason) => return Err(CliError::network(format!("the real request failed: {}", one_line(&reason)))),
+    };
+    let mut left = mock_side(mock);
+    (left.headers, right.headers) = (Vec::new(), Vec::new());
+    let (lines, more) = shape::capped(shape::diff(&left, &right, false));
+    let updated = !lines.is_empty() || more > 0;
+    if updated {
+        let mut entity = mock.clone();
+        let before: Option<Value> = serde_json::from_slice(&left.raw).ok();
+        let body = match (&right.body, &before) {
+            (Some(real), Some(have)) => Some(shape::merge(have, real)),
+            (Some(real), None) => Some(real.clone()),
+            _ => None,
+        };
+        if let Some(body) = body.filter(|body| before.as_ref() != Some(body)) {
+            entity["responseBody"] = json!(serde_json::to_string_pretty(&body).unwrap_or_default());
+        } else if right.body.is_none() && before.is_some() {
+            entity["responseBody"] = json!(String::from_utf8_lossy(&right.raw));
+        }
+        if entity["responseBody"] != mock["responseBody"] {
+            entity.as_object_mut().map(|fields| fields.remove("responseBodyEncoding"));
+        }
+        if left.status != right.status {
+            entity["responseStatus"] = json!(right.status);
+        }
+        if entity.get("workspaceId").is_none_or(Value::is_null) {
+            entity["workspaceId"] = json!(workspace);
+        }
+        refused(ctx.request("entity.update", json!({ "kind": "mocks", "entity": entity }))?)?;
+    }
+    let out = json!({
+        "schemaVersion": 1, "mock": name, "updated": updated,
+        "differences": lines.iter().map(Line::to_json).collect::<Vec<_>>(),
+    });
+    let printed = ctx.print(&out, || {
+        let verdict =
+            if updated { format!("updated mock \"{name}\"") } else { format!("mock \"{name}\" already matches") };
+        if updated {
+            format!(
+                "{}
+{verdict}",
+                shape::render(&lines, more)
+            )
+        } else {
+            verdict
+        }
+    });
+    Ok(if args.has("quiet") { String::new() } else { printed })
+}
+
+/// `contract snapshot [--mock <name>] [--folder <folder>] [--all] [--from-capture]`: store the shape (never a
+/// value) of what each paired request answers, one send per request, in the workspace's `contracts/` folder.
+pub fn snapshot(ctx: &mut Context) -> Result<String> {
+    ctx.accept(&["mock", "folder", "all", "from-capture", "var", "env", "fresh-session", "quiet"], 0)?;
+    let workspace = workspace_id(ctx)?;
+    let (mocks, reqs) = selection(ctx, &workspace)?;
+    let mut real = real_of(ctx);
+    let (mut saved, mut failed, mut unpaired): (Vec<Value>, Vec<Pair>, Vec<Pair>) =
+        (Vec::new(), Vec::new(), Vec::new());
+    let mut seen: Vec<&str> = Vec::new();
+    for mock in &mocks {
+        let request = match pair_of(mock, &reqs) {
+            Ok(request) => request,
+            Err(reason) => {
+                unpaired.push((text(mock, "name"), reason));
+                continue;
+            }
+        };
+        if seen.contains(&request.id.as_str()) {
+            continue;
+        }
+        seen.push(&request.id);
+        match real.side(ctx, &workspace, request)? {
+            Ok(side) => saved.push(snapshot_of(request, &side)),
+            Err(reason) if reason == "no real capture" => unpaired.push((text(mock, "name"), reason)),
+            Err(reason) => failed.push((request.name.clone(), one_line(&reason))),
+        }
+    }
+    if !saved.is_empty() {
+        ctx.request("contract.saveSnapshots", json!({ "workspaceId": workspace, "snapshots": saved }))?;
+    }
+    let pair = |rows: &[Pair], key: &str| -> Vec<Value> {
+        rows.iter()
+            .map(|(name, why)| json!({ key: name, if key == "mock" { "reason" } else { "error" }: why }))
+            .collect()
+    };
+    let out = json!({
+        "schemaVersion": 1, "saved": saved, "failed": pair(&failed, "request"), "unpaired": pair(&unpaired, "mock"),
+    });
+    let printed = ctx.print(&out, || {
+        let mut head = format!("saved {} snapshot{}", saved.len(), if saved.len() == 1 { "" } else { "s" });
+        for (n, word) in [(failed.len(), "failed"), (unpaired.len(), "unpaired")] {
+            if n > 0 {
+                head.push_str(&format!(" · {n} {word}"));
+            }
+        }
+        let mut lines = vec![head];
+        lines.extend(failed.iter().map(|(name, why)| format!("✗ {name}: {why}")));
+        lines.join(
+            "
+",
+        )
+    });
+    finish(ctx, printed, 0, failed.len())
 }
 
 #[cfg(test)]
@@ -460,5 +669,96 @@ mod tests {
         );
         assert_eq!(value["checks"][0]["request"], "Get orders");
         assert_eq!(value["checks"][0]["ok"], true);
+    }
+
+    fn answers_for(real_body: &str, extra: Vec<Answer>) -> Vec<Answer> {
+        let mut answers = engine(200, real_body);
+        answers.extend(extra);
+        answers
+    }
+
+    #[test]
+    fn update_mock_rewrites_the_shape_keeps_values_and_saves_once() {
+        let argv = ["contract", "update-mock", "get ORD"];
+        let body = r#"{"items":[{"id":7,"discount":2.5}],"total":"9"}"#;
+        let answers = answers_for(body, vec![("entity.update", Ok(json!({"ok": true})))]);
+        let (out, calls) = run(&argv, answers, update_mock);
+        assert_eq!(
+            out.unwrap(),
+            "+ .items[].discount (number)
++ .total (string)
+updated mock \"Get orders\""
+        );
+        let sent = payloads(&calls, "entity.update");
+        assert_eq!(sent.len(), 1);
+        let entity = &sent[0]["entity"];
+        let stored: Value = serde_json::from_str(entity["responseBody"].as_str().unwrap()).unwrap();
+        assert_eq!(stored, json!({"items": [{"id": 1, "discount": 2.5}], "total": "9"}));
+        assert!(entity["responseBody"].as_str().unwrap().contains("\n"));
+        assert_eq!((entity["responseStatus"].clone(), entity["name"].clone()), (json!(200), json!("Get orders")));
+    }
+
+    #[test]
+    fn update_mock_sets_the_status_and_leaves_a_matching_mock_alone() {
+        let answers = answers_for(r#"{"items":[{"id":3}]}"#, vec![("entity.update", Ok(json!({"ok": true})))]);
+        let (out, calls) = run(&["contract", "update-mock", "Create order", "--json"], answers.clone(), update_mock);
+        let value: Value = serde_json::from_str(&out.unwrap()).unwrap();
+        assert_eq!((value["updated"].clone(), value["mock"].clone()), (json!(true), json!("Create order")));
+        assert_eq!(payloads(&calls, "entity.update")[0]["entity"]["responseStatus"], 200);
+        let (out, calls) = run(&["contract", "update-mock", "Get orders"], answers, update_mock);
+        assert_eq!(out.unwrap(), "mock \"Get orders\" already matches");
+        assert!(payloads(&calls, "entity.update").is_empty());
+    }
+
+    #[test]
+    fn update_mock_refuses_an_unpaired_mock_and_a_failed_send() {
+        let (out, _) = run(&["contract", "update-mock", "Lonely"], engine(200, "{}"), update_mock);
+        let err = out.unwrap_err();
+        assert_eq!(err.code(), 3);
+        assert_eq!(err.to_string(), "\"Lonely\" has no saved request to compare with (no saved request)");
+        let mut down = engine(200, "{}");
+        down.retain(|(name, _)| *name != "request.send");
+        down.push(("request.send", Err(CliError::network("connection refused"))));
+        let (out, calls) = run(&["contract", "update-mock", "Get orders"], down, update_mock);
+        assert_eq!(out.unwrap_err().code(), 4);
+        assert!(payloads(&calls, "entity.update").is_empty());
+    }
+
+    #[test]
+    fn a_snapshot_stores_the_shape_without_values_once_per_request() {
+        let body = r#"{"items":[{"id":1,"token":"abc"}],"name":"Ann"}"#;
+        let answers = answers_for(body, vec![("contract.saveSnapshots", Ok(json!({"saved": 2})))]);
+        let (out, calls) = run(&["contract", "snapshot", "--all"], answers, snapshot);
+        assert_eq!(out.unwrap(), "saved 2 snapshots · 1 unpaired");
+        assert_eq!(payloads(&calls, "request.send").len(), 2);
+        let sent = &payloads(&calls, "contract.saveSnapshots")[0];
+        assert!(!sent.to_string().contains("abc") && !sent.to_string().contains("Ann"));
+        let first = &sent["snapshots"][0];
+        assert_eq!(first["requestId"], "r1");
+        assert_eq!(first["body"], json!({"items": [{"id": 0, "token": ""}], "name": ""}));
+    }
+
+    #[test]
+    fn a_failed_send_falls_back_to_the_snapshot_and_from_snapshot_sends_nothing() {
+        let stored = json!({"snapshots": [{"requestId": "r1", "status": 200, "contentType": "json",
+                                           "body": {"items": [{"id": 0, "extra": ""}]}}]});
+        let mut down = engine(200, "{}");
+        down.retain(|(name, _)| *name != "request.send");
+        down.push(("request.send", Err(CliError::network("connection refused"))));
+        down.push(("contract.listSnapshots", Ok(stored)));
+        let (out, _) = run(&["contract", "check", "--mock", "Get orders"], down.clone(), check);
+        let Err(CliError::Failed(text)) = out else { panic!("{out:?}") };
+        assert_eq!(
+            text,
+            "GET  /orders  Get orders  ✗ (snapshot)
+  + .items[].extra (string)
+1 drifted"
+        );
+        // Without a snapshot for the request the send failure stays a failure.
+        let (out, _) = run(&["contract", "check", "--mock", "Create order"], down.clone(), check);
+        assert_eq!(out.unwrap_err().code(), 4);
+        let (out, calls) = run(&["contract", "check", "--from-snapshot"], down, check);
+        assert_eq!(out.unwrap_err().code(), 1);
+        assert!(payloads(&calls, "request.send").is_empty());
     }
 }
