@@ -343,6 +343,8 @@ impl Session {
                     None => invoking.await,
                 }
             };
+            // Changes the command records say which client (and session) made them.
+            let invoking = crate::workspace::changes::as_client(client.as_deref(), invoking);
             // A handler that panics still answers: the client is not left waiting, and the failure is counted.
             let result = std::panic::AssertUnwindSafe(crate::runtime::with_command(&action, invoking))
                 .catch_unwind()

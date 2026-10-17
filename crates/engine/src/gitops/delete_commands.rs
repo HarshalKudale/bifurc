@@ -167,7 +167,11 @@ fn active_workspace(params: &Value) -> String {
 }
 
 fn audit_body(ws_id: &str, entity_id: &str) -> String {
-    format!("entity-id: {entity_id}\nworkspace-id: {ws_id}\nactor: {}", commit_identity(ws_id).actor)
+    format!(
+        "entity-id: {entity_id}\nworkspace-id: {ws_id}\nactor: {}{}",
+        commit_identity(ws_id).actor,
+        crate::workspace::git_store::session_trailer(ws_id, &[entity_id.to_string()])
+    )
 }
 
 /// Commit the deletion of `records`, each with its kind (and push it, with a remote). A record git no longer

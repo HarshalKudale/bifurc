@@ -18,6 +18,7 @@ Runs requests, mocks, flows and the proxies of a Bifurc workspace; starts an eng
   env       list | show | use | set | unset                Environments and their variables
   cookies   list | set | clear                             The cookie jar (yours in a --session)
   session   show | reset · vars list | set | clear         Your own cookies, variables and env (--session <name>)
+  changes   [--since <seq|2m|1h>] [--mine]                 What others changed since you last asked
   wait      <url|check> | --port <n> | --capture           Block until something is ready
   status                                                   Engine, proxy, mocks, capture and cookies, two lines
   Also: setup, workspaces, mappings, rules, folders, health, sync, history, export, import, vault, account, proxy,
@@ -66,6 +67,7 @@ Groups (bifurc <group> --help shows the arguments and options of each verb)
                                                                       Traffic the proxies captured
   cookies       list | set | clear | configure                       The cookie jar of the workspace's requests
   session       show | reset                                          Your named session: cookies, variables, environment
+  changes       [--since <seq|time>] [--mine]                         What others changed since you last asked
   vars          list | set | clear                                    The runtime variables of the session
   sync          status | changes | pull | push | commit | diff | discard | confirm | restore
                                                                       Git: what changed, and the remote
@@ -556,6 +558,20 @@ environment. The jar and the variables live as long as the engine and are never 
 Resolution: --var, then the session's variables, then the environment, then Global. A script's
 bc.environment.set in a named session stays in the session and not in the environment's file.";
 
+const CHANGES: &str = "Usage: bifurc changes [--since <seq|2m|1h|time>] [--mine] [--json]
+
+What changed in the workspace since this session last asked, oldest first, one line each: the kind, the name,
+what was done (and which fields), who did it (`session:<name>`, `cli`, `app`) and when. Your own changes are
+left out (--mine includes them). Held in memory since the engine started (the audit log keeps the full
+history; `history log` shows the session of each commit).
+Name the session with --session <name> or BIFURC_SESSION; without one the cursor is the command line's own.
+
+  (no option)                            Show what is new and move this session's cursor past it
+  --since <seq|2m|1h|2d|time>            Show everything after a sequence number, a time ago or a UTC time;
+                                         the cursor stays
+  --mine                                 Include the changes this session made itself
+  --json                                 {schemaVersion, changes: [{seq, ts, kind, id, name, action, fields, by}], cursor}";
+
 const VARS: &str = "Usage: bifurc vars <verb>
 
 The runtime variables of the session, in memory: what --extract name=<path> on requests send and curl stores,
@@ -666,6 +682,7 @@ pub fn group_usage(group: &str) -> Option<String> {
         "cookies" => COOKIES,
         "session" => SESSION,
         "vars" => VARS,
+        "changes" => CHANGES,
         "sync" => SYNC,
         "history" => HISTORY,
         "export" => EXPORT,
@@ -759,6 +776,9 @@ pub fn examples(group: &str) -> Option<&'static [&'static str]> {
             "bifurc vars set userId=7 --session frontend",
             "bifurc vars clear userId",
         ],
+        "changes" => {
+            &["bifurc changes --session frontend", "bifurc changes --since 10m", "bifurc changes --mine --json"]
+        }
         "wait" => &[
             "bifurc wait http://api.localhost/health --timeout 30s",
             "bifurc wait api-health --status 200",
@@ -807,7 +827,7 @@ pub(crate) mod tests {
     fn every_example_is_a_known_group_and_verb_with_flags_its_help_names() {
         for group in [
             "agent", "curl", "requests", "capture", "mocks", "contract", "flows", "runner", "env", "cookies",
-            "session", "vars", "wait",
+            "session", "vars", "changes", "wait",
         ] {
             let list = examples(group).unwrap_or_else(|| panic!("{group} has no examples"));
             assert!((3..=5).contains(&list.len()), "{group}");

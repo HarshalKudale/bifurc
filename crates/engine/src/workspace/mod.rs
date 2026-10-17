@@ -3,6 +3,7 @@
 
 pub mod accounts;
 pub mod blob;
+pub mod changes;
 pub mod config;
 pub mod contracts;
 pub mod deletions;
