@@ -40,15 +40,15 @@ fn status_of(snapshot: &Value) -> &str {
 fn asked(ctx: &Context) -> Result<Option<(&'static str, String)>> {
     let given: Vec<&'static str> = ASKS.into_iter().filter(|option| ctx.args.has(option)).collect();
     match given.as_slice() {
-        [] if ctx.args.has("arg") => Err(CliError::msg("--arg goes with --tool <name> or --prompt <name>")),
+        [] if ctx.args.has("arg") => Err(CliError::usage("--arg goes with --tool <name> or --prompt <name>")),
         [] => Ok(None),
         [kind] => {
             if *kind == "resource" && ctx.args.has("arg") {
-                return Err(CliError::msg("--arg goes with --tool <name> or --prompt <name>"));
+                return Err(CliError::usage("--arg goes with --tool <name> or --prompt <name>"));
             }
             Ok(Some((kind, ctx.args.flag(kind).unwrap_or_default().to_string())))
         }
-        _ => Err(CliError::msg("give one of --tool, --prompt and --resource")),
+        _ => Err(CliError::usage("give one of --tool, --prompt and --resource")),
     }
 }
 
@@ -58,7 +58,7 @@ fn arguments(ctx: &Context) -> Result<Map<String, Value>> {
     for raw in ctx.args.flags("arg") {
         match raw.split_once('=') {
             Some((name, value)) if !name.trim().is_empty() => out.insert(name.trim().to_string(), json!(value)),
-            _ => return Err(CliError::msg(format!("argument \"{raw}\" must be \"name=value\""))),
+            _ => return Err(CliError::usage(format!("argument \"{raw}\" must be \"name=value\""))),
         };
     }
     Ok(out)
@@ -410,7 +410,7 @@ mod tests {
             ),
         ] {
             let (out, calls) = run(&argv, engine(), |c| requests(c, sub(&argv)));
-            assert_eq!(out.unwrap_err(), CliError::msg(message), "{argv:?}");
+            assert_eq!(out.unwrap_err(), CliError::usage(message), "{argv:?}");
             assert!(payloads(&calls, "mcp.connect").is_empty(), "{argv:?}");
         }
     }

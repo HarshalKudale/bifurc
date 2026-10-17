@@ -2,12 +2,22 @@
 //! controlling terminal itself, not stdin and stderr, so they work when the program's own streams are
 //! redirected and they do not consume input meant for the program that is launched afterwards.
 
-use std::io::{BufRead, BufReader, Write};
+use std::io::{BufRead, BufReader, IsTerminal, Write};
 
 use crate::error::{CliError, Result};
 
-/// Read one line from the terminal with echo off. An error when there is no terminal.
+/// Whether a person is there to answer: stdin and stderr (where the prompt belongs) are terminals.
+pub fn interactive() -> bool {
+    std::io::stdin().is_terminal() && std::io::stderr().is_terminal()
+}
+
+const NO_TERMINAL: &str = "a secret must be typed at a terminal. Run this in a terminal, or set BIFURC_VAULT_PASSPHRASE, or pipe it with --passphrase-stdin.";
+
+/// Read one line from the terminal with echo off. Exit 6 when there is no terminal.
 pub fn secret(prompt: &str) -> Result<String> {
+    if !interactive() {
+        return Err(CliError::needs_human(NO_TERMINAL));
+    }
     read_hidden(prompt).map_err(|e| {
         CliError::msg(format!(
             "Could not ask for the passphrase ({e}). Run this in a terminal, or set BIFURC_VAULT_PASSPHRASE, or \

@@ -69,8 +69,13 @@ Options
   --json               Machine-readable output
   -h, --help
 
-Exit code: 0 when the command succeeded, 1 when it failed or what it ran failed (a request's failed test,
-a failed gRPC call, a health check that does not answer, a flow or a folder run with a failure).";
+Exit codes
+  0 succeeded    1 ran, but a test, expectation, script or check failed (a flow or folder run with a failure,
+                 a health check that does not answer)
+  2 usage error (unknown command, verb or option; missing or bad argument; ambiguous name)
+  3 a named thing was not found    4 network error of what was sent (refused, DNS, timeout)
+  5 the engine is not running and could not be started or reached
+  6 needs a person: a sealed vault and no terminal to ask on; vault run exits with the program's own code";
 
 const WORKSPACES: &str = "Usage: bifurc workspaces <verb>
 

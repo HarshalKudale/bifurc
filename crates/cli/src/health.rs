@@ -99,7 +99,9 @@ pub fn health(ctx: &mut Context, sub: Option<&str>) -> Result<String> {
             ctx.accept(&["name", "url", "auto", "no-auto"], 1)?;
             let auto = switch(args, "auto", "no-auto")?;
             if args.flag("name").is_none() && args.flag("url").is_none() && auto.is_none() {
-                return Err(CliError::msg("nothing to change: give at least one of --name, --url, --auto, --no-auto"));
+                return Err(CliError::usage(
+                    "nothing to change: give at least one of --name, --url, --auto, --no-auto",
+                ));
             }
             let wanted = need(args.positional(2), "health check id or name")?;
             let workspace = workspace_id(ctx)?;
@@ -206,7 +208,7 @@ mod tests {
         }
         let argv = ["health", "show", "nope"];
         let (out, _) = run(&argv, engine(up()), |c| health(c, sub(&argv)));
-        assert_eq!(out.unwrap_err(), CliError::msg("no health check \"nope\" (see: bifurc health list)"));
+        assert_eq!(out.unwrap_err(), CliError::not_found("no health check \"nope\" (see: bifurc health list)"));
     }
 
     #[test]
@@ -228,7 +230,7 @@ mod tests {
 
         let argv = ["health", "create", "Search"];
         let (out, calls) = run(&argv, engine(up()), |c| health(c, sub(&argv)));
-        assert_eq!(out.unwrap_err(), CliError::msg("missing URL, e.g. {{HOST}}/health"));
+        assert_eq!(out.unwrap_err(), CliError::usage("missing URL, e.g. {{HOST}}/health"));
         assert!(calls.is_empty());
     }
 
@@ -249,7 +251,7 @@ mod tests {
         let (out, calls) = run(&argv, engine(up()), |c| health(c, sub(&argv)));
         assert_eq!(
             out.unwrap_err(),
-            CliError::msg("nothing to change: give at least one of --name, --url, --auto, --no-auto")
+            CliError::usage("nothing to change: give at least one of --name, --url, --auto, --no-auto")
         );
         assert!(calls.is_empty());
     }
