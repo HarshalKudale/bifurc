@@ -35,6 +35,7 @@ pub fn run(ctx: &mut Context, group: &str, verb: &str) -> Option<Result<String>>
         ("env", "show") => env_show(ctx),
         ("env", "set") => env_variables(ctx, true),
         ("env", "unset") => env_variables(ctx, false),
+        ("env", "auth") => env_auth(ctx),
         ("capture", "list") => capture::list(ctx),
         ("capture", "show") => capture::show(ctx),
         ("capture", "diff") => capture::diff(ctx),
@@ -147,7 +148,96 @@ fn env_show(ctx: &mut Context) -> Result<String> {
         .flatten()
         .map(|variable| vec![js_template(variable.get("key")), js_template(variable.get("value"))])
         .collect();
-    Ok(ctx.print(&merged, || aligned(&rows)))
+    // The login the selected environment re-runs on a 401, named for a person.
+    let auth = merged.get("auth").filter(|auth| auth.is_object()).cloned();
+    let auth_line = match &auth {
+        Some(auth) => Some(auth_line(ctx, &workspace, auth)?),
+        None => None,
+    };
+    Ok(ctx.print(&merged, || match &auth_line {
+        Some(line) => format!(
+            "{}
+{line}",
+            aligned(&rows)
+        ),
+        None => aligned(&rows),
+    }))
+}
+
+/// `auth: login "Login as admin" (request) · retry on 401`.
+fn auth_line(ctx: &mut Context, workspace: &str, auth: &Value) -> Result<String> {
+    let login = &auth["login"];
+    let kind = if login["kind"] == "flow" { "flow" } else { "request" };
+    let all = list_entities(ctx, workspace, if kind == "flow" { "flows" } else { "requests" })?;
+    let id = js_template(login.get("id"));
+    let name =
+        all.iter().find(|row| js_template(row.get("id")) == id).map_or(id.clone(), |row| js_template(row.get("name")));
+    let retry = if auth["retryOn401"] == true { "retry on 401" } else { "no retry on 401" };
+    Ok(format!("auth: login \"{name}\" ({kind}) · {retry}"))
+}
+
+/// `env auth <env> --login <request|flow> [--flow <name>] [--retry true|false]` marks the request or flow an
+/// environment logs in with, which is run once when a send answers 401 and `retry` is on; `--off` removes it.
+fn env_auth(ctx: &mut Context) -> Result<String> {
+    ctx.accept(&["login", "flow", "retry", "off", "force"], 1)?;
+    let args = ctx.args;
+    let wanted = need(args.positional(2), "environment id or name")?;
+    let workspace = workspace_id(ctx)?;
+    let all = list_entities(ctx, &workspace, "environments")?;
+    let mut env = find_one(&all, &wanted, &["name"], "environment", "env")?.clone();
+    let retry = match args.flag("retry") {
+        None | Some("true") => true,
+        Some("false") => false,
+        Some(other) => return Err(CliError::usage(format!("--retry is true or false, not \"{other}\""))),
+    };
+    let done = if args.has("off") {
+        if args.flag("login").is_some() || args.flag("flow").is_some() {
+            return Err(CliError::usage("--off takes no --login or --flow"));
+        }
+        env["auth"] = Value::Null;
+        "no login".to_string()
+    } else {
+        let (kind, name) = match (args.flag("login"), args.flag("flow")) {
+            (Some(_), Some(_)) => return Err(CliError::usage("give --login or --flow, not both")),
+            (None, None) => {
+                return Err(CliError::usage("missing --login <request or flow name>, --flow <name> or --off"));
+            }
+            (None, Some(name)) => ("flow", name),
+            (Some(name), None) => {
+                // A request or a flow: the request when only it is called that, the flow when only it is.
+                let requests = list_entities(ctx, &workspace, "requests")?;
+                let flows = list_entities(ctx, &workspace, "flows")?;
+                match (
+                    find_one(&requests, name, &["name"], "request", "requests"),
+                    find_one(&flows, name, &["name"], "flow", "flows"),
+                ) {
+                    (Ok(r), Ok(f)) => {
+                        return Err(CliError::usage(format!(
+                            "\"{name}\" is a request ({}) and a flow ({}): use --flow {name} for the flow, or the request's id",
+                            id_of(r),
+                            id_of(f)
+                        )));
+                    }
+                    (Ok(_), Err(_)) => ("request", name),
+                    (Err(_), Ok(_)) => ("flow", name),
+                    (Err(error), Err(_)) => return Err(error),
+                }
+            }
+        };
+        let rows = list_entities(ctx, &workspace, if kind == "flow" { "flows" } else { "requests" })?;
+        let hit = find_one(&rows, name, &["name"], kind, if kind == "flow" { "flows" } else { "requests" })?;
+        env["auth"] = json!({ "login": { "kind": kind, "id": id_of(hit) }, "retryOn401": retry });
+        format!(
+            "login \"{}\" ({kind}) · {}",
+            js_template(hit.get("name")),
+            if retry { "retry on 401" } else { "no retry on 401" }
+        )
+    };
+    if env.get("workspaceId").is_none_or(Value::is_null) {
+        env["workspaceId"] = json!(workspace);
+    }
+    refused(ctx.request("entity.update", json!({ "kind": "environments", "entity": env }))?)?;
+    Ok(ctx.print(&env, || format!("Environment {}: {done}", js_template(env.get("name")))))
 }
 
 /// `env set <env> KEY=VALUE...` and `env unset <env> KEY...`: change some variables and leave the others.
@@ -292,6 +382,7 @@ fn runner_run(ctx: &mut Context) -> Result<String> {
             ms: result.get("responseTime").and_then(Value::as_u64),
             failure: failure_of(result),
             body: result.get("responseBody").and_then(Value::as_str).map(str::to_string),
+            reauthenticated: result.get("reauthenticated").and_then(Value::as_bool) == Some(true),
         })
         .collect();
     let text = ctx.print(&report, || {
@@ -351,6 +442,36 @@ mod tests {
             ("entity.list", Ok(json!({"entities": [dev]}))),
             ("entity.update", Ok(json!({"ok": true}))),
         ]
+    }
+
+    #[test]
+    fn env_auth_marks_a_request_or_a_flow_as_the_login_and_off_removes_it() {
+        let answers = || {
+            let mut a = environments();
+            a.push((
+                "entity.list:requests",
+                Ok(json!({"entities": [{"id": "r1", "name": "Login"}, {"id": "r2", "name": "Same"}]})),
+            ));
+            a.push((
+                "entity.list:flows",
+                Ok(json!({"entities": [{"id": "f1", "name": "Sign in"}, {"id": "f2", "name": "Same"}]})),
+            ));
+            a
+        };
+        let (out, calls) = go(&["env", "auth", "dev", "--login", "login", "--retry", "false"], answers());
+        assert_eq!(out.unwrap(), "Environment Dev: login \"Login\" (request) · no retry on 401");
+        let update = &payloads(&calls, "entity.update")[0];
+        assert_eq!(update["entity"]["auth"], json!({"login": {"kind": "request", "id": "r1"}, "retryOn401": false}));
+        let (out, calls) = go(&["env", "auth", "dev", "--login", "Sign in"], answers());
+        assert!(out.unwrap().ends_with("login \"Sign in\" (flow) · retry on 401"));
+        assert_eq!(payloads(&calls, "entity.update")[0]["entity"]["auth"]["login"]["kind"], "flow");
+        let (out, _) = go(&["env", "auth", "dev", "--login", "Same"], answers());
+        assert_eq!(out.unwrap_err().code(), 2);
+        let (out, calls) = go(&["env", "auth", "dev", "--off"], answers());
+        assert_eq!(out.unwrap(), "Environment Dev: no login");
+        assert_eq!(payloads(&calls, "entity.update")[0]["entity"]["auth"], Value::Null);
+        let (out, _) = go(&["env", "auth", "dev"], answers());
+        assert_eq!(out.unwrap_err().code(), 2);
     }
 
     #[test]

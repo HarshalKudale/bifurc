@@ -10,6 +10,7 @@ pub mod model;
 mod nodes;
 mod reference;
 mod run;
+pub use run::run_to_end;
 mod steps;
 mod streams;
 mod validate;

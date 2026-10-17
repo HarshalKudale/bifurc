@@ -149,7 +149,7 @@ async fn run_one(ctx: &CommandContext, ws_id: &str, request: &Value) -> Value {
                 "responseHeaders": sent["headers"],
                 "responseBody": truncated(&json!(String::from_utf8_lossy(&decode_base64_lenient(str_of(&sent, "body"))))),
             });
-            for key in ["preScriptError", "postScriptError"] {
+            for key in ["preScriptError", "postScriptError", "reauthenticated"] {
                 if let Some(error) = sent.get(key) {
                     result[key] = error.clone();
                 }
