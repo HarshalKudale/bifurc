@@ -42,7 +42,10 @@ fn scripts_of(source: &Value, pre: &str, post: &str, test: &str) -> PipelineScri
 
 pub fn register(registry: &mut CommandRegistry) {
     registry.register("request.send", |params: Value, ctx| async move {
-        send_scoped(&params.clone(), async move {
+        // `freshJar` (`--fresh-session`): the send has a jar of its own, empty and dropped with it.
+        let fresh = params.get("freshJar").and_then(Value::as_bool) == Some(true);
+        let scope_params = params.clone();
+        let work = send_scoped(&scope_params, async move {
             let ws_id = str_of(&params, "workspaceId").to_string();
             let (request, scripts) = if let Some(id) = opt_str(&params, "id") {
                 let entity = load_entity(&ws_id, "requests", id).ok_or_else(|| {
@@ -135,8 +138,8 @@ pub fn register(registry: &mut CommandRegistry) {
                 }
             }
             Ok(out)
-        })
-        .await
+        });
+        if fresh { crate::cookies::private(&crate::utils::id::generate_id(), work).await } else { work.await }
     });
 }
 

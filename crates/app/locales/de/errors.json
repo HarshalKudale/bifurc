@@ -306,6 +306,7 @@
   "entity.deleted_revert": "Es ist gelöscht. Machen Sie das Löschen rückgängig, um es zu ändern.",
   "env.cannot_delete_global": "Die globale Umgebung kann nicht gelöscht werden.",
   "env.cannot_activate_global": "Global ist immer aktiv; wählen Sie eine andere Umgebung.",
+  "session.none": "Session commands are for the command line: this connection has no session.",
   "folder.kind_unknown": "Unbekannte Ordnerart \"{kind}\".",
   "folder.failed": "Der Ordner konnte nicht geändert werden: {detail}",
   "github.rejected": "GitHub akzeptiert diese Anmeldung nicht mehr. Melden Sie sich erneut an.",

@@ -79,9 +79,10 @@ fn hidden(tool: &str) -> &'static [&'static str] {
             "operation",
             "max_body",
             "show_headers",
+            "extract",
         ],
         "requests_show" => &["type"],
-        "curl" => &["folder", "update", "save_only", "vars", "env", "show_headers", "max_body"],
+        "curl" => &["folder", "update", "save_only", "vars", "env", "show_headers", "max_body", "extract"],
         "mocks_create" => &["curl", "name", "delay", "regex", "disabled"],
         "flows_run" => &["timeout", "max_events", "fresh_session", "verbose", "max_body"],
         "capture_list" => &["since", "origin"],
@@ -331,8 +332,12 @@ mod tests {
 
     fn server(all_tools: bool) -> (tempfile::TempDir, Server) {
         let dir = tempfile::tempdir().unwrap();
-        let settings =
-            Settings { data_dir: Some(dir.path().to_string_lossy().into_owned()), no_start: true, env_data_dir: None };
+        let settings = Settings {
+            data_dir: Some(dir.path().to_string_lossy().into_owned()),
+            no_start: true,
+            session: None,
+            env_data_dir: None,
+        };
         (dir, Server::new(settings, all_tools))
     }
 

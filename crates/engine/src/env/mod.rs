@@ -3,6 +3,8 @@
 //! An environment is `{id, name, variables: [{id, key, value}], createdAt, workspaceId}`. `__global__` always
 //! exists and is merged under the selected environment.
 
+pub mod session;
+
 use std::{
     future::Future,
     sync::{Arc, LazyLock},
@@ -53,8 +55,16 @@ tokio::task_local! {
 }
 
 /// Run `future` with `scope` laid over every environment it loads. The scope follows the task, so it reaches
-/// a command only while that command resolves its variables before spawning anything.
-pub async fn with_variable_scope<F: Future>(scope: VariableScope, future: F) -> F::Output {
+/// a command only while that command resolves its variables before spawning anything. Inside another scope
+/// (a named session's, a `--var` send's) it builds on it: the outer variables stay, the inner ones win, and the
+/// environment and the change collector are the outer ones unless this scope sets its own.
+pub async fn with_variable_scope<F: Future>(mut scope: VariableScope, future: F) -> F::Output {
+    if let Ok(mut outer) = SCOPE.try_with(Clone::clone) {
+        outer.variables.append(&mut scope.variables);
+        scope.variables = outer.variables;
+        scope.environment_id = scope.environment_id.or(outer.environment_id);
+        scope.changes = scope.changes.or(outer.changes);
+    }
     SCOPE.scope(scope, future).await
 }
 
@@ -265,6 +275,7 @@ pub fn resolve_headers(headers: &Value, env: Option<&Value>) -> Value {
 }
 
 pub fn register(registry: &mut CommandRegistry) {
+    session::register(registry);
     registry.register_sync("env.resolveText", |params, _| {
         // A client asks what text resolves to; secrets never go back to one, so vault references stay as written.
         let mut env = load_merged_environment(str_of(&params, "workspaceId"));
@@ -283,6 +294,10 @@ pub fn register(registry: &mut CommandRegistry) {
                 "ok": false, "error": "cannot_activate_global", "errorKey": "env.cannot_activate_global",
                 "errorParams": {},
             }));
+        }
+        // A named session picks its own environment; the stored selection (the app's) stays.
+        if session::select_environment(id.as_str()) {
+            return Ok(json!({ "ok": true }));
         }
         let mut cfg = load_config();
         cfg["activeEnvironmentId"] = id.clone();

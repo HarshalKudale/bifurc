@@ -417,15 +417,15 @@ pub(crate) fn listen_seconds(args: &ParsedArgs, default: f64) -> Result<f64> {
 }
 
 /// What a send of a request that answers once prints (see [`present`]).
-const OUTPUT_OPTIONS: [&str; 10] =
-    ["body", "headers", "select", "out", "max-body", "raw", "quiet", "reveal", "expect-status", "expect"];
+const OUTPUT_OPTIONS: [&str; 11] =
+    ["body", "headers", "select", "out", "max-body", "raw", "quiet", "reveal", "expect-status", "expect", "extract"];
 
 /// The options only a send takes, each for the types [`exchange_options`] says.
 const SEND_OPTIONS: [&str; 7] = ["wait", "event", "ack", "tool", "prompt", "resource", "arg"];
 
 /// The options that lay values over a request that answers once: `--var` and `--env` for any such send, `--patch`
-/// for a saved one.
-const OVERRIDE_OPTIONS: [&str; 3] = ["var", "env", "patch"];
+/// for a saved one, and `--fresh-session` (a throwaway jar) for a rest one.
+const OVERRIDE_OPTIONS: [&str; 4] = ["var", "env", "patch", "fresh-session"];
 
 /// The field of a saved request `--data` and `--patch` act on: its body, a GraphQL request's variables.
 fn body_field(ty: &RequestType) -> &'static str {
@@ -479,6 +479,12 @@ pub(crate) fn add_overrides(
 ) -> Result<()> {
     add_scope(ctx, workspace, payload)?;
     let args = ctx.args;
+    if args.has("fresh-session") {
+        if ty.name != "rest" {
+            return Err(CliError::usage(format!("--fresh-session applies to rest requests, not {}", ty.name)));
+        }
+        payload["freshJar"] = json!(true);
+    }
     let Some(saved) = saved else { return Ok(()) };
     let field = body_field(ty);
     let mut body = body_from(args)?;
@@ -1693,6 +1699,58 @@ mod tests {
 
     fn json_reply(body: &str) -> Value {
         reply(200, json!({"Content-Type": "application/json"}), body.as_bytes(), json!([]))
+    }
+
+    /// `requests send r1` with `extra`, the engine answering `response`: the result and the payloads of
+    /// `session.setVariables`.
+    fn extract_with(extra: &[&str], response: Value) -> (Result<String>, Vec<Value>) {
+        let mut argv = vec!["requests", "send", "r1"];
+        argv.extend(extra);
+        let mut answers = saved_requests();
+        answers.push(("request.send", Ok(response)));
+        answers.push(("session.setVariables", Ok(json!({"ok": true}))));
+        let (out, calls) = run(&argv, answers, |c| requests(c, sub(&argv)));
+        (out, payloads(&calls, "session.setVariables"))
+    }
+
+    #[test]
+    fn extract_keeps_values_as_session_variables_and_says_so_masked_when_secret() {
+        let body = r#"{"cart":{"id":"c_91","n":2},"token":"abcdef"}"#;
+        let (out, stored) = extract_with(
+            &[
+                "--extract",
+                "cartId=.cart.id",
+                "--extract",
+                "n=.cart.n",
+                "--extract",
+                "authToken=.token",
+                "--extract",
+                "code=status",
+            ],
+            json_reply(body),
+        );
+        let out = out.unwrap();
+        assert_eq!(out.lines().nth(1).unwrap(), "extracted cartId=c_91 n=2 authToken=••••(6) code=200");
+        assert_eq!(stored, [json!({"variables": {"cartId": "c_91", "n": "2", "authToken": "abcdef", "code": "200"}})]);
+        let (out, _) = extract_with(&["--extract", "id=.id", "--json"], json_reply(r#"{"id":"x"}"#));
+        assert_eq!(serde_json::from_str::<Value>(&out.unwrap()).unwrap()["extracted"], json!({"id": "x"}));
+    }
+
+    #[test]
+    fn an_extract_path_that_finds_nothing_fails_with_a_reason() {
+        let (out, stored) = extract_with(&["--extract", "id=.nope"], json_reply(r#"{"id":1}"#));
+        let Err(CliError::Failed(text)) = out else { panic!("{out:?}") };
+        assert_eq!(text.lines().nth(1).unwrap(), "✗ extract id: .nope matched nothing");
+        assert!(stored.is_empty());
+        let (out, _) = extract_with(&["--extract", "id"], json_reply("{}"));
+        assert_eq!(out.unwrap_err().code(), 2);
+    }
+
+    #[test]
+    fn fresh_session_asks_for_a_throwaway_jar_of_a_rest_send() {
+        let (out, sent) = send_with(&["requests", "send", "r1", "--fresh-session"], "request.send");
+        out.unwrap();
+        assert_eq!(sent[0]["freshJar"], true);
     }
 
     #[test]

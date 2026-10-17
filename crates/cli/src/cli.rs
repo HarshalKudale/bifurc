@@ -20,8 +20,8 @@ use crate::{
     error::{CliError, Result},
     extras, flows, health,
     locate::locate_engine,
-    requests,
-    session::{Engine, connect},
+    named, requests,
+    session::{Engine, connect, session_name},
     setup,
     supervisor::{RESTART_TIMEOUT, START_TIMEOUT, STOP_TIMEOUT, restart_engine, start_engine, stop_engine},
     update,
@@ -41,15 +41,15 @@ pub fn data_dir_of(args: &ParsedArgs, env_value: Option<OsString>) -> PathBuf {
 }
 
 /// The engine for `data_dir`, started in the background first if none is running.
-fn connect_or_start(data_dir: &Path) -> Result<Box<dyn Engine>> {
+fn connect_or_start(data_dir: &Path, session: Option<&str>) -> Result<Box<dyn Engine>> {
     if find_running_engine(data_dir).is_none() {
         start_engine(&locate_engine()?, data_dir, "socket", true, START_TIMEOUT)?;
     }
-    connect_existing(data_dir)
+    connect_existing(data_dir, session)
 }
 
-fn connect_existing(data_dir: &Path) -> Result<Box<dyn Engine>> {
-    Ok(Box::new(connect(data_dir, VERSION)?))
+fn connect_existing(data_dir: &Path, session: Option<&str>) -> Result<Box<dyn Engine>> {
+    Ok(Box::new(connect(data_dir, VERSION, session)?))
 }
 
 /// `--transport`, defaulting to `socket`.
@@ -84,11 +84,11 @@ fn engine_command(args: &ParsedArgs, ctx: &Context, data_dir: &Path) -> Result<S
             Ok(started("started", &info))
         }
         "restart" => {
-            let info = restart_engine(connect_existing(data_dir)?, data_dir, RESTART_TIMEOUT)?;
+            let info = restart_engine(connect_existing(data_dir, None)?, data_dir, RESTART_TIMEOUT)?;
             Ok(started("restarted", &info))
         }
         "stop" => {
-            let engine = connect_existing(data_dir)?;
+            let engine = connect_existing(data_dir, None)?;
             let pid = engine.info().pid;
             stop_engine(engine, data_dir, STOP_TIMEOUT)?;
             Ok(ctx.print(&json!({ "ok": true }), || format!("stopped  pid {pid}")))
@@ -100,8 +100,14 @@ fn engine_command(args: &ParsedArgs, ctx: &Context, data_dir: &Path) -> Result<S
 /// What a command of `args` runs against: the engine of `data_dir`, reached when it is first needed.
 fn context<'a>(args: &'a ParsedArgs, data_dir: &'a Path) -> Context<'a> {
     let no_start = args.has("no-start");
-    let connector: Connector =
-        Box::new(move || if no_start { connect_existing(data_dir) } else { connect_or_start(data_dir) });
+    let connector: Connector = Box::new(move || {
+        let session = session_name(args)?;
+        if no_start {
+            connect_existing(data_dir, session.as_deref())
+        } else {
+            connect_or_start(data_dir, session.as_deref())
+        }
+    });
     Context::new(args, connector)
 }
 
@@ -127,6 +133,8 @@ fn dispatch(args: &ParsedArgs, data_dir: &Path, stdout: &mut dyn Write) -> Resul
         "wait" => wait::wait(&mut ctx),
         "setup" => setup::setup(&mut ctx),
         "agent" => agent::agent(&mut ctx, sub),
+        "session" => named::session(&mut ctx, sub),
+        "vars" => named::vars(&mut ctx, sub),
         "workspaces" => commands::workspaces(&mut ctx, sub),
         "account" => commands::account(&mut ctx, sub),
         "env" => commands::env(&mut ctx, sub),

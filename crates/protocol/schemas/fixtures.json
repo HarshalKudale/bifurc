@@ -253,6 +253,18 @@
   },
   "invalid": {}
  },
+ "cookies.set": {
+  "valid": {
+   "workspaceId": "w",
+   "domain": "x.test",
+   "name": "a",
+   "value": "1"
+  },
+  "invalid": {
+   "workspaceId": "w",
+   "name": "a"
+  }
+ },
  "curl.buildMock": {
   "valid": {
    "curl": "curl http://x"
@@ -1094,6 +1106,42 @@
   "valid": {},
   "invalid": {
    "extra": true
+  }
+ },
+ "session.clearVariables": {
+  "valid": {
+   "keys": [
+    "a"
+   ]
+  },
+  "invalid": {
+   "keys": "a"
+  }
+ },
+ "session.get": {
+  "valid": {
+   "workspaceId": "w"
+  },
+  "invalid": {
+   "workspaceId": 1
+  }
+ },
+ "session.reset": {
+  "valid": {},
+  "invalid": {
+   "workspaceId": 1
+  }
+ },
+ "session.setVariables": {
+  "valid": {
+   "variables": {
+    "a": "1"
+   }
+  },
+  "invalid": {
+   "variables": {
+    "a": 1
+   }
   }
  },
  "settings.update": {

@@ -79,7 +79,7 @@ impl<'a> Context<'a> {
 }
 
 /// The options every command takes.
-const GLOBAL_FLAGS: [&str; 5] = ["data-dir", "workspace", "no-start", "json", "help"];
+const GLOBAL_FLAGS: [&str; 6] = ["data-dir", "workspace", "no-start", "json", "help", "session"];
 
 /// An argument that must be present and non-empty.
 pub(crate) fn need(value: Option<&str>, what: &str) -> Result<String> {
@@ -561,14 +561,31 @@ pub fn status(ctx: &mut Context) -> Result<String> {
     let workspace = json!({ "workspaceId": active_id });
     let capture = ctx.request("capture.list", json!({ "workspaceId": active_id, "summary": true, "last": 0 })).ok();
     let cookies = ctx.request("cookies.list", workspace).ok();
-    let parts = StatusParts { server, config, capture, cookies };
+    let mut parts = StatusParts { server, config, capture, cookies };
+    // In a named session the environment is the session's own, when it chose one.
+    let session = crate::session::session_name(ctx.args)?;
+    if session.is_some()
+        && let Ok(own) = ctx.request("session.get", json!({ "workspaceId": active_id }))
+        && let Some(id) = own["environmentId"].as_str()
+        && let Some(config) = parts.config.as_mut()
+    {
+        config["activeEnvironmentId"] = json!(id);
+    }
     let mut value = json!({ "engine": info.raw, "server": parts.server, "activeWorkspace": active });
+    value["session"] = session.as_ref().map_or(Value::Null, |name| json!(name));
     value["environment"] = parts.environment().map_or(Value::Null, |name| json!(name));
     value["mocks"] = parts.mocks().map_or(Value::Null, |n| json!(n));
     value["capture"] =
         parts.capture.as_ref().map_or(Value::Null, |c| json!({ "count": c["matched"], "paused": c["paused"] }));
     value["cookies"] = parts.cookies_domains().map_or(Value::Null, |n| json!(n));
-    Ok(ctx.print(&value, || describe_status(&info, &active, &parts)))
+    Ok(ctx.print(&value, || {
+        let text = describe_status(&info, &active, &parts);
+        match (&session, text.split_once('\n')) {
+            (None, _) => text,
+            (Some(name), Some((first, rest))) => format!("{first} · session {name}\n{rest}"),
+            (Some(name), None) => format!("{text} · session {name}"),
+        }
+    }))
 }
 
 #[cfg(test)]
