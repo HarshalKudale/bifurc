@@ -18,7 +18,7 @@ pub enum CliError {
 
 /// The exit codes beyond 0 (ok) and 1 (the command ran and what it reports failed).
 const USAGE: i32 = 2;
-const NOT_FOUND: i32 = 3;
+pub(crate) const NOT_FOUND: i32 = 3;
 const NETWORK: i32 = 4;
 const ENGINE_UNREACHABLE: i32 = 5;
 const NEEDS_HUMAN: i32 = 6;

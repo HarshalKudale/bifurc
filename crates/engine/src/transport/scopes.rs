@@ -142,6 +142,7 @@ const SCOPE_BY_COMMAND: &[(&str, Scope)] = &[
     ("capture.setDisableCache", Scope::Write),
     ("capture.clear", Scope::Write),
     ("capture.remove", Scope::Write),
+    ("capture.pin", Scope::Write),
     ("request.send", Scope::Execute),
     ("response.history", Scope::Read),
     ("response.clearHistory", Scope::Write),

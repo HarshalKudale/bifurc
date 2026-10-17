@@ -183,6 +183,19 @@
   },
   "invalid": {}
  },
+ "capture.pin": {
+  "valid": {
+   "workspaceId": "ws1",
+   "ids": [
+    "log-1"
+   ],
+   "pinned": false
+  },
+  "invalid": {
+   "workspaceId": "ws1",
+   "ids": []
+  }
+ },
  "capture.remove": {
   "valid": {
    "workspaceId": "ws1",

@@ -200,9 +200,12 @@ pub fn imported(ctx: &mut Context, workspace: &str, done: &Value) -> String {
 
 /// `capture list`: one line per entry, newest first.
 pub fn list(ctx: &mut Context) -> Result<String> {
-    ctx.accept(&["last", "since", "status", "method", "host", "path", "origin", "grep"], 0)?;
+    ctx.accept(&["last", "since", "status", "method", "host", "path", "origin", "grep", "pinned"], 0)?;
     let workspace = workspace_id(ctx)?;
     let mut payload = filters(ctx)?;
+    if ctx.args.has("pinned") {
+        payload["pinned"] = json!(true);
+    }
     payload["last"] = json!(number(ctx, "last")?.unwrap_or(20));
     if let Some(raw) = ctx.args.flag("since") {
         payload["since"] = json!(since(ctx, &workspace, raw)?);
@@ -224,7 +227,7 @@ pub(crate) fn lines(answer: &Value) -> String {
         .zip(tails)
         .map(|(entry, tail)| {
             vec![
-                format!("#{tail}"),
+                format!("#{tail}{}", if entry["pinned"] == true { "*" } else { "" }),
                 clock(entry["timestamp"].as_i64().unwrap_or(0)),
                 js_template(entry.get("method")),
                 short_url(&js_template(entry.get("url"))),
@@ -307,6 +310,37 @@ pub fn show(ctx: &mut Context) -> Result<String> {
     if passed { Ok(out) } else { Err(CliError::Failed(out)) }
 }
 
+/// `capture pin|unpin <entry>...`: keep the entries beyond the buffer limit, or let them age out. The entries
+/// found are changed even when another is not; that one is named, and the exit code is 3.
+pub fn pin(ctx: &mut Context, pinned: bool) -> Result<String> {
+    ctx.accept(&[], usize::MAX / 2)?;
+    let wanted: Vec<String> = ctx.args.positionals.iter().skip(2).cloned().collect();
+    if wanted.is_empty() {
+        return Err(CliError::usage("missing the entries' ids (see: bifurc capture list)"));
+    }
+    let workspace = workspace_id(ctx)?;
+    let all = summaries(ctx, &workspace, json!({}))?;
+    let ids: Vec<String> = all["entries"].as_array().into_iter().flatten().map(|e| js_template(e.get("id"))).collect();
+    let (mut found, mut missing) = (Vec::new(), Vec::new());
+    for one in &wanted {
+        match entry_id(&ids, one) {
+            Ok(id) => found.push(id),
+            Err(CliError::Exit(crate::error::NOT_FOUND, _)) => missing.push(format!("\"{one}\"")),
+            Err(other) => return Err(other),
+        }
+    }
+    let done = if found.is_empty() {
+        json!({ "ok": true, "changed": 0, "missing": [] })
+    } else {
+        ctx.request("capture.pin", json!({ "workspaceId": workspace, "ids": found, "pinned": pinned }))?
+    };
+    let line = format!("{} {}", if pinned { "pinned" } else { "unpinned" }, done["changed"].as_u64().unwrap_or(0));
+    if missing.is_empty() {
+        return Ok(ctx.print(&done, || line.clone()));
+    }
+    Err(CliError::not_found(format!("{line}; no captured entry {} (see: bifurc capture list)", missing.join(", "))))
+}
+
 /// `capture watch`: one JSON line per new matching entry (the light form plus `tail`) until `--count` of them,
 /// `--timeout` seconds, or the output closes.
 pub fn watch(ctx: &mut Context, out: &mut dyn Write) -> Result<String> {
@@ -386,6 +420,33 @@ mod tests {
 
     fn engine(buffer: Value) -> Vec<Answer> {
         vec![("config.get", Ok(config())), ("capture.list", Ok(buffer))]
+    }
+
+    #[test]
+    fn pin_changes_the_entries_found_and_names_the_missing_ones() {
+        let answers = |changed: u64| {
+            let mut answers = engine(buffer());
+            answers.push(("capture.pin", Ok(json!({"ok": true, "changed": changed, "missing": []}))));
+            answers
+        };
+        let (out, calls) =
+            run_with_events(&["capture", "pin", "#k3f9", "x3f9"], answers(2), vec![], |ctx| pin(ctx, true));
+        assert_eq!(out.unwrap(), "pinned 2");
+        assert_eq!(payloads(&calls, "capture.pin")[0]["ids"], json!(["mgv2k3f9", "mgv1x3f9"]));
+        let (out, calls) =
+            run_with_events(&["capture", "unpin", "k3a1", "zzzz"], answers(1), vec![], |ctx| pin(ctx, false));
+        let err = out.unwrap_err();
+        assert_eq!(err.code(), 3);
+        assert!(err.to_string().starts_with("unpinned 1; no captured entry \"zzzz\""), "{err}");
+        assert_eq!(payloads(&calls, "capture.pin")[0]["pinned"], false);
+    }
+
+    #[test]
+    fn a_pinned_entry_is_starred_in_the_list() {
+        let mut buffer = buffer();
+        buffer["entries"][1]["pinned"] = json!(true);
+        let (out, _) = go(&["capture", "list"], engine(buffer));
+        assert!(out.unwrap().contains("#k3a1*"));
     }
 
     #[test]
