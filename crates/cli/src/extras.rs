@@ -37,6 +37,7 @@ pub fn run(ctx: &mut Context, group: &str, verb: &str) -> Option<Result<String>>
         ("env", "unset") => env_variables(ctx, false),
         ("capture", "list") => capture::list(ctx),
         ("capture", "show") => capture::show(ctx),
+        ("capture", "diff") => capture::diff(ctx),
         ("capture", "pin") => capture::pin(ctx, true),
         ("capture", "unpin") => capture::pin(ctx, false),
         ("capture", "mock") => capture_save(ctx, "mocks"),
