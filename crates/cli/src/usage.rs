@@ -356,6 +356,7 @@ Steps (YAML or JSON), compiled into the graph; `flows show` prints a line flow b
     - request: Add item
       vars: { qty: 2 }               variables for this step only
       expect: [ status == 201, .items | length == 1 ]   == != < <= > >= contains; a miss fails the run
+                                     in [ ], quote one with an index: '.items[0].qty == 2'
     - inline: POST {{baseUrl}}/orders      a request made here, saved as <flow> · <n>; headers:, body:
 
 The JSON of a flow
