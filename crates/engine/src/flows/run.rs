@@ -244,7 +244,7 @@ impl Run {
             .collect();
         variables.extend(self.variables.lock().iter().cloned());
         variables.extend(bindings);
-        let scope = VariableScope { variables, changes: collected.clone() };
+        let scope = VariableScope { variables, environment_id: None, changes: collected.clone() };
         let result = with_variable_scope(scope, work).await;
         if let Some(collected) = collected {
             let changes = std::mem::take(&mut *collected.lock());

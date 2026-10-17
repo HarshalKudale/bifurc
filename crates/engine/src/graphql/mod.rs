@@ -6,7 +6,7 @@ use std::time::Instant;
 use serde_json::{Map, Value, json};
 
 use crate::{
-    env::{load_merged_environment, resolve_headers, resolve_vars},
+    env::{load_merged_environment, resolve_headers, resolve_vars, send_scoped, with_overrides},
     kernel::CommandRegistry,
     protocol::{EngineError, ErrorCode},
     rest::direct_http::{exchange_with, header_pairs},
@@ -94,35 +94,42 @@ pub fn register(registry: &mut CommandRegistry) {
     });
 
     registry.register("graphql.send", |params: Value, ctx| async move {
-        let ws_id = str_of(&params, "workspaceId");
-        let stored = match opt_str(&params, "id") {
-            Some(id) => load_entity(ws_id, "graphqlRequests", id).ok_or_else(|| {
-                EngineError::not_found(format!("No saved graphqlRequests entity \"{id}\" in workspace \"{ws_id}\"."))
+        send_scoped(&params.clone(), async move {
+            let ws_id = str_of(&params, "workspaceId");
+            let stored = match opt_str(&params, "id") {
+                Some(id) => load_entity(ws_id, "graphqlRequests", id).ok_or_else(|| {
+                    EngineError::not_found(format!(
+                        "No saved graphqlRequests entity \"{id}\" in workspace \"{ws_id}\"."
+                    ))
                     .keyed(
                         "request.saved_not_found",
                         json!({ "kind": "graphqlRequests", "id": id, "workspace": ws_id }),
                     )
-            })?,
-            None => params.get("request").cloned().unwrap_or(Value::Null),
-        };
-        let env = load_merged_environment(ws_id);
-        let env = env.as_ref();
-        let mut payload = json!({
-            "url": resolve_vars(str_of(&stored, "endpointUrl"), env),
-            "headers": resolve_headers(stored.get("headers").unwrap_or(&Value::Null), env),
-            "query": resolve_vars(str_of(&stored, "query"), env),
-            "variables": resolve_vars(str_of(&stored, "variables"), env),
-            "operationName": resolve_vars(str_of(&stored, "operationName"), env),
-        });
-        if let Some(settings) = stored.get("settings").filter(|v| v.is_object()) {
-            payload["settings"] = settings.clone();
-        }
-        let url = str_of(&payload, "url").to_string();
-        let outcome = crate::cookies::scoped(ws_id, ctx.registry.invoke("graphql.execute", payload, ctx.clone())).await;
-        response_history::record_text(ws_id, &params, "POST", &url, &outcome);
-        let mut result = outcome?;
-        crate::vault::redact_value(ws_id, &mut result);
-        Ok(result)
+                })?,
+                None => params.get("request").cloned().unwrap_or(Value::Null),
+            };
+            let stored = with_overrides(stored, &params);
+            let env = load_merged_environment(ws_id);
+            let env = env.as_ref();
+            let mut payload = json!({
+                "url": resolve_vars(str_of(&stored, "endpointUrl"), env),
+                "headers": resolve_headers(stored.get("headers").unwrap_or(&Value::Null), env),
+                "query": resolve_vars(str_of(&stored, "query"), env),
+                "variables": resolve_vars(str_of(&stored, "variables"), env),
+                "operationName": resolve_vars(str_of(&stored, "operationName"), env),
+            });
+            if let Some(settings) = stored.get("settings").filter(|v| v.is_object()) {
+                payload["settings"] = settings.clone();
+            }
+            let url = str_of(&payload, "url").to_string();
+            let outcome =
+                crate::cookies::scoped(ws_id, ctx.registry.invoke("graphql.execute", payload, ctx.clone())).await;
+            response_history::record_text(ws_id, &params, "POST", &url, &outcome);
+            let mut result = outcome?;
+            crate::vault::redact_value(ws_id, &mut result);
+            Ok(result)
+        })
+        .await
     });
 }
 

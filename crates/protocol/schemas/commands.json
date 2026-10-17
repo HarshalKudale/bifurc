@@ -3049,6 +3049,21 @@
          "test"
         ]
        }
+      },
+      "variables": {
+       "type": "object",
+       "propertyNames": {
+        "type": "string"
+       },
+       "additionalProperties": {
+        "type": "string"
+       }
+      },
+      "environmentId": {
+       "type": "string"
+      },
+      "overrides": {
+       "type": "object"
       }
      },
      "required": [
@@ -3169,6 +3184,21 @@
       },
       "entityId": {
        "type": "string"
+      },
+      "variables": {
+       "type": "object",
+       "propertyNames": {
+        "type": "string"
+       },
+       "additionalProperties": {
+        "type": "string"
+       }
+      },
+      "environmentId": {
+       "type": "string"
+      },
+      "overrides": {
+       "type": "object"
       }
      },
      "required": [
@@ -3190,6 +3220,21 @@
       },
       "id": {
        "type": "string"
+      },
+      "variables": {
+       "type": "object",
+       "propertyNames": {
+        "type": "string"
+       },
+       "additionalProperties": {
+        "type": "string"
+       }
+      },
+      "environmentId": {
+       "type": "string"
+      },
+      "overrides": {
+       "type": "object"
       }
      },
      "required": [
@@ -3256,6 +3301,21 @@
       },
       "entityId": {
        "type": "string"
+      },
+      "variables": {
+       "type": "object",
+       "propertyNames": {
+        "type": "string"
+       },
+       "additionalProperties": {
+        "type": "string"
+       }
+      },
+      "environmentId": {
+       "type": "string"
+      },
+      "overrides": {
+       "type": "object"
       }
      },
      "required": [
@@ -3276,6 +3336,21 @@
       },
       "id": {
        "type": "string"
+      },
+      "variables": {
+       "type": "object",
+       "propertyNames": {
+        "type": "string"
+       },
+       "additionalProperties": {
+        "type": "string"
+       }
+      },
+      "environmentId": {
+       "type": "string"
+      },
+      "overrides": {
+       "type": "object"
       }
      },
      "required": [
@@ -3338,6 +3413,21 @@
       },
       "entityId": {
        "type": "string"
+      },
+      "variables": {
+       "type": "object",
+       "propertyNames": {
+        "type": "string"
+       },
+       "additionalProperties": {
+        "type": "string"
+       }
+      },
+      "environmentId": {
+       "type": "string"
+      },
+      "overrides": {
+       "type": "object"
       }
      },
      "required": [
@@ -3358,6 +3448,21 @@
       },
       "id": {
        "type": "string"
+      },
+      "variables": {
+       "type": "object",
+       "propertyNames": {
+        "type": "string"
+       },
+       "additionalProperties": {
+        "type": "string"
+       }
+      },
+      "environmentId": {
+       "type": "string"
+      },
+      "overrides": {
+       "type": "object"
       }
      },
      "required": [
@@ -3419,6 +3524,21 @@
       },
       "entityId": {
        "type": "string"
+      },
+      "variables": {
+       "type": "object",
+       "propertyNames": {
+        "type": "string"
+       },
+       "additionalProperties": {
+        "type": "string"
+       }
+      },
+      "environmentId": {
+       "type": "string"
+      },
+      "overrides": {
+       "type": "object"
       }
      },
      "required": [
