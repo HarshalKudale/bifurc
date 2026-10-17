@@ -508,6 +508,15 @@ mod tests {
                             "verbose": true, "max_body": 100})),
             ),
             ("settings_show", json!({"json": true})),
+            ("wait", with(json!({"target": "http://x/health", "status": "200", "timeout": "1s", "interval": "100ms"}))),
+            (
+                "wait",
+                with(json!({
+                    "capture": true, "status": "4xx", "host": "api.*", "method": "POST", "path": "/orders*",
+                    "origin": "mock", "grep": "qty",
+                })),
+            ),
+            ("wait", json!({"port": 3000, "host": "127.0.0.1", "timeout": "0", "json": true})),
             ("health_delete", with(json!({"check": "h1"}))),
         ]
         .into_iter()
@@ -570,6 +579,10 @@ mod tests {
         let settings =
             Settings { data_dir: Some(dir.path().to_string_lossy().into_owned()), no_start: true, env_data_dir: None };
         for (name, arguments) in examples() {
+            // Waiting for a port needs no engine: it tries the port.
+            if arguments.get("port").is_some() {
+                continue;
+            }
             let outcome = run(&tool(name), arguments.as_object().unwrap(), &settings);
             assert!(outcome.failed, "{name}");
             assert!(outcome.text.starts_with("No engine is running for"), "{name} {arguments}: {}", outcome.text);

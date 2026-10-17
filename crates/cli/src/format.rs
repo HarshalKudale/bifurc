@@ -258,28 +258,70 @@ pub fn describe_reflection(result: &Value) -> String {
     lines.join("\n")
 }
 
-/// The four lines of `bifurc status`.
-pub fn describe_status(engine: &RuntimeInfo, server: &Value, active_workspace: &Value) -> String {
-    let proxy = if server.get("running").is_some_and(truthy) {
-        format!("listening on {}", js_template(server.get("port")))
-    } else {
-        match server.get("error").filter(|e| truthy(e)) {
-            Some(error) => format!("stopped ({})", js_string(error)),
-            None => "stopped".to_string(),
-        }
-    };
-    let workspace = match active_workspace {
-        Value::Object(w) => format!("{} ({})", js_template(w.get("name")), js_template(w.get("id"))),
-        other => js_string(other),
-    };
-    [
-        format!("engine     pid {}, {} {}, v{}", engine.pid, engine.transport, engine.address, engine.engine_version),
-        format!("data dir   {}", engine.data_dir),
-        format!("proxy      {proxy}"),
-        format!("workspace  {workspace}"),
-    ]
-    .join("\n")
+/// The answers `bifurc status` gathers; one that could not be had is `None` and its part is left out.
+pub struct StatusParts {
+    pub server: Option<Value>,
+    pub config: Option<Value>,
+    pub capture: Option<Value>,
+    pub cookies: Option<Value>,
 }
+
+impl StatusParts {
+    /// The name of the environment in force (`none` when no one is), from the engine's own choice.
+    pub fn environment(&self) -> Option<String> {
+        let config = self.config.as_ref()?;
+        let id = config.get("activeEnvironmentId").filter(|id| !id.is_null());
+        let found = config.get("environments").and_then(Value::as_array).and_then(|all| {
+            all.iter().find(|e| e.get("id") == id && e.get("id").and_then(Value::as_str) != Some("__global__"))
+        });
+        Some(found.map_or("none".to_string(), |e| js_template(e.get("name"))))
+    }
+
+    /// How many mocks are enabled.
+    pub fn mocks(&self) -> Option<usize> {
+        let all = self.config.as_ref()?.get("mocks")?.as_array()?;
+        Some(all.iter().filter(|m| m.get("enabled").is_some_and(truthy)).count())
+    }
+
+    /// How many domains hold cookies.
+    pub fn cookies_domains(&self) -> Option<usize> {
+        Some(self.cookies.as_ref()?.get("domains")?.as_array()?.len())
+    }
+}
+
+/// The two lines of `bifurc status`.
+pub fn describe_status(engine: &RuntimeInfo, active_workspace: &Value, parts: &StatusParts) -> String {
+    let mut first = vec![format!("engine {}", engine.engine_version)];
+    if let Some(server) = &parts.server {
+        let port = parts.config.as_ref().and_then(|c| c.get("forwardProxyPort")).or(server.get("port"));
+        let state = if server.get("running").is_some_and(truthy) { "on" } else { "off" };
+        first.push(format!("proxy :{} {state}", js_template(port)));
+    }
+    if parts.config.is_some() {
+        first.push(format!(
+            "workspace {}",
+            match active_workspace {
+                Value::Object(w) => js_template(w.get("name")),
+                other => js_string(other),
+            }
+        ));
+    }
+    first.extend(parts.environment().map(|name| format!("env {name}")));
+    let mut second = Vec::new();
+    second.extend(parts.mocks().map(|n| format!("mocks {n} on")));
+    if let Some(capture) = &parts.capture {
+        let paused = if capture.get("paused").is_some_and(truthy) { " paused" } else { "" };
+        second.push(format!("capture {}/{}{paused}", js_template(capture.get("matched")), MAX_CAPTURE));
+    }
+    second.extend(parts.cookies_domains().map(|n| format!("cookies {n} domain{}", if n == 1 { "" } else { "s" })));
+    [first, second].iter().filter(|line| !line.is_empty()).map(|line| line.join(" · ")).collect::<Vec<_>>().join(
+        "
+",
+    )
+}
+
+/// What the engine keeps of captured traffic, per workspace.
+const MAX_CAPTURE: u32 = 200;
 
 /// JavaScript truthiness.
 pub fn truthy(value: &Value) -> bool {
@@ -452,23 +494,39 @@ boom"
     }
 
     #[test]
-    fn status_shows_engine_proxy_and_workspace() {
+    fn status_is_two_lines_and_leaves_out_what_could_not_be_had() {
         let info = RuntimeInfo::from_json(json!({
-            "pid": 5, "transport": "socket", "address": "addr", "dataDir": "/d", "engineVersion": "0.4.0"
+            "pid": 5, "transport": "socket", "address": "addr", "dataDir": "/d", "engineVersion": "0.6.0"
         }))
         .unwrap();
-        let workspace = json!({"id": "w1", "name": "Default"});
+        let workspace = json!({"id": "w1", "name": "smoke"});
+        let config = json!({"forwardProxyPort": 8080, "activeEnvironmentId": "e1", "environments": [
+            {"id": "__global__", "name": "Global"}, {"id": "e1", "name": "dev"}],
+            "mocks": [{"enabled": true}, {"enabled": false}, {"enabled": true}]});
+        let parts = StatusParts {
+            server: Some(json!({"running": true, "port": 1})),
+            config: Some(config),
+            capture: Some(json!({"matched": 143, "paused": false})),
+            cookies: Some(json!({"domains": [{}, {}, {}]})),
+        };
         assert_eq!(
-            describe_status(&info, &json!({"running": true, "port": 8080}), &workspace),
-            "engine     pid 5, socket addr, v0.4.0\ndata dir   /d\nproxy      listening on 8080\nworkspace  Default (w1)"
+            describe_status(&info, &workspace, &parts),
+            "engine 0.6.0 · proxy :8080 on · workspace smoke · env dev
+mocks 2 on · capture 143/200 · cookies 3 domains"
         );
-        assert!(
-            describe_status(&info, &json!({"running": false}), &json!("w9"))
-                .ends_with("proxy      stopped\nworkspace  w9")
+        let parts = StatusParts {
+            server: Some(json!({"running": false, "port": 9})),
+            config: None,
+            capture: Some(json!({"matched": 0, "paused": true})),
+            cookies: None,
+        };
+        assert_eq!(
+            describe_status(&info, &json!(null), &parts),
+            "engine 0.6.0 · proxy :9 off
+capture 0/200 paused"
         );
-        assert!(
-            describe_status(&info, &json!({"running": false, "error": "EADDRINUSE"}), &workspace)
-                .contains("proxy      stopped (EADDRINUSE)")
-        );
+        let none =
+            StatusParts { server: None, config: Some(json!({"environments": []})), capture: None, cookies: None };
+        assert_eq!(describe_status(&info, &workspace, &none), "engine 0.6.0 · workspace smoke · env none");
     }
 }

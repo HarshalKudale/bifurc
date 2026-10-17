@@ -2,7 +2,33 @@
 
 use crate::direct;
 
-/// The usage text, printed for `--help`, `help` and no command, and appended to an unknown-command error.
+/// The short overview, printed for `--help`, `help` and no command, and appended to an unknown-command error.
+pub const OVERVIEW: &str = "Usage: bifurc <group> <verb> [arguments] [options]
+
+Runs requests, mocks, flows and the proxies of a Bifurc workspace; starts an engine when none runs.
+
+  curl      <curl arguments> [--save <name>]               A curl command through the engine, one summary line
+  requests  list | show | send | create | update | delete  Saved requests of every type
+  capture   list | show | watch | mock | request | clear    Traffic the proxies captured
+  mocks     list | show | create | update | enable | disable
+  flows     list | show | run | validate | loadtest         Saved chains of requests
+  runner    run <folder> [--bail]                          Run a folder's requests
+  env       list | show | use | set | unset                Environments and their variables
+  cookies   list | clear                                   The workspace's cookie jar
+  wait      <url|check> | --port <n> | --capture           Block until something is ready
+  status                                                   Engine, proxy, mocks, capture and cookies, two lines
+  Also: workspaces, mappings, rules, folders, health, sync, history, export, import, vault, account, proxy,
+  settings, tls, services, engine, update, call, commands
+
+Options
+  --json  --data-dir <path>  -w, --workspace <id>  --no-start  -h, --help
+
+  bifurc help <group>             The verbs and options of a group
+  bifurc help <group> --examples  Copy-paste examples
+  bifurc help --all               Every group and verb
+Exit codes: 0 ok, 1 a check failed, 2 usage, 3 not found, 4 network, 5 no engine, 6 needs a person";
+
+/// The full usage text, printed for `help --all`.
 pub const USAGE: &str = "Usage: bifurc <group> <verb> [arguments] [options]
 
 Talks to the Bifurc engine that serves a data directory, over its socket (a named pipe on Windows).
@@ -53,7 +79,8 @@ Engine
   engine stop                            Stop it gracefully; the interfaces using it close too
   engine restart                         Stop it and start it again; the interfaces reconnect
   engine status                          Where it runs, without opening a session
-  status                                 Engine, proxy and active workspace
+  status                                 Engine, proxy, workspace, environment, mocks, capture and cookies in two lines
+  wait <url|check> | --port <n> | --capture   Block until a URL answers, a port accepts, or a request is captured
   update [check | skip <version>]        Whether a newer Bifurc exists and how this install gets it; check asks now
 
 Anything else
@@ -104,6 +131,19 @@ Output        --body --headers --select <path> --out <file> --max-body <bytes> -
               --bifurc-json     The machine-readable result (--json is curl's: data to send)
 Run           --var KEY=VALUE   A variable for this run (repeatable)    --env <name>   Another environment
               --no-jar          Send without the workspace's cookie jar";
+
+const WAIT: &str = "Usage: bifurc wait <url|health check> [--status <code>] [--timeout 30s] [--interval 500ms]
+       bifurc wait --port <n> [--host 127.0.0.1] [--timeout 30s] [--interval 500ms]
+       bifurc wait --capture [--method M] [--host H] [--path P*] [--status 4xx] [--origin real|mock|mapped|rule]
+                   [--grep text] [--timeout 30s] [--interval 500ms]
+
+Polls until the thing is ready, then prints one line (`ready · http://api.localhost/health 200 · 2.4s`) and
+exits 0. After --timeout it exits 4 and says why the last attempt failed.
+  <url>       Ready when the URL answers with any status, or with --status. A health check's name means its URL;
+              {{variables}} are resolved. http:// is added to an address without a scheme.
+  --port      Ready when a TCP connection is accepted. Needs no engine.
+  --capture   Ready when a new request that matches the filters of capture list is captured.
+Durations are 500ms, 30s, 2m or a number of seconds.";
 
 const WORKSPACES: &str = "Usage: bifurc workspaces <verb>
 
@@ -484,15 +524,112 @@ pub fn group_usage(group: &str) -> Option<String> {
         "settings" => SETTINGS,
         "tls" => TLS,
         "curl" => CURL,
+        "wait" => WAIT,
         _ => return None,
     };
     let rows = direct::usage(group);
     Some(if rows.is_empty() { own.to_string() } else { format!("{own}\n\n{rows}") })
 }
 
+/// Copy-paste examples of the groups agents use most, one command per line.
+pub fn examples(group: &str) -> Option<&'static [&'static str]> {
+    Some(match canonical_group(group) {
+        "curl" => &[
+            r#"bifurc curl -X POST {{baseUrl}}/users -d '{"email":"a@b.co"}' --save "Create user" --folder auth"#,
+            "bifurc curl -s http://api.localhost/users/1 --select .email",
+            "bifurc curl http://api.localhost/health --expect-status 200",
+            "bifurc curl -H 'Authorization: Bearer {{token}}' http://api.localhost/me --headers",
+        ],
+        "requests" => &[
+            "bifurc requests list --folder auth --grep user",
+            r#"bifurc requests send "Create user" --var email=x@y.co --expect-status 201 --select .id"#,
+            r#"bifurc requests send "Get order" --env staging --body --max-body 500"#,
+            "bifurc requests send --url http://api.localhost/ping --expect 'status < 300'",
+            r#"bifurc requests show "Create user" --curl"#,
+        ],
+        "capture" => &[
+            "bifurc capture list --status 4xx --last 5",
+            "bifurc capture show #k3f9 --select .error",
+            "bifurc capture list --host api.localhost --path /orders* --since 2m",
+            "bifurc capture show #k3f9 --req-body --headers",
+            "bifurc capture mock #k3f9",
+        ],
+        "mocks" => &[
+            "bifurc mocks list",
+            r#"bifurc mocks create http://api.localhost/users/1 --status 200 -d '{"id":1}' -H "Content-Type: application/json""#,
+            r#"bifurc mocks update "Get user" --status 500 --delay 800"#,
+            r#"bifurc mocks disable "Get user""#,
+        ],
+        "flows" => &[
+            "bifurc flows list",
+            r#"bifurc flows validate "Login then list""#,
+            r#"bifurc flows run "Login then list" --input user=ann --env dev"#,
+            r#"bifurc flows run "Login then list" --fresh-session --verbose"#,
+        ],
+        "runner" => &[
+            "bifurc runner run auth",
+            "bifurc runner run auth/admin --bail --env staging",
+            "bifurc runner run auth --var email=x@y.co --verbose",
+        ],
+        "env" => &[
+            "bifurc env list",
+            "bifurc env use dev",
+            "bifurc env show",
+            "bifurc env set dev baseUrl=http://api.localhost token=abc",
+            "bifurc env unset dev token",
+        ],
+        "cookies" => &[
+            "bifurc cookies list",
+            "bifurc cookies list --domain api.localhost",
+            "bifurc cookies clear --domain api.localhost",
+            "bifurc cookies clear",
+        ],
+        "wait" => &[
+            "bifurc wait http://api.localhost/health --timeout 30s",
+            "bifurc wait api-health --status 200",
+            "bifurc wait --port 3000 --timeout 1m",
+            "bifurc wait --capture --method POST --path /orders* --timeout 2m",
+        ],
+        _ => return None,
+    })
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn words(text: &str) -> Vec<&str> {
+        text.split(|c: char| !c.is_alphanumeric() && c != '-').collect()
+    }
+
+    #[test]
+    fn the_short_overview_is_at_most_30_lines_and_names_the_commands_agents_use() {
+        assert!(OVERVIEW.lines().count() <= 30, "{} lines", OVERVIEW.lines().count());
+        for group in ["curl", "requests", "capture", "mocks", "flows", "runner", "env", "cookies", "wait", "status"] {
+            assert!(words(OVERVIEW).contains(&group), "{group}");
+        }
+    }
+
+    #[test]
+    fn every_example_is_a_known_group_and_verb_with_flags_its_help_names() {
+        for group in ["curl", "requests", "capture", "mocks", "flows", "runner", "env", "cookies", "wait"] {
+            let help = group_usage(group).unwrap();
+            let list = examples(group).unwrap_or_else(|| panic!("{group} has no examples"));
+            assert!((3..=5).contains(&list.len()), "{group}");
+            for line in list {
+                let argv = crate::curl::shell_words(line);
+                assert_eq!((argv[0].as_str(), argv[1].as_str()), ("bifurc", group), "{line}");
+                let parsed = crate::args::parse_args(&argv[1..]).unwrap_or_else(|e| panic!("{line}: {e}"));
+                let verb = parsed.positional(1).unwrap_or_default();
+                assert!(group == "curl" || group == "wait" || help.contains(verb), "{line}: verb {verb}");
+                for flag in parsed.names().into_iter().filter(|f| !["json", "help"].contains(f)) {
+                    let aliased = ["header", "data", "method"].contains(&flag);
+                    assert!(aliased || help.contains(&format!("--{flag}")), "{line}: --{flag}");
+                }
+            }
+        }
+        assert_eq!(examples("status"), None);
+    }
 
     #[test]
     fn every_group_of_the_overview_has_its_own_help() {
@@ -500,6 +637,7 @@ mod tests {
         groups.extend(direct::verbs().iter().map(|verb| verb.words[0]).filter(|group| *group != "update"));
         for group in groups {
             assert!(USAGE.contains(&format!("\n  {group} ")), "{group} is not in the overview");
+            assert!(words(OVERVIEW).contains(&group), "{group} is not in the short overview");
             let help = group_usage(group).unwrap_or_else(|| panic!("{group} has no help"));
             assert!(help.starts_with(&format!("Usage: bifurc {group} ")), "{group}");
         }

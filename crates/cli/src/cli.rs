@@ -23,8 +23,8 @@ use crate::{
     session::{Engine, connect},
     supervisor::{RESTART_TIMEOUT, START_TIMEOUT, STOP_TIMEOUT, restart_engine, start_engine, stop_engine},
     update,
-    usage::{USAGE, canonical_group, group_usage},
-    vault,
+    usage::{OVERVIEW, USAGE, canonical_group, examples, group_usage},
+    vault, wait,
 };
 
 /// The version this client reports in the handshake.
@@ -122,6 +122,7 @@ fn dispatch(args: &ParsedArgs, data_dir: &Path, stdout: &mut dyn Write) -> Resul
     match group {
         "engine" => engine_command(args, &ctx, data_dir),
         "status" => commands::status(&mut ctx),
+        "wait" => wait::wait(&mut ctx),
         "workspaces" => commands::workspaces(&mut ctx, sub),
         "account" => commands::account(&mut ctx, sub),
         "env" => commands::env(&mut ctx, sub),
@@ -153,7 +154,7 @@ fn dispatch(args: &ParsedArgs, data_dir: &Path, stdout: &mut dyn Write) -> Resul
         )),
         // A group that has only verbs of the tables above.
         _ if group_usage(group).is_some() => Err(unknown_verb(group, verb)),
-        _ => Err(CliError::usage(format!("unknown command \"{group}\"\n\n{USAGE}"))),
+        _ => Err(CliError::usage(format!("unknown command \"{group}\"\n\n{OVERVIEW}"))),
     }
 }
 
@@ -190,6 +191,28 @@ pub fn run_with_env(
             }
         };
     }
+    // `bifurc help --all` is the whole overview (`--all` takes a value elsewhere, so it is read here).
+    if argv.iter().any(|a| a == "--all") && matches!(argv.first().map(String::as_str), Some("help" | "--help" | "-h")) {
+        let _ = writeln!(stdout, "{USAGE}");
+        return 0;
+    }
+    // `bifurc help mocks --examples` and `bifurc mocks --help --examples`; `curl` would misread the line below.
+    if argv.iter().any(|a| a == "--examples")
+        && let Ok(args) = parse_args(argv)
+    {
+        let topic = if args.positional(0) == Some("help") { args.positional(1) } else { args.positional(0) };
+        return match topic.and_then(examples) {
+            Some(lines) => {
+                let _ = writeln!(stdout, "{}", lines.join("\n"));
+                0
+            }
+            None => {
+                let message = "examples exist for: curl, requests, capture, mocks, flows, runner, env, cookies, wait";
+                let _ = writeln!(stderr, "{}", CliError::usage(message).line());
+                2
+            }
+        };
+    }
     // `bifurc curl …`: curl's arguments, which `parse_args` would misread (`-I`, `--json <data>`).
     if curl::at(argv).is_some() {
         let result = curl::split(argv).and_then(|(args, call)| {
@@ -217,7 +240,7 @@ pub fn run_with_env(
     if group.is_none() || args.has("help") || group == Some("help") {
         // `bifurc help mocks` and `bifurc mocks --help` are the help of that group.
         let topic = if group == Some("help") { args.positional(1) } else { group };
-        let _ = writeln!(stdout, "{}", topic.and_then(group_usage).unwrap_or_else(|| USAGE.to_string()));
+        let _ = writeln!(stdout, "{}", topic.and_then(group_usage).unwrap_or_else(|| OVERVIEW.to_string()));
         return 0;
     }
     let data_dir = data_dir_of(&args, env_data_dir);
@@ -280,7 +303,7 @@ mod tests {
         for argv in [vec![], vec!["--help"], vec!["-h"], vec!["help"], vec!["status", "--help"]] {
             let outcome = go(&argv);
             assert_eq!(outcome.code, 0, "{argv:?}");
-            assert_eq!(outcome.stdout, format!("{USAGE}\n"));
+            assert_eq!(outcome.stdout, format!("{OVERVIEW}\n"));
             assert_eq!(outcome.stderr, "");
         }
     }
@@ -290,7 +313,7 @@ mod tests {
         let outcome = go(&["frobnicate"]);
         assert_eq!(outcome.code, 2);
         assert_eq!(outcome.stdout, "");
-        assert_eq!(outcome.stderr, format!("bifurc: unknown command \"frobnicate\"\n\n{USAGE}\n"));
+        assert_eq!(outcome.stderr, format!("bifurc: unknown command \"frobnicate\"\n\n{OVERVIEW}\n"));
     }
 
     #[test]
@@ -386,7 +409,28 @@ mod tests {
             assert_eq!(outcome.code, 0, "{argv:?}");
             assert_eq!(outcome.stdout, format!("{}\n", group_usage("mocks").unwrap()));
         }
-        assert_eq!(go(&["help", "nonsense"]).stdout, format!("{USAGE}\n"));
+        assert_eq!(go(&["help", "nonsense"]).stdout, format!("{OVERVIEW}\n"));
+        assert_eq!(go(&["help", "--all"]).stdout, format!("{USAGE}\n"));
+    }
+
+    #[test]
+    fn examples_are_printed_for_a_group_in_either_spelling_and_refused_for_others() {
+        let want = format!("{}\n", examples("curl").unwrap().join("\n"));
+        for argv in [vec!["help", "curl", "--examples"], vec!["curl", "--help", "--examples"]] {
+            assert_eq!(go(&argv).stdout, want, "{argv:?}");
+        }
+        assert_eq!(go(&["help", "mock", "--examples"]).stdout.lines().count(), 4);
+        assert_eq!(go(&["help", "status", "--examples"]).code, 2);
+    }
+
+    #[test]
+    fn waiting_for_a_port_needs_no_engine() {
+        let dir = empty_dir();
+        let path = dir.path().to_str().unwrap();
+        let outcome = go(&["wait", "--port", "1", "--timeout", "0", "--no-start", "--data-dir", path]);
+        assert_eq!(outcome.code, 4);
+        assert!(outcome.stderr.starts_with("bifurc: timed out after 0s"), "{}", outcome.stderr);
+        assert!(!dir.path().join("runtime.json").exists());
     }
 
     #[test]

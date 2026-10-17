@@ -22,7 +22,7 @@ const FILTERS: [&str; 6] = ["status", "method", "host", "path", "origin", "grep"
 /// The events that say the buffer has new entries.
 const EVENT: &str = "event.log.entry";
 
-fn now_ms() -> i64 {
+pub(crate) fn now_ms() -> i64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |since| since.as_millis() as i64)
 }
 
@@ -44,7 +44,7 @@ fn clock(ms: i64) -> String {
 }
 
 /// `host/path` without the scheme; a query or fragment shows as `?…`.
-fn short_url(url: &str) -> String {
+pub(crate) fn short_url(url: &str) -> String {
     let rest = url.split_once("://").map_or(url, |(_, rest)| rest);
     match rest.find(['?', '#']) {
         Some(at) => format!("{}?…", &rest[..at]),
@@ -87,7 +87,7 @@ fn entry_id(ids: &[String], wanted: &str) -> Result<String> {
 }
 
 /// The entries of the workspace in the engine's light form, newest first.
-fn summaries(ctx: &mut Context, workspace: &str, mut payload: Value) -> Result<Value> {
+pub(crate) fn summaries(ctx: &mut Context, workspace: &str, mut payload: Value) -> Result<Value> {
     payload["workspaceId"] = json!(workspace);
     payload["summary"] = json!(true);
     ctx.request("capture.list", payload)
@@ -120,7 +120,7 @@ fn since(ctx: &mut Context, workspace: &str, raw: &str) -> Result<i64> {
 }
 
 /// The payload fields of the filters given.
-fn filters(ctx: &Context) -> Result<Value> {
+pub(crate) fn filters(ctx: &Context) -> Result<Value> {
     let mut payload = json!({});
     for name in FILTERS.iter().filter(|name| **name != "origin") {
         if let Some(value) = ctx.args.flag(name) {
