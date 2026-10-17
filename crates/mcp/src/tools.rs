@@ -218,7 +218,7 @@ fn request_options() -> Vec<Param> {
         ),
         text(
             "body",
-            "body",
+            "data",
             "rest, soap and sse: the request body. grpc: the message as JSON (a client-streaming \
             method takes a JSON array of messages).",
         ),
@@ -251,6 +251,24 @@ fn request_options() -> Vec<Param> {
             "mcp: how the server is reached. Default: \
             what the url looks like.",
         ),
+    ]
+}
+
+/// What a send of a request that answers once returns; the response is a summary line unless asked for more.
+fn output_options() -> Vec<Param> {
+    vec![
+        text("select", "select", "A jq-style path into the JSON body: return only the values it picks."),
+        switch("show_body", "body", None, "Include the response body (text only), cut at max_body."),
+        switch("show_headers", "headers", None, "Include the response headers; secrets are masked."),
+        typed("max_body", "max-body", Type::Integer, "Bytes of body returned with show_body (default 2048; 0 = all)."),
+        typed("expect_status", "expect-status", Type::Integer, "Fail unless the response has this status."),
+        Param {
+            name: "expect",
+            about: "Fail unless each '<path> <op> <value>' holds, e.g. 'status < 300' or '.id != null'.",
+            ty: Type::TextList,
+            place: Place::Each("expect"),
+            required: false,
+        },
     ]
 }
 
@@ -435,6 +453,7 @@ pub fn catalog() -> Vec<Tool> {
                 ],
                 request_options(),
                 exchange_options(),
+                output_options(),
             ]),
         },
         Row {

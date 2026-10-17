@@ -320,6 +320,12 @@ mod tests {
             (
                 "requests_send",
                 with(
+                    json!({"url": "http://x", "select": ".a", "show_body": true, "show_headers": true, "max_body": 10, "expect_status": 200, "expect": ["status < 300", ".a == 1"]}),
+                ),
+            ),
+            (
+                "requests_send",
+                with(
                     json!({"type": "graphql", "url": "http://x", "query": "{a}", "variables": {"a": 1}, "operation": "A"}),
                 ),
             ),

@@ -3,7 +3,7 @@
 use std::collections::HashMap;
 
 /// Flags that take no value.
-const BOOLEAN_FLAGS: [&str; 14] = [
+const BOOLEAN_FLAGS: [&str; 18] = [
     "yes",
     "ack",
     "json",
@@ -18,6 +18,10 @@ const BOOLEAN_FLAGS: [&str; 14] = [
     "auto",
     "no-auto",
     "reflection",
+    "headers",
+    "raw",
+    "quiet",
+    "reveal",
 ];
 
 /// Single-letter aliases; any other letter stands for itself.
@@ -25,7 +29,7 @@ fn alias(letter: char) -> String {
     match letter {
         'H' => "header",
         'X' => "method",
-        'd' => "body",
+        'd' => "data",
         'h' => "help",
         't' => "type",
         'w' => "workspace",
@@ -114,7 +118,12 @@ pub fn parse_args(argv: &[String]) -> Result<ParsedArgs, String> {
             }
         };
         i += 1;
-        if BOOLEAN_FLAGS.contains(&name.as_str()) {
+        // `--body` shows the body of a response when sending a request; everywhere else it is the request body,
+        // which `--data` (curl's `-d`) names.
+        let sends = matches!(parsed.positionals.as_slice(), [group, verb, ..]
+            if matches!(group.as_str(), "requests" | "request") && verb == "send");
+        let name = if name == "body" && !sends { "data".to_string() } else { name };
+        if BOOLEAN_FLAGS.contains(&name.as_str()) || (name == "body" && sends) {
             parsed.add(&name, "true".to_string());
             continue;
         }
@@ -156,7 +165,21 @@ mod tests {
         let a = ok(&["requests", "send", "--url", "http://x", "-X", "POST", "-H", "a: 1", "-H", "b: 2", "-d", "{}"]);
         assert_eq!(a.flag("method"), Some("POST"));
         assert_eq!(a.flags("header"), ["a: 1", "b: 2"]);
-        assert_eq!(a.flag("body"), Some("{}"));
+        assert_eq!(a.flag("data"), Some("{}"));
+    }
+
+    #[test]
+    fn body_is_a_switch_when_sending_requests_and_the_request_body_elsewhere() {
+        let a = ok(&["requests", "send", "r1", "--body", "--max-body", "10", "-d", "x"]);
+        assert_eq!(a.flag("body"), Some("true"));
+        assert_eq!(a.positionals, ["requests", "send", "r1"]);
+        assert_eq!(a.flag("data"), Some("x"));
+        let a = ok(&["request", "send", "r1", "--body"]);
+        assert_eq!(a.flag("body"), Some("true"));
+        for argv in [["requests", "create", "--body", "{}"], ["mocks", "create", "--body", "{}"]] {
+            let a = ok(&argv);
+            assert_eq!((a.flag("data"), a.has("body")), (Some("{}"), false), "{argv:?}");
+        }
     }
 
     #[test]
@@ -213,7 +236,7 @@ mod tests {
 
     #[test]
     fn a_value_may_start_with_a_dash() {
-        assert_eq!(ok(&["--body", "-5"]).flag("body"), Some("-5"));
+        assert_eq!(ok(&["--body", "-5"]).flag("data"), Some("-5"));
     }
 
     #[test]

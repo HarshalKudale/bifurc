@@ -16,10 +16,8 @@ use crate::{
         text_from, unknown_verb, with_field, workspace_id,
     },
     error::{CliError, Result},
-    format::{
-        describe_grpc, describe_reflection, describe_send, describe_socket, describe_text_response, js_template, json,
-        table, truthy,
-    },
+    format::{describe_reflection, describe_socket, js_template, json, table},
+    response::{Response, present},
 };
 
 /// One type of request.
@@ -47,7 +45,7 @@ const TYPES: [RequestType; 8] = [
         send: Some("request.send"),
         url_key: "url",
         headers_key: "headers",
-        options: &["method", "body", "body-file"],
+        options: &["method", "data", "body-file"],
         inline: &["method", "url", "headers", "body"],
     },
     RequestType {
@@ -65,7 +63,7 @@ const TYPES: [RequestType; 8] = [
         send: Some("grpc.send"),
         url_key: "serverAddress",
         headers_key: "metadata",
-        options: &["method", "body", "body-file", "proto", "reflection"],
+        options: &["method", "data", "body-file", "proto", "reflection"],
         inline: &[
             "serverAddress",
             "serviceName",
@@ -82,7 +80,7 @@ const TYPES: [RequestType; 8] = [
         send: Some("soap.send"),
         url_key: "endpointUrl",
         headers_key: "headers",
-        options: &["action", "body", "body-file"],
+        options: &["action", "data", "body-file"],
         inline: &["endpointUrl", "soapAction", "headers", "body"],
     },
     RequestType {
@@ -100,7 +98,7 @@ const TYPES: [RequestType; 8] = [
         send: None,
         url_key: "url",
         headers_key: "headers",
-        options: &["method", "body", "body-file"],
+        options: &["method", "data", "body-file"],
         inline: &["url", "method", "headers", "body"],
     },
     RequestType {
@@ -288,7 +286,7 @@ fn apply_options(ty: &RequestType, entity: &mut Value, args: &ParsedArgs) -> Res
         merge_headers(&mut map, &headers);
         set(entity, ty.headers_key, Value::Object(map));
     }
-    let body = if ty.options.contains(&"body") { body_from(args)? } else { None };
+    let body = if ty.options.contains(&"data") { body_from(args)? } else { None };
     match ty.name {
         "rest" | "sse" => {
             if let Some(method) = args.flag("method") {
@@ -410,26 +408,14 @@ fn described(ty: &RequestType, args: &ParsedArgs, extra: &[&str]) -> Result<Valu
     Ok(entity)
 }
 
-/// What the engine answered a send, printed; a failure of what was sent fails the command.
-fn sent(ctx: &Context, ty: &RequestType, response: Value) -> Result<String> {
-    let said = |key: &str| response.get(key).and_then(Value::as_str).is_some_and(|message| !message.is_empty());
-    let (human, failed) = match ty.name {
-        "rest" => {
-            let tests = response.get("tests").and_then(Value::as_array);
-            let a_test_failed = tests.into_iter().flatten().any(|test| !test.get("passed").is_some_and(truthy));
-            (describe_send(&response), a_test_failed || said("preScriptError") || said("postScriptError"))
-        }
-        "grpc" => {
-            if response.get("ok").and_then(Value::as_bool) == Some(false) && !ctx.json {
-                let error = response.get("error").and_then(Value::as_str).unwrap_or("the gRPC call failed");
-                return Err(CliError::msg(error));
-            }
-            (describe_grpc(&response), response.get("ok").and_then(Value::as_bool) == Some(false))
-        }
-        _ => (describe_text_response(&response), false),
+/// What the engine answered a send, printed as the output options say; a failure of what was sent fails the command.
+fn sent(ctx: &mut Context, ty: &RequestType, response: Value) -> Result<String> {
+    let response = match ty.name {
+        "rest" => Response::from_rest(&response),
+        "grpc" => Response::from_grpc(&response),
+        _ => Response::from_text(&response),
     };
-    let out = ctx.print(&response, || human);
-    if failed { Err(CliError::Failed(out)) } else { Ok(out) }
+    present(ctx, &response)
 }
 
 /// How long a WebSocket, an SSE stream or a Socket.IO connection is given to open.
@@ -447,6 +433,10 @@ pub(crate) fn listen_seconds(args: &ParsedArgs, default: f64) -> Result<f64> {
     }
 }
 
+/// What a send of a request that answers once prints (see [`present`]).
+const OUTPUT_OPTIONS: [&str; 10] =
+    ["body", "headers", "select", "out", "max-body", "raw", "quiet", "reveal", "expect-status", "expect"];
+
 /// The options only a send takes, each for the types [`exchange_options`] says.
 const SEND_OPTIONS: [&str; 7] = ["wait", "event", "ack", "tool", "prompt", "resource", "arg"];
 
@@ -456,8 +446,8 @@ const SEND_OPTIONS: [&str; 7] = ["wait", "event", "ack", "tool", "prompt", "reso
 fn exchange_options(ty: &RequestType) -> &'static [&'static str] {
     match ty.name {
         "sse" => &["wait"],
-        "socketio" => &["event", "body", "ack", "wait"],
-        "websocket" => &["body", "wait"],
+        "socketio" => &["event", "data", "ack", "wait"],
+        "websocket" => &["data", "wait"],
         "mcp" => &["tool", "prompt", "resource", "arg", "wait"],
         _ => &[],
     }
@@ -495,7 +485,7 @@ fn socket_exchange(ctx: &mut Context, workspace: &str, socket_id: &str, target: 
         }
     }
     let mut failure = None;
-    if let Some(message) = ctx.args.flag("body") {
+    if let Some(message) = body_from(ctx.args)? {
         let answer =
             ctx.request("ws.send", json!({ "workspaceId": workspace, "socketId": socket_id, "data": message }))?;
         failure = refused(answer).err();
@@ -611,7 +601,7 @@ pub fn requests(ctx: &mut Context, sub: Option<&str>) -> Result<String> {
         }
         "send" => {
             describing.extend(SEND_OPTIONS);
-            ctx.accept(&describing, 1)?;
+            ctx.accept(&[describing.as_slice(), &OUTPUT_OPTIONS].concat(), 1)?;
             match args.positional(2) {
                 // A saved request goes by id: the engine loads it, resolves it and runs its scripts.
                 Some(wanted) => {
@@ -986,7 +976,7 @@ mod tests {
             ),
             (
                 vec!["requests", "create", "-t", "ws", "--url", "ws://x", "-d", "hi"],
-                "--body is not an option of a websocket request (see: bifurc requests --help)",
+                "--data is not an option of a websocket request (see: bifurc requests --help)",
             ),
             (vec!["requests", "create", "--url", "u", "-H", "nocolon"], "header \"nocolon\" must be \"name: value\""),
             (
@@ -1084,14 +1074,14 @@ mod tests {
         let mut answers = saved_requests();
         answers.push(("request.send", Ok(response)));
         let (out, calls) = run(&argv, answers, |c| requests(c, sub(&argv)));
-        assert_eq!(out.unwrap(), "HTTP 200  (3 ms)\na: b\n\nok");
+        assert_eq!(out.unwrap(), "200 OK · 3ms · 2B text");
         assert_eq!(payloads(&calls, "request.send"), [json!({"workspaceId": "w1", "id": "r1"})]);
 
         let argv = ["requests", "send", "Hello"];
         let mut answers = saved_requests();
         answers.push(("grpc.send", Ok(json!({"ok": true, "status": 0, "durationMs": 3, "responses": ["{}"]}))));
         let (out, calls) = run(&argv, answers, |c| requests(c, sub(&argv)));
-        assert_eq!(out.unwrap(), "gRPC OK  (3 ms)\n\n{}");
+        assert_eq!(out.unwrap(), "gRPC OK · 3ms · 1 message");
         assert_eq!(payloads(&calls, "grpc.send"), [json!({"workspaceId": "w1", "id": "g1"})]);
 
         for (wanted, command) in [("q1", "graphql.send"), ("s1", "soap.send")] {
@@ -1099,7 +1089,7 @@ mod tests {
             let mut answers = saved_requests();
             answers.push((command, Ok(json!({"status": 200, "durationMs": 1, "headers": {}, "body": "plain"}))));
             let (out, calls) = run(&argv, answers, |c| requests(c, sub(&argv)));
-            assert_eq!(out.unwrap(), "HTTP 200  (1 ms)\n\nplain");
+            assert_eq!(out.unwrap(), "200 OK · 1ms · 5B text");
             assert_eq!(payloads(&calls, command), [json!({"workspaceId": "w1", "id": wanted})]);
         }
     }
@@ -1122,7 +1112,7 @@ mod tests {
         let argv = ["requests", "send", "--url", "http://x", "-X", "put", "-H", "a: 1", "-d", "hi", "-w", "w3"];
         let response = json!({"status": 201, "durationMs": 1, "headers": {}, "body": ""});
         let (out, calls) = run(&argv, vec![("request.send", Ok(response))], |c| requests(c, sub(&argv)));
-        assert!(out.unwrap().starts_with("HTTP 201"));
+        assert!(out.unwrap().starts_with("201 Created"));
         assert_eq!(
             calls[0].1,
             json!({"workspaceId": "w3", "scripts": {},
@@ -1150,7 +1140,7 @@ mod tests {
         ];
         let reply = json!({"ok": true, "status": 0, "durationMs": 3, "metadata": {"m": "1"}, "responses": ["{}"]});
         let (out, calls) = run(&argv, vec![("grpc.send", Ok(reply))], |c| requests(c, sub(&argv)));
-        assert_eq!(out.unwrap(), "gRPC OK  (3 ms)\nm: 1\n\n{}");
+        assert_eq!(out.unwrap(), "gRPC OK · 3ms · 1 message");
         assert_eq!(
             calls[0],
             (
@@ -1188,24 +1178,27 @@ mod tests {
         let mut answers = saved_requests();
         answers.push(("request.send", Ok(response)));
         let (out, _) = run(&argv, answers, |c| requests(c, sub(&argv)));
-        assert_eq!(out.unwrap_err(), CliError::Failed("HTTP 200  (3 ms)\n\n\nFAIL  is 201 — got 200".into()));
+        assert_eq!(
+            out.unwrap_err(),
+            CliError::Failed("200 OK · 3ms · 0B · tests 0/1 ✗\n✗ test \"is 201\": got 200".into())
+        );
 
         let response = json!({"status": 200, "durationMs": 3, "headers": {}, "body": "", "postScriptError": "boom",
                               "tests": [{"name": "ok", "passed": true}]});
         let mut answers = saved_requests();
         answers.push(("request.send", Ok(response)));
         let (out, _) = run(&argv, answers, |c| requests(c, sub(&argv)));
-        assert!(matches!(out.unwrap_err(), CliError::Failed(report) if report.contains("post-script error: boom")));
+        assert!(matches!(out.unwrap_err(), CliError::Failed(report) if report.contains("✗ post-script error: boom")));
     }
 
     #[test]
-    fn a_failed_grpc_call_is_an_error_and_with_json_a_failed_report() {
+    fn a_failed_grpc_call_fails_the_command_with_its_reason() {
         let reply = json!({"ok": false, "error": "UNAVAILABLE: down", "status": 14});
         let argv = ["requests", "send", "g1"];
         let mut answers = saved_requests();
         answers.push(("grpc.send", Ok(reply.clone())));
         let (out, _) = run(&argv, answers, |c| requests(c, sub(&argv)));
-        assert_eq!(out.unwrap_err(), CliError::msg("UNAVAILABLE: down"));
+        assert_eq!(out.unwrap_err(), CliError::Failed("gRPC 14 UNAVAILABLE · 0ms\n✗ UNAVAILABLE: down".into()));
 
         let argv = ["requests", "send", "g1", "--json"];
         let mut answers = saved_requests();
@@ -1226,6 +1219,244 @@ mod tests {
         let argv = ["requests", "frob"];
         let (out, _) = run(&argv, vec![], |c| requests(c, sub(&argv)));
         assert_eq!(out.unwrap_err(), CliError::usage("unknown: requests frob (see: bifurc requests --help)"));
+    }
+
+    /// Send the saved REST request `r1` with `extra` options, the engine answering `response`: the result and
+    /// the bytes `--raw` handed out.
+    fn send_r1(extra: &[&str], response: Value) -> (Result<String>, Option<Vec<u8>>) {
+        let mut argv = vec!["requests", "send", "r1"];
+        argv.extend(extra);
+        let mut answers = saved_requests();
+        answers.push(("request.send", Ok(response)));
+        let raw = std::cell::RefCell::new(None);
+        let (out, _) = run(&argv, answers, |c| {
+            let out = requests(c, sub(&argv));
+            *raw.borrow_mut() = c.raw.take();
+            out
+        });
+        (out, raw.into_inner())
+    }
+
+    /// What `request.send` answers: the body is base64 as the engine sends it.
+    fn reply(status: u16, headers: Value, body: &[u8], tests: Value) -> Value {
+        use base64::Engine as _;
+        json!({"status": status, "durationMs": 12, "headers": headers,
+               "body": base64::engine::general_purpose::STANDARD.encode(body), "tests": tests})
+    }
+
+    fn json_reply(body: &str) -> Value {
+        reply(200, json!({"Content-Type": "application/json"}), body.as_bytes(), json!([]))
+    }
+
+    #[test]
+    fn the_default_output_is_one_summary_line() {
+        let tests = json!([{"name": "a", "passed": true}, {"name": "b", "passed": true}]);
+        let (out, _) = send_r1(&[], reply(200, json!({"content-type": "application/json"}), b"{\"id\":1}", tests));
+        assert_eq!(out.unwrap(), "200 OK · 12ms · 8B json · tests 2/2 ✓");
+        let (out, _) = send_r1(&[], reply(201, json!({"content-type": "application/json"}), b"{\"id\":77}", json!([])));
+        assert_eq!(out.unwrap(), "201 Created · 12ms · 9B json");
+        let (out, _) = send_r1(&[], reply(299, json!({}), b"", json!([])));
+        assert_eq!(out.unwrap(), "299 · 12ms · 0B");
+    }
+
+    #[test]
+    fn an_error_status_adds_up_to_512_bytes_of_the_body() {
+        let body = format!("{{\"error\":\"{}\"}}", "x".repeat(600));
+        let (out, _) =
+            send_r1(&[], reply(422, json!({"content-type": "application/json"}), body.as_bytes(), json!([])));
+        let out = out.unwrap();
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(lines[0], "422 Unprocessable Entity · 12ms · 612B json");
+        assert_eq!(lines[1], &body[..512]);
+        assert_eq!(lines[2], "… 100B truncated — use --out or --select");
+        assert_eq!(lines.len(), 3);
+    }
+
+    #[test]
+    fn a_failed_test_fails_with_its_reason_and_the_body_preview() {
+        let tests = json!([{"name": "is 201", "passed": false, "error": "got 200"}]);
+        let (out, _) = send_r1(&[], reply(200, json!({"content-type": "text/plain"}), b"hi", tests));
+        assert_eq!(
+            out.unwrap_err(),
+            CliError::Failed("200 OK · 12ms · 2B text · tests 0/1 ✗\n✗ test \"is 201\": got 200\nhi".into())
+        );
+    }
+
+    #[test]
+    fn body_prints_the_text_cut_at_max_body_and_zero_means_all() {
+        let text = "a".repeat(30);
+        let ok = reply(200, json!({"content-type": "text/plain"}), text.as_bytes(), json!([]));
+        let (out, _) = send_r1(&["--body"], ok.clone());
+        assert_eq!(out.unwrap(), format!("200 OK · 12ms · 30B text\n{text}"));
+        let (out, _) = send_r1(&["--body", "--max-body", "10"], ok.clone());
+        let cut = format!("200 OK · 12ms · 30B text\n{}\n… 20B truncated — use --out or --select", "a".repeat(10));
+        assert_eq!(out.unwrap(), cut);
+        let (out, _) = send_r1(&["--body", "--max-body", "0"], ok.clone());
+        assert_eq!(out.unwrap(), format!("200 OK · 12ms · 30B text\n{text}"));
+        let (out, _) = send_r1(&["--body", "--max-body", "lots"], ok);
+        assert_eq!(out.unwrap_err(), CliError::usage("--max-body must be a whole number, not \"lots\""));
+    }
+
+    #[test]
+    fn select_prints_only_the_values_picked() {
+        let (out, _) = send_r1(&["--select", ".items[].id"], json_reply("{\"items\":[{\"id\":1},{\"id\":\"b\"}]}"));
+        assert_eq!(out.unwrap(), "1\nb");
+        let html = reply(200, json!({"content-type": "text/html"}), b"<p>", json!([]));
+        let (out, _) = send_r1(&["--select", ".a"], html);
+        assert_eq!(out.unwrap_err(), CliError::msg("--select needs a JSON body, but this response is html"));
+        // An error status shows the summary: the values of an error body are not what was asked for.
+        let (out, _) = send_r1(&["--select", ".a"], reply(404, json!({}), b"{\"a\":1}", json!([])));
+        assert_eq!(out.unwrap(), "404 Not Found · 12ms · 7B json\n{\"a\":1}");
+    }
+
+    #[test]
+    fn expect_status_and_expect_fail_with_exit_1_and_a_reason() {
+        let (out, _) = send_r1(&["--expect-status", "200"], json_reply("{}"));
+        assert_eq!(out.unwrap(), "200 OK · 12ms · 2B json");
+        let (out, _) = send_r1(&["--expect-status", "201"], json_reply("{}"));
+        assert_eq!(
+            out.unwrap_err(),
+            CliError::Failed("200 OK · 12ms · 2B json\n✗ expect status == 201, got 200\n{}".into())
+        );
+        let (out, _) = send_r1(&["--expect", "status < 300", "--expect", ".n >= 2"], json_reply("{\"n\":3}"));
+        assert!(out.is_ok());
+        let (out, _) = send_r1(&["--expect", "status < 300", "--expect", ".n >= 2"], json_reply("{\"n\":1}"));
+        assert!(matches!(out.unwrap_err(), CliError::Failed(r) if r.contains("✗ expect .n >= 2, got 1")));
+        let text = reply(200, json!({"content-type": "text/plain"}), b"x", json!([]));
+        let (out, _) = send_r1(&["--expect", ".n == 1"], text.clone());
+        assert!(
+            matches!(out.unwrap_err(), CliError::Failed(r) if r.contains("✗ expect .n == 1, but the body is not JSON"))
+        );
+        let (out, _) = send_r1(&["--expect", "status == 200"], text);
+        assert!(out.is_ok());
+        let (out, _) = send_r1(&["--expect", "nonsense"], json_reply("{}"));
+        assert!(matches!(out.unwrap_err(), CliError::Exit(2, _)));
+    }
+
+    #[test]
+    fn headers_are_listed_with_secrets_masked() {
+        let headers =
+            json!({"Content-Type": "text/plain", "Authorization": "Bearer abc", "Set-Cookie": "sid=1; Path=/"});
+        let (out, _) = send_r1(&["--headers"], reply(200, headers.clone(), b"", json!([])));
+        assert_eq!(
+            out.unwrap(),
+            "200 OK · 12ms · 0B text\nContent-Type: text/plain\nAuthorization: ••••(10)\nSet-Cookie: ••••(13)"
+        );
+        // Not a terminal here, so --reveal is ignored.
+        let (out, _) = send_r1(&["--headers", "--reveal"], reply(200, headers, b"", json!([])));
+        assert!(out.unwrap().contains("Authorization: ••••(10)"));
+    }
+
+    #[test]
+    fn json_is_the_contract_object() {
+        let tests = json!([{"name": "a", "passed": false, "error": "no"}]);
+        let ok = reply(200, json!({"Content-Type": "application/json", "X-Token": "t"}), b"{\"a\":[1,2]}", tests);
+        let (out, _) = send_r1(&["--json", "--headers", "--select", ".a[]", "--expect", ".a | length == 2"], ok);
+        let Err(CliError::Failed(out)) = out else { panic!("a failed test fails the command") };
+        let out: Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(
+            out,
+            json!({"schemaVersion": 1, "status": 200, "statusText": "OK", "durationMs": 12, "size": 11,
+                   "contentType": "application/json",
+                   "tests": [{"name": "a", "passed": false, "error": "no"}],
+                   "body": "{\"a\":[1,2]}", "bodyTruncated": false, "error": "test \"a\": no",
+                   "headers": {"Content-Type": "application/json", "X-Token": "••••(1)"}, "selected": [1, 2],
+                   "expectations": [{"text": ".a | length == 2", "passed": true, "error": null}]})
+        );
+        let (out, _) = send_r1(&["--json"], json_reply("{}"));
+        let out: Value = serde_json::from_str(&out.unwrap()).unwrap();
+        assert_eq!((&out["body"], &out["error"], out.get("headers")), (&Value::Null, &Value::Null, None));
+    }
+
+    #[test]
+    fn raw_hands_out_exactly_the_body_bytes_and_quiet_prints_nothing() {
+        let bytes: &[u8] = &[0, 159, 146, 150];
+        let (out, raw) = send_r1(&["--raw"], reply(200, json!({}), bytes, json!([])));
+        assert_eq!((out.unwrap(), raw.as_deref()), (String::new(), Some(bytes)));
+        // A failure is reported on stderr, so that stdout stays the body.
+        let failing = reply(200, json!({}), b"x", json!([{"name": "t", "passed": false}]));
+        let (out, raw) = send_r1(&["--raw"], failing.clone());
+        assert_eq!((out.unwrap_err(), raw), (CliError::msg("✗ test \"t\""), Some(b"x".to_vec())));
+        let (out, raw) = send_r1(&["--quiet"], json_reply("{}"));
+        assert_eq!((out.unwrap(), raw), (String::new(), None));
+        let (out, _) = send_r1(&["--quiet"], failing);
+        assert_eq!(out.unwrap_err(), CliError::Failed(String::new()));
+    }
+
+    #[test]
+    fn out_saves_the_whole_body_and_a_binary_body_is_never_printed() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("body.bin").to_string_lossy().into_owned();
+        let bytes: Vec<u8> = (0..=255u8).cycle().take(4300).collect();
+        let binary = reply(200, json!({"content-type": "application/octet-stream"}), &bytes, json!([]));
+        let (out, _) = send_r1(&["--out", &file, "--body"], binary);
+        assert_eq!(
+            out.unwrap(),
+            format!("200 OK · 12ms · 4.2KB binary\nbinary body not shown (4.2KB) — use --out\nsaved {file} (4.2KB)")
+        );
+        assert_eq!(std::fs::read(&file).unwrap(), bytes);
+        // Not even a failure shows it.
+        let (out, _) = send_r1(&[], reply(500, json!({}), &[0xff, 0xfe, 0xfd], json!([])));
+        assert_eq!(out.unwrap(), "500 Internal Server Error · 12ms · 3B binary");
+    }
+
+    #[test]
+    fn graphql_and_soap_answer_in_the_same_format() {
+        for (id, command) in [("q1", "graphql.send"), ("s1", "soap.send")] {
+            let argv = ["requests", "send", id, "--expect-status", "200"];
+            let mut answers = saved_requests();
+            let headers = json!({"content-type": "application/json"});
+            answers.push((command, Ok(json!({"status": 200, "durationMs": 4, "headers": headers, "body": "{}"}))));
+            let (out, _) = run(&argv, answers, |c| requests(c, sub(&argv)));
+            assert_eq!(out.unwrap(), "200 OK · 4ms · 2B json", "{command}");
+        }
+    }
+
+    #[test]
+    fn grpc_summarises_messages_and_names_a_failed_status() {
+        let two = json!({"ok": true, "status": 0, "durationMs": 12, "responses": ["{\"a\":1}", "{}"]});
+        let argv = ["requests", "send", "g1", "--json"];
+        let mut answers = saved_requests();
+        answers.push(("grpc.send", Ok(two.clone())));
+        let (out, _) = run(&argv, answers, |c| requests(c, sub(&argv)));
+        let out: Value = serde_json::from_str(&out.unwrap()).unwrap();
+        assert_eq!((&out["statusText"], &out["status"], &out["size"]), (&json!("OK"), &json!(0), &json!(12)));
+
+        let argv = ["requests", "send", "g1", "--body"];
+        let mut answers = saved_requests();
+        answers.push(("grpc.send", Ok(two)));
+        let (out, _) = run(&argv, answers, |c| requests(c, sub(&argv)));
+        assert_eq!(out.unwrap(), "gRPC OK · 12ms · 2 messages\n[{\"a\":1},{}]");
+
+        let argv = ["requests", "send", "g1"];
+        let mut answers = saved_requests();
+        let failed = json!({"ok": false, "status": 5, "statusMessage": "no such user", "durationMs": 9});
+        answers.push(("grpc.send", Ok(failed)));
+        let (out, _) = run(&argv, answers, |c| requests(c, sub(&argv)));
+        assert_eq!(out.unwrap_err(), CliError::Failed("gRPC 5 NOT_FOUND · 9ms\n✗ no such user".into()));
+    }
+
+    #[test]
+    fn data_is_the_request_body_and_at_file_reads_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("body.json").to_string_lossy().into_owned();
+        std::fs::write(&file, "{\"a\":1}").unwrap();
+        let at_file = format!("@{file}");
+        let response = json!({"status": 200, "durationMs": 1, "headers": {}, "body": ""});
+        for (flag, value, expected) in [
+            ("--data", "hi", "hi"),
+            ("-d", "hi", "hi"),
+            ("--body-file", file.as_str(), "{\"a\":1}"),
+            ("--data", at_file.as_str(), "{\"a\":1}"),
+        ] {
+            let argv = ["requests", "send", "--url", "http://x", flag, value, "-w", "w3"];
+            let (_, calls) = run(&argv, vec![("request.send", Ok(response.clone()))], |c| requests(c, sub(&argv)));
+            assert_eq!(calls[0].1["request"]["body"], expected, "{flag}");
+        }
+        // `--body` is still the request body outside of a send.
+        let argv = ["requests", "create", "--url", "http://x", "--body", "b"];
+        let (_, calls) = run(&argv, saved_requests(), |c| requests(c, sub(&argv)));
+        assert_eq!(payloads(&calls, "entity.create")[0]["entity"]["body"], "b");
     }
 
     fn socket(status: &str, messages: Value) -> Result<Value> {
