@@ -479,13 +479,13 @@ fn templatize(entity: &mut Value, ty: &RequestType, vars: &[(String, String)]) -
     (used, warnings)
 }
 
-/// The id of the folder `path` names in the request tree, creating the folders that are missing.
-fn folder_id(ctx: &mut Context, workspace: &str, parts: &[&str]) -> Result<String> {
+/// The id of the folder `path` names in the `tree` (`request` or `flow`), creating the folders that are missing.
+pub(crate) fn folder_id(ctx: &mut Context, workspace: &str, tree: &str, parts: &[&str]) -> Result<String> {
     if ctx.args.flag("workspace").is_some() {
         return Err(CliError::msg("--folder uses the active workspace: run bifurc workspaces use <workspace>"));
     }
     let config = ctx.request("config.get", json!({}))?;
-    let folders = config.get("requestFolders").and_then(Value::as_array).cloned().unwrap_or_default();
+    let folders = config.get(format!("{tree}Folders")).and_then(Value::as_array).cloned().unwrap_or_default();
     let mut parent: Option<String> = None;
     for part in parts {
         let hit = folders.iter().find(|f| {
@@ -496,7 +496,7 @@ fn folder_id(ctx: &mut Context, workspace: &str, parts: &[&str]) -> Result<Strin
         parent = Some(match hit {
             Some(folder) => id_of(folder),
             None => {
-                let made = json!({ "kind": "request", "name": part, "parentId": parent, "workspaceId": workspace });
+                let made = json!({ "kind": tree, "name": part, "parentId": parent, "workspaceId": workspace });
                 id_of(&ctx.request("folder.add", made)?)
             }
         });
@@ -540,7 +540,7 @@ fn save(
     if args.has("folder") && parts.is_empty() {
         return Err(CliError::usage("--folder needs a folder name"));
     }
-    let folder = if parts.is_empty() { None } else { Some(folder_id(ctx, workspace, &parts)?) };
+    let folder = if parts.is_empty() { None } else { Some(folder_id(ctx, workspace, "request", &parts)?) };
     let id = match existing {
         Some((_, mut found)) => {
             // What the command describes replaces the request's; its id, folder, scripts and tests stay.

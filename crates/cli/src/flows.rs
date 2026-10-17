@@ -1,5 +1,5 @@
-//! `flows`: saved graphs of requests, listed, shown and run. A flow is made in the desktop app, so there is no
-//! create, update or delete here.
+//! `flows`: saved graphs of requests, listed, shown and run. A flow is drawn in the desktop app, or written as a
+//! list of steps that the engine compiles into the same graph (`create --steps`, `update --steps`).
 //!
 //! A run is the engine's: `flow.run` starts it and the engine reports its progress as events, which this
 //! command prints until the run is finished.
@@ -11,6 +11,7 @@ use serde_json::{Value, json};
 use crate::{
     commands::{Context, find_one, list_entities, need, unknown_verb, workspace_id},
     error::{CliError, Result},
+    flowsteps,
     format::{js_template, json, table},
     steps::{Step, lines, max_body, one_line, path_of},
 };
@@ -33,17 +34,28 @@ pub fn flows(ctx: &mut Context, sub: Option<&str>, out: &mut dyn Write) -> Resul
             Ok(ctx.print(&Value::Array(all.clone()), || table(&all, &["id", "name"])))
         }
         "show" => {
-            ctx.accept(&[], 1)?;
+            ctx.accept(&["steps"], 1)?;
             let wanted = need(args.positional(2), "flow id or name")?;
             let workspace = workspace_id(ctx)?;
             let id = find_flow(ctx, &workspace, &wanted)?;
             let loaded = ctx.request("entity.load", json!({ "workspaceId": workspace, "kind": "flows", "id": id }))?;
             let flow = loaded.get("entity").cloned().unwrap_or(Value::Null);
-            if ctx.json {
+            let asked_steps = args.has("steps");
+            if ctx.json && !asked_steps {
                 return Ok(json(&flow));
             }
             let checked = ctx.request("flow.validate", json!({ "workspaceId": workspace, "id": id }))?;
-            Ok(describe_flow(&flow, &checked))
+            let line = flowsteps::linear(&flow, checked.get("nodes").unwrap_or(&Value::Null));
+            if asked_steps {
+                let line = line.ok_or_else(|| {
+                    CliError::usage(format!(
+                        "\"{}\" is not a linear flow (see: bifurc flows show)",
+                        js_template(flow.get("name"))
+                    ))
+                })?;
+                return Ok(flowsteps::yaml(&js_template(flow.get("name")), &line));
+            }
+            Ok(describe_flow(&flow, &checked, line.as_deref()))
         }
         verb @ ("run" | "loadtest") => {
             let load = verb == "loadtest";
@@ -104,14 +116,96 @@ pub fn flows(ctx: &mut Context, sub: Option<&str>, out: &mut dyn Write) -> Resul
     }
 }
 
+/// The steps of the saved flow `id` when it is a line, as `flows show` prints them. A flow the engine cannot
+/// describe, or one that is not a line, has none.
+pub fn line_steps(ctx: &mut Context, workspace: &str, id: &str) -> Option<Vec<String>> {
+    let loaded = ctx.request("entity.load", json!({ "workspaceId": workspace, "kind": "flows", "id": id })).ok()?;
+    let checked = ctx.request("flow.validate", json!({ "workspaceId": workspace, "id": id })).ok()?;
+    let line = flowsteps::linear(loaded.get("entity")?, checked.get("nodes")?)?;
+    Some(flowsteps::render(&line))
+}
+
+/// The step file `--steps` names: a file, `-` for stdin, or the text itself when it has more than one line.
+fn steps_text(source: &str) -> Result<String> {
+    // shortcut: a value of one line is a path, so a one-line JSON step file must be passed as a file or on stdin.
+    let read = match source {
+        "-" => std::io::read_to_string(std::io::stdin()),
+        text if text.contains('\n') => return Ok(text.to_string()),
+        path => std::fs::read_to_string(path),
+    };
+    read.map_err(|e| CliError::msg(format!("cannot read {source}: {e}")))
+}
+
+/// `flows create --steps <file|->` and `flows update <flow> --steps <file>`: the engine compiles the step file
+/// into the flow's graph, and the flow is saved only when the file has no problem. An update keeps the flow's id
+/// (and its name, unless `--name` gives another).
+pub fn from_steps(ctx: &mut Context, verb: &str) -> Result<String> {
+    let args = ctx.args;
+    let update = verb == "update";
+    ctx.accept(if update { &["steps", "name"] } else { &["steps", "name", "folder"] }, usize::from(update))?;
+    let source = need(args.flag("steps"), "--steps")?;
+    let wanted = if update { Some(need(args.positional(2), "flow id or name")?) } else { None };
+    let text = steps_text(&source)?;
+    let workspace = workspace_id(ctx)?;
+    let mut stored = Value::Null;
+    if let Some(wanted) = &wanted {
+        let id = find_flow(ctx, &workspace, wanted)?;
+        let loaded = ctx.request("entity.load", json!({ "workspaceId": workspace, "kind": "flows", "id": id }))?;
+        stored = loaded.get("entity").cloned().unwrap_or(Value::Null);
+    }
+    let mut payload = json!({ "workspaceId": workspace, "text": text });
+    if let Some(name) = args.flag("name").or(stored.get("name").and_then(Value::as_str)) {
+        payload["name"] = json!(name);
+    }
+    let answer = ctx.request("flow.fromSteps", payload)?;
+    let problems = answer.get("problems").and_then(Value::as_array).map(Vec::as_slice).unwrap_or_default();
+    if !problems.is_empty() {
+        let message = problems.iter().map(|p| js_template(p.get("message"))).collect::<Vec<_>>().join("\n");
+        // A mistake in how the file is written outranks a request it names that is not there.
+        let wrong = problems.iter().any(|p| p.get("kind").and_then(Value::as_str) == Some("usage"));
+        return Err(if wrong { CliError::usage(message) } else { CliError::not_found(message) });
+    }
+    let mut flow = answer.get("flow").cloned().unwrap_or(Value::Null);
+    let id = if update {
+        let mut entity = stored;
+        for key in ["name", "nodes", "edges"] {
+            entity[key] = flow[key].clone();
+        }
+        let id = js_template(entity.get("id"));
+        ctx.request("entity.update", json!({ "kind": "flows", "entity": entity }))?;
+        id
+    } else {
+        if let Some(path) = args.flag("folder") {
+            let parts: Vec<&str> = path.split('/').filter(|p| !p.is_empty()).collect();
+            if parts.is_empty() {
+                return Err(CliError::usage("--folder needs a folder name"));
+            }
+            flow["folderId"] = json!(crate::curl::folder_id(ctx, &workspace, "flow", &parts)?);
+        }
+        let created =
+            ctx.request("entity.create", json!({ "kind": "flows", "workspaceId": workspace, "entity": flow }))?;
+        js_template(created.get("id"))
+    };
+    let steps: Vec<String> = answer
+        .get("steps")
+        .and_then(Value::as_array)
+        .map(|steps| steps.iter().map(|s| js_template(Some(s))).collect())
+        .unwrap_or_default();
+    let name = js_template(flow.get("name"));
+    let saved = format!("saved flow \"{name}\" · {} step{}", steps.len(), if steps.len() == 1 { "" } else { "s" });
+    let report = json!({ "id": id, "name": name, "steps": steps });
+    Ok(ctx.print(&report, || steps.iter().cloned().chain([saved.clone()]).collect::<Vec<_>>().join("\n")))
+}
+
 /// The id of the flow `wanted` names, by id or by name.
 fn find_flow(ctx: &mut Context, workspace: &str, wanted: &str) -> Result<String> {
     let all = list_entities(ctx, workspace, "flows")?;
     Ok(js_template(find_one(&all, wanted, &["name"], "flow", "flows")?.get("id")))
 }
 
-/// What `flows show` prints: the inputs, the nodes with the request each runs, and what the engine finds wrong.
-fn describe_flow(flow: &Value, checked: &Value) -> String {
+/// What `flows show` prints: the inputs, the steps of a flow that is a line or else the nodes with the request
+/// each runs, and what the engine finds wrong.
+fn describe_flow(flow: &Value, checked: &Value, line: Option<&[flowsteps::Line]>) -> String {
     let mut lines = vec![format!("{}  ({})", js_template(flow.get("name")), js_template(flow.get("id")))];
     let inputs = flow.get("inputs").and_then(Value::as_array).map(Vec::as_slice).unwrap_or_default();
     if !inputs.is_empty() {
@@ -122,6 +216,10 @@ fn describe_flow(flow: &Value, checked: &Value) -> String {
         );
     }
     lines.push(String::new());
+    if let Some(line) = line {
+        lines.extend(flowsteps::render(line));
+        return with_problems(lines, checked);
+    }
     lines.push("Nodes".to_string());
     let nodes = flow.get("nodes").and_then(Value::as_array).map(Vec::as_slice).unwrap_or_default();
     let rows: Vec<Value> = nodes
@@ -143,6 +241,11 @@ fn describe_flow(flow: &Value, checked: &Value) -> String {
         })
         .collect();
     lines.push(table(&rows, &["id", "type", "name", "request"]));
+    with_problems(lines, checked)
+}
+
+/// `lines`, then what the engine finds wrong with the flow, if anything.
+fn with_problems(mut lines: Vec<String>, checked: &Value) -> String {
     let problems = checked.get("problems").and_then(Value::as_array).map(Vec::as_slice).unwrap_or_default();
     if !problems.is_empty() {
         lines.push(String::new());
@@ -284,10 +387,18 @@ fn steps_of(report: &Value, described: &Value, order: &[String]) -> Vec<Step> {
         .filter_map(|node| {
             let status = node.get("status").and_then(Value::as_str)?;
             let request = described.get(id_of(node)).and_then(|n| n.get("request")).filter(|r| r.is_object());
-            let failure = failed_test(node).or_else(|| {
-                let error = node.get("error").and_then(Value::as_str).filter(|e| !e.is_empty());
-                error.map(one_line).or_else(|| (status == "failed").then(|| "failed".to_string()))
-            });
+            let name = js_template(node.get("name"));
+            // A check made from a step's `expect` is told by its name; what failed is the expectation.
+            let check = request.is_none() && name.starts_with("expect ");
+            let failure = if check && status == "failed" {
+                let error = node.get("error").and_then(Value::as_str).unwrap_or_default();
+                Some(error.rsplit("Error: ").next().filter(|said| said.starts_with("expect ")).map_or(name, one_line))
+            } else {
+                failed_test(node).or_else(|| {
+                    let error = node.get("error").and_then(Value::as_str).filter(|e| !e.is_empty());
+                    error.map(one_line).or_else(|| (status == "failed").then(|| "failed".to_string()))
+                })
+            };
             if !matches!(status, "succeeded" | "failed") || (request.is_none() && failure.is_none()) {
                 return None;
             }
@@ -306,7 +417,16 @@ fn steps_of(report: &Value, described: &Value, order: &[String]) -> Vec<Step> {
                 body: output.get("body").and_then(Value::as_str).map(str::to_string),
             })
         })
-        .collect()
+        .fold(Vec::new(), |mut steps: Vec<Step>, step| {
+            // A failed expectation is the failure of the request it checks.
+            match steps.last_mut() {
+                Some(last) if step.status.is_none() && step.label.starts_with("expect ") && step.failure.is_some() => {
+                    last.failure = step.failure;
+                }
+                _ => steps.push(step),
+            }
+            steps
+        })
 }
 
 /// Start the run `payload` asks for and follow it to its end: a line for each step, then how the flow did.
@@ -464,22 +584,186 @@ mod tests {
     }
 
     #[test]
-    fn show_names_the_request_each_node_runs_and_the_problems() {
+    fn show_prints_a_line_flow_as_steps_and_the_problems() {
         let argv = ["flows", "show", "checkout"];
         let (out, calls) = run(&argv, engine(), |c| flows(c, sub(&argv), &mut std::io::sink()));
         assert_eq!(
             out.unwrap(),
-            "Checkout  (f1)\n\nInputs\n  user = alice\n\nNodes\n\
-             ID  TYPE     NAME   REQUEST\n\
-             n1  start    Start\n\
-             n2  request  Login  Login POST http://x/login\n\n\
-             Problems\n  warning n2: no tests"
+            "Checkout  (f1)\n\nInputs\n  user = alice\n\n1 POST /login  Login\n\nProblems\n  warning n2: no tests"
         );
         assert_eq!(payloads(&calls, "flow.validate"), [json!({"workspaceId": "w1", "id": "f1"})]);
 
         let argv = ["flows", "show", "f1", "--json"];
         let (out, _) = run(&argv, engine(), |c| flows(c, sub(&argv), &mut std::io::sink()));
         assert_eq!(serde_json::from_str::<Value>(&out.unwrap()).unwrap()["nodes"][1]["requestId"], "r1");
+    }
+
+    /// The engine with the flow `nodes`/`edges` in place of the line flow.
+    fn engine_with(nodes: Value, edges: Value) -> Vec<Answer> {
+        let mut answers = vec![(
+            "entity.load:flows",
+            Ok(json!({"ok": true, "entity": {"id": "f1", "name": "Checkout", "inputs": [], "nodes": nodes,
+                "edges": edges, "settings": {}}})),
+        )];
+        answers.extend(engine());
+        answers
+    }
+
+    #[test]
+    fn show_falls_back_to_the_node_table_when_the_flow_is_not_a_line() {
+        let nodes = json!([{"id": "n1", "name": "Start", "type": "start"},
+            {"id": "n2", "name": "Login", "type": "request", "requestKind": "requests", "requestId": "r1"},
+            {"id": "n3", "name": "Wait", "type": "delay"}]);
+        let edges = json!([{"id": "e1", "from": "n1", "port": "out", "to": "n2"},
+            {"id": "e2", "from": "n2", "port": "success", "to": "n3"}]);
+        let argv = ["flows", "show", "checkout"];
+        let (out, _) =
+            run(&argv, engine_with(nodes.clone(), edges.clone()), |c| flows(c, sub(&argv), &mut std::io::sink()));
+        assert!(out.unwrap().contains("Nodes\nID  TYPE     NAME   REQUEST\nn1  start    Start"));
+        let argv = ["flows", "show", "checkout", "--steps"];
+        let (out, _) = run(&argv, engine_with(nodes, edges), |c| flows(c, sub(&argv), &mut std::io::sink()));
+        let error = out.unwrap_err();
+        assert_eq!(error.code(), 2);
+        assert!(error.to_string().contains("\"Checkout\" is not a linear flow"), "{error}");
+    }
+
+    /// A line flow of two requests, the second with a variable and two expectations, the first feeding it a token.
+    fn checkout_line() -> Vec<Answer> {
+        let nodes = json!([{"id": "start", "type": "start"},
+            {"id": "s1", "name": "Login", "type": "request", "requestKind": "requests", "requestId": "r1"},
+            {"id": "s2", "name": "Add item", "type": "request", "requestKind": "requests", "requestId": "r2",
+             "variables": [{"name": "qty", "value": "2"}]},
+            {"id": "s2_x1", "name": "expect status == 201", "type": "validate", "rules": [{"path": "input.status"}]},
+            {"id": "s2_x2", "name": "expect .items | length == 1", "type": "evaluate", "expression": "1"},
+            {"id": "done", "name": "Done", "type": "display"}]);
+        let edges = json!([{"id": "e1", "from": "start", "port": "out", "to": "s1"},
+            {"id": "e2", "from": "s1", "port": "success", "to": "s2"},
+            {"id": "e3", "from": "s2", "port": "success", "to": "s2_x1"},
+            {"id": "e4", "from": "s2_x1", "port": "pass", "to": "s2_x2"},
+            {"id": "e5", "from": "s2_x2", "port": "out", "to": "done"},
+            {"id": "w1", "from": "s1", "port": "success", "to": "s2", "input": "var:token", "path": ["body", "token"]}]);
+        let mut answers = engine_with(nodes, edges);
+        answers.insert(
+            0,
+            (
+                "flow.validate",
+                Ok(json!({"ok": true, "problems": [], "nodes": {
+                    "s1": {"request": {"name": "Login", "method": "POST", "address": "{{baseUrl}}/login"}},
+                    "s2": {"request": {"name": "Add item", "method": "POST", "address": "http://x/items"}}}})),
+            ),
+        );
+        answers
+    }
+
+    #[test]
+    fn show_steps_prints_the_step_file_a_line_flow_was_made_from() {
+        let argv = ["flows", "show", "checkout"];
+        let (out, _) = run(&argv, checkout_line(), |c| flows(c, sub(&argv), &mut std::io::sink()));
+        assert_eq!(
+            out.unwrap(),
+            "Checkout  (f1)\n\n1 POST /login  Login  extract token=.token\n\
+             2 POST /items  Add item  vars qty=2  expect status == 201, .items | length == 1"
+        );
+        let argv = ["flows", "show", "checkout", "--steps"];
+        let (out, _) = run(&argv, checkout_line(), |c| flows(c, sub(&argv), &mut std::io::sink()));
+        let file = "name: Checkout\nsteps:\n  - request: Login\n    extract: { token: .token }\n  \
+                    - request: Add item\n    vars: { qty: 2 }\n    expect: [ status == 201, .items | length == 1 ]\n";
+        assert_eq!(out.unwrap(), file);
+    }
+
+    const STEPS: &str = "name: Checkout happy path\nsteps:\n  - request: Login\n  - request: Create cart\n    extract: { cartId: .id }\n";
+
+    fn compiled() -> Value {
+        json!({
+            "flow": {"name": "Checkout happy path", "inputs": [], "nodes": [{"id": "start", "type": "start"}], "edges": [],
+                     "settings": {}},
+            "steps": ["1 POST /login  Login", "2 POST /carts  Create cart  extract cartId=.id"],
+            "problems": [],
+        })
+    }
+
+    #[test]
+    fn create_with_steps_compiles_in_the_engine_and_saves_the_flow() {
+        let argv = ["flows", "create", "--steps", STEPS, "--folder", "auth/shop"];
+        let answers = vec![
+            ("config.get", Ok(config())),
+            ("flow.fromSteps", Ok(compiled())),
+            ("folder.add", Ok(json!({"id": "d1"}))),
+            ("entity.create", Ok(json!({"id": "f9"}))),
+        ];
+        let (out, calls) = run(&argv, answers, |c| from_steps(c, "create"));
+        assert_eq!(
+            out.unwrap(),
+            "1 POST /login  Login\n2 POST /carts  Create cart  extract cartId=.id\nsaved flow \"Checkout happy path\" · 2 steps"
+        );
+        assert_eq!(payloads(&calls, "flow.fromSteps"), [json!({"workspaceId": "w1", "text": STEPS})]);
+        let folders = payloads(&calls, "folder.add");
+        assert_eq!(folders.len(), 2);
+        assert_eq!((&folders[0]["kind"], &folders[1]["parentId"]), (&json!("flow"), &json!("d1")));
+        let created = &payloads(&calls, "entity.create")[0];
+        assert_eq!(created["kind"], "flows");
+        assert_eq!(
+            (&created["entity"]["folderId"], &created["entity"]["name"]),
+            (&json!("d1"), &json!("Checkout happy path"))
+        );
+    }
+
+    #[test]
+    fn create_reads_a_step_file_and_takes_its_name_from_the_flag() {
+        let file = std::env::temp_dir().join("bifurc-flows-steps-test.yaml");
+        std::fs::write(&file, STEPS).unwrap();
+        let argv = ["flows", "create", "--steps", file.to_str().unwrap(), "--name", "Shop", "--json"];
+        let answers = vec![
+            ("config.get", Ok(config())),
+            ("flow.fromSteps", Ok(compiled())),
+            ("entity.create", Ok(json!({"id": "f9"}))),
+        ];
+        let (out, calls) = run(&argv, answers, |c| from_steps(c, "create"));
+        std::fs::remove_file(&file).unwrap();
+        let printed: Value = serde_json::from_str(&out.unwrap()).unwrap();
+        assert_eq!((&printed["id"], printed["steps"].as_array().unwrap().len()), (&json!("f9"), 2));
+        assert_eq!(payloads(&calls, "flow.fromSteps"), [json!({"workspaceId": "w1", "text": STEPS, "name": "Shop"})]);
+
+        let argv = ["flows", "create", "--steps", "/nowhere/steps.yaml"];
+        let (out, _) = run(&argv, vec![("config.get", Ok(config()))], |c| from_steps(c, "create"));
+        assert!(out.unwrap_err().to_string().contains("cannot read /nowhere/steps.yaml"));
+    }
+
+    #[test]
+    fn update_with_steps_keeps_the_flows_id_name_and_inputs() {
+        let argv = ["flows", "update", "checkout", "--steps", STEPS];
+        let mut answers = engine_with(json!([]), json!([]));
+        answers.extend([("flow.fromSteps", Ok(compiled())), ("entity.update", Ok(json!({"ok": true})))]);
+        let (out, calls) = run(&argv, answers, |c| from_steps(c, "update"));
+        assert!(out.unwrap().ends_with("saved flow \"Checkout happy path\" · 2 steps"));
+        assert_eq!(payloads(&calls, "flow.fromSteps")[0]["name"], "Checkout");
+        let updated = &payloads(&calls, "entity.update")[0];
+        assert_eq!(updated["kind"], "flows");
+        assert_eq!(updated["entity"]["id"], "f1");
+        assert_eq!(updated["entity"]["nodes"][0]["id"], "start");
+        assert!(payloads(&calls, "entity.create").is_empty());
+    }
+
+    #[test]
+    fn problems_are_not_saved_and_set_the_exit_code() {
+        let refused = |problems: Value| {
+            let argv = ["flows", "create", "--steps", STEPS];
+            let answers = vec![
+                ("config.get", Ok(config())),
+                ("flow.fromSteps", Ok(json!({"flow": null, "steps": [], "problems": problems}))),
+            ];
+            let (out, calls) = run(&argv, answers, |c| from_steps(c, "create"));
+            assert!(payloads(&calls, "entity.create").is_empty());
+            out.unwrap_err()
+        };
+        let missing = json!({"step": 2, "kind": "notFound", "message": "step 2: no saved request \"Nope\""});
+        let bad = json!({"step": 3, "kind": "usage", "message": "step 3: expectation 'x' should look like ..."});
+        let error = refused(json!([missing]));
+        assert_eq!((error.code(), error.to_string()), (3, "step 2: no saved request \"Nope\"".to_string()));
+        let error = refused(json!([missing, bad]));
+        assert_eq!(error.code(), 2);
+        assert!(error.to_string().starts_with("step 2: no saved request"));
+        assert!(error.to_string().contains("\nstep 3: expectation"));
     }
 
     /// A node as the finished report holds it: a request that answered `status` with `body`.
@@ -629,6 +913,30 @@ mod tests {
         );
         let CliError::Failed(text) = out.unwrap_err() else { panic!("a failed node is a failed command") };
         assert_eq!(text, "1 Pick  -  ✗ boom\nflow failed at step 1 · 166ms\nerror: Pick: boom");
+    }
+
+    #[test]
+    fn a_failed_expectation_is_the_failure_of_the_request_it_checks() {
+        let ok = get_user("succeeded", 200, "{\"items\":[1,2]}", Value::Null);
+        let evaluate = json!({"id": "n5", "name": "expect .items | length == 1", "status": "failed", "output": {},
+            "error": "The expression failed: Error: expect .items | length == 1, got 2"});
+        let validate = json!({"id": "n6", "name": "expect status == 201", "status": "failed", "output": {},
+            "error": "1 of 1 checks failed", "tests": [{"name": "input.status Equals 201", "passed": false}]});
+        let argv = ["flows", "run", "f1"];
+        for (check, said) in [(evaluate, "expect .items | length == 1, got 2"), (validate, "expect status == 201")] {
+            let events = vec![finished_nodes("failed", "x", 0, json!([start_node(), ok.clone(), check]))];
+            let (out, _, _) = go(&argv, with_get_user(engine()), events);
+            let CliError::Failed(text) = out.unwrap_err() else { panic!("a failed expectation fails the command") };
+            assert_eq!(
+                text,
+                format!(
+                    "1 GET /users/1?a=1  200 · 12ms  ✗ {said}
+  → {{\"items\":[1,2]}}
+flow failed at step 1 · 166ms
+error: x"
+                )
+            );
+        }
     }
 
     #[test]

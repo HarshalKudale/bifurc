@@ -1414,6 +1414,28 @@
    ],
    "additionalProperties": false
   },
+  "flow.fromSteps": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "text": {
+     "type": "string"
+    },
+    "name": {
+     "type": "string"
+    },
+    "folderId": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "workspaceId",
+    "text"
+   ],
+   "additionalProperties": false
+  },
   "flow.run": {
    "type": "object",
    "properties": {
@@ -3122,6 +3144,9 @@
     },
     "folderName": {
      "type": "string"
+    },
+    "keepAll": {
+     "type": "boolean"
     }
    },
    "required": [

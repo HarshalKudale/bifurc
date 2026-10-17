@@ -154,6 +154,50 @@ pub(crate) fn number(ctx: &Context, flag: &str) -> Result<Option<u64>> {
         .transpose()
 }
 
+/// What `capture import` prints: what was saved, what was left out as noise, and the steps of a flow.
+pub fn imported(ctx: &mut Context, workspace: &str, done: &Value) -> String {
+    let count = |key: &str| done.get(key).and_then(Value::as_array).map_or(0, Vec::len);
+    let names = |key: &str| {
+        let all: Vec<String> = done
+            .get(key)
+            .and_then(Value::as_array)
+            .map(|names| names.iter().map(|name| js_template(Some(name))).collect())
+            .unwrap_or_default();
+        all.join(", ")
+    };
+    let requests = count("requestIds");
+    let mut lines = vec![format!("saved {requests} request{}", if requests == 1 { "" } else { "s" })];
+    for (key, what) in [
+        ("variables", "new variables"),
+        ("vaultSecrets", "sealed in the vault"),
+        ("keptInRequests", "kept in the requests"),
+    ] {
+        if count(key) > 0 {
+            lines.push(format!("{what}: {}", names(key)));
+        }
+    }
+    if let Some(cookies) = done.get("cookies").and_then(Value::as_u64).filter(|n| *n > 0) {
+        lines.push(format!("cookies moved to the jar: {cookies}"));
+    }
+    let dropped = done.get("dropped");
+    let of = |why: &str| dropped.and_then(|d| d.get(why)).and_then(Value::as_u64).unwrap_or(0);
+    let total: u64 = ["assets", "preflights", "analytics"].iter().map(|why| of(why)).sum();
+    if total > 0 {
+        let reasons: Vec<&str> = ["assets", "preflights", "analytics"].into_iter().filter(|why| of(why) > 0).collect();
+        lines.push(format!("dropped {total} ({}) — --keep-all keeps them", reasons.join(", ")));
+    }
+    if let Some(id) = done.get("flowId").and_then(Value::as_str) {
+        match crate::flows::line_steps(ctx, workspace, id) {
+            Some(steps) => lines.extend(steps),
+            None => lines.push(format!("flow {id} (see: bifurc flows show {id})")),
+        }
+    }
+    lines.join(
+        "
+",
+    )
+}
+
 /// `capture list`: one line per entry, newest first.
 pub fn list(ctx: &mut Context) -> Result<String> {
     ctx.accept(&["last", "since", "status", "method", "host", "path", "origin", "grep"], 0)?;
@@ -483,5 +527,36 @@ mod tests {
         assert_eq!(lines.iter().map(|l| l["tail"].as_str().unwrap()).collect::<Vec<_>>(), ["k3a1", "k3f9"]);
         assert_eq!(payloads(&calls, "subscribe"), [json!({"events": [EVENT]})]);
         assert_eq!(payloads(&calls, "capture.list")[0]["status"], "4xx");
+    }
+
+    #[test]
+    fn import_says_what_was_saved_and_dropped_and_lists_a_flows_steps() {
+        let argv = ["capture", "import", "k1", "k2", "--flow", "true"];
+        let flow = json!({"id": "f1", "name": "Captured",
+            "nodes": [{"id": "start", "type": "start"},
+                {"id": "request_1", "name": "login", "type": "request", "requestKind": "requests", "requestId": "r1"},
+                {"id": "request_2", "name": "orders", "type": "request", "requestKind": "requests", "requestId": "r2"},
+                {"id": "failed", "type": "display"}],
+            "edges": [{"id": "e1", "from": "start", "port": "out", "to": "request_1"},
+                {"id": "e2", "from": "request_1", "port": "success", "to": "request_2"},
+                {"id": "e3", "from": "request_1", "port": "error", "to": "failed"},
+                {"id": "e4", "from": "request_2", "port": "error", "to": "failed"}]});
+        let answers: Vec<Answer> = vec![
+            ("entity.load:flows", Ok(json!({"ok": true, "entity": flow}))),
+            (
+                "flow.validate",
+                Ok(json!({"ok": true, "problems": [], "nodes": {
+                    "request_1": {"request": {"name": "login", "method": "POST", "address": "https://x.test/api/login"}},
+                    "request_2": {"request": {"name": "orders", "method": "GET", "address": "https://x.test/api/orders"}}}})),
+            ),
+        ];
+        let done = json!({"requestIds": ["r1", "r2"], "flowId": "f1", "variables": ["token"], "cookies": 0,
+            "vaultSecrets": [], "keptInRequests": [], "dropped": {"analytics": 1, "assets": 5, "preflights": 1}});
+        let (out, _) = crate::testing::run(&argv, answers, |c| Ok(imported(c, "w1", &done)));
+        assert_eq!(
+            out.unwrap(),
+            "saved 2 requests\nnew variables: token\ndropped 7 (assets, preflights, analytics) — --keep-all keeps them\n\
+             1 POST /api/login  login\n2 GET /api/orders  orders"
+        );
     }
 }

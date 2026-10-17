@@ -18,6 +18,7 @@ pub mod entities;
 pub mod error;
 pub mod extras;
 pub mod flows;
+pub mod flowsteps;
 pub mod format;
 pub mod health;
 pub mod locate;
