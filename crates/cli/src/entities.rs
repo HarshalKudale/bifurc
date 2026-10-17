@@ -17,6 +17,9 @@ use crate::{
 };
 
 mod scenarios;
+mod serve;
+
+pub use serve::serve;
 
 /// One kind of item that can be switched on and off.
 struct Kind {

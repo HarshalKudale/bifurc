@@ -915,6 +915,30 @@
    "workspaceId": "ws1"
   }
  },
+ "mocks.serve": {
+  "valid": {
+   "workspaceId": "ws1",
+   "port": 4010,
+   "host": "127.0.0.1",
+   "fallthrough": "http://localhost:3000",
+   "detach": true
+  },
+  "invalid": {}
+ },
+ "mocks.serveStatus": {
+  "valid": {},
+  "invalid": {
+   "extra": true
+  }
+ },
+ "mocks.serveStop": {
+  "valid": {
+   "port": 4010
+  },
+  "invalid": {
+   "port": "x"
+  }
+ },
  "proxy.status": {
   "valid": {
    "workspaceId": "ws1"

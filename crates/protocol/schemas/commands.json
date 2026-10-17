@@ -759,6 +759,48 @@
    },
    "additionalProperties": false
   },
+  "mocks.serve": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "port": {
+     "type": "integer",
+     "minimum": 0,
+     "maximum": 65535
+    },
+    "host": {
+     "type": "string"
+    },
+    "fallthrough": {
+     "type": "string"
+    },
+    "detach": {
+     "type": "boolean"
+    }
+   },
+   "required": [
+    "workspaceId"
+   ],
+   "additionalProperties": false
+  },
+  "mocks.serveStop": {
+   "type": "object",
+   "properties": {
+    "port": {
+     "type": "integer",
+     "minimum": 0,
+     "maximum": 65535
+    }
+   },
+   "additionalProperties": false
+  },
+  "mocks.serveStatus": {
+   "type": "object",
+   "properties": {},
+   "additionalProperties": false
+  },
   "proxy.status": {
    "type": "object",
    "properties": {
@@ -2935,6 +2977,9 @@
      "type": "integer"
     },
     "via": {
+     "type": "string"
+    },
+    "origin": {
      "type": "string"
     },
     "mockId": {

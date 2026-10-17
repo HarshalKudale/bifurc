@@ -20,7 +20,7 @@ use crate::{
 const FILTERS: [&str; 6] = ["status", "method", "host", "path", "origin", "grep"];
 
 /// The events that say the buffer has new entries.
-const EVENT: &str = "event.log.entry";
+pub(crate) const EVENT: &str = "event.log.entry";
 
 pub(crate) fn now_ms() -> i64 {
     SystemTime::now().duration_since(UNIX_EPOCH).map_or(0, |since| since.as_millis() as i64)
@@ -127,7 +127,9 @@ pub(crate) fn filters(ctx: &Context) -> Result<Value> {
             payload[*name] = json!(value);
         }
     }
-    if let Some(origin) = ctx.args.flag("origin") {
+    if ctx.args.flag("origin") == Some("server") {
+        payload["origin"] = json!("server");
+    } else if let Some(origin) = ctx.args.flag("origin") {
         payload["via"] = json!(match origin {
             "real" => "proxy,rfc6761",
             "mock" => "mock",
@@ -136,7 +138,7 @@ pub(crate) fn filters(ctx: &Context) -> Result<Value> {
             "error" => "error",
             other => {
                 return Err(CliError::usage(format!(
-                    "--origin must be one of real, mock, mapped, rule, error, not \"{other}\""
+                    "--origin must be one of real, mock, mapped, rule, error, server, not \"{other}\""
                 )));
             }
         });
@@ -376,6 +378,8 @@ mod tests {
         let (out, calls) = go(&["capture", "list", "--origin", "mapped"], engine(json!({"entries": []})));
         assert_eq!(out.unwrap(), "(none)");
         assert_eq!(payloads(&calls, "capture.list")[0]["via"], "mapping");
+        let (_, calls) = go(&["capture", "list", "--origin", "server"], engine(json!({"entries": []})));
+        assert_eq!(payloads(&calls, "capture.list")[0]["origin"], "server");
         let (out, _) = go(&["capture", "list", "--origin", "x"], engine(json!({})));
         assert_eq!(out.unwrap_err().code(), 2);
     }

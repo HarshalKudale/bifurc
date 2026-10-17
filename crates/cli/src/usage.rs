@@ -11,7 +11,7 @@ Runs requests, mocks, flows and the proxies of a Bifurc workspace; starts an eng
   curl      <curl arguments> [--save <name>]               A curl command through the engine, one summary line
   requests  list | show | send | create | update | delete  Saved requests of every type
   capture   list | show | watch | mock | request | clear    Traffic the proxies captured
-  mocks     list | show | create | update | enable | disable | scenario | status | hits
+  mocks     list | show | create | update | enable | disable | scenario | status | hits | serve
   flows     list | show | run | validate | loadtest         Saved chains of requests
   runner    run <folder> [--bail]                          Run a folder's requests
   env       list | show | use | set | unset                Environments and their variables
@@ -50,7 +50,7 @@ Groups (bifurc <group> --help shows the arguments and options of each verb)
                                                                       <sub>.localhost → target
   rules         list | show | create | update | patch | enable | disable | duplicate | delete
                                                                       Forward-proxy rules
-  mocks         list | show | create | update | patch | enable | disable | scenario | status | hits | duplicate | delete
+  mocks         list | show | create | update | patch | enable | disable | scenario | status | hits | serve | duplicate | delete
                                                                       Mocked responses
   requests      list | show | create | update | patch | send | reflect | duplicate | delete
                                                                       REST, GraphQL, gRPC, SOAP, WebSocket, SSE, Socket.IO, MCP
@@ -155,7 +155,7 @@ Run           --var KEY=VALUE   A variable for this run (repeatable)    --env <n
 
 const WAIT: &str = "Usage: bifurc wait <url|health check> [--status <code>] [--timeout 30s] [--interval 500ms]
        bifurc wait --port <n> [--host 127.0.0.1] [--timeout 30s] [--interval 500ms]
-       bifurc wait --capture [--method M] [--host H] [--path P*] [--status 4xx] [--origin real|mock|mapped|rule]
+       bifurc wait --capture [--method M] [--host H] [--path P*] [--status 4xx] [--origin real|mock|mapped|rule|error|server]
                    [--grep text] [--timeout 30s] [--interval 500ms]
 
 Polls until the thing is ready, then prints one line (`ready · http://api.localhost/health 200 · 2.4s`) and
@@ -247,6 +247,14 @@ A mock created here is the whole response: nothing is asked of the real server.
                                          Switch a call between its answers; no scenario (or --list) lists them
   status                                 A line per call: name, method, pattern, active scenario, on/off, hits
   hits <mock> [--last 5]                 Captured requests this call's mocks answered: did the app hit the mock?
+  serve [--port 4010] [--host 127.0.0.1] [--fallthrough <base-url>] [--detach] [--quiet]
+                                         The enabled mocks over plain HTTP on a local port, no proxy or
+                                         certificate (for Node tests, CI, backends). Scenarios apply. Blocks and
+                                         prints a line per request; stops with Ctrl+C or the end of the command;
+                                         --detach keeps it running under the engine. The host part of a mock's
+                                         pattern is ignored: /orders matches http://api.localhost/orders.
+                                         No match: 404 with the closest mocks, or --fallthrough forwards.
+  serve --stop [--port N] | --status      Stop the mock server(s) / list the running ones
 
 --method takes * for any method.
 
@@ -452,7 +460,7 @@ const CAPTURE: &str = "Usage: bifurc capture <verb>
 What went through the proxies: each exchange with its request and its response.
 
   list [--last N] [--status 4xx|422|!2xx] [--method M] [--host H] [--path P*] [--since 2m|1h|#id]
-       [--origin real|mock|mapped|rule] [--grep text]
+       [--origin real|mock|mapped|rule|error|server] [--grep text]
                                          One line per entry, newest first (default 20): #id time method
                                          host/path status duration origin. Times are UTC.
   show <entry> [--body] [--headers] [--req-body] [--req-headers] [--select <path>] [--max-body N]
@@ -643,7 +651,7 @@ pub fn examples(group: &str) -> Option<&'static [&'static str]> {
         "mocks" => &[
             r#"bifurc mocks create http://api.localhost/users/1 --status 200 -d '{"id":1}' -H "Content-Type: application/json""#,
             r#"bifurc mocks scenario "Get user" error500"#,
-            "bifurc mocks status",
+            "bifurc mocks serve --port 4010 --detach",
             r#"bifurc mocks hits "Get user" --last 5"#,
             r#"bifurc mocks create --from-request "Get user" --name "Get user""#,
         ],

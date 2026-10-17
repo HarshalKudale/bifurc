@@ -264,6 +264,8 @@ pub struct StatusParts {
     pub config: Option<Value>,
     pub capture: Option<Value>,
     pub cookies: Option<Value>,
+    /// `mocks.serveStatus`: the local mock servers that run.
+    pub mock_servers: Option<Value>,
 }
 
 impl StatusParts {
@@ -309,6 +311,16 @@ pub fn describe_status(engine: &RuntimeInfo, active_workspace: &Value, parts: &S
     first.extend(parts.environment().map(|name| format!("env {name}")));
     let mut second = Vec::new();
     second.extend(parts.mocks().map(|n| format!("mocks {n} on")));
+    let ports: Vec<String> = parts
+        .mock_servers
+        .iter()
+        .flat_map(|s| s["servers"].as_array())
+        .flatten()
+        .map(|s| format!(":{}", js_template(s.get("port"))))
+        .collect();
+    if !ports.is_empty() {
+        second.push(format!("mock server {}", ports.join(",")));
+    }
     if let Some(capture) = &parts.capture {
         let paused = if capture.get("paused").is_some_and(truthy) { " paused" } else { "" };
         second.push(format!("capture {}/{}{paused}", js_template(capture.get("matched")), MAX_CAPTURE));
@@ -508,25 +520,32 @@ boom"
             config: Some(config),
             capture: Some(json!({"matched": 143, "paused": false})),
             cookies: Some(json!({"domains": [{}, {}, {}]})),
+            mock_servers: Some(json!({"servers": [{"port": 4010}]})),
         };
         assert_eq!(
             describe_status(&info, &workspace, &parts),
             "engine 0.6.0 · proxy :8080 on · workspace smoke · env dev
-mocks 2 on · capture 143/200 · cookies 3 domains"
+mocks 2 on · mock server :4010 · capture 143/200 · cookies 3 domains"
         );
         let parts = StatusParts {
             server: Some(json!({"running": false, "port": 9})),
             config: None,
             capture: Some(json!({"matched": 0, "paused": true})),
             cookies: None,
+            mock_servers: None,
         };
         assert_eq!(
             describe_status(&info, &json!(null), &parts),
             "engine 0.6.0 · proxy :9 off
 capture 0/200 paused"
         );
-        let none =
-            StatusParts { server: None, config: Some(json!({"environments": []})), capture: None, cookies: None };
+        let none = StatusParts {
+            server: None,
+            config: Some(json!({"environments": []})),
+            capture: None,
+            cookies: None,
+            mock_servers: None,
+        };
         assert_eq!(describe_status(&info, &workspace, &none), "engine 0.6.0 · workspace smoke · env none");
     }
 }
