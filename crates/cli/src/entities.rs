@@ -197,7 +197,7 @@ pub fn mappings(ctx: &mut Context, sub: Option<&str>) -> Result<String> {
             Ok(ctx.print(&saved, || format!("Mapped http://{domain} → {target}  (id {})", id_of(&saved))))
         }
         "update" => {
-            ctx.accept(&["domain", "target", "label"], 1)?;
+            ctx.accept(&["domain", "target", "label", "force"], 1)?;
             let (workspace, mut entity) = resolve(ctx, &MAPPINGS)?;
             let mut changed = set_text(&mut entity, "target", args, "target");
             changed |= set_text(&mut entity, "label", args, "label");
@@ -282,7 +282,7 @@ pub fn rules(ctx: &mut Context, sub: Option<&str>) -> Result<String> {
             Ok(ctx.print(&saved, || format!("Saved rule {}", id_of(&saved))))
         }
         "update" => {
-            ctx.accept(&["pattern", "mapping", "target", "name", "regex", "no-regex"], 1)?;
+            ctx.accept(&["pattern", "mapping", "target", "name", "regex", "no-regex", "force"], 1)?;
             let regex = switch(args, "regex", "no-regex")?;
             let (workspace, mut rule) = resolve(ctx, &RULES)?;
             let mut changed = set_text(&mut rule, "name", args, "name");
@@ -474,7 +474,7 @@ pub fn mocks(ctx: &mut Context, sub: Option<&str>) -> Result<String> {
         }
         "update" => {
             let mut options = MOCK_RESPONSE_OPTIONS.to_vec();
-            options.push("url");
+            options.extend(["url", "force"]);
             ctx.accept(&options, 1)?;
             // The options are read before the engine is asked for anything, so a bad one changes nothing.
             apply_mock_options(&mut json!({}), args)?;
@@ -590,6 +590,23 @@ mod tests {
         let argv = ["mappings", "create", "api"];
         let (out, _) = run(&argv, vec![], |c| mappings(c, sub(&argv)));
         assert_eq!(out.unwrap_err(), CliError::usage("missing target, e.g. 127.0.0.1:3000 or http://host:port"));
+    }
+
+    #[test]
+    fn show_makes_the_engine_remember_and_force_skips_the_stale_check() {
+        let argv = ["mappings", "show", "m1"];
+        let (_, calls) = run(&argv, one_mapping(), |c| mappings(c, sub(&argv)));
+        assert_eq!(payloads(&calls, "entity.load")[0]["remember"], true);
+        let argv = ["mappings", "update", "m1", "--label", "X", "--force"];
+        let (_, calls) = run(&argv, one_mapping(), |c| mappings(c, sub(&argv)));
+        assert!(payloads(&calls, "entity.load")[0].get("remember").is_none());
+        assert_eq!(payloads(&calls, "entity.update")[0]["force"], true);
+        let argv = ["mappings", "update", "m1", "--label", "X"];
+        let mut answers = one_mapping();
+        answers.retain(|a| a.0 != "entity.update");
+        answers.push(("entity.update", Err(CliError::Engine { code: "CONFLICT".into(), message: "stale".into() })));
+        let (out, _) = run(&argv, answers, |c| mappings(c, sub(&argv)));
+        assert_eq!(out.unwrap_err().code(), 2);
     }
 
     #[test]

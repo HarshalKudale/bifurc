@@ -142,7 +142,7 @@ fn steps_text(source: &str) -> Result<String> {
 pub fn from_steps(ctx: &mut Context, verb: &str) -> Result<String> {
     let args = ctx.args;
     let update = verb == "update";
-    ctx.accept(if update { &["steps", "name"] } else { &["steps", "name", "folder"] }, usize::from(update))?;
+    ctx.accept(if update { &["steps", "name", "force"] } else { &["steps", "name", "folder"] }, usize::from(update))?;
     let source = need(args.flag("steps"), "--steps")?;
     let wanted = if update { Some(need(args.positional(2), "flow id or name")?) } else { None };
     let text = steps_text(&source)?;
