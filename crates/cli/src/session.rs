@@ -61,11 +61,11 @@ const SETUP_REQUIRED: &str = "setupRequired";
 fn engine_error(raw: &Value) -> CliError {
     let text = |key: &str| raw.get(key).and_then(Value::as_str).map(str::to_string);
     // The engine refuses the command line until the first-run setup is finished, and opens the interface
-    // itself. Its message is the whole story; the code in front of it would only be noise.
+    // itself. Its message is the whole story, and only a person can go on (exit 6).
     if raw.pointer("/details/reason").and_then(Value::as_str) == Some(SETUP_REQUIRED)
         && let Some(message) = text("message")
     {
-        return CliError::msg(message);
+        return CliError::needs_human(message);
     }
     // A send that failed on the way (refused, DNS, closed, timed out) is keyed `request.send.*`, whatever its code.
     let key = raw.pointer("/details/key").and_then(Value::as_str).unwrap_or_default();
@@ -360,6 +360,7 @@ mod tests {
         let stream = Scripted::new(&[json!({"id": "cli-1", "ok": false, "error": error})]);
         let err = Session::new(stream).call("config.get", json!({})).unwrap_err();
         assert_eq!(err.line(), "bifurc: Bifurc has not been set up yet.");
+        assert_eq!(err.code(), 6);
         // Any other refusal keeps its code.
         let error = json!({"code": "FORBIDDEN", "message": "no", "details": {"required": "admin"}});
         let stream = Scripted::new(&[json!({"id": "cli-1", "ok": false, "error": error})]);
