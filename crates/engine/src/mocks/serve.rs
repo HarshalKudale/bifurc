@@ -178,6 +178,10 @@ async fn handle(served: Arc<Served>, bound: SocketAddr, mut socket: TcpStream) {
         ..Default::default()
     };
 
+    // A cassette being replayed answers what it recorded; its hosts mean nothing here, so a miss goes on to the mocks.
+    if crate::cassettes::replay::serve(&mut socket, &base, false, &target, &body, t0).await {
+        return;
+    }
     let (routing, names) = snapshot(&served.workspace_id);
     let env = routing.env.as_ref();
     let mock = match_local(&routing.mocks, &head.method, &host, &target, env);

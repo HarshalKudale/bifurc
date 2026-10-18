@@ -88,7 +88,8 @@ Groups (bifurc <group> --help shows the arguments and options of each verb)
   port          free <port> [--kill]                                  What holds a port, and stopping it
   mail          list | show | last | clear                            Mail the local SMTP sink caught; codes and links
   webhooks      listen | stop | list | show | replay | save | trigger  Receive webhooks locally, optionally forward them
-  record        start | stop | status                                  Record proxied traffic of chosen hosts into a cassette
+  record        start | stop | status | list                           Record proxied traffic of chosen hosts into a cassette
+  replay        <cassette> [--passthrough] | stop | status              Serve a recorded cassette instead of the real hosts
 
 Engine
   engine start [--transport socket|ws] [--no-tray]   Start a standalone engine in the background
@@ -706,7 +707,29 @@ parameters and JSON or form bodies are masked as `••••` while recording.
                                          one is already recording
   stop                                   Save and commit it: `saved cassettes/x.json · 12 interactions · 3 values
                                          masked`. Exit 3 when nothing records
-  status                                 `recording x · 12 interactions · a.com`, or `not recording`";
+  status                                 `recording x · 12 interactions · a.com`, or `not recording`
+  list                                   The cassettes of the workspace: name, interactions, hosts, when recorded
+                                         (see: bifurc replay --help)";
+
+const REPLAY: &str = "Usage: bifurc replay <cassette> [--passthrough] | stop | status
+
+Serve a recorded cassette (see: bifurc record --help) instead of the real hosts, through the proxy and the
+local mock server (there, with no hosts to go by, only recorded requests are answered and the rest go on to
+the mocks). A request matches a recorded one by method, path, query and body; headers are never
+compared. Masked values (`••••`) match anything; timestamps, idempotency keys, nonces and request ids are
+ignored. The same request repeated gets the recorded answers in order, then the last one again. A replayed
+answer shows in `capture` as via mock, target `cassette:<name>`. One replay at a time, and not while recording.
+https:// hosts need HTTPS interception (see: bifurc tls status).
+
+  <cassette> [--passthrough]             Start replaying `cassettes/<cassette>.json`: `replaying checkout · 12
+                                         interactions · api.stripe.com`. A request the cassette does not hold
+                                         is a 404 `x-bifurc-cassette: unmatched` naming the nearest recorded
+                                         ones; with --passthrough it goes to the real host instead. Exit 3
+                                         when there is no such cassette, 2 when one is already running
+  stop                                   `stopped x · 10 served · 0 unmatched`; lists each unmatched request
+                                         (`✗ GET url`) and exits 1 when there were any. Exit 3 when nothing
+                                         replays
+  status                                 `replaying x · 3 served · 1 unmatched`, or `not replaying`";
 
 const WEBHOOKS: &str = "Usage: bifurc webhooks <verb>
 
@@ -824,6 +847,7 @@ pub fn group_usage(group: &str) -> Option<String> {
         "mail" => MAIL,
         "webhooks" => WEBHOOKS,
         "record" => RECORD,
+        "replay" => REPLAY,
         "engine" => ENGINE,
         "update" => UPDATE,
         "folders" => FOLDERS,
@@ -954,6 +978,13 @@ pub fn examples(group: &str) -> Option<&'static [&'static str]> {
             "bifurc record start --hosts *.example.com --cassette example",
             "bifurc record status",
             "bifurc record stop",
+            "bifurc record list",
+        ],
+        "replay" => &[
+            "bifurc replay checkout",
+            "bifurc replay checkout --passthrough",
+            "bifurc replay status",
+            "bifurc replay stop",
         ],
         "mail" => &[
             "bifurc mail clear",
@@ -1010,7 +1041,7 @@ pub(crate) mod tests {
     fn every_example_is_a_known_group_and_verb_with_flags_its_help_names() {
         for group in [
             "agent", "curl", "requests", "capture", "mocks", "contract", "flows", "runner", "env", "cookies",
-            "session", "vars", "changes", "claim", "wait", "services", "mail", "webhooks", "record",
+            "session", "vars", "changes", "claim", "wait", "services", "mail", "webhooks", "record", "replay",
         ] {
             let list = examples(group).unwrap_or_else(|| panic!("{group} has no examples"));
             assert!((3..=5).contains(&list.len()), "{group}");
