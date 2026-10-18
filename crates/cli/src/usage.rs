@@ -88,6 +88,7 @@ Groups (bifurc <group> --help shows the arguments and options of each verb)
   port          free <port> [--kill]                                  What holds a port, and stopping it
   mail          list | show | last | clear                            Mail the local SMTP sink caught; codes and links
   webhooks      listen | stop | list | show | replay | save | trigger  Receive webhooks locally, optionally forward them
+  jwt           decode | mint                                         Read a token's claims and expiry; sign a test token
   types         <request> [--lang ts|zod|python|go] [--out f]         Types inferred from a request's responses
   openapi       infer [--folder f] [--out f] [--title t]             OpenAPI 3 file from saved requests, mocks, captures
   record        start | stop | status | list                           Record proxied traffic of chosen hosts into a cassette
@@ -767,6 +768,24 @@ saved request is an operation too; regex mocks are skipped. The first http(s) ho
 
 Without --out the document is printed and nothing else. Exit 3 when there is no request to describe.";
 
+const JWT: &str = "Usage: bifurc jwt <decode|mint>
+
+  decode <token> [--check] [--json]
+  decode --from-jar <host> [--check] [--json]
+                                         Header, claims, and exp / nbf / iat as a time and how far away it is.
+                                         The signature is not verified. --from-jar decodes the JWT-shaped
+                                         cookies of the host (or a parent domain) in this session's jar and
+                                         prints `cookie <name>` first; none is exit 3. --check exits 1 when the
+                                         token is expired or not valid yet. Not a JWT, or encrypted (JWE): exit 2
+  mint --key-from-vault <vault> [--claims '<json>'] [--exp 5m|none] [--secret KEY] [--alg A] [--header '<json>']
+                                         Sign a token with a vault secret and print only the token. --claims is
+                                         a JSON object; iat is added, and exp (default 15m; 30s, 5m, 1h, 2d, or
+                                         none) unless the claims have their own. --secret picks the key (default:
+                                         the only secret, else JWT_KEY). --alg HS256 HS384 HS512 RS256 ES256
+                                         (default: from the key; a PEM private key signs RS256 or ES256, else
+                                         the text is an HMAC secret). --header adds header members. A sealed
+                                         vault asks for its passphrase (--passphrase-stdin) or exits 6";
+
 const WEBHOOKS: &str = "Usage: bifurc webhooks <verb>
 
 The engine receives webhooks on a local port (127.0.0.1) and captures each one with its exact headers and raw
@@ -884,6 +903,7 @@ pub fn group_usage(group: &str) -> Option<String> {
         "types" => TYPES,
         "openapi" => OPENAPI,
         "webhooks" => WEBHOOKS,
+        "jwt" => JWT,
         "record" => RECORD,
         "replay" => REPLAY,
         "engine" => ENGINE,
@@ -1024,6 +1044,13 @@ pub fn examples(group: &str) -> Option<&'static [&'static str]> {
             "bifurc webhooks replay k3f9 --to http://localhost:3000 --expect-status 200",
             "bifurc webhooks trigger stripe --vault app --patch '.data.object.amount_total=500' --expect-status 200",
         ],
+        "jwt" => &[
+            "bifurc jwt decode eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.c2ln",
+            "bifurc jwt decode --from-jar api.localhost --check",
+            "bifurc jwt decode --from-jar api.localhost --json",
+            r#"bifurc jwt mint --claims '{"role":"admin"}' --exp 5m --key-from-vault jwt_dev"#,
+            "bifurc jwt mint --key-from-vault jwt_dev --secret JWT_KEY --alg HS512 --exp none",
+        ],
         "record" => &[
             "bifurc record start --hosts api.stripe.com,api.openai.com --cassette checkout",
             "bifurc record start --hosts *.example.com --cassette example",
@@ -1092,7 +1119,7 @@ pub(crate) mod tests {
     fn every_example_is_a_known_group_and_verb_with_flags_its_help_names() {
         for group in [
             "agent", "curl", "requests", "capture", "mocks", "contract", "flows", "runner", "env", "cookies",
-            "session", "vars", "changes", "claim", "wait", "services", "mail", "webhooks", "types", "openapi",
+            "session", "vars", "changes", "claim", "wait", "services", "mail", "webhooks", "jwt", "types", "openapi",
             "record", "replay",
         ] {
             let list = examples(group).unwrap_or_else(|| panic!("{group} has no examples"));

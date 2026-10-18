@@ -18,7 +18,7 @@ use crate::{
     discovery::{RuntimeInfo, find_running_engine, platform_default_data_dir},
     entities,
     error::{CliError, Result},
-    extras, flows, health,
+    extras, flows, health, jwt,
     locate::locate_engine,
     mail, named, openapi, record, replay, requests,
     session::{Engine, connect, session_name},
@@ -163,6 +163,7 @@ fn dispatch(args: &ParsedArgs, data_dir: &Path, stdout: &mut dyn Write) -> Resul
         "logs" => devservices::logs(&mut ctx),
         "mail" => mail::mail(&mut ctx, sub),
         "webhooks" => webhooks::webhooks(&mut ctx, sub, stdout),
+        "jwt" => jwt::jwt(&mut ctx, sub),
         "types" => types::types(&mut ctx, sub),
         "openapi" => openapi::openapi(&mut ctx, sub),
         "record" => record::record(&mut ctx, sub),
@@ -235,7 +236,7 @@ pub fn run_with_env(
                 0
             }
             None => {
-                let message = "examples exist for: agent, curl, requests, capture, mocks, flows, runner, env, cookies, wait, services, mail, webhooks, record, replay, types, openapi";
+                let message = "examples exist for: agent, curl, requests, capture, mocks, flows, runner, env, cookies, wait, services, mail, webhooks, jwt, record, replay, types, openapi";
                 let _ = writeln!(stderr, "{}", CliError::usage(message).line());
                 2
             }

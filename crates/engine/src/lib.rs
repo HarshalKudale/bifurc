@@ -18,6 +18,7 @@ pub mod gitops;
 pub mod graphql;
 pub mod grpc;
 pub mod importexport;
+pub mod jwt;
 pub mod kernel;
 pub mod mail;
 pub mod mcp;
