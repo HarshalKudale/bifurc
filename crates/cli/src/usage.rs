@@ -90,6 +90,7 @@ Groups (bifurc <group> --help shows the arguments and options of each verb)
   webhooks      listen | stop | list | show | replay | save | trigger  Receive webhooks locally, optionally forward them
   jwt           decode | mint                                         Read a token's claims and expiry; sign a test token
   policy        show | check                                          Guardrails for agents: the workspace's policy.yaml
+  approvals     list | approve | deny                                 Calls a policy holds for a person; decided at a terminal
   types         <request> [--lang ts|zod|python|go] [--out f]         Types inferred from a request's responses
   openapi       infer [--folder f] [--out f] [--title t]             OpenAPI 3 file from saved requests, mocks, captures
   record        start | stop | status | list                           Record proxied traffic of chosen hosts into a cassette
@@ -824,10 +825,26 @@ hosts (globs; *.x.com is its subdomains; the port is ignored) and paths (globs o
 segment, ** crosses them); no key matches everything. A call to a host that allow_hosts does not list is blocked.
 Top-level deny:/allow_hosts:/require_human: with no policies list is one unnamed rule each. deny and allow_hosts
 are checked first (first in the file wins), then require_human. A blocked call exits 7 with
-`blocked by policy \"no-prod-writes\": DELETE https://api.prod.x/orders/1`; a held one exits 6 (approvals arrive in a
-later version). A run (runner, flows) stops at its first blocked request. A file that cannot be read blocks every
+`blocked by policy \"no-prod-writes\": DELETE https://api.prod.x/orders/1`; a require_human call waits for a
+person (see: bifurc approvals --help), exit 6 if nobody answers in time. A run (runner, flows) stops at its first
+blocked request. A file that cannot be read blocks every
 guarded call (exit 7 `policy file invalid: ...`) until a person fixes it; quote a bare * in YAML. If policy.yaml and
 policy.json both exist, policy.yaml is used.";
+
+const APPROVALS: &str = "Usage: bifurc approvals <list|approve|deny>
+
+Calls a require_human policy holds (see: bifurc policy --help). The agent's call waits in the engine, by default 5
+minutes (setting approvalTimeoutSeconds, 10-3600); a person decides here, in their own terminal.
+
+  list [--all] [-w workspace] [--json]   What waits for a person, oldest first; --all adds the last 100 decided
+  approve <id> [--reason text]           Let the call through. <id> is the id, #tail or tail that list shows
+  deny <id> [--reason text]              Refuse it; the agent's call fails with exit 7 and says who and why
+
+approve and deny need stdin and stdout to be a terminal, else exit 2: an agent's shell cannot approve its own call.
+They are not in MCP. If nobody answered in time the call exits 6 with `still pending as #<id>`; the item stays
+pending for 30 minutes, and approving it late lets the same call, repeated within 10 minutes, through once.
+`bifurc status` shows `approvals N pending`. Every block, request and decision is kept, one JSON line each, in
+<data dir>/audit/policy.jsonl (also the engine log and `bifurc changes`).";
 
 const WEBHOOKS: &str = "Usage: bifurc webhooks <verb>
 
@@ -948,6 +965,7 @@ pub fn group_usage(group: &str) -> Option<String> {
         "webhooks" => WEBHOOKS,
         "jwt" => JWT,
         "policy" => POLICY,
+        "approvals" => APPROVALS,
         "record" => RECORD,
         "replay" => REPLAY,
         "engine" => ENGINE,
@@ -1102,6 +1120,12 @@ pub fn examples(group: &str) -> Option<&'static [&'static str]> {
             "bifurc policy check DELETE https://api.prod.x/orders/1",
             "bifurc policy check POST http://api.localhost/orders --env prod --json",
         ],
+        "approvals" => &[
+            "bifurc approvals list",
+            "bifurc approvals list --all --json",
+            "bifurc approvals approve 1k3f",
+            "bifurc approvals deny 1k3f --reason \"not on a Friday\"",
+        ],
         "record" => &[
             "bifurc record start --hosts api.stripe.com,api.openai.com --cassette checkout",
             "bifurc record start --hosts *.example.com --cassette example",
@@ -1169,9 +1193,31 @@ pub(crate) mod tests {
     #[test]
     fn every_example_is_a_known_group_and_verb_with_flags_its_help_names() {
         for group in [
-            "agent", "curl", "requests", "capture", "mocks", "contract", "flows", "runner", "env", "cookies",
-            "session", "vars", "changes", "claim", "wait", "services", "mail", "webhooks", "jwt", "policy", "types",
-            "openapi", "record", "replay",
+            "agent",
+            "curl",
+            "requests",
+            "capture",
+            "mocks",
+            "contract",
+            "flows",
+            "runner",
+            "env",
+            "cookies",
+            "session",
+            "vars",
+            "changes",
+            "claim",
+            "wait",
+            "services",
+            "mail",
+            "webhooks",
+            "jwt",
+            "policy",
+            "approvals",
+            "types",
+            "openapi",
+            "record",
+            "replay",
         ] {
             let list = examples(group).unwrap_or_else(|| panic!("{group} has no examples"));
             assert!((3..=5).contains(&list.len()), "{group}");

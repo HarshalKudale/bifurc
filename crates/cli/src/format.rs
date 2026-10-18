@@ -274,9 +274,17 @@ pub struct StatusParts {
     pub recording: Option<Value>,
     /// `cassette.replayStatus`: the cassette being replayed, if any.
     pub replaying: Option<Value>,
+    /// `approvals.list`: the calls a policy holds for a person.
+    pub approvals: Option<Value>,
 }
 
 impl StatusParts {
+    /// How many held calls wait for a person (`None` when none do).
+    pub fn approvals_pending(&self) -> Option<usize> {
+        let n = self.approvals.as_ref()?.get("pending")?.as_array()?.len();
+        (n > 0).then_some(n)
+    }
+
     /// The name of the environment in force (`none` when no one is), from the engine's own choice.
     pub fn environment(&self) -> Option<String> {
         let config = self.config.as_ref()?;
@@ -318,6 +326,7 @@ pub fn describe_status(engine: &RuntimeInfo, active_workspace: &Value, parts: &S
     }
     first.extend(parts.environment().map(|name| format!("env {name}")));
     let mut second = Vec::new();
+    second.extend(parts.approvals_pending().map(|n| format!("approvals {n} pending")));
     second.extend(parts.mocks().map(|n| format!("mocks {n} on")));
     let ports: Vec<String> = parts
         .mock_servers
@@ -538,6 +547,21 @@ boom"
         assert_eq!(describe_stream(&failed), "SSE error  http://h/e\nerror: HTTP 404 Not Found");
     }
 
+    fn none_again() -> StatusParts {
+        StatusParts {
+            server: None,
+            config: None,
+            capture: None,
+            cookies: None,
+            mock_servers: None,
+            mail: None,
+            webhooks: None,
+            recording: None,
+            replaying: None,
+            approvals: None,
+        }
+    }
+
     #[test]
     fn status_is_two_lines_and_leaves_out_what_could_not_be_had() {
         let info = RuntimeInfo::from_json(json!({
@@ -558,6 +582,7 @@ boom"
             webhooks: Some(json!({"listeners": [{"port": 4020}]})),
             recording: None,
             replaying: None,
+            approvals: None,
         };
         assert_eq!(
             describe_status(&info, &workspace, &parts),
@@ -574,6 +599,7 @@ mocks 2 on · mock server :4010 · mail :1025 (3) · webhooks :4020 · capture 1
             webhooks: None,
             recording: None,
             replaying: None,
+            approvals: None,
         };
         assert_eq!(
             describe_status(&info, &json!(null), &parts),
@@ -590,6 +616,7 @@ mail :1025 off (Port 1025 is already in use) · capture 0/200 paused"
             webhooks: None,
             recording: None,
             replaying: None,
+            approvals: None,
         };
         assert_eq!(describe_status(&info, &workspace, &none), "engine 0.6.0 · workspace smoke · env none");
         let recording = StatusParts {
@@ -597,6 +624,8 @@ mail :1025 off (Port 1025 is already in use) · capture 0/200 paused"
             replaying: Some(json!({"replaying": {"name": "checkout", "served": 3, "unmatchedCount": 1}})),
             ..none
         };
+        let held = StatusParts { approvals: Some(json!({"pending": [{}, {}]})), ..none_again() };
+        assert!(describe_status(&info, &workspace, &held).ends_with("approvals 2 pending"));
         assert!(describe_status(&info, &workspace, &recording).ends_with(
             "recording checkout · 1 interaction · a.com,b.com · replaying checkout · 3 served · 1 unmatched"
         ));

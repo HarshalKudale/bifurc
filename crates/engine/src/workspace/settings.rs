@@ -17,6 +17,8 @@ pub const DEFAULT_COMPANION_PORT: u16 = 4747;
 pub const DEFAULT_CAPTURE_LIMIT: usize = 200;
 /// The SMTP port of the local mail sink, unless `mailPort` says otherwise.
 pub const DEFAULT_MAIL_PORT: u16 = 1025;
+/// How long a call held for approval waits for a person, unless `approvalTimeoutSeconds` says otherwise.
+pub const DEFAULT_APPROVAL_TIMEOUT_SECONDS: u64 = 300;
 /// The header that carries the capture id to the upstream, unless `traceHeader` says otherwise.
 pub const DEFAULT_TRACE_HEADER: &str = "x-bifurc-trace";
 /// Where the terms of service a first run asks the user to accept are published.
@@ -70,6 +72,13 @@ impl AppSettings {
     pub fn capture_limit(&self) -> usize {
         let limit = self.0.get("captureLimit").and_then(Value::as_u64).and_then(|n| usize::try_from(n).ok());
         limit.filter(|n| (10..=10_000).contains(n)).unwrap_or(DEFAULT_CAPTURE_LIMIT)
+    }
+
+    /// How long a call held by a `require_human` policy waits for a person (`approvalTimeoutSeconds`, 10 to 3600;
+    /// anything else is the default; not written into the defaults).
+    pub fn approval_timeout_seconds(&self) -> u64 {
+        let seconds = self.0.get("approvalTimeoutSeconds").and_then(Value::as_u64);
+        seconds.filter(|n| (10..=3600).contains(n)).unwrap_or(DEFAULT_APPROVAL_TIMEOUT_SECONDS)
     }
 
     /// The header the proxies stamp on forwarded requests with the capture id (`traceHeader`; empty or not a

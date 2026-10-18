@@ -1536,6 +1536,16 @@ pub fn catalog() -> Vec<Tool> {
             ],
         },
         Row {
+            name: "approvals_list",
+            words: &["approvals", "list"],
+            summary: "The calls a require_human policy holds for a person, oldest first (all=true adds the last decided).",
+            details: "Read-only: only a person decides, in a terminal (`bifurc approvals approve <id>`); there is no approve or deny here. A held call of yours waits for that person up to 5 minutes, then fails with exit 6 `still pending as #<id>`: tell the person the id and retry the same call after they approve. `denied by ...` (exit 7) is final: do not retry another way.",
+            effect: Effect::Reads,
+            upfront: false,
+            scoped: true,
+            params: vec![switch("all", "all", None, "Also the last decided ones.")],
+        },
+        Row {
             name: "types",
             words: &["types"],
             summary: "Types for a saved request's response, inferred from its recorded and captured JSON answers: ts, zod, python or go.",

@@ -10,7 +10,7 @@ use std::{
 use serde_json::json;
 
 use crate::{
-    agent,
+    agent, approvals,
     args::{ParsedArgs, parse_args},
     capture, changes, claims,
     commands::{self, Connector, Context, unknown_verb},
@@ -165,6 +165,7 @@ fn dispatch(args: &ParsedArgs, data_dir: &Path, stdout: &mut dyn Write) -> Resul
         "webhooks" => webhooks::webhooks(&mut ctx, sub, stdout),
         "jwt" => jwt::jwt(&mut ctx, sub),
         "policy" => policy::policy(&mut ctx, sub),
+        "approvals" => approvals::approvals(&mut ctx, sub),
         "types" => types::types(&mut ctx, sub),
         "openapi" => openapi::openapi(&mut ctx, sub),
         "record" => record::record(&mut ctx, sub),
@@ -237,7 +238,7 @@ pub fn run_with_env(
                 0
             }
             None => {
-                let message = "examples exist for: agent, curl, requests, capture, mocks, flows, runner, env, cookies, wait, services, mail, webhooks, jwt, policy, record, replay, types, openapi";
+                let message = "examples exist for: agent, curl, requests, capture, mocks, flows, runner, env, cookies, wait, services, mail, webhooks, jwt, policy, approvals, record, replay, types, openapi";
                 let _ = writeln!(stderr, "{}", CliError::usage(message).line());
                 2
             }

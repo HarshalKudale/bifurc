@@ -173,6 +173,9 @@ const SCOPE_BY_COMMAND: &[(&str, Scope)] = &[
     ("contract.saveSnapshots", Scope::Write),
     ("contract.listSnapshots", Scope::Read),
     ("contract.fromOpenApi", Scope::Read),
+    ("approvals.list", Scope::Read),
+    // A decision lets an agent's held call through: the same tier as signing in or out.
+    ("approvals.decide", Scope::Admin),
     ("policy.show", Scope::Read),
     ("policy.check", Scope::Read),
     ("request.send", Scope::Execute),
