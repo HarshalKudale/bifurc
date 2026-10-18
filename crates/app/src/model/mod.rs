@@ -12,6 +12,7 @@ pub mod graphql;
 pub mod history;
 pub mod http;
 pub mod kind;
+pub mod logs;
 pub mod mcp;
 pub mod media;
 pub mod snippet;

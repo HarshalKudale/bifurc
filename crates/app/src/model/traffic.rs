@@ -282,6 +282,8 @@ pub struct Exchange {
     pub response_headers: Vec<(String, String)>,
     pub request_body: Vec<u8>,
     pub response_body: Vec<u8>,
+    /// The `x-bifurc-trace` value the proxy forwarded, when tracing was on.
+    pub trace_id: Option<String>,
 }
 
 impl Exchange {
@@ -305,6 +307,7 @@ impl Exchange {
             response_headers: read_headers(value.get("resHeaders")),
             request_body: body("reqBody"),
             response_body: body("resBody"),
+            trace_id: text("traceId").filter(|id| !id.is_empty()),
         })
     }
 

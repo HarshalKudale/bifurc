@@ -8,7 +8,7 @@
 //! from the stored entry (`capture.buildRequest`, `capture.buildMock`) and this screen saves what it built.
 
 use gpui_kit::component::{
-    ActiveTheme as _, Disableable as _, Icon, IconName, Selectable as _, Sizable as _, WindowExt as _,
+    ActiveTheme as _, Disableable as _, Icon, IconName, Selectable as _, Sizable as _, StyledExt as _, WindowExt as _,
     alert::Alert,
     button::{Button, ButtonGroup, ButtonVariants as _},
     checkbox::Checkbox,
@@ -26,7 +26,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AppContext as _, ClipboardItem, Context, Entity, EventEmitter, InteractiveElement as _, IntoElement, MouseButton,
     ParentElement as _, Render, SharedString, StatefulInteractiveElement as _, Styled as _, Subscription,
-    UniformListScrollHandle, Window, div, px, uniform_list,
+    TestSupportExt as _, UniformListScrollHandle, Window, div, px, uniform_list,
 };
 use serde_json::{Value, json};
 use std::{collections::HashSet, ops::Range};
@@ -44,6 +44,7 @@ use crate::{
     model::{
         git::date_time_utc,
         http::{pretty_json, status_text},
+        logs::{self, Found},
         media::{self, BodyClass},
         snippet::{RequestParts, SnippetKind, snippet},
         traffic::{self, Exchange, Handler, RESPONSE_BODY_LIMIT, ResourceType, TrafficEntry, body_class, clock_utc},
@@ -123,9 +124,24 @@ enum Section {
     Headers,
     Payload,
     Response,
+    Logs,
 }
 
-const SECTIONS: [Section; 3] = [Section::Headers, Section::Payload, Section::Response];
+const SECTIONS: [Section; 4] = [Section::Headers, Section::Payload, Section::Response, Section::Logs];
+
+/// The dev servers' lines for the selected exchange, looked up when the Logs tab is opened.
+enum TraceLogs {
+    Idle,
+    Loading,
+    Failed(String),
+    /// `approximate`: no line carried the id, these were matched by time and path.
+    Found {
+        lines: Vec<Found>,
+        approximate: bool,
+    },
+    /// Nothing matched; the key of the text that says why.
+    Empty(&'static str),
+}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum BodyView {
@@ -210,6 +226,7 @@ pub struct CaptureScreen {
     handlers: [bool; 3],
     detail: Detail,
     section: Section,
+    trace_logs: TraceLogs,
     response_view: BodyView,
     request_body: Entity<EditorState>,
     response_body: Entity<EditorState>,
@@ -288,6 +305,7 @@ impl CaptureScreen {
             handlers: [false, true, true],
             detail: Detail::Idle,
             section: Section::Headers,
+            trace_logs: TraceLogs::Idle,
             response_view: BodyView::Pretty,
             request_body,
             response_body,
@@ -416,6 +434,7 @@ impl CaptureScreen {
 
     fn select(&mut self, id: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
         self.selected = id.clone();
+        self.trace_logs = TraceLogs::Idle;
         self.response_view = BodyView::Pretty;
         match id {
             Some(id) => {
@@ -468,6 +487,76 @@ impl CaptureScreen {
             });
         }
         self.detail = Detail::Ready(Box::new(Shown { exchange, request, response }));
+        if self.section == Section::Logs && matches!(self.trace_logs, TraceLogs::Idle) {
+            self.load_logs(cx);
+        }
+    }
+
+    /// Looks the selected exchange up in the dev servers' output, as `capture show --logs` does: the lines
+    /// that carry its id or trace id, else those that mention its path around the time it was served.
+    fn load_logs(&mut self, cx: &mut Context<Self>) {
+        let (Some(id), Detail::Ready(shown)) = (self.selected.clone(), &self.detail) else { return };
+        let exchange = &shown.exchange;
+        let traced = exchange.trace_id.is_some();
+        let workspace = self.model.read(cx).workspace_id().to_owned();
+        let exact = logs::exact_query(&workspace, &id, exchange.trace_id.as_deref());
+        let near = logs::near_query(
+            &workspace,
+            &exchange.url,
+            self.selected_entry().map_or(0, |entry| entry.ts),
+            exchange.duration_ms.unwrap_or_default(),
+        );
+        self.trace_logs = TraceLogs::Loading;
+        cx.notify();
+        let client = self.model.read(cx).client().clone();
+        call(&client, cx, "devservice.grep", exact, move |this, outcome, cx| {
+            if this.selected.as_deref() != Some(id.as_str()) {
+                return;
+            }
+            if let Some(message) = failure(&outcome) {
+                this.trace_logs = TraceLogs::Failed(message);
+                return cx.notify();
+            }
+            if let Some(lines) = outcome.ok().as_ref().and_then(logs::found) {
+                this.trace_logs = TraceLogs::Found { lines, approximate: false };
+                return cx.notify();
+            }
+            let Some(near) = near else { return this.nothing_in_logs(id, traced, cx) };
+            let client = this.model.read(cx).client().clone();
+            call(&client, cx, "devservice.grep", near, move |this, outcome, cx| {
+                if this.selected.as_deref() != Some(id.as_str()) {
+                    return;
+                }
+                match outcome.ok().as_ref().and_then(logs::found) {
+                    Some(lines) => {
+                        this.trace_logs = TraceLogs::Found { lines, approximate: true };
+                        cx.notify();
+                    }
+                    None => this.nothing_in_logs(id, traced, cx),
+                }
+            });
+        });
+    }
+
+    /// No line matched: says why, which depends on whether any dev server is running at all.
+    fn nothing_in_logs(&mut self, id: String, traced: bool, cx: &mut Context<Self>) {
+        let model = self.model.read(cx);
+        let payload = json!({ "workspaceId": model.workspace_id() });
+        let client = model.client().clone();
+        call(&client, cx, "devservice.list", payload, move |this, outcome, cx| {
+            if this.selected.as_deref() != Some(id.as_str()) {
+                return;
+            }
+            let running = outcome.ok().is_some_and(|result| {
+                result["services"].as_array().is_some_and(|list| list.iter().any(|s| s["state"] == "running"))
+            });
+            this.trace_logs = TraceLogs::Empty(match (running, traced) {
+                (false, _) => "capture.logs.empty.no_servers",
+                (true, false) => "capture.logs.empty.not_traced",
+                (true, true) => "capture.logs.empty.none",
+            });
+            cx.notify();
+        });
     }
 
     fn set_response_view(&mut self, view: BodyView, window: &mut Window, cx: &mut Context<Self>) {
@@ -1541,28 +1630,98 @@ impl CaptureScreen {
         }
     }
 
+    /// The lines the dev servers printed for this exchange, grouped by service, the context around a match muted.
+    fn render_logs(&self, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
+        let theme = cx.theme().clone();
+        match &self.trace_logs {
+            TraceLogs::Idle | TraceLogs::Loading => page::loading(t("capture.logs.loading")),
+            TraceLogs::Failed(message) => div()
+                .p_4()
+                .child(
+                    Alert::error("capture-logs-failed", SharedString::from(message.clone()))
+                        .title(t("capture.logs.error")),
+                )
+                .into_any_element(),
+            TraceLogs::Empty(key) => page::empty(t("capture.logs.empty.title"), t(key)),
+            TraceLogs::Found { lines, approximate } => {
+                let mut service = None;
+                let rows = lines.iter().enumerate().map(|(ix, line)| {
+                    let heading = service != Some(line.service.as_str());
+                    service = Some(line.service.as_str());
+                    v_flex()
+                        .when(heading, |this| {
+                            this.child(
+                                div()
+                                    .id(("capture-log-service", ix))
+                                    .test_support()
+                                    .pt_3()
+                                    .pb_1()
+                                    .text_xs()
+                                    .font_medium()
+                                    .child(line.service.clone()),
+                            )
+                        })
+                        .when(line.gap && !heading, |this| this.child(div().h_px().my_1().bg(theme.border)))
+                        .child(
+                            div()
+                                .id(("capture-log", ix))
+                                .test_support()
+                                .text_xs()
+                                .font_family(theme.mono_font_family.clone())
+                                .when(!line.matched, |this| this.text_color(theme.muted_foreground))
+                                .child(line.text.clone()),
+                        )
+                });
+                v_flex()
+                    .id("capture-logs")
+                    .size_full()
+                    .overflow_y_scroll()
+                    .px_4()
+                    .pb_3()
+                    .when(*approximate, |this| {
+                        this.child(
+                            div()
+                                .id("capture-logs-approximate")
+                                .test_support()
+                                .pt_3()
+                                .text_sm()
+                                .text_color(theme.muted_foreground)
+                                .child(t("capture.logs.approximate")),
+                        )
+                    })
+                    .children(rows)
+                    .into_any_element()
+            }
+        }
+    }
+
     fn render_sections(&self, shown: &Shown, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
         let selected = SECTIONS.iter().position(|s| *s == self.section).unwrap_or(0);
         let content = match self.section {
             Section::Headers => self.render_headers(shown, cx),
             Section::Payload => self.render_payload(shown, cx),
             Section::Response => self.render_response(shown, cx),
+            Section::Logs => self.render_logs(cx),
         };
         v_flex()
             .size_full()
             .child(
-                div().flex_none().px_4().child(
+                div().id("capture-section-tabs").test_support().flex_none().px_4().child(
                     TabBar::new("capture-sections")
                         .underline()
                         .small()
                         .selected_index(selected)
                         .on_click(cx.listener(|this, ix: &usize, _, cx| {
                             this.section = SECTIONS[*ix];
+                            if this.section == Section::Logs && matches!(this.trace_logs, TraceLogs::Idle) {
+                                this.load_logs(cx);
+                            }
                             cx.notify();
                         }))
                         .child(Tab::new().label(t("capture.tab.headers")))
                         .child(Tab::new().label(t("capture.tab.payload")))
-                        .child(Tab::new().label(t("capture.tab.response"))),
+                        .child(Tab::new().label(t("capture.tab.response")))
+                        .child(Tab::new().label(t("capture.tab.logs"))),
                 ),
             )
             .child(div().flex_1().min_h_0().child(content))
