@@ -129,6 +129,7 @@ mod tests {
             ("sync workspace to git", "workspaces_sync"),
             ("grpc reflection services", "requests_reflect"),
             ("list secrets", "vault_list"),
+            ("inject latency into the api", "faults"),
             ("update saved request headers", "requests_update"),
             ("github repositories", "account_repos"),
             ("which ports are listening", "services_list"),
