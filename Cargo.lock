@@ -724,6 +724,7 @@ dependencies = [
  "bifurc-protocol",
  "libc",
  "serde_json",
+ "sha2 0.10.9",
  "tempfile",
  "tungstenite",
  "windows-sys 0.59.0",
