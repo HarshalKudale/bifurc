@@ -25,6 +25,7 @@ pub mod flows;
 pub mod flowsteps;
 pub mod format;
 pub mod health;
+pub mod infer;
 pub mod locate;
 pub mod logtrace;
 pub mod mail;
@@ -46,6 +47,7 @@ pub mod stream;
 pub mod supervisor;
 #[cfg(test)]
 pub(crate) mod testing;
+pub mod types;
 pub mod update;
 pub mod usage;
 pub mod vault;

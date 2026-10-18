@@ -625,6 +625,7 @@ mod tests {
             ),
             ("webhooks", json!({"verb": "save", "id": "#k3f9", "as_request": true, "folder": "hooks"})),
             ("webhooks", json!({"verb": "save", "id": "#k3f9", "as_request": true, "name": "Stripe hook"})),
+            ("types", with(json!({"request": "Get orders", "lang": "zod", "out": "src/o.ts", "name": "Order", "send": true, "env": "Dev"}))),
             ("record", with(json!({"verb": "start", "hosts": "api.stripe.com,api.openai.com", "cassette": "checkout"}))),
             ("record", with(json!({"verb": "list"}))),
             ("replay", with(json!({"target": "checkout", "passthrough": true}))),

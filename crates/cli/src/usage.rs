@@ -88,6 +88,7 @@ Groups (bifurc <group> --help shows the arguments and options of each verb)
   port          free <port> [--kill]                                  What holds a port, and stopping it
   mail          list | show | last | clear                            Mail the local SMTP sink caught; codes and links
   webhooks      listen | stop | list | show | replay | save | trigger  Receive webhooks locally, optionally forward them
+  types         <request> [--lang ts|zod|python|go] [--out f]         Types inferred from a request's responses
   record        start | stop | status | list                           Record proxied traffic of chosen hosts into a cassette
   replay        <cassette> [--passthrough] | stop | status              Serve a recorded cassette instead of the real hosts
 
@@ -731,6 +732,23 @@ https:// hosts need HTTPS interception (see: bifurc tls status).
                                          replays
   status                                 `replaying x · 3 served · 1 unmatched`, or `not replaying`";
 
+const TYPES: &str =
+    "Usage: bifurc types <request> [--lang ts|zod|python|go] [--out <file>] [--name <TypeName>] [--send]
+
+The type of what a saved REST request answers, inferred from its recorded responses and the captured calls with
+the same method and path ({{var}} and :var segments match any one segment), merged: a field missing from some
+samples is optional, null adds `| null`, 1 and 1.5 together are a number, different kinds make a union. Only
+2xx JSON bodies count. Prints the code and nothing else, so it can be piped.
+
+  --lang <ts|zod|python|go>              The language (default ts); --ts --zod --python --go are shorthands
+  --out <file>                           Write the code there and print `saved <file> (N samples)`
+  --name <TypeName>                      The type's name (default: the request's name in PascalCase + Response)
+  --send                                 Send the request first and use that answer too
+  --var k=v  --env <name>  --fresh-session   With --send, as for requests send
+  --json                                 {schemaVersion, name, lang, samples, code}
+
+The first line states the source. Python needs 3.11+ (NotRequired). Exit 3 when there is no JSON response yet.";
+
 const WEBHOOKS: &str = "Usage: bifurc webhooks <verb>
 
 The engine receives webhooks on a local port (127.0.0.1) and captures each one with its exact headers and raw
@@ -845,6 +863,7 @@ pub fn group_usage(group: &str) -> Option<String> {
         "logs" => LOGS,
         "port" => PORT,
         "mail" => MAIL,
+        "types" => TYPES,
         "webhooks" => WEBHOOKS,
         "record" => RECORD,
         "replay" => REPLAY,
@@ -966,6 +985,13 @@ pub fn examples(group: &str) -> Option<&'static [&'static str]> {
             "bifurc services down api",
             "bifurc services snippet express",
         ],
+        "types" => &[
+            r#"bifurc types "Get orders""#,
+            r#"bifurc types "Get orders" --lang zod --out src/schemas/orders.ts"#,
+            r#"bifurc types "Get orders" --ts --out src/types/orders.ts --send"#,
+            r#"bifurc types "Get orders" --python --name Order"#,
+            r#"bifurc types "Get orders" --go --json"#,
+        ],
         "webhooks" => &[
             "bifurc webhooks listen --name stripe --forward http://api.localhost/webhooks/stripe --detach",
             "bifurc webhooks stop stripe",
@@ -1019,7 +1045,7 @@ pub(crate) mod tests {
         let Some(help) = group_usage(group) else { return assert_eq!(group, "status", "{line}") };
         let parsed = crate::args::parse_args(&argv[1..]).unwrap_or_else(|e| panic!("{line}: {e}"));
         let verb = parsed.positional(1).unwrap_or_default();
-        assert!(group == "curl" || group == "wait" || help.contains(verb), "{line}: verb {verb}");
+        assert!(matches!(group, "curl" | "wait" | "types") || help.contains(verb), "{line}: verb {verb}");
         for flag in parsed.names().into_iter().filter(|f| !["json", "help"].contains(f)) {
             let aliased = ["header", "data", "method"].contains(&flag);
             assert!(aliased || help.contains(&format!("--{flag}")), "{line}: --{flag}");
@@ -1041,7 +1067,7 @@ pub(crate) mod tests {
     fn every_example_is_a_known_group_and_verb_with_flags_its_help_names() {
         for group in [
             "agent", "curl", "requests", "capture", "mocks", "contract", "flows", "runner", "env", "cookies",
-            "session", "vars", "changes", "claim", "wait", "services", "mail", "webhooks", "record", "replay",
+            "session", "vars", "changes", "claim", "wait", "services", "mail", "webhooks", "types", "record", "replay",
         ] {
             let list = examples(group).unwrap_or_else(|| panic!("{group} has no examples"));
             assert!((3..=5).contains(&list.len()), "{group}");
