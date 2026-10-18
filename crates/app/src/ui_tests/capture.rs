@@ -156,3 +156,75 @@ fn when_nothing_matches_the_logs_tab_says_why(cx: &mut gpui_kit::TestAppContext)
     ui.click_within("capture-section-tabs", 3usize);
     assert!(ui.has("empty-state"));
 }
+
+fn open_pinnable(cx: &mut gpui_kit::TestAppContext, pinned: &[&str]) -> crate::test_support::Ui {
+    let mut ui = open_populated(cx);
+    let entry = |id: &str, ts: u64| {
+        let mut entry = json!({"id": id, "timestamp": ts, "method": "GET", "url": "https://api.test/x", "status": 200, "via": "proxy"});
+        if pinned.contains(&id) {
+            entry["pinned"] = json!(true);
+        }
+        entry
+    };
+    ui.fake.reply(
+        "capture.list",
+        json!({"paused": false, "disableCache": true, "limit": 200, "entries": [entry("c2", 2), entry("c1", 1)]}),
+    );
+    ui.fake.reply("capture.pin", json!({"ok": true, "changed": 1, "missing": []}));
+    ui.show(Screen::Capture);
+    ui
+}
+
+#[gpui_kit::test]
+fn a_pinned_exchange_is_marked_in_the_list(cx: &mut gpui_kit::TestAppContext) {
+    let mut ui = open_pinnable(cx, &["c1"]);
+    assert!(ui.has("capture-pinned-c1") && !ui.has("capture-pinned-c2"));
+}
+
+#[gpui_kit::test]
+fn the_detail_pins_and_unpins_the_selected_exchange(cx: &mut gpui_kit::TestAppContext) {
+    let mut ui = open_pinnable(cx, &[]);
+    ui.click("capture-c1");
+    ui.fake.forget_calls();
+    ui.click("capture-pin");
+    assert_eq!(ui.fake.sent("capture.pin"), [json!({"workspaceId": "w1", "ids": ["c1"], "pinned": true})]);
+    assert!(ui.has("capture-pinned-c1"), "the marker shows at once");
+    ui.fake.forget_calls();
+    ui.click("capture-pin");
+    assert_eq!(ui.fake.sent("capture.pin"), [json!({"workspaceId": "w1", "ids": ["c1"], "pinned": false})]);
+    assert!(!ui.has("capture-pinned-c1"));
+}
+
+#[gpui_kit::test]
+fn the_ticked_exchanges_are_pinned_and_unpinned_together(cx: &mut gpui_kit::TestAppContext) {
+    let mut ui = open_pinnable(cx, &[]);
+    assert!(!ui.has("capture-pin-checked"), "nothing is ticked yet");
+    ui.click("capture-check-c1");
+    ui.click("capture-check-c2");
+    ui.fake.forget_calls();
+    ui.click("capture-pin-checked");
+    let ids = json!(["c1", "c2"]);
+    assert_eq!(ui.fake.sent("capture.pin"), [json!({"workspaceId": "w1", "ids": ids, "pinned": true})]);
+    assert!(ui.has("capture-pinned-c1") && ui.has("capture-pinned-c2"));
+    ui.fake.forget_calls();
+    ui.click("capture-unpin-checked");
+    assert_eq!(ui.fake.sent("capture.pin"), [json!({"workspaceId": "w1", "ids": ids, "pinned": false})]);
+    assert!(!ui.has("capture-pinned-c1") && !ui.has("capture-pinned-c2"));
+}
+
+#[gpui_kit::test]
+fn pinned_only_narrows_the_list(cx: &mut gpui_kit::TestAppContext) {
+    let mut ui = open_pinnable(cx, &["c1"]);
+    ui.click("capture-pinned-only");
+    assert!(ui.has("capture-c1") && !ui.has("capture-c2"));
+}
+
+#[gpui_kit::test]
+fn webhook_traffic_is_listed_unless_its_chip_is_off(cx: &mut gpui_kit::TestAppContext) {
+    let mut ui = open_populated(cx);
+    ui.fake.reply("capture.list", json!({"paused": false, "disableCache": true, "entries": [
+        {"id": "w9", "timestamp": 3, "method": "POST", "url": "http://127.0.0.1:4020/hook", "status": 200, "via": "proxy", "origin": "webhook"},
+    ]}));
+    ui.show(Screen::Capture);
+    assert!(ui.has("capture-w9"));
+}
