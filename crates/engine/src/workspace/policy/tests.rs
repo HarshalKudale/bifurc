@@ -227,6 +227,7 @@ async fn a_send_by_the_command_line_is_stopped_before_the_network_and_the_apps_g
     assert_eq!((&denied["decision"], &denied["policy"]), (&json!("deny"), &json!("no-deletes")));
     assert_eq!(checked("GET", "http://h/x", Value::Null).await["decision"], "allow");
     write_policy(&root, "policy.yaml", "require_human: { methods: [DELETE] }");
+    let _wait = short_wait(100);
     let asked = checked("DELETE", "http://h/x", Value::Null).await;
     assert_eq!((&asked["decision"], &asked["policy"]), (&json!("require_human"), &json!("require_human")));
     let held = send("cli", "DELETE", "").await.unwrap_err();
@@ -260,4 +261,298 @@ async fn a_websocket_or_event_stream_the_command_line_opens_is_held_too() {
         assert!(blocked.message.starts_with("blocked by policy \"local-names\""), "{}", blocked.message);
     }
     assert_eq!(seen.load(Ordering::SeqCst), 0, "nothing was dialled");
+}
+
+// ---- approvals ----
+
+/// For the length of a test, a held call waits this long (ms) instead of the setting's minutes.
+fn short_wait(ms: u64) -> impl Drop {
+    struct Reset;
+    impl Drop for Reset {
+        fn drop(&mut self) {
+            approvals::TEST_TIMEOUT_MS.store(0, Ordering::SeqCst);
+        }
+    }
+    approvals::TEST_TIMEOUT_MS.store(ms, Ordering::SeqCst);
+    approvals::reset();
+    Reset
+}
+
+/// A server that answers 200 and counts the requests.
+async fn ok_server() -> (String, Arc<AtomicUsize>) {
+    use tokio::io::{AsyncReadExt, AsyncWriteExt};
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let base = format!("http://127.0.0.1:{}", listener.local_addr().unwrap().port());
+    let seen = Arc::new(AtomicUsize::new(0));
+    let count = seen.clone();
+    tokio::spawn(async move {
+        while let Ok((mut socket, _)) = listener.accept().await {
+            let count = count.clone();
+            tokio::spawn(async move {
+                let mut buf = vec![0u8; 4096];
+                let _ = socket.read(&mut buf).await;
+                count.fetch_add(1, Ordering::SeqCst);
+                let _ = socket.write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\nconnection: close\r\n\r\nok").await;
+            });
+        }
+    });
+    (base, seen)
+}
+
+struct Harness {
+    registry: Arc<CommandRegistry>,
+    base: String,
+    seen: Arc<AtomicUsize>,
+}
+
+impl Harness {
+    async fn new(root: &crate::testing::ScratchRoot, policy: &str) -> Self {
+        let (base, seen) = ok_server().await;
+        let mut registry = CommandRegistry::new();
+        crate::rest::register(&mut registry);
+        crate::websocket::register(&mut registry);
+        crate::workspace::policy::register(&mut registry);
+        write_policy(root, "policy.yaml", policy);
+        Harness { registry: Arc::new(registry), base, seen }
+    }
+
+    fn ctx(&self) -> CommandContext {
+        CommandContext::internal(self.registry.clone())
+    }
+
+    /// A send as the command line; spawned, so several can wait at once.
+    fn send(&self, method: &str, path: &str) -> tokio::task::JoinHandle<Result<Value>> {
+        let request = json!({ "method": method, "url": format!("{}{path}", self.base), "headers": {}, "body": "", "settings": { "timeoutMs": 2000 } });
+        let payload = json!({ "workspaceId": "ws1", "request": request, "scripts": {} });
+        let (registry, ctx) = (self.registry.clone(), self.ctx());
+        tokio::spawn(as_client(Some("cli"), async move { registry.invoke("request.send", payload, ctx).await }))
+    }
+
+    async fn run(&self, command: &str, payload: Value) -> Result<Value> {
+        as_client(Some("cli"), self.registry.invoke(command, payload, self.ctx())).await
+    }
+
+    async fn pending(&self) -> Vec<Value> {
+        let got = self.run("approvals.list", json!({})).await.unwrap();
+        got["pending"].as_array().unwrap().clone()
+    }
+
+    /// Wait until `n` calls are queued.
+    async fn queued(&self, n: usize) -> Vec<Value> {
+        for _ in 0..200 {
+            let pending = self.pending().await;
+            if pending.len() == n {
+                return pending;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(10)).await;
+        }
+        panic!("{n} approvals never queued");
+    }
+
+    async fn decide(&self, id: &str, decision: &str, reason: Option<&str>) -> Result<Value> {
+        let mut payload = json!({ "id": id, "decision": decision, "interactive": true });
+        if let Some(reason) = reason {
+            payload["reason"] = json!(reason);
+        }
+        self.run("approvals.decide", payload).await
+    }
+}
+
+const ASK: &str = "policies: [{ name: staging-deletes, require_human: { methods: [DELETE] } }]";
+
+fn id_in(message: &str) -> String {
+    message.split("pending as #").nth(1).and_then(|rest| rest.split(';').next()).unwrap().to_string()
+}
+
+#[tokio::test]
+async fn a_waiting_send_goes_through_when_a_person_approves_and_every_step_is_logged() {
+    let root = scratch_data_root();
+    let _wait = short_wait(10_000);
+    let h = Harness::new(&root, ASK).await;
+    let events = Arc::new(parking_lot::Mutex::new(Vec::new()));
+    let sink = events.clone();
+    let listener = crate::kernel::bus().on("approval.requested", move |payload| sink.lock().push(payload.clone()));
+    let cursor = changes::cursor();
+
+    let sending = h.send("DELETE", "/orders/1?token=s3cret");
+    let queued = h.queued(1).await;
+    let item = &queued[0];
+    assert_eq!(
+        (&item["policy"], &item["method"], &item["workspaceId"], &item["by"]),
+        (&json!("staging-deletes"), &json!("DELETE"), &json!("ws1"), &json!("cli"))
+    );
+    assert_eq!(item["url"], format!("{}/orders/1", h.base), "no query in the queue");
+    assert!(item["expiresAt"].as_i64() > item["createdAt"].as_i64());
+    assert_eq!(h.seen.load(Ordering::SeqCst), 0, "nothing is sent while it waits");
+    assert_eq!(events.lock().len(), 1);
+    // The engine is not stuck while a command waits: another command answers.
+    assert_eq!(h.run("policy.show", json!({ "workspaceId": "ws1" })).await.unwrap()["file"], "policy.yaml");
+
+    let id = item["id"].as_str().unwrap();
+    let decided = h.decide(id, "approve", None).await.unwrap();
+    assert_eq!((&decided["decision"], &decided["decidedBy"]), (&json!("approved"), &json!("cli")));
+    assert!(decided.get("passUntil").is_none(), "the waiting call took the approval itself");
+    sending.await.unwrap().unwrap();
+    assert_eq!(h.seen.load(Ordering::SeqCst), 1);
+    assert!(h.pending().await.is_empty());
+    let all = h.run("approvals.list", json!({ "all": true })).await.unwrap();
+    assert_eq!(all["decided"][0]["id"], id);
+    assert_eq!(all["decided"][0]["decision"], "approved");
+    // No pass was left: the same call waits again.
+    let again = h.send("DELETE", "/orders/1");
+    h.queued(1).await;
+    again.abort();
+
+    let feed = changes::since("ws1", id, cursor);
+    let actions: Vec<&str> = feed.iter().map(|c| c["action"].as_str().unwrap()).collect();
+    assert_eq!(actions, ["requested", "approved"]);
+    assert!(!format!("{feed:?}").contains("s3cret"));
+    crate::kernel::bus().off(listener);
+}
+
+#[tokio::test]
+async fn a_denied_send_fails_as_blocked_with_who_and_why_and_is_never_sent() {
+    let root = scratch_data_root();
+    let _wait = short_wait(10_000);
+    let h = Harness::new(&root, ASK).await;
+    let sending = h.send("DELETE", "/orders/2");
+    let id = h.queued(1).await[0]["id"].as_str().unwrap().to_string();
+    let decided = h.decide(&id, "deny", Some("not on friday")).await.unwrap();
+    assert_eq!((&decided["decision"], &decided["reason"]), (&json!("denied"), &json!("not on friday")));
+    let error = sending.await.unwrap().unwrap_err();
+    assert_eq!(error.code, ErrorCode::PolicyBlocked);
+    assert_eq!(
+        error.message,
+        format!("denied by cli: policy \"staging-deletes\" (DELETE {}/orders/2): not on friday", h.base)
+    );
+    assert_eq!(h.seen.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn a_send_nobody_answers_times_out_with_its_id_and_a_late_approval_lets_one_identical_retry_pass() {
+    let root = scratch_data_root();
+    let _wait = short_wait(150);
+    let h = Harness::new(&root, ASK).await;
+    let timed_out = h.send("DELETE", "/orders/3").await.unwrap().unwrap_err();
+    assert_eq!(timed_out.code, ErrorCode::PolicyApproval);
+    let id = id_in(&timed_out.message);
+    assert!(
+        timed_out.message.ends_with(&format!("approve with: bifurc approvals approve {id}")),
+        "{}",
+        timed_out.message
+    );
+    assert!(timed_out.message.starts_with("needs approval: policy \"staging-deletes\" (DELETE "));
+    assert_eq!(h.pending().await.len(), 1, "it stays pending for a late approval");
+
+    let decided = h.decide(&id, "approve", None).await.unwrap();
+    assert!(decided["passUntil"].as_i64() > decided["decidedAt"].as_i64(), "a pass was left");
+    h.send("DELETE", "/orders/3").await.unwrap().unwrap();
+    assert_eq!(h.seen.load(Ordering::SeqCst), 1);
+    // The pass is used up; a different call never had one.
+    assert_eq!(h.send("DELETE", "/orders/3").await.unwrap().unwrap_err().code, ErrorCode::PolicyApproval);
+    assert_eq!(h.send("DELETE", "/orders/4").await.unwrap().unwrap_err().code, ErrorCode::PolicyApproval);
+    assert_eq!(h.seen.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn two_sends_wait_at_once_without_blocking_each_other_or_the_queue() {
+    let root = scratch_data_root();
+    let _wait = short_wait(10_000);
+    let h = Harness::new(&root, ASK).await;
+    let (a, b) = (h.send("DELETE", "/a"), h.send("DELETE", "/b"));
+    let queued = h.queued(2).await;
+    // Decide the second first: each waiter is woken by its own item.
+    for item in queued.iter().rev() {
+        h.decide(item["id"].as_str().unwrap(), "approve", None).await.unwrap();
+    }
+    a.await.unwrap().unwrap();
+    b.await.unwrap().unwrap();
+    assert_eq!(h.seen.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn a_connect_cannot_wait_so_it_queues_once_and_the_retry_after_approval_passes() {
+    let root = scratch_data_root();
+    let _wait = short_wait(10_000);
+    let h = Harness::new(&root, "require_human: {}").await;
+    let url = h.base.replacen("http://", "ws://", 1);
+    let connect =
+        || h.run("ws.connect", json!({ "workspaceId": "ws1", "socketId": "s1", "url": format!("{url}/live") }));
+    let first = connect().await.unwrap_err();
+    assert_eq!(first.code, ErrorCode::PolicyApproval);
+    let id = id_in(&first.message);
+    let second = connect().await.unwrap_err();
+    assert_eq!(id_in(&second.message), id, "an identical pending item is reused");
+    assert_eq!(h.pending().await.len(), 1);
+
+    h.decide(&id, "approve", None).await.unwrap();
+    // The pass lets the connect go on: it dials and fails there (the server is not a WebSocket), not at the policy.
+    let retried = connect().await;
+    assert!(retried.is_ok() || retried.is_err_and(|e| e.code != ErrorCode::PolicyApproval));
+    assert_eq!(connect().await.unwrap_err().code, ErrorCode::PolicyApproval, "one pass, one connect");
+}
+
+#[tokio::test]
+async fn only_a_terminal_decides_and_an_unknown_or_settled_id_says_so() {
+    let root = scratch_data_root();
+    let _wait = short_wait(10_000);
+    let h = Harness::new(&root, ASK).await;
+    let sending = h.send("DELETE", "/orders/5");
+    let id = h.queued(1).await[0]["id"].as_str().unwrap().to_string();
+    for payload in
+        [json!({ "id": id, "decision": "approve", "interactive": false }), json!({ "id": id, "decision": "approve" })]
+    {
+        let error = h.run("approvals.decide", payload).await.unwrap_err();
+        assert_eq!(error.code, ErrorCode::BadRequest, "{}", error.message);
+    }
+    assert_eq!(h.pending().await.len(), 1, "nothing was decided");
+    assert_eq!(h.decide("nope", "deny", None).await.unwrap_err().code, ErrorCode::NotFound);
+    h.decide(&id, "deny", None).await.unwrap();
+    assert_eq!(h.decide(&id, "approve", None).await.unwrap_err().code, ErrorCode::Conflict);
+    sending.await.unwrap().unwrap_err();
+}
+
+#[tokio::test]
+async fn the_decided_ring_keeps_100_pending_items_expire_and_list_filters_by_workspace() {
+    let root = scratch_data_root();
+    let _wait = short_wait(10_000);
+    let h = Harness::new(&root, ASK).await;
+    for n in 0..105 {
+        let id = id_in(&approvals::hold_now("ws1", "p", "DELETE", &format!("http://h/{n}")).unwrap_err().message);
+        h.decide(&id, "deny", None).await.unwrap();
+    }
+    let all = h.run("approvals.list", json!({ "all": true })).await.unwrap();
+    assert_eq!(all["decided"].as_array().unwrap().len(), 100);
+    assert_eq!(all["decided"][0]["url"], "http://h/104", "newest first");
+
+    let id = id_in(&approvals::hold_now("ws1", "p", "GET", "http://h/old").unwrap_err().message);
+    approvals::hold_now("other", "p", "GET", "http://h/x").unwrap_err();
+    assert_eq!(h.run("approvals.list", json!({})).await.unwrap()["pending"].as_array().unwrap().len(), 2);
+    let only = h.run("approvals.list", json!({ "workspaceId": "other", "all": true })).await.unwrap();
+    assert_eq!((only["pending"].as_array().unwrap().len(), only["decided"].as_array().unwrap().len()), (1, 0));
+    approvals::expire_now(&id);
+    let after = h.run("approvals.list", json!({ "all": true })).await.unwrap();
+    assert_eq!(after["pending"].as_array().unwrap().len(), 1);
+    assert_eq!((&after["decided"][0]["id"], &after["decided"][0]["decision"]), (&json!(id), &json!("expired")));
+    assert_eq!(h.decide(&id, "approve", None).await.unwrap_err().code, ErrorCode::Conflict);
+}
+
+#[tokio::test]
+async fn a_block_is_written_to_the_audit_trail_without_the_secret_in_the_url() {
+    let root = scratch_data_root();
+    let _wait = short_wait(10_000);
+    let h = Harness::new(&root, "policies: [{ name: no-deletes, deny: { methods: [DELETE] } }]").await;
+    let cursor = changes::cursor();
+    let error = h.send("DELETE", "/orders/6?token=s3cret").await.unwrap().unwrap_err();
+    assert_eq!(error.code, ErrorCode::PolicyBlocked);
+    let feed = changes::since("ws1", "", cursor);
+    assert_eq!(feed.len(), 1, "{feed:?}");
+    assert_eq!((feed[0]["kind"].as_str(), feed[0]["action"].as_str()), (Some("approval"), Some("blocked")));
+    assert_eq!(feed[0]["name"], format!("DELETE {}/orders/6", h.base));
+    assert!(!feed[0].to_string().contains("s3cret"));
+    // The file survives a restart, whoever launched the engine.
+    let file = std::fs::read_to_string(root.dir.path().join("audit").join("policy.jsonl")).unwrap();
+    let line: Value = serde_json::from_str(file.lines().last().unwrap()).unwrap();
+    assert_eq!((line["action"].as_str(), line["policy"].as_str()), (Some("blocked"), Some("no-deletes")));
+    assert!(!file.contains("s3cret"));
 }

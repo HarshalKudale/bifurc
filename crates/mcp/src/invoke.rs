@@ -631,6 +631,7 @@ mod tests {
                 "jwt",
                 json!({"verb": "mint", "key_from_vault": "jwt_dev", "secret": "JWT_KEY", "claims": "{\"role\":\"admin\"}", "exp": "5m", "alg": "HS256", "header": "{\"kid\":\"dev\"}"}),
             ),
+            ("approvals_list", with(json!({"all": true}))),
             ("policy_show", with(json!({}))),
             ("policy_check", with(json!({"method": "DELETE", "url": "https://api.prod.x/orders/1", "env": "prod"}))),
             ("types", with(json!({"request": "Get orders", "lang": "zod", "out": "src/o.ts", "name": "Order", "send": true, "env": "Dev"}))),

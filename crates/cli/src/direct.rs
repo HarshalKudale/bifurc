@@ -687,6 +687,7 @@ pub fn verbs() -> Vec<Verb> {
             option("forwardport", "forwardProxyPort", Take::Int, "The forward proxy's port."),
             option("companionport", "companionPort", Take::Int, "The port the browser extension connects to."),
             option("capturelimit", "captureLimit", Take::Int, "How many unpinned captured requests are kept (10-10000)."),
+            option("approvaltimeout", "approvalTimeoutSeconds", Take::Int, "Seconds a call held by a require_human policy waits for a person (default 300, 10-3600)."),
             option("mailport", "mailPort", Take::Int, "The port of the local mail sink (default 1025); mail list shows what it caught."),
             option("traceheader", "traceHeader", Take::Text, "Header that carries the capture id upstream (default x-bifurc-trace; empty = off)."),
             option(

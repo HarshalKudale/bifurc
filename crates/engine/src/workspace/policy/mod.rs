@@ -41,6 +41,7 @@ use crate::{
     workspace::{changes, contracts::plain, fs::ws_dir},
 };
 
+pub mod approvals;
 #[cfg(test)]
 mod tests;
 
@@ -349,11 +350,12 @@ fn blocked(policy: &str, method: &str, url: &str) -> EngineError {
         .keyed("policy.blocked", json!({ "policy": policy, "method": method, "url": url }))
 }
 
+/// What `policy check` says of a held call (nothing is queued by a check).
 fn needs_approval(policy: &str, method: &str, url: &str) -> EngineError {
     let method = method.to_uppercase();
     EngineError::new(
         ErrorCode::PolicyApproval,
-        format!("needs approval: policy \"{policy}\" ({method} {url}); approvals arrive in a later version"),
+        format!("needs approval: policy \"{policy}\" ({method} {url}); the call waits for a person to run: bifurc approvals approve <id>"),
     )
     .keyed("policy.approval", json!({ "policy": policy, "method": method, "url": url }))
 }
@@ -372,28 +374,51 @@ fn error_of(verdict: Verdict, method: &str, url: &str) -> Option<EngineError> {
     }
 }
 
-/// The one place an outbound call of a client is allowed or stopped: `Err` carries `POLICY_BLOCKED` or
-/// `POLICY_APPROVAL` and the caller must not send. Engine-internal work (no client) and clients a policy does
-/// not apply to pass. Call it with the final method and URL, before anything goes on the wire.
-pub async fn guard(method: &str, url: &str) -> Result<()> {
-    guard_now(method, url)
-}
-
-/// [`guard`] for a sync handler (one that opens a connection: WebSocket, SSE, Socket.IO, MCP). It runs inside the
-/// command's task, so it sees the same client.
-pub fn guard_now(method: &str, url: &str) -> Result<()> {
+/// What a call of the running command is judged as: the workspace, the verdict and the URL as it may be shown.
+/// `None` for engine-internal work with no client.
+fn judge_call(method: &str, url: &str) -> Option<(String, Verdict, String)> {
     let client = changes::client_kind();
     if client.is_empty() {
-        return Ok(());
+        return None;
     }
     // shortcut: outside a command-line session the workspace is the active one, not the command's own; use the command's payload when the app is held to a policy.
     let ws_id = crate::env::session::current_workspace()
         .unwrap_or_else(|| crate::workspace::settings::load_settings().active_workspace_id());
     let (verdict, shown) = verdict(&ws_id, &client, None, method, url);
-    // D8b: a `RequireHuman` verdict queues the request for approval and waits here instead of failing.
-    match error_of(verdict, method, &shown) {
-        Some(error) => Err(error),
+    Some((ws_id, verdict, shown))
+}
+
+/// A verdict that stops the call outright, written to the audit trail; `Ok` for Allow.
+fn stop(ws: &str, verdict: Verdict, method: &str, shown: &str) -> Result<()> {
+    let policy = match &verdict {
+        Verdict::Deny { policy } | Verdict::RequireHuman { policy } => policy.clone(),
+        Verdict::Invalid(_) => "policy file invalid".to_string(),
+        Verdict::Allow => return Ok(()),
+    };
+    approvals::log_block(ws, &policy, method, shown);
+    Err(error_of(verdict, method, shown).expect("a verdict that is not Allow has an error"))
+}
+
+/// The one place an outbound call of a client is allowed or stopped: `Err` carries `POLICY_BLOCKED` or
+/// `POLICY_APPROVAL` and the caller must not send. Engine-internal work (no client) and clients a policy does
+/// not apply to pass. Call it with the final method and URL, before anything goes on the wire. A call a
+/// `require_human` policy holds waits here for a person (see [`approvals`]); nothing is locked meanwhile.
+pub async fn guard(method: &str, url: &str) -> Result<()> {
+    match judge_call(method, url) {
         None => Ok(()),
+        Some((ws, Verdict::RequireHuman { policy }, shown)) => approvals::hold(&ws, &policy, method, &shown).await,
+        Some((ws, verdict, shown)) => stop(&ws, verdict, method, &shown),
+    }
+}
+
+/// [`guard`] for a sync handler (one that opens a connection: WebSocket, SSE, Socket.IO, MCP). It runs inside the
+/// command's task, so it sees the same client. It cannot wait: a held call is queued and fails at once with the
+/// id; once a person approves, the retried connect passes.
+pub fn guard_now(method: &str, url: &str) -> Result<()> {
+    match judge_call(method, url) {
+        None => Ok(()),
+        Some((ws, Verdict::RequireHuman { policy }, shown)) => approvals::hold_now(&ws, &policy, method, &shown),
+        Some((ws, verdict, shown)) => stop(&ws, verdict, method, &shown),
     }
 }
 
@@ -417,6 +442,8 @@ fn clause_json(c: &Clause) -> Value {
 }
 
 pub fn register(registry: &mut CommandRegistry) {
+    approvals::register(registry);
+
     registry.register_sync("policy.show", |params, _| {
         let ws = workspace_of(&params)?;
         Ok(match load(ws) {
