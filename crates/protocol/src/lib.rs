@@ -4,6 +4,7 @@
 //! `schemas/commands.json`; `schemas/fixtures.json` holds one valid and one invalid payload per command, and
 //! the tests run every one through the validator.
 
+pub mod analysis;
 pub mod commands;
 pub mod crash;
 pub mod envelope;

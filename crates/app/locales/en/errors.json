@@ -348,5 +348,6 @@
   "updates.no_address": "There is no address to look for updates at.",
   "policy.blocked": "Blocked by policy \"{policy}\": {method} {url}",
   "policy.approval": "Needs approval: policy \"{policy}\" ({method} {url})",
-  "policy.invalid": "The policy file is invalid: {reason}"
+  "policy.invalid": "The policy file is invalid: {reason}",
+  "types.no_samples": "No JSON response for \"{name}\" yet; send the request first."
 }
