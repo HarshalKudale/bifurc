@@ -7,6 +7,7 @@
 
 pub mod analytics;
 pub mod capture;
+pub mod cassettes;
 pub mod certificates;
 pub mod cookies;
 pub mod env;
