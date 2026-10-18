@@ -173,6 +173,8 @@ const SCOPE_BY_COMMAND: &[(&str, Scope)] = &[
     ("contract.saveSnapshots", Scope::Write),
     ("contract.listSnapshots", Scope::Read),
     ("contract.fromOpenApi", Scope::Read),
+    ("policy.show", Scope::Read),
+    ("policy.check", Scope::Read),
     ("request.send", Scope::Execute),
     ("response.history", Scope::Read),
     ("response.clearHistory", Scope::Write),

@@ -72,6 +72,9 @@ fn engine_error(raw: &Value) -> CliError {
     let sent_and_lost =
         key.starts_with("request.send.") && !key.ends_with("invalid_url") && !key.ends_with("cancelled");
     match (text("code"), text("message")) {
+        // A guardrail's message is the whole line: `blocked by policy "x": DELETE url`.
+        (Some(code), Some(message)) if code == "POLICY_BLOCKED" => CliError::blocked(message),
+        (Some(code), Some(message)) if code == "POLICY_APPROVAL" => CliError::needs_human(message),
         (Some(code), Some(message)) if sent_and_lost => CliError::network(format!("{code}: {message}")),
         (Some(code), Some(message)) => CliError::Engine { code, message },
         _ => CliError::Engine {
@@ -384,6 +387,24 @@ mod tests {
         let stream = Scripted::new(&[json!({"id": "cli-1", "ok": false, "error": error})]);
         let err = Session::new(stream).call("config.get", json!({})).unwrap_err();
         assert_eq!(err.line(), "bifurc: FORBIDDEN: no");
+    }
+
+    #[test]
+    fn a_guardrail_is_exit_7_and_a_held_call_exit_6_with_the_engines_line() {
+        let go = |code: &str, message: &str| {
+            let error = json!({"code": code, "message": message});
+            let stream = Scripted::new(&[json!({"id": "cli-1", "ok": false, "error": error})]);
+            Session::new(stream).call("request.send", json!({})).unwrap_err()
+        };
+        let blocked = go("POLICY_BLOCKED", "blocked by policy \"no-prod-writes\": DELETE https://api.prod.x/orders/1");
+        assert_eq!(blocked.code(), 7);
+        assert_eq!(blocked.line(), "bifurc: blocked by policy \"no-prod-writes\": DELETE https://api.prod.x/orders/1");
+        let held = go(
+            "POLICY_APPROVAL",
+            "needs approval: policy \"staging-deletes\" (DELETE https://s.x/o/1); approvals arrive in a later version",
+        );
+        assert_eq!(held.code(), 6);
+        assert!(held.line().starts_with("bifurc: needs approval: policy \"staging-deletes\" (DELETE "));
     }
 
     #[test]

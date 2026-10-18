@@ -68,6 +68,7 @@ fn execute_body(query: &str, variables: &str, operation_name: &str) -> String {
 
 pub fn register(registry: &mut CommandRegistry) {
     registry.register("graphql.introspect", |params: Value, _| async move {
+        crate::workspace::policy::guard("POST", str_of(&params, "url")).await?;
         let body = json!({ "query": INTROSPECTION_QUERY }).to_string();
         let headers = post_headers(params.get("headers").unwrap_or(&Value::Null));
         let settings = RequestSettings::resolve(params.get("settings"));
@@ -78,6 +79,7 @@ pub fn register(registry: &mut CommandRegistry) {
     });
 
     registry.register("graphql.execute", |params: Value, _| async move {
+        crate::workspace::policy::guard("POST", str_of(&params, "url")).await?;
         let body =
             execute_body(str_of(&params, "query"), str_of(&params, "variables"), str_of(&params, "operationName"));
         let headers = post_headers(params.get("headers").unwrap_or(&Value::Null));

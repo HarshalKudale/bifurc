@@ -312,6 +312,37 @@ async fn a_failure_ends_the_run_unless_its_error_port_is_connected() {
 }
 
 #[tokio::test]
+async fn a_flow_run_by_the_command_line_stops_at_the_first_step_a_policy_blocks() {
+    let store = store();
+    let base = test_server::start(HashMap::new()).await;
+    std::fs::write(
+        crate::workspace::fs::ws_dir(WS).join("policy.yaml"),
+        "policies: [{ name: no-blocked, deny: { paths: ['/blocked'] } }]",
+    )
+    .unwrap();
+    store.request("r-fine", format!("{base}/fine"), json!({}));
+    store.request("r-blocked", format!("{base}/blocked"), json!({}));
+    // The blocked step's error port is wired on, which would let any other failure carry on.
+    store.flow(
+        "guarded",
+        json!({
+            "nodes": [start(), request("fine", "r-fine", json!({})), request("blocked", "r-blocked", json!({})), request("after", "r-fine", json!({}))],
+            "edges": [edge("start", "out", "fine"), edge("fine", "success", "blocked"), edge("blocked", "error", "after")],
+        }),
+    );
+    let report = crate::workspace::changes::as_client(Some("cli"), run("guarded")).await;
+    assert_eq!(report["status"], "failed");
+    assert_eq!(report["errorKey"], "policy.blocked", "{report}");
+    assert_eq!(report["errorParams"]["policy"], "no-blocked");
+    assert!(str_of(&report, "error").starts_with("blocked by policy \"no-blocked\": GET "), "{report}");
+    assert_eq!(node(&report, "fine")["status"], "succeeded");
+    assert_eq!(node(&report, "blocked")["status"], "failed");
+    assert_eq!(node(&report, "after")["status"], "idle");
+    let free = crate::workspace::changes::as_client(Some("desktop-ui"), run("guarded")).await;
+    assert_eq!(free["status"], "succeeded", "the app is not held");
+}
+
+#[tokio::test]
 async fn a_flow_that_cannot_run_says_what_is_wrong() {
     let store = store();
     store.flow(

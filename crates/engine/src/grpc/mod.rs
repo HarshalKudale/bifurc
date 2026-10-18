@@ -81,8 +81,20 @@ async fn find_method(
     })
 }
 
+/// A gRPC call as the policy sees it: a POST to `grpc://host:port/Service/method`.
+fn grpc_url(address: &str, service: &str, method: &str) -> String {
+    let address = address.split_once("://").map_or(address, |(_, rest)| rest);
+    format!("grpc://{address}/{service}/{method}")
+}
+
+pub(crate) async fn guard_call(request: &Value) -> Result<(), EngineError> {
+    let url = grpc_url(str_of(request, "serverAddress"), str_of(request, "serviceName"), str_of(request, "methodName"));
+    crate::workspace::policy::guard("POST", &url).await
+}
+
 pub fn register(registry: &mut CommandRegistry) {
     registry.register("grpc.execute", |params: Value, _| async move {
+        guard_call(&params).await?;
         let started = std::time::Instant::now();
         let elapsed = |value: Value| {
             let mut value = value;
@@ -124,6 +136,7 @@ pub fn register(registry: &mut CommandRegistry) {
     });
 
     registry.register("grpc.reflect", |params: Value, _| async move {
+        crate::workspace::policy::guard("POST", &grpc_url(str_of(&params, "serverAddress"), "", "")).await?;
         // The address may be written with environment variables, as it is in a saved request.
         let address = match opt_str(&params, "workspaceId") {
             Some(ws_id) => resolve_vars(str_of(&params, "serverAddress"), load_merged_environment(ws_id).as_ref()),
