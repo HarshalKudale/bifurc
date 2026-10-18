@@ -7,6 +7,8 @@
 //! (`capture.setPaused`); nothing passes into the history until it is resumed. An exchange can be turned into a saved request or a mock: the engine builds the entity
 //! from the stored entry (`capture.buildRequest`, `capture.buildMock`) and this screen saves what it built.
 
+mod cassettes;
+
 use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, Icon, IconName, Selectable as _, Sizable as _, StyledExt as _, WindowExt as _,
     alert::Alert,
@@ -1348,6 +1350,7 @@ impl CaptureScreen {
                     })),
             )
             .child(div().flex_1())
+            .child(self.render_cassette_buttons(cx))
             .child(
                 Button::new("capture-create-flow")
                     .small()
