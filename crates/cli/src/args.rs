@@ -163,6 +163,9 @@ pub fn parse_args(argv: &[String]) -> Result<ParsedArgs, String> {
         // `contract check --all` and `--from-capture` are switches (`mocks create --from-capture` takes an entry).
         let contract_switch = matches!(name.as_str(), "all" | "from-capture" | "from-snapshot")
             && parsed.positionals.first().is_some_and(|group| group == "contract");
+        // `types --send|--ts|--zod|--python|--go` are switches.
+        let types_switch = matches!(name.as_str(), "send" | "ts" | "zod" | "python" | "go")
+            && parsed.positionals.first().is_some_and(|group| group == "types");
         // `services up --all` and `--wait` are switches (`--wait` takes a time on `requests send`).
         let services_switch = matches!(name.as_str(), "all" | "wait")
             && parsed.positionals.first().is_some_and(|group| matches!(group.as_str(), "services" | "service"));
@@ -191,6 +194,7 @@ pub fn parse_args(argv: &[String]) -> Result<ParsedArgs, String> {
             || asks_status
             || prints_steps
             || contract_switch
+            || types_switch
             || services_switch
             || mail_switch
             || auth_off

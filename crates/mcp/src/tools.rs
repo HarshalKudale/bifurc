@@ -1485,6 +1485,23 @@ pub fn catalog() -> Vec<Tool> {
             ]),
         },
         Row {
+            name: "types",
+            words: &["types"],
+            summary: "Types for a saved request's response, inferred from its recorded and captured JSON answers: ts, zod, python or go.",
+            details: "Merges the request's response history and the captured calls with the same method and path (2xx JSON only): fields missing from some samples are optional, null adds `| null`, different kinds make a union. Returns the code (first line says where it came from); `out` writes it to a file instead. `send` sends the request first and uses that answer too. Exit 3 when there is no JSON response yet.",
+            effect: Effect::Runs,
+            upfront: false,
+            scoped: true,
+            params: vec![
+                operand("request", "The saved request's name or id.").required(),
+                typed("lang", "lang", Type::Choice(&["ts", "zod", "python", "go"]), "The language (default ts)."),
+                text("out", "out", "Write the code to this file."),
+                text("name", "name", "The type's name (default: the request's name in PascalCase + Response)."),
+                switch("send", "send", None, "Send the request first and use that answer too."),
+                text("env", "env", "send: environment to send with."),
+            ],
+        },
+        Row {
             name: "record",
             words: &["record"],
             summary: "Record the real answers of chosen hosts, as they pass through the proxy, into a cassette: start, stop, status, list.",
