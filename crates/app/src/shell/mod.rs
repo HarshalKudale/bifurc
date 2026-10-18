@@ -261,6 +261,7 @@ impl Shell {
             | ModelEvent::DevServiceOutput(_)
             | ModelEvent::MailChanged(_)
             | ModelEvent::WebhookChanged(_)
+            | ModelEvent::ClaimsChanged
             | ModelEvent::EngineRestarted
             | ModelEvent::ConfigPatched
             | ModelEvent::EntityReverted(_) => {}

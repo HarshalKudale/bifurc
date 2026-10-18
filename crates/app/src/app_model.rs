@@ -9,7 +9,7 @@ use std::time::Duration;
 
 use bifurc_engine_client::{ClientError, EngineClient, Incoming, reconnect};
 use futures::StreamExt as _;
-use gpui_kit::{AppContext as _, Context, EventEmitter};
+use gpui_kit::{AppContext as _, Context, EventEmitter, Global, WeakEntity};
 use serde_json::{Value, json};
 
 use crate::{
@@ -18,12 +18,18 @@ use crate::{
     model::{
         ConfigSnapshot,
         agent::{self, Approval, FaultRule, Recording, Replay},
+        claims::{Claim, Claims},
         config::AccountInfo,
         git::GitStatus,
         update::UpdateStatus,
         vault::VaultInfo,
     },
 };
+
+/// The model of the open window, for code that has only an `App` (the engine helpers claiming what is saved).
+pub struct ModelHandle(pub WeakEntity<AppModel>);
+
+impl Global for ModelHandle {}
 
 /// Wire names of the engine events the UI listens to.
 ///
@@ -32,7 +38,7 @@ use crate::{
 /// follows every write with the git state, and says `configChanged: false` when `entity.changed` already
 /// described the whole change; without that field (an older engine, or a pull, sync or import) it means
 /// "re-read the workspace".
-const EVENTS: [&str; 39] = [
+const EVENTS: [&str; 40] = [
     "event.request.stream",
     "event.flow.progress",
     "event.flow.finished",
@@ -53,6 +59,7 @@ const EVENTS: [&str; 39] = [
     "event.devservice.output",
     "event.mail.changed",
     "event.webhook.changed",
+    "event.claims.changed",
     "event.cassette.changed",
     "event.approval.requested",
     "event.approval.decided",
@@ -242,6 +249,8 @@ pub enum ModelEvent {
     MailChanged(Value),
     /// `event.webhook.changed`: a webhook listener started or stopped; the payload is every listener, as `webhook.list` has them.
     WebhookChanged(Value),
+    /// `event.claims.changed`: someone claimed, released or took over an entity; the model already holds the new list.
+    ClaimsChanged,
     /// `event.approval.requested`: an agent's call is waiting for a person to approve or deny it.
     ApprovalRequested(Approval),
     /// The engine was stopped and started again: anything that lived only in the old one is gone.
@@ -263,6 +272,8 @@ pub struct AppModel {
     recording: Option<Recording>,
     replaying: Option<Replay>,
     approvals: Vec<Approval>,
+    /// The entities of the workspace somebody is editing; see [`crate::model::claims`].
+    claims: Claims,
     setup: SetupState,
     /// What the engine knows about newer versions.
     update: UpdateStatus,
@@ -295,6 +306,7 @@ impl AppModel {
             recording: None,
             replaying: None,
             approvals: Vec::new(),
+            claims: Claims::default(),
             setup: SetupState::default(),
             update: UpdateStatus::default(),
             restarting_engine: false,
@@ -307,6 +319,8 @@ impl AppModel {
             connection_lost: false,
             publishing: false,
         };
+        let handle = ModelHandle(cx.weak_entity());
+        cx.set_global(handle);
         model.listen(cx);
         model.refresh(cx);
         model.refresh_setup(cx);
@@ -619,6 +633,7 @@ impl AppModel {
                 "event.devservice.output" => cx.emit(ModelEvent::DevServiceOutput(event.payload)),
                 "event.mail.changed" => cx.emit(ModelEvent::MailChanged(event.payload)),
                 "event.webhook.changed" => cx.emit(ModelEvent::WebhookChanged(event.payload)),
+                "event.claims.changed" => self.apply_claims(&event.payload, cx),
                 "event.faults.changed" => {
                     self.faults = FaultRule::list_from_value(&event.payload);
                     cx.notify();
@@ -710,6 +725,7 @@ impl AppModel {
                 if rest_changed {
                     self.refresh_vaults(cx);
                     self.refresh_proxy(cx);
+                    self.refresh_claims(cx);
                 }
             }
             Err(message) => {
@@ -723,6 +739,62 @@ impl AppModel {
         cx.notify();
         if std::mem::take(&mut self.refresh_again) {
             self.refresh(cx);
+        }
+    }
+
+    pub fn claims(&self) -> &Claims {
+        &self.claims
+    }
+
+    /// Re-reads the workspace's claims (`claims.list`); a failure keeps the list there is.
+    pub fn refresh_claims(&mut self, cx: &mut Context<Self>) {
+        if self.workspace_id().is_empty() {
+            return;
+        }
+        let client = self.engine.client.clone();
+        let payload = json!({ "workspaceId": self.workspace_id() });
+        call(&client, cx, "claims.list", payload, |this, outcome, cx| {
+            if let Ok(value) = outcome {
+                this.apply_claims(&value, cx);
+            }
+        });
+    }
+
+    /// Replaces the claims with those of `claims.list` / `claims.changed`, when they are this workspace's.
+    fn apply_claims(&mut self, payload: &Value, cx: &mut Context<Self>) {
+        let ours = payload.get("workspaceId").and_then(Value::as_str).is_none_or(|ws| ws == self.workspace_id());
+        let claims = Claims::from_value(payload);
+        if ours && claims != self.claims {
+            self.claims = claims;
+            cx.emit(ModelEvent::ClaimsChanged);
+            cx.notify();
+        }
+    }
+
+    /// A save was refused with `claims.locked`: the editor learns who holds the entity, whatever the list said.
+    pub fn note_locked(&mut self, params: &Value, cx: &mut Context<Self>) {
+        if let Some(claim) = Claim::from_refusal(params)
+            && self.claims.of(&claim.id) != Some(&claim)
+        {
+            self.claims.insert(claim);
+            cx.emit(ModelEvent::ClaimsChanged);
+            cx.notify();
+        }
+    }
+
+    /// Takes the entity over from whoever holds it (`claims.set` with `force`). The list follows from the event.
+    pub fn take_over(&mut self, claim: &Claim, cx: &mut Context<Self>) {
+        let payload =
+            json!({ "workspaceId": self.workspace_id(), "id": claim.id, "kind": claim.kind, "force": true });
+        self.run_for_agents("claims.set", payload, cx);
+    }
+
+    /// Lets go of the app's claims on `ids`, as their tabs close.
+    pub fn release_claims(&mut self, ids: &[String], cx: &mut Context<Self>) {
+        let mine: Vec<&String> = ids.iter().filter(|id| self.claims.held_by_me(id)).collect();
+        if !mine.is_empty() {
+            let payload = json!({ "workspaceId": self.workspace_id(), "ids": mine });
+            self.run_for_agents("claims.release", payload, cx);
         }
     }
 
@@ -856,6 +928,7 @@ impl AppModel {
                         this.refresh(cx);
                         this.refresh_setup(cx);
                         cx.emit(ModelEvent::EngineRestarted);
+                        this.refresh_claims(cx);
                         this.refresh_update(cx);
                         this.refresh_agent_activity(cx);
                     }
