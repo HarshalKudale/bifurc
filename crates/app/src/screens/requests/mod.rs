@@ -68,6 +68,15 @@ enum TabKey {
     Runner(String),
 }
 
+impl TabKey {
+    fn saved_id(&self) -> Option<&str> {
+        match self {
+            TabKey::Saved { id, .. } => Some(id),
+            _ => None,
+        }
+    }
+}
+
 enum TabContent {
     Request(Session),
     Runner(Entity<FolderRunner>),
@@ -587,6 +596,8 @@ impl RequestsScreen {
         for tab in self.tabs.iter().filter(|tab| keys.contains(&tab.key) && !matches!(tab.key, TabKey::Draft(_))) {
             self.closed.push(tab.key.clone());
         }
+        let ids: Vec<String> = keys.iter().filter_map(|key| key.saved_id().map(str::to_owned)).collect();
+        self.model.update(cx, |model, cx| model.release_claims(&ids, cx));
         self.tabs.retain(|tab| !keys.contains(&tab.key));
         let next = match front.and_then(|key| self.tabs.iter().position(|tab| tab.key == key)) {
             Some(ix) => Some(ix),

@@ -18,14 +18,17 @@ use gpui_kit::component::{
     button::{Button, ButtonVariants as _},
     h_flex,
     menu::{DropdownMenu as _, PopupMenuItem},
+    v_flex,
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{App, ClickEvent, Context, IntoElement, ParentElement as _, SharedString, Styled as _, Window, div};
 
 use crate::{
     app_model::AppModel,
+    components::lock_banner::lock_banner,
     i18n::t,
     model::{
+        claims::Claim,
         git::FileState,
         tree::{FolderRow, folder_choices},
     },
@@ -89,6 +92,8 @@ pub struct EntityBar {
     pub deletable: bool,
     /// Where it is filed, for an entity kept in folders.
     pub folder: Option<FolderPicker>,
+    /// Another session's claim on it: the entity is read-only here (its writes are refused) and says so.
+    pub locked: Option<Claim>,
 }
 
 impl EntityBar {
@@ -102,6 +107,7 @@ impl EntityBar {
             has_remote: git.has_remote,
             read_only: model.is_read_only(),
             busy: model.is_publishing(),
+            locked: saved_id.and_then(|id| model.claims().held_by_other(id).cloned()),
             deletable: true,
             ..Self::default()
         }
@@ -191,7 +197,8 @@ pub fn entity_bar<V: 'static>(
         (false, false) => "components.entity_bar.sync.tooltip_commit",
     });
 
-    h_flex()
+    let banner = bar.locked.clone().map(|claim| lock_banner(claim, cx));
+    let footer = h_flex()
         .flex_none()
         .h_10()
         .px_3()
@@ -220,7 +227,7 @@ pub fn entity_bar<V: 'static>(
                 } else {
                     "components.entity_bar.delete.delete"
                 }))
-                .disabled(!bar.deletable)
+                .disabled(!bar.deletable || bar.locked.is_some())
                 .on_click(listener(&on, EntityAction::Delete, cx)),
         )
         .child(
@@ -264,5 +271,6 @@ pub fn entity_bar<V: 'static>(
                 .loading(bar.draft && bar.saving)
                 .disabled(!bar.draft || bar.saving)
                 .on_click(listener(&on, EntityAction::Save, cx)),
-        )
+        );
+    v_flex().flex_none().children(banner).child(footer)
 }

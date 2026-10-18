@@ -349,5 +349,6 @@
   "policy.blocked": "Blocked by policy \"{policy}\": {method} {url}",
   "policy.approval": "Needs approval: policy \"{policy}\" ({method} {url})",
   "policy.invalid": "The policy file is invalid: {reason}",
-  "types.no_samples": "Noch keine JSON-Antwort für \"{name}\"; sende die Anfrage zuerst."
+  "types.no_samples": "Noch keine JSON-Antwort für \"{name}\"; sende die Anfrage zuerst.",
+  "claims.locked": "\"{name}\" wird gerade von {claimedBy} bearbeitet und ist hier schreibgeschützt."
 }
