@@ -29,6 +29,9 @@ pub struct RequestLogEntry {
     /// The trace-id of the request's own `traceparent`, so log lines that carry it match this exchange.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub trace_id: Option<String>,
+    /// A webhook listener's forward URL when the exchange was received, so a replay still has it after the listener stopped.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub forward: Option<String>,
     pub status: Option<u16>,
     /// `rfc6761` | `mapping` | `proxy` | `rule` | `mock` | `error`
     pub via: String,
