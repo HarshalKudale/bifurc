@@ -42,6 +42,8 @@ use crate::{
     shell::ActiveTarget,
 };
 
+mod faults;
+
 const DEFAULT_NAME: &str = "New rule";
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -98,6 +100,8 @@ pub struct ProxyRulesScreen {
     response_script: VarEditor,
     /// 0 shows the request script, 1 the response script.
     script_ix: usize,
+    /// 0 shows the rules, 1 the fault rules.
+    tab: usize,
     baseline: Fields,
     saving: bool,
     autosave: Autosave,
@@ -184,6 +188,7 @@ impl ProxyRulesScreen {
             }));
         }
 
+        subscriptions.push(cx.observe(&model, |_, _, cx| cx.notify()));
         let mut this = Self {
             model,
             rules: Vec::new(),
@@ -199,6 +204,7 @@ impl ProxyRulesScreen {
             request_script,
             response_script,
             script_ix: 0,
+            tab: 0,
             baseline: Fields {
                 name: String::new(),
                 pattern: String::new(),
@@ -854,23 +860,44 @@ impl ProxyRulesScreen {
 
 impl Render for ProxyRulesScreen {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let header = page::header(
-            t("proxy_rules.page.title"),
-            t("proxy_rules.page.description"),
+        let on_faults = self.tab == 1;
+        let action = if on_faults {
+            Button::new("add-fault")
+                .small()
+                .icon(IconName::Plus)
+                .label(t("faults.add.button"))
+                .on_click(cx.listener(|this, _, window, cx| this.prompt_fault(None, window, cx)))
+        } else {
             Button::new("new-rule")
                 .small()
                 .icon(IconName::Plus)
                 .label(t("proxy_rules.button.new_rule"))
-                .on_click(cx.listener(|this, _, window, cx| this.go_to(Selection::Draft, window, cx))),
-            cx,
+                .on_click(cx.listener(|this, _, window, cx| this.go_to(Selection::Draft, window, cx)))
+        };
+        let header = page::header(t("proxy_rules.page.title"), t("proxy_rules.page.description"), action, cx);
+        let tabs = div().flex_none().px_3().child(
+            TabBar::new("proxy-tabs")
+                .underline()
+                .small()
+                .selected_index(self.tab)
+                .on_click(cx.listener(|this, ix: &usize, _, cx| {
+                    this.tab = *ix;
+                    cx.notify();
+                }))
+                .child(Tab::new().label(t("proxy_rules.tab.rules")))
+                .child(Tab::new().label(t("faults.tab"))),
         );
-        let has_list = !self.rules.is_empty()
-            || !self.deleted_rules(cx).is_empty()
-            || !self.locked_rules(cx).is_empty()
-            || self.selection == Selection::Draft;
-        let list = has_list.then(|| self.render_list(cx).into_any_element());
-        let detail = self.render_detail(cx);
-        let body = master_detail(list, detail, cx);
-        page::screen(header, body, cx)
+        let content = if on_faults {
+            self.render_faults(cx)
+        } else {
+            let has_list = !self.rules.is_empty()
+                || !self.deleted_rules(cx).is_empty()
+                || !self.locked_rules(cx).is_empty()
+                || self.selection == Selection::Draft;
+            let list = has_list.then(|| self.render_list(cx).into_any_element());
+            let detail = self.render_detail(cx);
+            master_detail(list, detail, cx).into_any_element()
+        };
+        page::screen(header, v_flex().size_full().child(tabs).child(div().flex_1().min_h_0().child(content)), cx)
     }
 }

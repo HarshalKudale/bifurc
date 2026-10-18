@@ -34,5 +34,6 @@
   "confirm.revert.consequence": "それ以降に保存した変更は破棄されます。",
   "confirm.delete.title": "ルール「{name}」を削除しますか?",
   "empty.title": "プロキシルールなし",
-  "empty.description": "ルールは、パターンに一致するトラフィックをマッピングまたは別のサーバーに送ります。"
+  "empty.description": "ルールは、パターンに一致するトラフィックをマッピングまたは別のサーバーに送ります。",
+  "tab.rules": "ルール"
 }
