@@ -71,5 +71,19 @@
   "free.body": "The process ends, and whatever it was serving stops.",
   "free.button": "Stop process",
   "free.tooltip": "Stop the process holding this port",
-  "free.error": "Couldn't free port {port}. {message}"
+  "free.error": "Couldn't free port {port}. {message}",
+  "logs.title": "Output of {name}",
+  "logs.count": "{shown} of {total} lines",
+  "logs.search_placeholder": "Search the output",
+  "logs.errors_only": "Errors only",
+  "logs.errors_only_tooltip": "Warnings and errors, with their stack traces; repeated lines are counted",
+  "logs.follow": "Follow",
+  "logs.copy": "Copy",
+  "logs.clear": "Clear view",
+  "logs.clear_tooltip": "Empty this view; the server's output is not touched",
+  "logs.close": "Close the output",
+  "logs.empty.title": "No output yet",
+  "logs.empty.description": "Lines this server prints will appear here as they arrive.",
+  "logs.no_matches.title": "No matching lines",
+  "logs.no_matches.description": "No line has that text, or none is a warning or an error."
 }
