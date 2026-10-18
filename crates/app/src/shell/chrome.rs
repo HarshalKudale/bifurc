@@ -383,6 +383,7 @@ impl Shell {
             (None, false) => t("shell.chrome.proxy_start_tooltip").into(),
         };
         let app_model = self.model.clone();
+        let agent_badges = self.render_agent_badges(cx);
 
         StatusBar::new().left(self.render_git_status(cx)).right(
             h_flex()
@@ -401,6 +402,7 @@ impl Shell {
                             ),
                     )
                 })
+                .children(agent_badges)
                 .child(
                     Button::new("proxy-toggle")
                         .ghost()

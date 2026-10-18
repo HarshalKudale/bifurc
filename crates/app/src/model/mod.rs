@@ -3,6 +3,7 @@
 //! Everything in this module is testable without a window. The engine is the source of truth; these types
 //! are snapshots the views render from.
 
+pub mod agent;
 pub mod config;
 pub mod explorer;
 pub mod flow;

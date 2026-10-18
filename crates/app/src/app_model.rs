@@ -15,7 +15,14 @@ use serde_json::{Value, json};
 use crate::{
     engine::{EngineSession, call, describe, error_text, failure},
     i18n::{t, t_with},
-    model::{ConfigSnapshot, config::AccountInfo, git::GitStatus, update::UpdateStatus, vault::VaultInfo},
+    model::{
+        ConfigSnapshot,
+        agent::{self, Approval, FaultRule, Recording, Replay},
+        config::AccountInfo,
+        git::GitStatus,
+        update::UpdateStatus,
+        vault::VaultInfo,
+    },
 };
 
 /// Wire names of the engine events the UI listens to.
@@ -25,7 +32,7 @@ use crate::{
 /// follows every write with the git state, and says `configChanged: false` when `entity.changed` already
 /// described the whole change; without that field (an older engine, or a pull, sync or import) it means
 /// "re-read the workspace".
-const EVENTS: [&str; 31] = [
+const EVENTS: [&str; 35] = [
     "event.request.stream",
     "event.flow.progress",
     "event.flow.finished",
@@ -41,6 +48,10 @@ const EVENTS: [&str; 31] = [
     "event.history.changed",
     "event.vault.changed",
     "event.cookies.changed",
+    "event.faults.changed",
+    "event.cassette.changed",
+    "event.approval.requested",
+    "event.approval.decided",
     "event.sync.status",
     "event.settings.changed",
     "event.server.error",
@@ -219,6 +230,8 @@ pub enum ModelEvent {
     CompanionsChanged,
     /// `event.cookies.changed`: a response set or removed cookies, or the jar was cleared or reconfigured.
     CookiesChanged,
+    /// `event.approval.requested`: an agent's call is waiting for a person to approve or deny it.
+    ApprovalRequested(Approval),
     /// The engine was stopped and started again: anything that lived only in the old one is gone.
     EngineRestarted,
     /// A short message for the user: a failed command, a lost connection.
@@ -233,6 +246,11 @@ pub struct AppModel {
     vaults: Vec<VaultInfo>,
     proxy: ProxyStatus,
     reverse_proxy: ProxyStatus,
+    /// What agents have started that changes this app's traffic or waits on the user.
+    faults: Vec<FaultRule>,
+    recording: Option<Recording>,
+    replaying: Option<Replay>,
+    approvals: Vec<Approval>,
     setup: SetupState,
     /// What the engine knows about newer versions.
     update: UpdateStatus,
@@ -261,6 +279,10 @@ impl AppModel {
             vaults: Vec::new(),
             proxy: ProxyStatus::default(),
             reverse_proxy: ProxyStatus::default(),
+            faults: Vec::new(),
+            recording: None,
+            replaying: None,
+            approvals: Vec::new(),
             setup: SetupState::default(),
             update: UpdateStatus::default(),
             restarting_engine: false,
@@ -277,6 +299,7 @@ impl AppModel {
         model.refresh(cx);
         model.refresh_setup(cx);
         model.refresh_update(cx);
+        model.refresh_agent_activity(cx);
         model
     }
 
@@ -373,6 +396,86 @@ impl AppModel {
 
     pub fn reverse_proxy(&self) -> &ProxyStatus {
         &self.reverse_proxy
+    }
+
+    pub fn faults(&self) -> &[FaultRule] {
+        &self.faults
+    }
+
+    pub fn recording(&self) -> Option<&Recording> {
+        self.recording.as_ref()
+    }
+
+    pub fn replaying(&self) -> Option<&Replay> {
+        self.replaying.as_ref()
+    }
+
+    pub fn approvals(&self) -> &[Approval] {
+        &self.approvals
+    }
+
+    /// Reads what agents have going. A failure keeps what is shown: the events keep it current after.
+    fn refresh_agent_activity(&mut self, cx: &mut Context<Self>) {
+        let client = self.engine.client.clone();
+        call(&client, cx, "fault.list", json!({}), |this, outcome, cx| {
+            if let Ok(value) = outcome {
+                this.faults = FaultRule::list_from_value(&value);
+                cx.notify();
+            }
+        });
+        call(&client, cx, "cassette.recordStatus", json!({}), |this, outcome, cx| {
+            if let Ok(value) = outcome {
+                this.recording = agent::recording_from_value(&value);
+                cx.notify();
+            }
+        });
+        call(&client, cx, "cassette.replayStatus", json!({}), |this, outcome, cx| {
+            if let Ok(value) = outcome {
+                this.replaying = agent::replay_from_value(&value);
+                cx.notify();
+            }
+        });
+        self.refresh_approvals(cx);
+    }
+
+    fn refresh_approvals(&mut self, cx: &mut Context<Self>) {
+        let client = self.engine.client.clone();
+        call(&client, cx, "approvals.list", json!({}), |this, outcome, cx| {
+            if let Ok(value) = outcome {
+                this.approvals = Approval::list_from_value(&value);
+                cx.notify();
+            }
+        });
+    }
+
+    /// Runs `action` for the footer's controls. The state follows from the event the engine sends; only a
+    /// failure is reported here.
+    fn run_for_agents(&mut self, action: &'static str, payload: Value, cx: &mut Context<Self>) {
+        let client = self.engine.client.clone();
+        call(&client, cx, action, payload, |_, outcome, cx| {
+            if let Some(error) = failure(&outcome) {
+                cx.emit(ModelEvent::Notice(error));
+            }
+        });
+    }
+
+    /// Removes the fault rule `id`, or all of them.
+    pub fn clear_faults(&mut self, id: Option<&str>, cx: &mut Context<Self>) {
+        self.run_for_agents("fault.clear", id.map_or_else(|| json!({}), |id| json!({ "id": id })), cx);
+    }
+
+    pub fn stop_recording(&mut self, cx: &mut Context<Self>) {
+        self.run_for_agents("cassette.recordStop", json!({}), cx);
+    }
+
+    pub fn stop_replay(&mut self, cx: &mut Context<Self>) {
+        self.run_for_agents("cassette.replayStop", json!({}), cx);
+    }
+
+    /// Lets the held call go on, or fails it as blocked. `interactive` is how the engine knows a person decided.
+    pub fn decide_approval(&mut self, id: &str, approve: bool, cx: &mut Context<Self>) {
+        let decision = if approve { "approve" } else { "deny" };
+        self.run_for_agents("approvals.decide", json!({ "id": id, "decision": decision, "interactive": true }), cx);
     }
 
     pub fn is_restarting_engine(&self) -> bool {
@@ -500,6 +603,21 @@ impl AppModel {
                 }
                 "event.companions.changed" => cx.emit(ModelEvent::CompanionsChanged),
                 "event.cookies.changed" => cx.emit(ModelEvent::CookiesChanged),
+                "event.faults.changed" => {
+                    self.faults = FaultRule::list_from_value(&event.payload);
+                    cx.notify();
+                }
+                "event.cassette.changed" => {
+                    self.recording = event.payload.get("record").and_then(agent::recording_from_value);
+                    self.replaying = event.payload.get("replay").and_then(agent::replay_from_value);
+                    cx.notify();
+                }
+                // The decided item does not carry the pending list, so both events read it again.
+                "event.approval.requested" => {
+                    self.refresh_approvals(cx);
+                    cx.emit(ModelEvent::ApprovalRequested(Approval::from_value(&event.payload)));
+                }
+                "event.approval.decided" => self.refresh_approvals(cx),
                 "event.update.changed" => {
                     self.update = UpdateStatus::from_value(&event.payload);
                     cx.notify();
@@ -723,6 +841,7 @@ impl AppModel {
                         this.refresh_setup(cx);
                         cx.emit(ModelEvent::EngineRestarted);
                         this.refresh_update(cx);
+                        this.refresh_agent_activity(cx);
                     }
                     Err(message) => {
                         // The old connection is closed whatever happened, so nothing is live now.
