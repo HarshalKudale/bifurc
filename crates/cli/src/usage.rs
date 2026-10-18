@@ -728,7 +728,7 @@ body (origin webhook), so a signature check still passes when it is sent again. 
                                          the response as `requests send` does (--body, --headers, --select,
                                          --expect-status ...); refused: exit 4
   save <id> --as-request [--name x] [--folder f]
-                                         Save it as a request
+                                         Save it as a request (to the forward URL when it had one)
   fixtures                               The sample events: stripe.checkout.session.completed, github.push
   trigger <fixture> [--to <url>] [--name x] [--vault v [--secret KEY]] [--patch '<path>=<value>'] [output flags]
                                          Send a sample event (fresh ids, compact JSON). Goes to --to, else the
