@@ -5,6 +5,7 @@
 //! engine commands and a printed answer. Argument parsing, formatting and engine location are pure modules.
 
 pub mod agent;
+pub mod approvals;
 pub mod args;
 #[cfg(test)]
 mod budget;
