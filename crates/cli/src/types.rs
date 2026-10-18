@@ -9,7 +9,7 @@ use crate::{
     commands::{Context, find_one, id_of, need, workspace_id},
     contract::{path_of, paths_match},
     error::{CliError, Result},
-    infer::{Lang, emit, infer, pascal},
+    infer::Lang,
     requests::{self, TYPES, saved, text},
     response::Response,
     shape::Side,
@@ -18,15 +18,6 @@ use crate::{
 /// How many captured entries are looked through, newest first, and how many matching ones are read.
 const CAPTURE_WINDOW: u64 = 500;
 const MAX_CAPTURES: usize = 20;
-
-pub(crate) fn is_2xx(status: u16) -> bool {
-    (200..300).contains(&status)
-}
-
-/// The JSON body of a 2xx answer.
-fn json_of(side: &Side) -> Option<Value> {
-    side.body.clone().filter(|_| is_2xx(side.status))
-}
 
 /// A response-history entry (`response.history`): status, headers as an object, body as text or base64.
 pub(crate) fn history_side(entry: &Value) -> Side {
@@ -80,6 +71,8 @@ pub(crate) fn capture_sides(
     Ok(sides)
 }
 
+/// `types <request> [--lang ..] [--name ..] [--send] [--out <file>]`: the engine's `types.generate` infers the
+/// type; this names the request, writes the file and maps the engine's refusals to exit codes.
 pub fn types(ctx: &mut Context, sub: Option<&str>) -> Result<String> {
     ctx.accept_top(&["lang", "out", "name", "send", "ts", "zod", "python", "go", "var", "env", "fresh-session"], 1)?;
     let args = ctx.args;
@@ -93,46 +86,47 @@ pub fn types(ctx: &mut Context, sub: Option<&str>) -> Result<String> {
         (None, [one]) => one,
         (None, []) => "ts",
     };
-    let lang = Lang::parse(lang_name)
-        .ok_or_else(|| CliError::usage(format!("--lang must be ts, zod, python or go, not \"{lang_name}\"")))?;
+    if Lang::parse(lang_name).is_none() {
+        return Err(CliError::usage(format!("--lang must be ts, zod, python or go, not \"{lang_name}\"")));
+    }
+    if let Some(given) = args.flag("name").filter(|given| {
+        !(given.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_')
+            && given.chars().all(|c| c.is_ascii_alphanumeric() || c == '_'))
+    }) {
+        return Err(CliError::usage(format!("--name must be an identifier, not \"{given}\"")));
+    }
 
     let workspace = workspace_id(ctx)?;
     let entities: Vec<Value> = saved(ctx, &workspace, &[&TYPES[0]])?.into_iter().map(|(_, entity)| entity).collect();
     let request = find_one(&entities, &wanted, &["name"], "request", "requests")?.clone();
     let (id, name) = (id_of(&request), text(&request, "name"));
 
-    let mut samples: Vec<Value> = Vec::new();
-    samples.extend(history_sides(ctx, &workspace, &id)?.iter().filter_map(json_of));
-    let all = recent_captures(ctx, &workspace)?;
-    samples.extend(capture_sides(ctx, &workspace, &all, &request, is_2xx)?.iter().filter_map(json_of));
-
+    let mut params = json!({ "workspaceId": workspace, "request": id, "lang": lang_name });
+    if let Some(given) = args.flag("name") {
+        params["name"] = json!(given);
+    }
     if args.has("send") {
-        let response = requests::send_saved(ctx, &workspace, &id)?;
-        if response.status == 0 {
-            return Err(CliError::network(response.failure.unwrap_or_else(|| "no response".into())));
+        params["send"] = json!(true);
+        if args.has("fresh-session") {
+            params["freshJar"] = json!(true);
         }
-        samples.extend(json_of(&response_side(&response)));
+        requests::add_scope(ctx, &workspace, &mut params)?;
     }
-    if samples.is_empty() {
-        let hint = if args.has("send") { "" } else { " (or add --send)" };
-        return Err(CliError::not_found(format!(
-            "no JSON response for \"{name}\" yet; send it first: bifurc requests send \"{name}\"{hint}"
-        )));
-    }
-
-    let type_name = match args.flag("name") {
-        Some(given)
-            if given.starts_with(|c: char| c.is_ascii_alphabetic() || c == '_')
-                && given.chars().all(|c| c.is_ascii_alphanumeric() || c == '_') =>
-        {
-            given.to_string()
+    let got = match ctx.request("types.generate", params) {
+        Ok(got) => got,
+        Err(CliError::Engine { message, .. }) if message.starts_with("no JSON response for") => {
+            let hint = if args.has("send") { "" } else { " (or add --send)" };
+            return Err(CliError::not_found(format!(
+                "no JSON response for \"{name}\" yet; send it first: bifurc requests send \"{name}\"{hint}"
+            )));
         }
-        Some(given) => return Err(CliError::usage(format!("--name must be an identifier, not \"{given}\""))),
-        None => format!("{}Response", pascal(&name)),
+        // A send that got no response at all.
+        Err(CliError::Engine { code, message }) if code == "UPSTREAM_FAILED" && args.has("send") => {
+            return Err(CliError::network(message));
+        }
+        Err(other) => return Err(other),
     };
-    let count = samples.len();
-    let header = format!("Inferred by bifurc from {count} response{} of \"{name}\"", if count == 1 { "" } else { "s" });
-    let code = emit(lang, &type_name, &infer(&samples), &header);
+    let (code, count) = (text(&got, "code"), got["samples"].as_u64().unwrap_or(0));
 
     let saved_to = match args.flag("out") {
         Some(path) => {
@@ -144,7 +138,9 @@ pub fn types(ctx: &mut Context, sub: Option<&str>) -> Result<String> {
         }
         None => None,
     };
-    let result = json!({ "schemaVersion": 1, "name": type_name, "lang": lang.name(), "samples": count, "code": code });
+    let result = json!({
+        "schemaVersion": 1, "name": got["name"], "lang": got["lang"], "samples": count, "code": code,
+    });
     Ok(ctx.print(&result, || match saved_to {
         Some(path) => format!("saved {path} ({count} samples)"),
         None => code.trim_end().to_string(),
@@ -163,10 +159,6 @@ mod tests {
         })
     }
 
-    fn b64(text: &str) -> String {
-        STANDARD.encode(text)
-    }
-
     fn engine(extra: Vec<Answer>) -> Vec<Answer> {
         let mut answers = vec![
             ("config.get", Ok(config())),
@@ -176,95 +168,93 @@ mod tests {
                     {"id": "r1", "name": "Get orders", "method": "GET", "url": "{{baseUrl}}/orders/{{id}}"},
                     {"id": "r2", "name": "Make order", "method": "POST", "url": "{{baseUrl}}/orders"}]})),
             ),
-            (
-                "response.history",
-                Ok(json!({"entries": [
-                    {"status": 200, "headers": {"Content-Type": "application/json"}, "body": r#"{"id":1,"note":null}"#},
-                    {"status": 500, "headers": {"content-type": "application/json"}, "body": r#"{"error":"x"}"#},
-                    {"status": 200, "headers": {"content-type": "application/json"}, "body": b64(r#"{"id":2,"total":1.5}"#), "encoding": "base64"},
-                    {"status": 200, "headers": {"content-type": "text/html"}, "body": "<p>hi</p>"}]})),
-            ),
-            (
-                "capture.list",
-                Ok(json!({"entries": [
-                    {"id": "c1", "method": "GET", "url": "http://h/orders/7?x=1", "status": 200},
-                    {"id": "c2", "method": "GET", "url": "http://h/users/7", "status": 200},
-                    {"id": "c3", "method": "POST", "url": "http://h/orders/7", "status": 200},
-                    {"id": "c4", "method": "GET", "url": "http://h/orders/8", "status": 200, "via": "mock"}]})),
-            ),
         ];
         answers.extend(extra);
         answers
     }
 
-    fn capture_entry(body: &str) -> Answer {
+    fn generated(lang: &str, name: &str) -> Answer {
         (
-            "capture.get",
-            Ok(
-                json!({"entry": {"resStatus": 200, "resHeaders": {"content-type": "application/json"}, "resBody": b64(body)}}),
-            ),
+            "types.generate",
+            Ok(json!({"name": name, "lang": lang, "samples": 3,
+                      "code": "// Inferred by bifurc from 3 responses of \"Get orders\"
+export type X = {};
+"})),
         )
     }
 
     #[test]
-    fn samples_come_from_history_and_matching_captures_only() {
-        let (out, calls) = go(&["types", "get ord"], engine(vec![capture_entry(r#"{"id":3,"extra":true}"#)]));
+    fn the_engine_infers_for_the_request_the_name_picks_and_the_code_prints_trimmed() {
+        let (out, calls) = go(&["types", "get ord"], engine(vec![generated("ts", "GetOrdersResponse")]));
         assert_eq!(
             out.unwrap(),
-            "// Inferred by bifurc from 3 responses of \"Get orders\"\nexport type GetOrdersResponse = {\n  id: number;\n  note?: null;\n  total?: number;\n  extra?: boolean;\n};"
+            "// Inferred by bifurc from 3 responses of \"Get orders\"
+export type X = {};"
         );
-        assert_eq!(payloads(&calls, "capture.get").len(), 1);
-        assert_eq!(payloads(&calls, "capture.get")[0]["id"], "c1");
-        assert!(payloads(&calls, "request.send").is_empty());
+        let sent = &payloads(&calls, "types.generate")[0];
+        assert_eq!(
+            (sent["request"].clone(), sent["lang"].clone(), sent["workspaceId"].clone()),
+            (json!("r1"), json!("ts"), json!("w1"))
+        );
+        assert!(sent.get("send").is_none() && sent.get("name").is_none());
     }
 
     #[test]
     fn no_json_sample_is_exit_3_and_json_flag_lang_and_name_shape_the_output() {
-        let mut answers = engine(vec![]);
-        answers[2] = ("response.history", Ok(json!({"entries": []})));
-        answers[3] = ("capture.list", Ok(json!({"entries": []})));
-        let err = go(&["types", "Get orders"], answers).0.unwrap_err();
+        let none = Err(CliError::Engine {
+            code: "NOT_FOUND".into(),
+            message: "no JSON response for \"Get orders\" yet".into(),
+        });
+        let err = go(&["types", "Get orders"], engine(vec![("types.generate", none.clone())])).0.unwrap_err();
         assert_eq!(err.code(), 3);
         assert_eq!(
             err.to_string(),
             "no JSON response for \"Get orders\" yet; send it first: bifurc requests send \"Get orders\" (or add --send)"
         );
+        let err = go(&["types", "Get orders", "--send"], engine(vec![("types.generate", none)])).0.unwrap_err();
+        assert!(err.to_string().ends_with("bifurc requests send \"Get orders\""), "{err}");
 
-        let (out, _) =
-            go(&["types", "Get orders", "--zod", "--name", "Order", "--json"], engine(vec![capture_entry("{}")]));
+        let (out, calls) =
+            go(&["types", "Get orders", "--zod", "--name", "Order", "--json"], engine(vec![generated("zod", "Order")]));
         let value: Value = serde_json::from_str(&out.unwrap()).unwrap();
         assert_eq!(
-            (value["schemaVersion"].clone(), value["name"].clone(), value["lang"].clone()),
-            (json!(1), json!("Order"), json!("zod"))
+            (value["schemaVersion"].clone(), value["name"].clone(), value["lang"].clone(), value["samples"].clone()),
+            (json!(1), json!("Order"), json!("zod"), json!(3))
         );
-        assert_eq!(value["samples"], 3);
-        assert!(value["code"].as_str().unwrap().contains("export const Order = z.object({"));
+        let sent = &payloads(&calls, "types.generate")[0];
+        assert_eq!((sent["lang"].clone(), sent["name"].clone()), (json!("zod"), json!("Order")));
     }
 
     #[test]
-    fn send_adds_the_sent_response_and_out_writes_the_file() {
+    fn send_is_passed_on_out_writes_the_file_and_a_send_with_no_answer_is_exit_4() {
         let dir = tempfile::tempdir().unwrap();
         let file = dir.path().join("src/types/orders.ts");
-        let reply = json!({"status": 200, "durationMs": 3, "headers": {"content-type": "application/json"}, "body": b64(r#"{"id":9}"#)});
-        let answers = engine(vec![
-            capture_entry("{}"),
-            ("entity.list", Ok(json!({"entities": []}))),
-            ("request.send", Ok(reply)),
-        ]);
-        let (out, calls) = go(&["types", "Get orders", "--send", "--out", file.to_str().unwrap()], answers);
-        assert_eq!(out.unwrap(), format!("saved {} (4 samples)", file.display()));
-        assert_eq!(payloads(&calls, "request.send")[0]["id"], "r1");
+        let answers = engine(vec![generated("ts", "GetOrdersResponse"), ("entity.list", Ok(json!({"entities": []})))]);
+        let (out, calls) =
+            go(&["types", "Get orders", "--send", "--var", "a=b", "--out", file.to_str().unwrap()], answers);
+        assert_eq!(out.unwrap(), format!("saved {} (3 samples)", file.display()));
+        let sent = &payloads(&calls, "types.generate")[0];
+        assert_eq!((sent["send"].clone(), sent["variables"]["a"].clone()), (json!(true), json!("b")));
         let code = std::fs::read_to_string(&file).unwrap();
-        assert!(code.starts_with("// Inferred by bifurc from 4 responses of \"Get orders\"\n"), "{code}");
+        assert!(
+            code.starts_with(
+                "// Inferred by bifurc from 3 responses of \"Get orders\"
+"
+            ),
+            "{code}"
+        );
+
+        let down = Err(CliError::Engine { code: "UPSTREAM_FAILED".into(), message: "no response".into() });
+        let err = go(&["types", "Get orders", "--send"], engine(vec![("types.generate", down)])).0.unwrap_err();
+        assert_eq!((err.code(), err.to_string().as_str()), (4, "no response"));
     }
 
     #[test]
-    fn a_bad_language_or_name_is_a_usage_error() {
+    fn a_bad_language_or_name_is_a_usage_error_before_the_engine_is_asked() {
         assert_eq!(go(&["types", "Get orders", "--lang", "rust"], engine(vec![])).0.unwrap_err().code(), 2);
         assert_eq!(go(&["types", "Get orders", "--go", "--ts"], engine(vec![])).0.unwrap_err().code(), 2);
-        assert_eq!(
-            go(&["types", "Get orders", "--name", "1 bad"], engine(vec![capture_entry("{}")])).0.unwrap_err().code(),
-            2
-        );
+        let (out, calls) = go(&["types", "Get orders", "--name", "1 bad"], engine(vec![generated("ts", "X")]));
+        assert_eq!(out.unwrap_err().code(), 2);
+        assert!(payloads(&calls, "types.generate").is_empty());
     }
 }

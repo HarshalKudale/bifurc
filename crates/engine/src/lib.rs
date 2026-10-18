@@ -41,6 +41,7 @@ pub mod updates;
 pub mod utils;
 pub mod vault;
 pub mod webhook;
+pub mod analysis;
 pub mod websocket;
 pub mod workspace;
 
