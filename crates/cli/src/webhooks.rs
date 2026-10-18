@@ -230,19 +230,20 @@ fn replay(ctx: &mut Context) -> Result<String> {
         return Err(CliError::not_found(format!("no webhook \"{id}\" (see: bifurc webhooks list)")));
     };
     let to = ctx.args.flag("to").map(str::to_string);
-    let mut forward = None;
-    // shortcut: the forward URL is not stored on the entry, so a listener that has stopped is forgotten and the
-    // replay goes to the original URL; keep the forward on the entry if that bites.
+    // The entry's own forward (new entries); older entries fall back to the running listener's.
+    let mut forward = entry["forward"].as_str().map(str::to_string);
+    let mut stopped = None;
     if to.is_none()
+        && forward.is_none()
         && let Some(name) = entry["target"].as_str().and_then(|t| t.strip_prefix("webhook:"))
     {
         let listeners = ctx.request("webhook.list", json!({}))?;
-        forward = listeners["listeners"]
-            .as_array()
-            .into_iter()
-            .flatten()
-            .find(|l| l["name"].as_str() == Some(name))
-            .and_then(|l| l["forward"].as_str().map(str::to_string));
+        let running =
+            listeners["listeners"].as_array().into_iter().flatten().find(|l| l["name"].as_str() == Some(name));
+        forward = running.and_then(|l| l["forward"].as_str().map(str::to_string));
+        if running.is_none() {
+            stopped = Some(name.to_string());
+        }
     }
     let url = replay_target(&js_template(entry.get("url")), forward.as_deref(), to.as_deref())?;
     // The body was read whole (no chunking), and the HTTP client sets its own host and length.
@@ -253,7 +254,13 @@ fn replay(ctx: &mut Context) -> Result<String> {
         .filter(|(name, _)| !["host", "content-length", "transfer-encoding"].contains(&name.to_lowercase().as_str()))
         .map(|(name, value)| (name.clone(), json!(js_template(Some(value)))))
         .collect();
-    send(ctx, &js_template(entry.get("method")), &url, &headers, entry["reqBody"].as_str().unwrap_or_default())
+    send(ctx, &js_template(entry.get("method")), &url, &headers, entry["reqBody"].as_str().unwrap_or_default()).map_err(
+        |err| match (stopped, err.code()) {
+            // Only a listener without a stored forward lands here: its own port is what refused.
+            (Some(name), 4) => CliError::network(format!("{err}; the listener \"{name}\" is stopped, use --to <url>")),
+            _ => err,
+        },
+    )
 }
 
 /// Send `method url` with these headers and a base64 body through `request.replay` and print the answer.
@@ -484,6 +491,11 @@ fn save(ctx: &mut Context) -> Result<String> {
     let id = webhook_id(ctx, &workspace, &wanted)?;
     let built = ctx.request("capture.buildRequest", json!({ "workspaceId": workspace, "id": id }))?;
     let mut entity = built.get("request").cloned().unwrap_or(Value::Null);
+    // Aim it at the handler the listener forwarded to, not the listener's own (short-lived) port.
+    let got = ctx.request("capture.get", json!({ "workspaceId": workspace, "id": id }))?;
+    if let (Some(forward), Some(url)) = (got["entry"]["forward"].as_str(), entity["url"].as_str()) {
+        entity["url"] = json!(replay_target(url, Some(forward), None)?);
+    }
     if let Some(name) = ctx.args.flag("name") {
         entity["name"] = json!(name);
     }
@@ -663,21 +675,53 @@ mod tests {
         assert!(payloads(&calls, "webhook.list").is_empty());
         assert_eq!(payloads(&calls, "request.replay")[0]["url"], "http://127.0.0.1:4021/hooks/a?x=1");
         answers.insert(0, ("request.replay", Err(CliError::network("refused"))));
-        let (out, _, _) = go(&["webhooks", "replay", "1111"], answers, vec![]);
+        let (out, _, _) = go(&["webhooks", "replay", "1111"], answers.clone(), vec![]);
         assert_eq!(out.unwrap_err().code(), 4);
+        // A stopped listener with no stored forward: the refusal says so.
+        answers.retain(|(action, _)| *action != "webhook.list");
+        answers.push(("webhook.list", Ok(json!({"listeners": []}))));
+        let (out, _, _) = go(&["webhooks", "replay", "1111"], answers, vec![]);
+        let err = out.unwrap_err();
+        assert_eq!(err.code(), 4);
+        assert!(err.line().contains("\"stripe\" is stopped, use --to <url>"), "{}", err.line());
+    }
+
+    #[test]
+    fn replay_uses_the_forward_stored_on_the_entry_without_the_listener() {
+        use base64::{Engine as _, engine::general_purpose::STANDARD};
+        let mut entry = hook("mg1a1111", Some("stripe"), "webhook");
+        entry["forward"] = json!("http://api.localhost/in");
+        entry["reqBody"] = json!(STANDARD.encode("{}"));
+        let reply = json!({"status": 200, "headers": {}, "body": ""});
+        let mut answers = buffer();
+        answers.extend([("capture.get", Ok(json!({"entry": entry}))), ("request.replay", Ok(reply))]);
+        let (out, calls, _) = go(&["webhooks", "replay", "1111"], answers.clone(), vec![]);
+        out.unwrap();
+        assert!(payloads(&calls, "webhook.list").is_empty());
+        assert_eq!(payloads(&calls, "request.replay")[0]["url"], "http://api.localhost/in/hooks/a?x=1");
+        let (_, calls, _) = go(&["webhooks", "replay", "1111", "--to", "http://127.0.0.1:4021"], answers, vec![]);
+        assert_eq!(payloads(&calls, "request.replay")[0]["url"], "http://127.0.0.1:4021/hooks/a?x=1");
     }
 
     #[test]
     fn save_builds_the_request_and_names_it() {
         let mut answers = buffer();
         answers.extend([
-            ("capture.buildRequest", Ok(json!({"request": {"name": "POST /hooks/a", "method": "POST"}}))),
+            (
+                "capture.buildRequest",
+                Ok(json!({"request": {"name": "POST /hooks/a", "method": "POST", "url": "http://127.0.0.1:4020/hooks/a?x=1"}})),
+            ),
+            ("capture.get", Ok(json!({"entry": {"forward": "http://api.localhost/in"}}))),
             ("entity.create", Ok(json!({"entity": {"id": "r1", "name": "Stripe hook"}}))),
         ]);
         let (out, calls, _) =
             go(&["webhooks", "save", "1111", "--as-request", "--name", "Stripe hook"], answers.clone(), vec![]);
         assert_eq!(out.unwrap(), "Saved request \"Stripe hook\"");
-        assert_eq!(payloads(&calls, "entity.create")[0]["entity"]["name"], "Stripe hook");
+        let saved = &payloads(&calls, "entity.create")[0]["entity"];
+        assert_eq!(
+            (saved["name"].clone(), saved["url"].clone()),
+            (json!("Stripe hook"), json!("http://api.localhost/in/hooks/a?x=1"))
+        );
         let (out, _, _) = go(&["webhooks", "save", "1111"], answers, vec![]);
         assert_eq!(out.unwrap_err().code(), 2);
     }
