@@ -230,7 +230,11 @@ pub struct CaptureScreen {
     /// Show only this kind of response; `None` shows all.
     type_filter: Option<ResourceType>,
     /// Which handlers' exchanges are listed, in [`Handler::ALL`] order. Mappings are off by default.
-    handlers: [bool; 3],
+    handlers: [bool; Handler::ALL.len()],
+    /// Show only the pinned exchanges.
+    pinned_only: bool,
+    /// The unpinned exchanges the engine keeps (`captureLimit`), as `capture.list` reported it.
+    limit: usize,
     detail: Detail,
     section: Section,
     trace_logs: TraceLogs,
@@ -292,7 +296,7 @@ impl CaptureScreen {
                     let refresh =
                         this.selected.as_ref().filter(|id| incoming.iter().any(|entry| &entry.id == *id)).cloned();
                     // A batch is oldest first; the list is newest first.
-                    traffic::merge_live(&mut this.entries, incoming);
+                    traffic::merge_live(&mut this.entries, incoming, this.limit);
                     if let Some(id) = refresh {
                         this.fetch(id, window, cx);
                     }
@@ -325,7 +329,9 @@ impl CaptureScreen {
             checked: HashSet::new(),
             type_filter: None,
             origin,
-            handlers: [false, true, true],
+            handlers: [false, true, true, true],
+            pinned_only: false,
+            limit: traffic::MAX_ENTRIES,
             detail: Detail::Idle,
             section: Section::Headers,
             trace_logs: TraceLogs::Idle,
@@ -360,7 +366,8 @@ impl CaptureScreen {
         (match self.origin {
             Some(origin) => entry.origin.as_deref() == Some(origin),
             None => Handler::ALL.iter().zip(self.handlers).any(|(handler, on)| on && *handler == entry.handler()),
-        }) && self.type_filter.is_none_or(|kind| entry.resource_type() == kind)
+        }) && (!self.pinned_only || entry.pinned)
+            && self.type_filter.is_none_or(|kind| entry.resource_type() == kind)
             && entry.matches(needle)
     }
 
@@ -384,6 +391,11 @@ impl CaptureScreen {
             match outcome {
                 Ok(result) => {
                     this.entries = traffic::parse_list(&result);
+                    this.limit = result
+                        .get("limit")
+                        .and_then(Value::as_u64)
+                        .and_then(|limit| usize::try_from(limit).ok())
+                        .unwrap_or(traffic::MAX_ENTRIES);
                     this.paused = result.get("paused").and_then(Value::as_bool).unwrap_or(false);
                     this.disable_cache = result.get("disableCache").and_then(Value::as_bool).unwrap_or(true);
                     this.loaded = true;
@@ -599,6 +611,31 @@ impl CaptureScreen {
             self.response_body.update(cx, |state, cx| state.set_value(text, window, cx));
         }
         cx.notify();
+    }
+
+    /// Pins or unpins exchanges: the rows change at once, and are read again when the engine refuses.
+    fn pin(&mut self, ids: Vec<String>, pinned: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if ids.is_empty() {
+            return;
+        }
+        for entry in self.entries.iter_mut().filter(|entry| ids.contains(&entry.id)) {
+            entry.pinned = pinned;
+        }
+        let model = self.model.read(cx);
+        let client = model.client().clone();
+        let payload = json!({ "workspaceId": model.workspace_id(), "ids": ids, "pinned": pinned });
+        call_in(&client, window, cx, "capture.pin", payload, move |this, outcome, window, cx| {
+            if let Some(message) = failure(&outcome) {
+                this.report(t(if pinned { "capture.error.pin" } else { "capture.error.unpin" }), message, cx);
+                this.reload(window, cx);
+            }
+        });
+        cx.notify();
+    }
+
+    fn pin_checked(&mut self, pinned: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let ids = self.checked_exchanges().into_iter().map(|(id, _)| id).collect();
+        self.pin(ids, pinned, window, cx);
     }
 
     fn remove_selected(&mut self, cx: &mut Context<Self>) {
@@ -1272,6 +1309,7 @@ impl CaptureScreen {
         );
         h_flex()
             .flex_none()
+            .flex_wrap()
             .gap_3()
             .px_4()
             .py_2()
@@ -1285,6 +1323,16 @@ impl CaptureScreen {
                     .tooltip(t("capture.disable_cache.tooltip"))
                     .checked(self.disable_cache)
                     .on_change(cx.listener(|this, checked: &bool, _, cx| this.set_disable_cache(*checked, cx))),
+            )
+            .child(
+                Checkbox::new("capture-pinned-only")
+                    .small()
+                    .label(t("capture.pinned_only"))
+                    .checked(self.pinned_only)
+                    .on_change(cx.listener(|this, checked: &bool, _, cx| {
+                        this.pinned_only = *checked;
+                        cx.notify();
+                    })),
             )
             .child(
                 ButtonGroup::new("capture-handlers")
@@ -1343,6 +1391,20 @@ impl CaptureScreen {
                             .label(t("capture.save_checked_mocks"))
                             .disabled(self.saving)
                             .on_click(cx.listener(|this, _, window, cx| this.save_checked(true, window, cx))),
+                    )
+                    .child(
+                        Button::new("capture-pin-checked")
+                            .small()
+                            .label(t("capture.pin_checked"))
+                            .tooltip(t("capture.pin_tooltip"))
+                            .on_click(cx.listener(|this, _, window, cx| this.pin_checked(true, window, cx))),
+                    )
+                    .child(
+                        Button::new("capture-unpin-checked")
+                            .small()
+                            .label(t("capture.unpin_checked"))
+                            .tooltip(t("capture.unpin_tooltip"))
+                            .on_click(cx.listener(|this, _, window, cx| this.pin_checked(false, window, cx))),
                     )
                     .child(Button::new("capture-uncheck").ghost().small().label(t("capture.clear_selection")).on_click(
                         cx.listener(|this, _, _, cx| {
@@ -1426,6 +1488,21 @@ impl CaptureScreen {
                                             .min_w_0()
                                             .gap_2()
                                             .overflow_hidden()
+                                            .children(entry.pinned.then(|| {
+                                                div()
+                                                    .id(gpui_kit::ElementId::Name(
+                                                        format!("capture-pinned-{}", entry.id).into(),
+                                                    ))
+                                                    .test_support()
+                                                    .flex_none()
+                                                    .tooltip(|window, cx| {
+                                                        gpui_kit::component::tooltip::Tooltip::new(t(
+                                                            "capture.pinned_marker",
+                                                        ))
+                                                        .build(window, cx)
+                                                    })
+                                                    .child(Icon::new(IconName::Star).small())
+                                            }))
                                             .child(
                                                 div().min_w_0().overflow_hidden().text_ellipsis().child(entry.name()),
                                             )
@@ -1562,10 +1639,10 @@ impl CaptureScreen {
             Some(code) => format!("{code} {}", status_text(code)),
             None => t("capture.pending").to_owned(),
         };
-        let via = self.selected_entry().map_or("", TrafficEntry::via_label);
+        let via = self.selected_entry().map(TrafficEntry::via_label).unwrap_or_default();
         let handled_by = match (via.is_empty(), &exchange.target) {
             (false, Some(target)) => format!("{via} · {target}"),
-            (false, None) => via.to_owned(),
+            (false, None) => via,
             (true, Some(target)) => target.clone(),
             (true, None) => String::new(),
         };
@@ -1843,6 +1920,18 @@ impl CaptureScreen {
                                 .label(t("webhooks.replay_to"))
                                 .on_click(cx.listener(|this, _, window, cx| this.ask_replay_to(window, cx))),
                         )
+                    })
+                    .child({
+                        let pinned = entry.pinned;
+                        Button::new("capture-pin")
+                            .small()
+                            .label(t(if pinned { "capture.unpin" } else { "capture.pin" }))
+                            .tooltip(t(if pinned { "capture.unpin_tooltip" } else { "capture.pin_tooltip" }))
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                if let Some(id) = this.selected.clone() {
+                                    this.pin(vec![id], !pinned, window, cx);
+                                }
+                            }))
                     })
                     .child(
                         Button::new("capture-save-request")

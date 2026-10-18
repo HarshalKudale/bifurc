@@ -185,5 +185,22 @@
   "update.copy": "Kopieren",
   "update.skipped": "Übersprungen",
   "update.skip": "Diese Version überspringen",
-  "update.what_changed": "Was sich geändert hat"
+  "update.what_changed": "Was sich geändert hat",
+  "invalid_value": "{setting} wurde nicht geändert: Dieser Wert ist nicht erlaubt.",
+  "capture.group": "Erfassung",
+  "capture.limit.title": "Gespeicherte Austausche",
+  "capture.limit.description": "Wie viele nicht angeheftete erfasste Austausche ein Workspace behält, 10 bis 10000. Angeheftete kommen hinzu. Leer verwendet 200.",
+  "trace.switch.title": "Trace-Header",
+  "trace.switch.description": "Weitergeleitete Anfragen mit der Erfassungs-ID versehen, damit die Logs eines Upstreams zur Erfassung passen.",
+  "trace.name.title": "Name des Trace-Headers",
+  "trace.name.description": "Buchstaben, Ziffern, - und _. Leer verwendet x-bifurc-trace.",
+  "capture.footer": "Änderungen gelten sofort.",
+  "mail.group": "Mail-Senke",
+  "mail.port.title": "SMTP-Port",
+  "mail.port.description": "Auf diesem Port lauscht die lokale Mail-Senke: SMTP einer App darauf richten und das Eingehende unter Mail lesen. Leer verwendet 1025.",
+  "mail.footer": "Ein neuer Port gilt sofort. Lässt er sich nicht binden, zeigt Mail den Grund.",
+  "approvals.group": "Freigaben",
+  "approvals.timeout.title": "Freigabe-Timeout (Sekunden)",
+  "approvals.timeout.description": "Wie lange ein von einer require_human-Richtlinie angehaltener Aufruf auf eine Person wartet, 10 bis 3600. Leer verwendet 300.",
+  "approvals.footer": "Gilt für Aufrufe, die ab jetzt angehalten werden."
 }

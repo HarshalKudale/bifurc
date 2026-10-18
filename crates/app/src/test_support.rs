@@ -387,6 +387,17 @@ impl Ui {
             .expect("the window is open")
     }
 
+    /// Whether an element with this id is on screen and not scrolled or clipped out of view.
+    pub fn visible(&mut self, id: impl Into<ElementId>) -> bool {
+        let id = id.into();
+        self.frame();
+        self.cx
+            .update_window(self.window, |_, window, _| {
+                snapshots(window).iter().any(|s| s.path().last() == Some(&id) && s.visible())
+            })
+            .expect("the window is open")
+    }
+
     /// How many elements on screen have this id.
     pub fn count(&mut self, id: impl Into<ElementId>) -> usize {
         let id = id.into();

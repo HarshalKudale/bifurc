@@ -104,6 +104,15 @@ pub struct EngineSettings {
     pub telemetry_enabled: bool,
     /// The engine looks for a newer version once a day.
     pub update_check_enabled: bool,
+    /// Unpinned captured exchanges kept; `None` = not set (the engine's default).
+    pub capture_limit: Option<u64>,
+    /// The header stamped on forwarded requests with the capture id: `None` = not set (the default),
+    /// empty = off.
+    pub trace_header: Option<String>,
+    /// The SMTP port of the local mail sink; `None` = not set.
+    pub mail_port: Option<u16>,
+    /// Seconds a call held for approval waits for a person; `None` = not set.
+    pub approval_timeout_seconds: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -456,6 +465,10 @@ impl ConfigSnapshot {
                 tls_enabled: flag("tlsEnabled"),
                 telemetry_enabled: config.get("telemetryEnabled").and_then(Value::as_bool).unwrap_or(true),
                 update_check_enabled: config.get("updateCheckEnabled").and_then(Value::as_bool).unwrap_or(true),
+                capture_limit: config.get("captureLimit").and_then(Value::as_u64),
+                trace_header: config.get("traceHeader").and_then(Value::as_str).map(str::to_owned),
+                mail_port: config.get("mailPort").and_then(Value::as_u64).and_then(|p| u16::try_from(p).ok()),
+                approval_timeout_seconds: config.get("approvalTimeoutSeconds").and_then(Value::as_u64),
             },
         })
     }
