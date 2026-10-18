@@ -339,6 +339,9 @@ impl Shell {
             if screen == Screen::Mail {
                 self.mail.update(cx, |mail, cx| mail.refresh(cx));
             }
+            if screen == Screen::Mocks {
+                self.mocks.update(cx, |mocks, cx| mocks.refresh(cx));
+            }
             if screen == Screen::Webhooks {
                 self.webhooks.update(cx, |webhooks, cx| webhooks.refresh(window, cx));
             }
