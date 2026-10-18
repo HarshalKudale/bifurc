@@ -64,7 +64,7 @@ const GRPC_CODES: [&str; 17] = [
     "UNAUTHENTICATED",
 ];
 
-fn reason(status: u16) -> &'static str {
+pub(crate) fn reason(status: u16) -> &'static str {
     match status {
         200 => "OK",
         201 => "Created",

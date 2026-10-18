@@ -574,7 +574,10 @@ fn skeleton_body(spec: &Value, schema: &Value, at: &mut At) -> Option<Value> {
             at.path = outer;
             Some(Value::Array(element.into_iter().collect()))
         }
-        None if types == ["null"] => Some(Value::Null),
+        // `nullable: true` with nothing else is how OpenAPI 3.0 says a value that is always null.
+        None if types == ["null"] || (types.is_empty() && schema.get("nullable") == Some(&json!(true))) => {
+            Some(Value::Null)
+        }
         _ => None,
     }
 }
@@ -912,6 +915,27 @@ mod tests {
         );
         assert_eq!(only_null["operations"][0]["body"], json!({"a": null, "b": ""}));
         assert_eq!(only_null["basePath"], "");
+    }
+
+    #[test]
+    fn contract_operations_read_a_json_document_as_bifurc_openapi_infer_writes_it() {
+        let doc = json!({"openapi": "3.0.3", "info": {"title": "t", "version": "1"}, "servers": [{"url": "http://h.test:80"}],
+            "paths": {"/orders/{id}": {"get": {"operationId": "g", "parameters": [{"name": "id", "in": "path", "required": true, "schema": {"type": "string"}}],
+                "responses": {"200": {"description": "OK", "content": {"application/json": {"schema": {"type": "object",
+                    "properties": {"id": {"type": "integer"}, "note": {"nullable": true}, "tag": {"type": "string", "nullable": true}, "x": {"type": "number"}},
+                    "required": ["id", "note", "tag"]}}}},
+                    "404": {"description": "Not Found", "content": {"text/html": {}}}}},
+                "delete": {"responses": {"default": {"description": "no recorded response"}}}}}});
+        let got = ops(&serde_json::to_string_pretty(&doc).unwrap());
+        assert_eq!(got["basePath"], "");
+        assert_eq!(got["operations"].as_array().unwrap().len(), 1);
+        let op = &got["operations"][0];
+        assert_eq!(
+            (op["method"].clone(), op["path"].clone(), op["status"].clone()),
+            (json!("GET"), json!("/orders/{id}"), json!(200))
+        );
+        assert_eq!(op["body"], json!({"id": 0, "note": null, "tag": ""}));
+        assert_eq!(op["optional"], json!([".x"]));
     }
 
     #[test]

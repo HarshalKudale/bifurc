@@ -89,6 +89,7 @@ Groups (bifurc <group> --help shows the arguments and options of each verb)
   mail          list | show | last | clear                            Mail the local SMTP sink caught; codes and links
   webhooks      listen | stop | list | show | replay | save | trigger  Receive webhooks locally, optionally forward them
   types         <request> [--lang ts|zod|python|go] [--out f]         Types inferred from a request's responses
+  openapi       infer [--folder f] [--out f] [--title t]             OpenAPI 3 file from saved requests, mocks, captures
   record        start | stop | status | list                           Record proxied traffic of chosen hosts into a cassette
   replay        <cassette> [--passthrough] | stop | status              Serve a recorded cassette instead of the real hosts
 
@@ -749,6 +750,23 @@ samples is optional, null adds `| null`, 1 and 1.5 together are a number, differ
 
 The first line states the source. Python needs 3.11+ (NotRequired). Exit 3 when there is no JSON response yet.";
 
+const OPENAPI: &str = "Usage: bifurc openapi infer [--folder <folder>] [--out <file>] [--title <text>]
+
+Builds an OpenAPI 3.0.3 document (JSON) from the saved REST requests, their recorded and captured answers, and the
+enabled mocks. One operation per method and path ({{id}} and :id segments become {id}); per status, a schema
+merged from every JSON answer seen (a field missing from some is not required, null makes it nullable, 1 and 1.5
+together are a number); a JSON request body gives requestBody; the URL's query gives parameters. A mock with no
+saved request is an operation too; regex mocks are skipped. The first http(s) host seen is `servers[0]`.
+`contract check --openapi <file>` accepts the result.
+
+  --folder <folder>                      Only the requests in this folder and below (and the mocks of their paths)
+  --out <file>                           Write the document there and print
+                                         `saved f.json · 4 operations · 6 responses from 11 samples`
+  --title <text>                         info.title (default \"Bifurc API\")
+  --json                                 {schemaVersion, operations, responses, samples, document}
+
+Without --out the document is printed and nothing else. Exit 3 when there is no request to describe.";
+
 const WEBHOOKS: &str = "Usage: bifurc webhooks <verb>
 
 The engine receives webhooks on a local port (127.0.0.1) and captures each one with its exact headers and raw
@@ -864,6 +882,7 @@ pub fn group_usage(group: &str) -> Option<String> {
         "port" => PORT,
         "mail" => MAIL,
         "types" => TYPES,
+        "openapi" => OPENAPI,
         "webhooks" => WEBHOOKS,
         "record" => RECORD,
         "replay" => REPLAY,
@@ -992,6 +1011,12 @@ pub fn examples(group: &str) -> Option<&'static [&'static str]> {
             r#"bifurc types "Get orders" --python --name Order"#,
             r#"bifurc types "Get orders" --go --json"#,
         ],
+        "openapi" => &[
+            "bifurc openapi infer",
+            "bifurc openapi infer --out openapi.json",
+            "bifurc openapi infer --folder shop --title \"Shop API\" --out shop.json",
+            "bifurc openapi infer --json",
+        ],
         "webhooks" => &[
             "bifurc webhooks listen --name stripe --forward http://api.localhost/webhooks/stripe --detach",
             "bifurc webhooks stop stripe",
@@ -1067,7 +1092,8 @@ pub(crate) mod tests {
     fn every_example_is_a_known_group_and_verb_with_flags_its_help_names() {
         for group in [
             "agent", "curl", "requests", "capture", "mocks", "contract", "flows", "runner", "env", "cookies",
-            "session", "vars", "changes", "claim", "wait", "services", "mail", "webhooks", "types", "record", "replay",
+            "session", "vars", "changes", "claim", "wait", "services", "mail", "webhooks", "types", "openapi",
+            "record", "replay",
         ] {
             let list = examples(group).unwrap_or_else(|| panic!("{group} has no examples"));
             assert!((3..=5).contains(&list.len()), "{group}");
