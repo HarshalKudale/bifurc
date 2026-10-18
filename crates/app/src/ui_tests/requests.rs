@@ -164,3 +164,25 @@ fn a_request_that_cannot_be_loaded_says_so(cx: &mut gpui_kit::TestAppContext) {
     assert!(ui.has("tab-requests-r2"), "the tab opens and reports the failure");
     assert!(!ui.has("send-request"), "there is no editor for a request that did not load");
 }
+
+#[gpui_kit::test]
+fn the_cookies_tab_lists_set_cookies_and_decodes_a_jwt(cx: &mut gpui_kit::TestAppContext) {
+    // A token that expired in 2023: {"alg":"HS256","typ":"JWT"} . {"sub":"1","exp":1700000000,"iat":1699990000}
+    let token =
+        "eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxIiwiZXhwIjoxNzAwMDAwMDAwLCJpYXQiOjE2OTk5OTAwMDB9.c2ln";
+    let mut ui = open_populated(cx);
+    let set_cookie = format!("session={token}; Path=/; HttpOnly, theme=dark; Max-Age=60");
+    ui.fake.reply("request.send", json!({ "status": 200, "headers": { "set-cookie": set_cookie }, "body": "" }));
+    ui.show(Screen::Requests);
+    ui.click("tree-row-r2");
+    ui.click("send-request");
+    ui.click_within("response-sections", 3usize);
+    assert!(ui.has(("cookie-copy", 0usize)) && ui.has(("cookie-copy", 1usize)), "a row for each cookie");
+    assert!(ui.has(("cookie-decode", 0usize)), "the JWT can be decoded");
+    assert!(!ui.has(("cookie-decode", 1usize)), "a plain value cannot");
+    assert!(!ui.has(("cookie-copy-payload", 0usize)));
+    ui.click(("cookie-decode", 0usize));
+    ui.settle();
+    assert!(ui.has(("cookie-decode", 0usize)), "still on the cookies tab");
+    assert!(ui.has(("cookie-copy-payload", 0usize)), "the decoded header and payload are shown");
+}

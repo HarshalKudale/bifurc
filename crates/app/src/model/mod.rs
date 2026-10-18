@@ -5,6 +5,7 @@
 
 pub mod agent;
 pub mod config;
+pub mod cookies;
 pub mod explorer;
 pub mod flow;
 pub mod git;
