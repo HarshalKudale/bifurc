@@ -1,6 +1,57 @@
 {
  "protocolVersion": "1.0.0",
  "commands": {
+  "contract.check": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "mock": {
+     "type": "string"
+    },
+    "folder": {
+     "type": "string"
+    },
+    "all": {
+     "type": "boolean"
+    },
+    "ignore": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     }
+    },
+    "fromCapture": {
+     "type": "boolean"
+    },
+    "fromSnapshot": {
+     "type": "boolean"
+    },
+    "openapi": {
+     "type": "string"
+    },
+    "variables": {
+     "type": "object",
+     "propertyNames": {
+      "type": "string"
+     },
+     "additionalProperties": {
+      "type": "string"
+     }
+    },
+    "environmentId": {
+     "type": "string"
+    },
+    "freshJar": {
+     "type": "boolean"
+    }
+   },
+   "required": [
+    "workspaceId"
+   ],
+   "additionalProperties": false
+  },
   "entity.create": {
    "type": "object",
    "properties": {
@@ -680,6 +731,52 @@
      "additionalProperties": false
     }
    },
+   "additionalProperties": false
+  },
+  "types.generate": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "request": {
+     "type": "string"
+    },
+    "lang": {
+     "type": "string",
+     "enum": [
+      "ts",
+      "zod",
+      "python",
+      "go"
+     ]
+    },
+    "name": {
+     "type": "string"
+    },
+    "send": {
+     "type": "boolean"
+    },
+    "variables": {
+     "type": "object",
+     "propertyNames": {
+      "type": "string"
+     },
+     "additionalProperties": {
+      "type": "string"
+     }
+    },
+    "environmentId": {
+     "type": "string"
+    },
+    "freshJar": {
+     "type": "boolean"
+    }
+   },
+   "required": [
+    "workspaceId",
+    "request"
+   ],
    "additionalProperties": false
   },
   "webhook.fixtures": {
