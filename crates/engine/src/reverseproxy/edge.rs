@@ -173,6 +173,10 @@ async fn route<W: AsyncRead + AsyncWrite + Unpin>(
         return;
     };
     base.workspace_id = Some(str_of(&cfg, "activeWorkspaceId").to_string());
+    // A fault on the host beats everything after it (replay, mocks, the mapping).
+    if crate::faults::apply(out, &mut base, t0).await {
+        return;
+    }
     // A cassette being replayed answers first, for its hosts (as on the forward proxy).
     let target = url::Url::parse(&url).map_or_else(
         |_| req_path.to_string(),

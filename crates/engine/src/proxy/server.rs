@@ -165,7 +165,7 @@ async fn serve<S: AsyncRead + AsyncWrite + Unpin + Send + 'static>(shared: Arc<S
             if let Some((mut tls, request, body)) = intercept_tls(client, &host).await {
                 dispatch_https(&shared, &mut tls, &request, &body, &host, port).await;
             }
-        } else {
+        } else if !crate::faults::tunnel(&mut socket, &host, port).await {
             tcp_tunnel(socket, &host, port, &leftover, Some("HTTP/1.1 200 Connection Established\r\n\r\n")).await;
         }
         return;
@@ -235,11 +235,14 @@ async fn dispatch<W: AsyncRead + AsyncWrite + Unpin>(shared: &Shared, out: &mut 
     };
     let url =
         if raw_target.starts_with("http") { raw_target.to_string() } else { format!("http://{host_header}{req_path}") };
-    let (base, req_body_b64) =
+    let (mut base, req_body_b64) =
         base_entry(id, t0, head, url.clone(), host.clone(), headers.clone(), body, &routing.workspace_id);
     let forwarded = forwarded_headers(&headers, &base.id);
 
     if absolute {
+        if crate::faults::apply(out, &mut base, t0).await {
+            return;
+        }
         let exchange = Exchange {
             routing,
             method: &head.method,
@@ -293,9 +296,12 @@ pub(super) async fn dispatch_https<W: AsyncRead + AsyncWrite + Unpin>(
     let req_path = if head.target.is_empty() { "/".to_string() } else { head.target.clone() };
     let port_suffix = if port == 443 { String::new() } else { format!(":{port}") };
     let url = format!("https://{hostname}{port_suffix}{req_path}");
-    let (base, req_body_b64) =
+    let (mut base, req_body_b64) =
         base_entry(id, t0, head, url.clone(), hostname.to_string(), headers.clone(), body, &routing.workspace_id);
     let forwarded = forwarded_headers(&headers, &base.id);
+    if crate::faults::apply(out, &mut base, t0).await {
+        return;
+    }
 
     let exchange = Exchange {
         routing,
