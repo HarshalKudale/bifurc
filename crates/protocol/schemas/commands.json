@@ -658,6 +658,11 @@
    },
    "additionalProperties": false
   },
+  "webhook.fixtures": {
+   "type": "object",
+   "properties": {},
+   "additionalProperties": false
+  },
   "webhook.list": {
    "type": "object",
    "properties": {},
@@ -715,6 +720,56 @@
      "type": "string"
     }
    },
+   "additionalProperties": false
+  },
+  "webhook.trigger": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "fixture": {
+     "type": "string"
+    },
+    "to": {
+     "type": "string"
+    },
+    "name": {
+     "type": "string"
+    },
+    "vault": {
+     "type": "string"
+    },
+    "secret": {
+     "type": "string"
+    },
+    "patch": {
+     "type": "array",
+     "items": {
+      "type": "object",
+      "properties": {
+       "path": {
+        "type": "array",
+        "items": {
+         "type": [
+          "string",
+          "integer"
+         ]
+        }
+       },
+       "value": {}
+      },
+      "required": [
+       "path"
+      ],
+      "additionalProperties": false
+     }
+    }
+   },
+   "required": [
+    "workspaceId",
+    "fixture"
+   ],
    "additionalProperties": false
   },
   "workspace.add": {
