@@ -1,0 +1,18 @@
+{
+  "scenario.label": "Szenario",
+  "hits": "{count} Treffer",
+  "serve.tooltip": "Aktive Mocks auf einem Port bereitstellen",
+  "serve.title": "Mocks auf einem Port bereitstellen",
+  "serve.confirm": "Bereitstellen",
+  "serve.port": "Port",
+  "serve.port_placeholder": "4010",
+  "serve.fallthrough": "Weiterleiten an",
+  "serve.fallthrough_placeholder": "http://localhost:3000; leer für 404, wenn kein Mock passt",
+  "serve.bad_port": "Der Port ist eine Zahl von 0 bis 65535.",
+  "serve.failed": "Die Mocks konnten nicht bereitgestellt werden",
+  "serve.stop_failed": "Der Mock-Server konnte nicht beendet werden",
+  "server.fallthrough": "leitet weiter an {url}",
+  "server.copy": "URL kopieren",
+  "server.copied": "URL kopiert",
+  "server.stop": "Beenden"
+}
