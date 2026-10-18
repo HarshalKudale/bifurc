@@ -95,6 +95,24 @@ impl SyncInfo {
     }
 }
 
+/// What one policy rule matches, in a line: "env: prod; methods: POST", or "any request".
+fn clause_line(clause: &Value) -> String {
+    let parts: Vec<String> = [
+        ("env", "workspace.policy.env"),
+        ("methods", "workspace.policy.methods"),
+        ("hosts", "workspace.policy.hosts"),
+        ("paths", "workspace.policy.paths"),
+    ]
+    .into_iter()
+    .filter_map(|(key, title)| {
+        let values: Vec<&str> = clause.get(key)?.as_array()?.iter().filter_map(Value::as_str).collect();
+        (!values.is_empty())
+            .then(|| t_with("workspace.policy.part", &[("what", &t(title)), ("values", &values.join(", "))]))
+    })
+    .collect();
+    if parts.is_empty() { t("workspace.policy.anything").to_owned() } else { parts.join("; ") }
+}
+
 fn formats_from(value: &Value) -> Vec<(String, Vec<Format>)> {
     KINDS
         .iter()
@@ -133,6 +151,12 @@ pub struct WorkspaceScreen {
     transferring: Option<&'static str>,
     /// The workspace's cookie jar, as `cookies.list` answers.
     cookies: Value,
+    /// The workspace's policy, as `policy.show` answers.
+    policy: Value,
+    check_method: Entity<InputState>,
+    check_url: Entity<InputState>,
+    /// The last `policy.check` answer.
+    verdict: Option<Value>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -152,6 +176,7 @@ impl WorkspaceScreen {
                     this.load_formats(cx);
                     this.refresh_sync(cx);
                     this.refresh_cookies(cx);
+                    this.refresh_policy(cx);
                 }
                 ModelEvent::WorkspaceSwitched => this.follow_workspace(window, cx),
                 _ => {}
@@ -162,6 +187,8 @@ impl WorkspaceScreen {
                 }
             }),
         ];
+        let check_method = cx.new(|cx| InputState::new(window, cx).default_value("GET"));
+        let check_url = cx.new(|cx| InputState::new(window, cx).placeholder(t("workspace.policy.url_placeholder")));
         let mut this = Self {
             model,
             name,
@@ -174,6 +201,10 @@ impl WorkspaceScreen {
             collision: "keep",
             transferring: None,
             cookies: Value::Null,
+            policy: Value::Null,
+            check_method,
+            check_url,
+            verdict: None,
             _subscriptions: subscriptions,
         };
         this.follow_workspace(window, cx);
@@ -211,6 +242,9 @@ impl WorkspaceScreen {
             self.refresh_sync(cx);
             self.cookies = Value::Null;
             self.refresh_cookies(cx);
+            self.policy = Value::Null;
+            self.verdict = None;
+            self.refresh_policy(cx);
         }
         cx.notify();
     }
@@ -232,6 +266,159 @@ impl WorkspaceScreen {
                 cx.notify();
             }
         });
+    }
+
+    fn refresh_policy(&mut self, cx: &mut Context<Self>) {
+        let model = self.model.read(cx);
+        let workspace_id = model.workspace_id().to_owned();
+        if workspace_id.is_empty() {
+            return;
+        }
+        let client = model.client().clone();
+        let asked = workspace_id.clone();
+        call(&client, cx, "policy.show", json!({ "workspaceId": workspace_id }), move |this, outcome, cx| {
+            if let Ok(shown) = outcome
+                && this.model.read(cx).workspace_id() == asked
+            {
+                this.policy = shown;
+                cx.notify();
+            }
+        });
+    }
+
+    fn check_policy(&mut self, cx: &mut Context<Self>) {
+        let method = self.check_method.read(cx).value().trim().to_ascii_uppercase();
+        let url = self.check_url.read(cx).value().trim().to_owned();
+        if url.is_empty() {
+            return;
+        }
+        let model = self.model.read(cx);
+        let payload = json!({ "workspaceId": model.workspace_id(), "method": method, "url": url });
+        let client = model.client().clone();
+        call(&client, cx, "policy.check", payload, |this, outcome, cx| {
+            match &outcome {
+                Ok(verdict) => this.verdict = Some(verdict.clone()),
+                Err(_) => {
+                    let message = failure(&outcome).unwrap_or_default();
+                    this.report(t_with("workspace.policy.check_failed", &[("message", &message)]), cx);
+                }
+            }
+            cx.notify();
+        });
+    }
+
+    /// Shows the policy file in the system's file manager. The engine names the file, not the folder: it is
+    /// `<data dir>/data/<workspace id>/<file>`.
+    fn reveal_policy(&self, cx: &mut Context<Self>) {
+        let file = self.policy.get("file").and_then(Value::as_str).unwrap_or_default();
+        let model = self.model.read(cx);
+        let path = model.engine().data_dir.join("data").join(model.workspace_id()).join(file);
+        cx.reveal_path(&path);
+    }
+
+    fn policy_page(&self, cx: &mut Context<Self>) -> SettingPage {
+        let this = cx.weak_entity();
+        let file = self.policy.get("file").and_then(Value::as_str).map(str::to_owned);
+        let error = self.policy.get("error").and_then(Value::as_str).map(str::to_owned);
+        let apply_to = self
+            .policy
+            .get("applyTo")
+            .and_then(Value::as_array)
+            .map(|clients| clients.iter().filter_map(Value::as_str).collect::<Vec<_>>().join(", "))
+            .unwrap_or_default();
+        let clauses = self.policy.get("policies").and_then(Value::as_array).cloned().unwrap_or_default();
+        let status = match (&file, &error) {
+            (None, _) => t("workspace.policy.none").to_owned(),
+            (Some(file), None) => t_with("workspace.policy.file", &[("file", file), ("clients", &apply_to)]),
+            (Some(file), Some(error)) => t_with("workspace.policy.invalid", &[("file", file), ("error", error)]),
+        };
+        let (reveal, reload) = (this.clone(), this.clone());
+        let has_file = file.is_some();
+        let source =
+            SettingGroup::new().title(t("workspace.policy.group")).item(SettingItem::render(move |options, _, cx| {
+                let theme = cx.theme().clone();
+                let (reveal, reload) = (reveal.clone(), reload.clone());
+                v_flex().w_full().gap_2().child(div().text_color(theme.muted_foreground).child(status.clone())).child(
+                    h_flex()
+                        .gap_2()
+                        .child(
+                            Button::new("policy-reveal")
+                                .with_size(options.size())
+                                .label(t("workspace.policy.reveal"))
+                                .disabled(!has_file)
+                                .on_click(move |_, _, cx| {
+                                    reveal.update(cx, |this, cx| this.reveal_policy(cx)).ok();
+                                }),
+                        )
+                        .child(
+                            Button::new("policy-reload")
+                                .with_size(options.size())
+                                .label(t("workspace.policy.reload"))
+                                .on_click(move |_, _, cx| {
+                                    reload.update(cx, |this, cx| this.refresh_policy(cx)).ok();
+                                }),
+                        ),
+                )
+            }));
+
+        let mut rules = SettingGroup::new().title(t("workspace.policy.rules"));
+        if clauses.is_empty() {
+            rules = rules.item(Self::fact(t("workspace.policy.no_rules"), String::new(), false, None));
+        }
+        for clause in &clauses {
+            let kind = clause.get("kind").and_then(Value::as_str).unwrap_or_default();
+            let label = match kind {
+                "deny" => t("workspace.policy.kind_deny"),
+                "require_human" => t("workspace.policy.kind_require_human"),
+                "allow_hosts" => t("workspace.policy.kind_allow_hosts"),
+                _ => t("workspace.policy.kind_other"),
+            };
+            let detail = clause_line(clause);
+            let name = clause.get("name").and_then(Value::as_str).unwrap_or_default();
+            rules = rules.item(Self::fact(label, format!("{name}: {detail}"), false, None));
+        }
+
+        let check = this.clone();
+        let (method, url) = (self.check_method.clone(), self.check_url.clone());
+        let verdict = self.verdict.as_ref().map(|verdict| {
+            let text = |key: &str| verdict.get(key).and_then(Value::as_str).unwrap_or_default().to_owned();
+            let decision = match text("decision").as_str() {
+                "allow" => t("workspace.policy.allow"),
+                "require_human" => t("workspace.policy.needs_person"),
+                _ => t("workspace.policy.deny"),
+            };
+            t_with("workspace.policy.verdict", &[("decision", &decision), ("reason", &text("reason"))])
+        });
+        let tester = SettingGroup::new()
+            .title(t("workspace.policy.check_group"))
+            .item(SettingItem::render(move |options, _, cx| {
+                let theme = cx.theme().clone();
+                let check = check.clone();
+                v_flex()
+                    .w_full()
+                    .gap_2()
+                    .child(
+                        h_flex()
+                            .w_full()
+                            .gap_2()
+                            .child(div().w_24().child(Input::new(&method)))
+                            .child(div().flex_1().child(Input::new(&url)))
+                            .child(
+                                Button::new("policy-check")
+                                    .with_size(options.size())
+                                    .label(t("workspace.policy.check"))
+                                    .on_click(move |_, _, cx| {
+                                        check.update(cx, |this, cx| this.check_policy(cx)).ok();
+                                    }),
+                            ),
+                    )
+                    .when_some(verdict.clone(), |this, verdict| {
+                        this.child(div().text_color(theme.muted_foreground).child(verdict))
+                    })
+            }))
+            .footer(|_, _| t("workspace.policy.check_footer"));
+
+        SettingPage::new(t("workspace.page.policy")).icon(IconName::Bot).groups(vec![source, rules, tester])
     }
 
     fn refresh_cookies(&mut self, cx: &mut Context<Self>) {
@@ -1044,6 +1231,7 @@ impl Render for WorkspaceScreen {
             self.sync_page(cx),
             self.cookies_page(cx),
             self.transfer_page(cx),
+            self.policy_page(cx),
             self.danger_page(cx),
         ];
         div()
@@ -1056,6 +1244,14 @@ impl Render for WorkspaceScreen {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_policy_rule_reads_as_what_it_matches() {
+        let rule =
+            json!({"name": "x", "kind": "deny", "env": ["prod"], "methods": ["POST", "PUT"], "hosts": [], "paths": []});
+        assert_eq!(clause_line(&rule), "Environments: prod; Methods: POST, PUT");
+        assert_eq!(clause_line(&json!({"name": "y", "kind": "deny"})), "any request");
+    }
 
     #[test]
     fn formats_are_listed_in_the_order_of_the_kinds() {
