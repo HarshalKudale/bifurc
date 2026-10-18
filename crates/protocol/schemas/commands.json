@@ -536,6 +536,27 @@
    },
    "additionalProperties": false
   },
+  "claims.release": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "ids": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     }
+    },
+    "force": {
+     "type": "boolean"
+    }
+   },
+   "required": [
+    "ids"
+   ],
+   "additionalProperties": false
+  },
   "claims.set": {
    "type": "object",
    "properties": {
@@ -549,6 +570,9 @@
      "type": "string"
     },
     "release": {
+     "type": "boolean"
+    },
+    "force": {
      "type": "boolean"
     }
    },

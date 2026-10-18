@@ -300,6 +300,7 @@ async fn delete_entity_core(kind: &CrudKind, id: &str) -> Result<Value> {
 
     let mut cfg = load_config();
     let ws_id = str_of(&cfg, "activeWorkspaceId").to_string();
+    claims::guard(&ws_id, id)?;
     if let Some(version) = entity_lock(&ws_id, kind.kind, id) {
         return Err(stamp::update_required(&version));
     }
@@ -382,10 +383,11 @@ pub fn register(registry: &mut CommandRegistry) {
         };
         let entity = params.get("entity").unwrap_or(&Value::Null);
         let (ws_id, id) = (workspace_of(entity, &load_config()), str_of(entity, "id").to_string());
+        claims::guard(&ws_id, &id)?;
         versions::check(&ws_id, kind.kind, &id, truthy(&params, "force"))?;
-        let mut done = update_entity_core(kind, entity)?;
+        let done = update_entity_core(kind, entity)?;
         versions::wrote(&ws_id, kind.kind, &id);
-        claims::annotate(&ws_id, &id, &mut done);
+
         Ok(done)
     });
 

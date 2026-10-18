@@ -316,11 +316,23 @@
    "workspaceId": 1
   }
  },
+ "claims.release": {
+  "valid": {
+   "ids": [
+    "m1"
+   ],
+   "force": true
+  },
+  "invalid": {
+   "ids": "m1"
+  }
+ },
  "claims.set": {
   "valid": {
    "kind": "mocks",
    "id": "m1",
-   "release": true
+   "release": true,
+   "force": true
   },
   "invalid": {
    "kind": "mocks"

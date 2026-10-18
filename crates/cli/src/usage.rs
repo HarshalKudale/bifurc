@@ -68,7 +68,7 @@ Groups (bifurc <group> --help shows the arguments and options of each verb)
   cookies       list | set | clear | configure                       The cookie jar of the workspace's requests
   session       show | reset                                          Your named session: cookies, variables, environment
   changes       [--since <seq|time>] [--mine]                         What others changed since you last asked
-  claim         [--release] <request|mock|flow|env> <name>            Mark an item you are editing (30 minutes)
+  claim         [--release|--force] <request|mock|flow|env> <name>   Lock an item you are editing (30 minutes)
   claims                                                              The live claims
   vars          list | set | clear                                    The runtime variables of the session
   sync          status | changes | pull | push | commit | diff | discard | confirm | restore
@@ -607,15 +607,17 @@ Name the session with --session <name> or BIFURC_SESSION; without one the cursor
   --mine                                 Include the changes this session made itself
   --json                                 {schemaVersion, changes: [{seq, ts, kind, id, name, action, fields, by}], cursor}";
 
-const CLAIM: &str = "Usage: bifurc claim [--release] <request|mock|flow|env> <name> | bifurc claims
+const CLAIM: &str = "Usage: bifurc claim [--release] [--force] <request|mock|flow|env> <name> | bifurc claims
 
-Tell the other agents which item you are editing. Advisory only, nothing is blocked: when someone else updates
-a claimed item the update goes through and prints `bifurc: warning: \"Get orders\" is claimed by session:frontend
-(3m ago)` on stderr (exit code unchanged). Claims live in the engine's memory and lapse after 30 minutes;
-claiming again renews. Deleting the item drops its claim. Name the session with --session or BIFURC_SESSION.
+Lock an item you are editing. Others can still read and use it (show, send, run) but their update, delete or
+enable/disable is refused with exit 2 naming the holder. Your own writes renew the claim; it lapses 30 minutes
+after the last one, is released with --release, or when the desktop app that made it disconnects. Claiming an
+item someone else holds is refused unless --force (take over; the old holder sees it in `changes`). Deleting
+the item drops its claim. Unnamed runs all share the holder `cli`, so they never lock each other: name the
+session with --session or BIFURC_SESSION to be told apart. Claims live in the engine's memory.
 
   claim <kind> <name>                    `claimed mock \"Get orders\"`, or `… — was held by session:frontend 3m ago`
-  claim --release <kind> <name>          `released mock \"Get orders\"` (anyone may release)
+  claim --release <kind> <name>          `released mock \"Get orders\"` (only the holder, else --force)
   claims                                 One line per claim: `mock  \"Get orders\"  by session:backend  3m ago`
   --json                                 {schemaVersion, claim, previous} / {schemaVersion, claims: [{id, kind, name, by, ts}]}";
 
