@@ -19,7 +19,7 @@ use crate::{
 const CAPTURE_WINDOW: u64 = 500;
 const MAX_CAPTURES: usize = 20;
 
-fn is_2xx(status: u16) -> bool {
+pub(crate) fn is_2xx(status: u16) -> bool {
     (200..300).contains(&status)
 }
 
@@ -29,7 +29,7 @@ fn json_of(side: &Side) -> Option<Value> {
 }
 
 /// A response-history entry (`response.history`): status, headers as an object, body as text or base64.
-fn history_side(entry: &Value) -> Side {
+pub(crate) fn history_side(entry: &Value) -> Side {
     let status = entry["status"].as_u64().unwrap_or(0) as u16;
     let content_type = entry["headers"]
         .as_object()
@@ -39,6 +39,45 @@ fn history_side(entry: &Value) -> Side {
     let body = entry["body"].as_str().unwrap_or_default();
     let raw = if entry["encoding"] == "base64" { STANDARD.decode(body).unwrap_or_default() } else { body.into() };
     Side::new(status, content_type, &[], raw)
+}
+
+/// The recorded responses of a saved request (`response.history`), whatever their status.
+pub(crate) fn history_sides(ctx: &mut Context, workspace: &str, id: &str) -> Result<Vec<Side>> {
+    let history = ctx.request("response.history", json!({ "workspaceId": workspace, "id": id }))?;
+    Ok(history["entries"].as_array().into_iter().flatten().map(history_side).collect())
+}
+
+/// The newest captured calls (summaries), to match against several requests with [`capture_sides`].
+pub(crate) fn recent_captures(ctx: &mut Context, workspace: &str) -> Result<Value> {
+    capture::summaries(ctx, workspace, json!({ "last": CAPTURE_WINDOW }))
+}
+
+/// The answers captured for the calls with the same method and path as `request` (mock-served ones skipped)
+/// whose status `keep` accepts, newest first.
+// shortcut: only the newest MAX_CAPTURES matches of the last CAPTURE_WINDOW captures are read; raise them if a
+// busy proxy buries older samples.
+pub(crate) fn capture_sides(
+    ctx: &mut Context,
+    workspace: &str,
+    all: &Value,
+    request: &Value,
+    keep: fn(u16) -> bool,
+) -> Result<Vec<Side>> {
+    let (method, path) = (text(request, "method"), path_of(&text(request, "url")));
+    let hits = all["entries"].as_array().into_iter().flatten().filter(|entry| {
+        entry["via"] != "mock"
+            && entry["status"].as_u64().is_some_and(|s| keep(s as u16))
+            && text(entry, "method").eq_ignore_ascii_case(&method)
+            && paths_match(&path, &path_of(&text(entry, "url")))
+    });
+    let mut sides = Vec::new();
+    for entry in hits.take(MAX_CAPTURES) {
+        let got = ctx.request("capture.get", json!({ "workspaceId": workspace, "id": text(entry, "id") }))?;
+        if let Some(entry) = got.get("entry").filter(|e| e.is_object()) {
+            sides.push(response_side(&Response::from_capture(entry)));
+        }
+    }
+    Ok(sides)
 }
 
 pub fn types(ctx: &mut Context, sub: Option<&str>) -> Result<String> {
@@ -63,25 +102,9 @@ pub fn types(ctx: &mut Context, sub: Option<&str>) -> Result<String> {
     let (id, name) = (id_of(&request), text(&request, "name"));
 
     let mut samples: Vec<Value> = Vec::new();
-    let history = ctx.request("response.history", json!({ "workspaceId": workspace, "id": id }))?;
-    samples.extend(history["entries"].as_array().into_iter().flatten().filter_map(|e| json_of(&history_side(e))));
-
-    // shortcut: only the newest MAX_CAPTURES of the last CAPTURE_WINDOW captures are read; raise them if a busy
-    // proxy buries older samples.
-    let (method, path) = (text(&request, "method"), path_of(&text(&request, "url")));
-    let all = capture::summaries(ctx, &workspace, json!({ "last": CAPTURE_WINDOW }))?;
-    let hits = all["entries"].as_array().into_iter().flatten().filter(|entry| {
-        entry["via"] != "mock"
-            && entry["status"].as_u64().is_some_and(|s| is_2xx(s as u16))
-            && text(entry, "method").eq_ignore_ascii_case(&method)
-            && paths_match(&path, &path_of(&text(entry, "url")))
-    });
-    for entry in hits.take(MAX_CAPTURES) {
-        let got = ctx.request("capture.get", json!({ "workspaceId": workspace, "id": text(entry, "id") }))?;
-        if let Some(entry) = got.get("entry").filter(|e| e.is_object()) {
-            samples.extend(json_of(&response_side(&Response::from_capture(entry))));
-        }
-    }
+    samples.extend(history_sides(ctx, &workspace, &id)?.iter().filter_map(json_of));
+    let all = recent_captures(ctx, &workspace)?;
+    samples.extend(capture_sides(ctx, &workspace, &all, &request, is_2xx)?.iter().filter_map(json_of));
 
     if args.has("send") {
         let response = requests::send_saved(ctx, &workspace, &id)?;

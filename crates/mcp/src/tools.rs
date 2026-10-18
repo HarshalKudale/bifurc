@@ -1502,6 +1502,20 @@ pub fn catalog() -> Vec<Tool> {
             ],
         },
         Row {
+            name: "openapi_infer",
+            words: &["openapi", "infer"],
+            summary: "Build an API description document (3.0.3, JSON) from the saved requests, their recorded answers, captures and mocks.",
+            details: "One operation per method and path ({{id}} and :id become {id}); responses by status with a schema merged from every JSON answer seen (a field missing from some is not required, null makes it nullable); a JSON request body and the URL's query become requestBody and parameters. Without `out` returns the document; with it writes the file and returns a one-line summary. Exit 3 when there is nothing to describe.",
+            effect: Effect::Runs,
+            upfront: false,
+            scoped: true,
+            params: vec![
+                text("folder", "folder", "Only the requests in this folder and below."),
+                text("out", "out", "Write the document to this file."),
+                text("title", "title", "info.title (default Bifurc API)."),
+            ],
+        },
+        Row {
             name: "record",
             words: &["record"],
             summary: "Record the real answers of chosen hosts, as they pass through the proxy, into a cassette: start, stop, status, list.",
