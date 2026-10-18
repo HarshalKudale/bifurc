@@ -193,27 +193,14 @@ fn split_origin(url: &str) -> (&str, &str) {
     url.split_at(end)
 }
 
-/// Where a webhook is sent again: `--to` (host only: the entry's path and query go on it; with a path of its
-/// own: used whole), else the listener's forward URL, else the URL it came in on.
-fn replay_target(entry_url: &str, forward: Option<&str>, to: Option<&str>) -> Result<String> {
+/// A request URL aimed at a listener's forward URL: the request's path is appended to the forward URL's path,
+/// like the listener's own forwarding.
+fn forwarded_url(entry_url: &str, forward: &str) -> String {
     let path = match split_origin(entry_url).1 {
         "" => "/",
         path => path,
     };
-    if let Some(to) = to {
-        let (origin, rest) = split_origin(to);
-        if !to.contains("://") || origin.ends_with("://") {
-            return Err(CliError::usage(format!("--to is a URL like http://127.0.0.1:4021, not \"{to}\"")));
-        }
-        return Ok(if matches!(rest, "" | "/") { format!("{origin}{path}") } else { to.to_string() });
-    }
-    // Like the listener's own forwarding: the request's path is appended to the forward URL's path.
-    Ok(match forward {
-        Some(forward) => {
-            format!("{}{path}", forward.split(['?', '#']).next().unwrap_or_default().trim_end_matches('/'))
-        }
-        None => entry_url.to_string(),
-    })
+    format!("{}{path}", forward.split(['?', '#']).next().unwrap_or_default().trim_end_matches('/'))
 }
 
 /// `webhooks replay <id> [--to <url>]`: the captured request again, with its method, headers and raw body bytes.
@@ -225,42 +212,18 @@ fn replay(ctx: &mut Context) -> Result<String> {
     let wanted = need(ctx.args.positional(2), "the webhook's id (see: bifurc webhooks list)")?;
     let workspace = workspace_id(ctx)?;
     let id = webhook_id(ctx, &workspace, &wanted)?;
-    let got = ctx.request("capture.get", json!({ "workspaceId": workspace, "id": id }))?;
-    let Some(entry) = got.get("entry").filter(|entry| entry.is_object()) else {
-        return Err(CliError::not_found(format!("no webhook \"{id}\" (see: bifurc webhooks list)")));
-    };
-    let to = ctx.args.flag("to").map(str::to_string);
-    // The entry's own forward (new entries); older entries fall back to the running listener's.
-    let mut forward = entry["forward"].as_str().map(str::to_string);
-    let mut stopped = None;
-    if to.is_none()
-        && forward.is_none()
-        && let Some(name) = entry["target"].as_str().and_then(|t| t.strip_prefix("webhook:"))
-    {
-        let listeners = ctx.request("webhook.list", json!({}))?;
-        let running =
-            listeners["listeners"].as_array().into_iter().flatten().find(|l| l["name"].as_str() == Some(name));
-        forward = running.and_then(|l| l["forward"].as_str().map(str::to_string));
-        if running.is_none() {
-            stopped = Some(name.to_string());
-        }
+    let mut payload = json!({ "workspaceId": workspace, "id": id });
+    if let Some(to) = ctx.args.flag("to") {
+        payload["to"] = json!(to);
     }
-    let url = replay_target(&js_template(entry.get("url")), forward.as_deref(), to.as_deref())?;
-    // The body was read whole (no chunking), and the HTTP client sets its own host and length.
-    let headers: serde_json::Map<String, Value> = entry["reqHeaders"]
-        .as_object()
-        .into_iter()
-        .flatten()
-        .filter(|(name, _)| !["host", "content-length", "transfer-encoding"].contains(&name.to_lowercase().as_str()))
-        .map(|(name, value)| (name.clone(), json!(js_template(Some(value)))))
-        .collect();
-    send(ctx, &js_template(entry.get("method")), &url, &headers, entry["reqBody"].as_str().unwrap_or_default()).map_err(
-        |err| match (stopped, err.code()) {
-            // Only a listener without a stored forward lands here: its own port is what refused.
-            (Some(name), 4) => CliError::network(format!("{err}; the listener \"{name}\" is stopped, use --to <url>")),
-            _ => err,
-        },
-    )
+    let started = Instant::now();
+    let mut sent = ctx.request("webhook.replay", payload).map_err(|err| match err {
+        CliError::Engine { code, message } if code == "BAD_REQUEST" => CliError::usage(message),
+        CliError::Engine { code, message } if code == "NOT_FOUND" => CliError::not_found(message),
+        other => other,
+    })?;
+    sent["durationMs"] = json!(started.elapsed().as_millis() as u64);
+    present(ctx, &Response::from_rest(&sent))
 }
 
 /// Send `method url` with these headers and a base64 body through `request.replay` and print the answer.
@@ -494,7 +457,7 @@ fn save(ctx: &mut Context) -> Result<String> {
     // Aim it at the handler the listener forwarded to, not the listener's own (short-lived) port.
     let got = ctx.request("capture.get", json!({ "workspaceId": workspace, "id": id }))?;
     if let (Some(forward), Some(url)) = (got["entry"]["forward"].as_str(), entity["url"].as_str()) {
-        entity["url"] = json!(replay_target(url, Some(forward), None)?);
+        entity["url"] = json!(forwarded_url(url, forward));
     }
     if let Some(name) = ctx.args.flag("name") {
         entity["name"] = json!(name);
@@ -626,81 +589,31 @@ mod tests {
     }
 
     #[test]
-    fn the_replay_goes_to_the_forward_url_else_the_original_or_to() {
-        let came = "http://127.0.0.1:4020/hooks/a?x=1";
-        assert_eq!(replay_target(came, None, None).unwrap(), came);
-        assert_eq!(
-            replay_target(came, Some("http://api.localhost/webhooks/stripe/?y=2"), None).unwrap(),
-            "http://api.localhost/webhooks/stripe/hooks/a?x=1"
-        );
-        for host_only in ["http://127.0.0.1:4021", "http://127.0.0.1:4021/"] {
-            assert_eq!(
-                replay_target(came, Some("http://f.test"), Some(host_only)).unwrap(),
-                "http://127.0.0.1:4021/hooks/a?x=1"
-            );
-        }
-        assert_eq!(replay_target(came, None, Some("https://app.test/in?z=1")).unwrap(), "https://app.test/in?z=1");
-        assert_eq!(replay_target("http://h:1", None, Some("http://app.test")).unwrap(), "http://app.test/");
-        assert_eq!(replay_target(came, None, Some("localhost:3000")).unwrap_err().code(), 2);
-    }
-
-    #[test]
-    fn replay_sends_the_raw_body_and_headers_unchanged() {
-        use base64::{Engine as _, engine::general_purpose::STANDARD};
-        let raw = [0xff, 0xfe, 0x00, 0x80, b'{', 0xc3, 0xa9];
-        let mut entry = hook("mg1a1111", Some("stripe"), "webhook");
-        entry["reqBody"] = json!(STANDARD.encode(raw));
-        entry["reqHeaders"] = json!({"Host": "127.0.0.1:4020", "Content-Length": "7", "stripe-signature": "t=1,v1=ab",
-                                     "x-dup": "a, b", "content-type": "application/octet-stream"});
+    fn replay_asks_the_engine_and_prints_its_answer_as_before() {
         let reply = json!({"status": 200, "headers": {"content-type": "application/json"}, "body": STANDARD.encode("{\"ok\":true}")});
         let mut answers = buffer();
-        answers.extend([
-            ("capture.get", Ok(json!({"entry": entry}))),
-            ("webhook.list", Ok(json!({"listeners": [{"name": "stripe", "forward": "http://api.localhost/in"}]}))),
-            ("request.replay", Ok(reply)),
-        ]);
-        let (out, calls, _) = go(&["webhooks", "replay", "1111"], answers.clone(), vec![]);
-        assert!(out.unwrap().starts_with("200 OK"));
-        let sent = &payloads(&calls, "request.replay")[0];
-        assert_eq!(sent["url"], "http://api.localhost/in/hooks/a?x=1");
-        assert_eq!(sent["method"], "POST");
-        assert_eq!(sent["body"], STANDARD.encode(raw));
-        assert_eq!(
-            sent["headers"],
-            json!({"stripe-signature": "t=1,v1=ab", "x-dup": "a, b", "content-type": "application/octet-stream"})
-        );
-        // --to skips the listener lookup.
-        let (_, calls, _) =
+        answers.push(("webhook.replay", Ok(reply)));
+        let (out, calls, _) =
             go(&["webhooks", "replay", "1111", "--to", "http://127.0.0.1:4021"], answers.clone(), vec![]);
-        assert!(payloads(&calls, "webhook.list").is_empty());
-        assert_eq!(payloads(&calls, "request.replay")[0]["url"], "http://127.0.0.1:4021/hooks/a?x=1");
-        answers.insert(0, ("request.replay", Err(CliError::network("refused"))));
-        let (out, _, _) = go(&["webhooks", "replay", "1111"], answers.clone(), vec![]);
-        assert_eq!(out.unwrap_err().code(), 4);
-        // A stopped listener with no stored forward: the refusal says so.
-        answers.retain(|(action, _)| *action != "webhook.list");
-        answers.push(("webhook.list", Ok(json!({"listeners": []}))));
-        let (out, _, _) = go(&["webhooks", "replay", "1111"], answers, vec![]);
-        let err = out.unwrap_err();
-        assert_eq!(err.code(), 4);
-        assert!(err.line().contains("\"stripe\" is stopped, use --to <url>"), "{}", err.line());
-    }
-
-    #[test]
-    fn replay_uses_the_forward_stored_on_the_entry_without_the_listener() {
-        use base64::{Engine as _, engine::general_purpose::STANDARD};
-        let mut entry = hook("mg1a1111", Some("stripe"), "webhook");
-        entry["forward"] = json!("http://api.localhost/in");
-        entry["reqBody"] = json!(STANDARD.encode("{}"));
-        let reply = json!({"status": 200, "headers": {}, "body": ""});
-        let mut answers = buffer();
-        answers.extend([("capture.get", Ok(json!({"entry": entry}))), ("request.replay", Ok(reply))]);
-        let (out, calls, _) = go(&["webhooks", "replay", "1111"], answers.clone(), vec![]);
-        out.unwrap();
-        assert!(payloads(&calls, "webhook.list").is_empty());
-        assert_eq!(payloads(&calls, "request.replay")[0]["url"], "http://api.localhost/in/hooks/a?x=1");
-        let (_, calls, _) = go(&["webhooks", "replay", "1111", "--to", "http://127.0.0.1:4021"], answers, vec![]);
-        assert_eq!(payloads(&calls, "request.replay")[0]["url"], "http://127.0.0.1:4021/hooks/a?x=1");
+        assert!(out.unwrap().starts_with("200 OK"));
+        assert_eq!(
+            payloads(&calls, "webhook.replay"),
+            [json!({"workspaceId": "w1", "id": "mg1a1111", "to": "http://127.0.0.1:4021"})]
+        );
+        let refused = |code: &str, message: &str| Err(CliError::Engine { code: code.into(), message: message.into() });
+        for (code, exit, line) in [
+            ("BAD_REQUEST", 2, "bifurc: --to is a URL"),
+            ("NOT_FOUND", 3, "bifurc: no webhook"),
+            ("UPSTREAM_FAILED", 4, "bifurc: UPSTREAM_FAILED: refused"),
+        ] {
+            let mut answers = buffer();
+            answers.push((
+                "webhook.replay",
+                refused(code, line.trim_start_matches("bifurc: UPSTREAM_FAILED: ").trim_start_matches("bifurc: ")),
+            ));
+            let err = go(&["webhooks", "replay", "1111"], answers, vec![]).0.unwrap_err();
+            assert_eq!((err.code(), err.line().as_str()), (exit, line));
+        }
     }
 
     #[test]
