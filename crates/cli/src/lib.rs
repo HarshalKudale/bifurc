@@ -26,6 +26,7 @@ pub mod flowsteps;
 pub mod format;
 pub mod health;
 pub mod infer;
+pub mod jwt;
 pub mod locate;
 pub mod logtrace;
 pub mod mail;

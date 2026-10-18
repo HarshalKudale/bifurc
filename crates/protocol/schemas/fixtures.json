@@ -1048,6 +1048,13 @@
    "blobId": "blob_test"
   }
  },
+ "jwt.mint": {
+  "valid": {
+   "workspaceId": "x",
+   "vault": "x"
+  },
+  "invalid": {}
+ },
  "mail.clear": {
   "valid": {},
   "invalid": {
