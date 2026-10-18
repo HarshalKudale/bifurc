@@ -43,6 +43,7 @@ use crate::{
         environments::EnvironmentsScreen,
         flows::FlowsScreen,
         healthbar::HealthBarScreen,
+        mail::MailScreen,
         mappings::MappingsScreen,
         mocks::MocksScreen,
         onboarding::Onboarding,
@@ -89,6 +90,7 @@ pub struct Shell {
     healthbar: Entity<HealthBarScreen>,
     proxy_rules: Entity<ProxyRulesScreen>,
     capture: Entity<CaptureScreen>,
+    mail: Entity<MailScreen>,
     mappings: Entity<MappingsScreen>,
     environments: Entity<EnvironmentsScreen>,
     flows: Entity<FlowsScreen>,
@@ -114,6 +116,7 @@ impl Shell {
         let healthbar = cx.new(|cx| HealthBarScreen::new(model.clone(), window, cx));
         let proxy_rules = cx.new(|cx| ProxyRulesScreen::new(model.clone(), window, cx));
         let capture = cx.new(|cx| CaptureScreen::new(model.clone(), window, cx));
+        let mail = cx.new(|cx| MailScreen::new(model.clone(), window, cx));
         let mappings = cx.new(|cx| MappingsScreen::new(model.clone(), window, cx));
         let environments = cx.new(|cx| EnvironmentsScreen::new(model.clone(), window, cx));
         let flows = cx.new(|cx| FlowsScreen::new(model.clone(), window, cx));
@@ -139,6 +142,7 @@ impl Shell {
             cx.observe(&services, |_, _, cx| cx.notify()),
             cx.observe(&healthbar, |_, _, cx| cx.notify()),
             cx.observe(&capture, |_, _, cx| cx.notify()),
+            cx.observe(&mail, |_, _, cx| cx.notify()),
             cx.subscribe_in(&capture, window, Self::on_capture_event),
         ];
 
@@ -161,6 +165,7 @@ impl Shell {
             healthbar,
             proxy_rules,
             capture,
+            mail,
             mappings,
             environments,
             flows,
@@ -248,6 +253,7 @@ impl Shell {
             | ModelEvent::CookiesChanged
             | ModelEvent::DevServiceChanged(_)
             | ModelEvent::DevServiceOutput(_)
+            | ModelEvent::MailChanged(_)
             | ModelEvent::EngineRestarted
             | ModelEvent::ConfigPatched
             | ModelEvent::EntityReverted(_) => {}
@@ -307,6 +313,7 @@ impl Shell {
             Screen::HealthBar => Some(self.healthbar.clone().into()),
             Screen::ProxyRules => Some(self.proxy_rules.clone().into()),
             Screen::Capture => Some(self.capture.clone().into()),
+            Screen::Mail => Some(self.mail.clone().into()),
         }
     }
 
@@ -316,6 +323,9 @@ impl Shell {
             self.sync_right_sidebar(window, cx);
             if screen == Screen::Services {
                 self.services.update(cx, |services, cx| services.refresh_dev(cx));
+            }
+            if screen == Screen::Mail {
+                self.mail.update(cx, |mail, cx| mail.refresh(cx));
             }
         }
         cx.notify();

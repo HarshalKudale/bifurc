@@ -7,6 +7,7 @@ pub mod environments;
 pub mod flows;
 pub mod healthbar;
 pub mod licenses;
+pub mod mail;
 pub mod mappings;
 pub mod mocks;
 pub mod onboarding;
