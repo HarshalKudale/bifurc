@@ -61,6 +61,15 @@ enum TabKey {
     Draft(u64),
 }
 
+impl TabKey {
+    fn saved_id(&self) -> Option<&str> {
+        match self {
+            TabKey::Saved(id) => Some(id),
+            TabKey::Draft(_) => None,
+        }
+    }
+}
+
 struct OpenTab {
     key: TabKey,
     editor: Entity<MockEditor>,
@@ -662,6 +671,8 @@ impl MocksScreen {
                 self.closed.push(id.clone());
             }
         }
+        let ids: Vec<String> = keys.iter().filter_map(|key| key.saved_id().map(str::to_owned)).collect();
+        self.model.update(cx, |model, cx| model.release_claims(&ids, cx));
         self.tabs.retain(|tab| !keys.contains(&tab.key));
         let next = match front.and_then(|key| self.tabs.iter().position(|tab| tab.key == key)) {
             Some(ix) => Some(ix),

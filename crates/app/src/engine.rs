@@ -10,7 +10,10 @@ use bifurc_engine_client::{ClientError, EngineClient, EngineError, Hello, Runtim
 use gpui_kit::{AppContext as _, AsyncApp, Context, Global, Window};
 use serde_json::{Value, json};
 
-use crate::i18n::{has, t, t_with};
+use crate::{
+    app_model::ModelHandle,
+    i18n::{has, t, t_with},
+};
 
 /// A connected engine.
 ///
@@ -131,12 +134,55 @@ pub fn call<V: 'static>(
     then: impl FnOnce(&mut V, Result<Value, ClientError>, &mut Context<V>) + 'static,
 ) {
     let client = client.clone();
-    let request = cx.background_spawn(async move { client.call(action, payload).await });
+    let claim = claim_for_write(action, &payload, cx);
+    let request = cx.background_spawn(send(client, action, payload, claim));
     cx.spawn(async move |this, cx: &mut AsyncApp| {
         let outcome = request.await;
+        cx.update(|cx| heard_refusal(&outcome, cx));
         this.update(cx, |this, cx| then(this, outcome, cx)).ok();
     })
     .detach();
+}
+
+/// The `claims.set` that must precede this call: the app claims what it edits before the first write of a
+/// saved entity, so an agent cannot edit it under a person. Later writes renew the claim by themselves (the
+/// engine's guard does), so nothing is sent while the app holds it.
+fn claim_for_write(action: &str, payload: &Value, cx: &gpui_kit::App) -> Option<Value> {
+    if action != "entity.update" {
+        return None;
+    }
+    let id = payload.pointer("/entity/id")?.as_str()?;
+    let kind = payload.get("kind")?.as_str()?;
+    let model = cx.try_global::<ModelHandle>()?.0.upgrade()?;
+    let model = model.read(cx);
+    (!model.claims().held_by_me(id)).then(|| json!({ "workspaceId": model.workspace_id(), "id": id, "kind": kind }))
+}
+
+/// The call, after its claim; a claim someone else holds refuses the write the same way the engine would.
+async fn send(
+    client: EngineClient,
+    action: &'static str,
+    payload: Value,
+    claim: Option<Value>,
+) -> Result<Value, ClientError> {
+    if let Some(claim) = claim {
+        client.call("claims.set", claim).await?;
+    }
+    client.call(action, payload).await
+}
+
+/// A refusal because another session holds the entity is told to the model, which then shows the entity as locked.
+fn heard_refusal(outcome: &Result<Value, ClientError>, cx: &mut gpui_kit::App) {
+    let Err(ClientError::Engine(error)) = outcome else { return };
+    if error.key() != Some("claims.locked") {
+        return;
+    }
+    let (Some(params), Some(model)) = (error.params(), cx.try_global::<ModelHandle>().and_then(|h| h.0.upgrade()))
+    else {
+        return;
+    };
+    let params = Value::Object(params.clone());
+    model.update(cx, |model, cx| model.note_locked(&params, cx));
 }
 
 /// The failure of a command, whether the call failed or the engine answered `{ ok: false, error }`.
@@ -339,9 +385,11 @@ pub fn call_in<V: 'static>(
     then: impl FnOnce(&mut V, Result<Value, ClientError>, &mut Window, &mut Context<V>) + 'static,
 ) {
     let client = client.clone();
-    let request = cx.background_spawn(async move { client.call(action, payload).await });
+    let claim = claim_for_write(action, &payload, cx);
+    let request = cx.background_spawn(send(client, action, payload, claim));
     cx.spawn_in(window, async move |this, cx| {
         let outcome = request.await;
+        cx.update(|_, cx| heard_refusal(&outcome, cx)).ok();
         this.update_in(cx, |this, window, cx| then(this, outcome, window, cx)).ok();
     })
     .detach();
