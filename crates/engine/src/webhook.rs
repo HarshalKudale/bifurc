@@ -97,6 +97,7 @@ async fn handle(listening: Arc<Listening>, bound: SocketAddr, mut socket: TcpStr
         },
         workspace_id: Some(listening.workspace_id.clone()),
         origin: Some("webhook".to_string()),
+        forward: listening.forward.as_ref().map(|u| u.to_string()),
         ..Default::default()
     };
 
@@ -360,7 +361,18 @@ mod tests {
             (Some("proxy"), Some("webhook"), Some(200))
         );
         assert!(!entry["resBody"].as_str().unwrap().is_empty());
+        assert_eq!(entry["forward"], format!("{upstream}/webhooks/stripe"));
         call(&registry, "webhook.stop", json!({ "id": started["id"] })).await.unwrap();
+    }
+
+    #[test]
+    fn an_entry_stored_without_a_forward_still_loads() {
+        let old = json!({ "id": "a", "ts": 1, "method": "POST", "url": "http://h/", "host": "h", "reqHeaders": {},
+                          "reqBody": "", "status": 200, "via": "webhook", "target": "webhook:x", "durationMs": 1,
+                          "resHeaders": {}, "resBody": "", "resStatus": 200 });
+        let entry: RequestLogEntry = serde_json::from_value(old).unwrap();
+        assert_eq!(entry.forward, None);
+        assert!(serde_json::to_value(&entry).unwrap().get("forward").is_none());
     }
 
     #[tokio::test]
