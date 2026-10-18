@@ -14,7 +14,7 @@ use std::{
 };
 
 use bifurc_engine_client::EngineClient;
-use gpui_base::test_support::{ElementSnapshot, find, snapshots};
+use gpui_base::test_support::{ElementSnapshot, find, scope, snapshots};
 use gpui_kit::component::Root;
 use gpui_kit::{
     AnyWindowHandle, App, AppContext as _, ElementId, Entity, InputEvent as _, KeyDownEvent, KeyUpEvent, Keystroke,
@@ -308,7 +308,21 @@ impl Ui {
 
     /// Clicks the centre of the element with this id, with a real pointer event.
     pub fn click(&mut self, id: impl Into<ElementId>) {
-        self.cx.update_window(self.window, |_, window, cx| click(window, id, cx)).expect("the window is open");
+        self.cx.update_window(self.window, |_, window, cx| click(window, &[], id, cx)).expect("the window is open");
+        self.settle();
+    }
+
+    /// [`click`](Self::click) for an id that several elements share (the tabs of a bar are numbered): the one
+    /// inside the element `within`.
+    pub fn click_within(&mut self, within: impl Into<ElementId>, id: impl Into<ElementId>) {
+        let within = within.into();
+        self.cx
+            .update_window(self.window, |_, window, cx| {
+                draw(window, cx);
+                let within = scope(window, &[], &within);
+                click(window, &within, id, cx)
+            })
+            .expect("the window is open");
         self.settle();
     }
 
@@ -389,14 +403,14 @@ fn draw(window: &mut Window, cx: &mut App) {
     window.draw(cx).clear(cx);
 }
 
-fn click(window: &mut Window, id: impl Into<ElementId>, cx: &mut App) {
+fn click(window: &mut Window, within: &[ElementId], id: impl Into<ElementId>, cx: &mut App) {
     let id = id.into();
     // An overlay that has just opened slides into place on the wall clock, so the target is aimed at once it
     // has stopped moving.
     let mut target = None;
     for _ in 0..40 {
         draw(window, cx);
-        let now = find(window, &[], &id).unwrap_or_else(|| panic!("no element {id:?} on screen"));
+        let now = find(window, within, &id).unwrap_or_else(|| panic!("no element {id:?} on screen"));
         if target.as_ref().is_some_and(|before: &ElementSnapshot| before.bounds() == now.bounds()) {
             break;
         }

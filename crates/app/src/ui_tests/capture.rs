@@ -88,3 +88,71 @@ fn the_cache_switch_tells_the_engine(cx: &mut gpui_kit::TestAppContext) {
     ui.click("capture-disable-cache");
     assert_eq!(ui.fake.sent("capture.setDisableCache"), [json!({"disableCache": false})]);
 }
+
+fn grep_answer(matched: &[&str]) -> serde_json::Value {
+    let lines: Vec<_> = matched
+        .iter()
+        .enumerate()
+        .map(|(seq, text)| json!({"service": "api", "seq": seq, "ts": 1, "stream": "stdout", "text": text, "match": true}))
+        .collect();
+    json!({"lines": lines, "traced": true})
+}
+
+/// Capture with `c1` (traced as `tr-1`) selected and its detail loaded.
+fn open_selected(cx: &mut gpui_kit::TestAppContext) -> crate::test_support::Ui {
+    let mut ui = open_populated(cx);
+    ui.fake.reply(
+        "capture.get",
+        json!({"entry": {"id": "c1", "durationMs": 40, "method": "GET",
+            "url": "https://api.test/users?x=1", "status": 200, "traceId": "tr-1"}}),
+    );
+    ui.show(Screen::Capture);
+    ui.click("capture-c1");
+    ui
+}
+
+#[gpui_kit::test]
+fn the_logs_tab_searches_the_dev_servers_only_when_it_is_opened(cx: &mut gpui_kit::TestAppContext) {
+    let mut ui = open_selected(cx);
+    ui.fake.reply("devservice.grep", grep_answer(&["GET /users tr-1"]));
+    assert!(ui.fake.sent("devservice.grep").is_empty(), "the tab is not open");
+    ui.click_within("capture-section-tabs", 3usize);
+    let asked = ui.fake.sent("devservice.grep");
+    assert_eq!(asked.len(), 1);
+    assert_eq!(asked[0]["needles"], json!(["c1", "tr-1"]));
+    assert_eq!(asked[0]["workspaceId"], "w1");
+    assert!(ui.has(("capture-log", 0usize)) && !ui.has("capture-logs-approximate"));
+}
+
+#[gpui_kit::test]
+fn without_the_id_in_any_line_the_lines_near_the_request_are_shown_as_approximate(cx: &mut gpui_kit::TestAppContext) {
+    let mut ui = open_selected(cx);
+    ui.fake.reply_with("devservice.grep", |payload| {
+        Ok(if payload.get("sinceTs").is_some() {
+            grep_answer(&["GET /users 500"])
+        } else {
+            json!({"lines": [], "traced": false})
+        })
+    });
+    ui.click_within("capture-section-tabs", 3usize);
+    let asked = ui.fake.sent("devservice.grep");
+    assert_eq!(asked.len(), 2);
+    assert_eq!(
+        (&asked[1]["needles"], &asked[1]["sinceTs"], &asked[1]["untilTs"]),
+        (&json!(["/users"]), &json!(-999), &json!(2041))
+    );
+    assert!(ui.has("capture-logs-approximate") && ui.has(("capture-log", 0usize)));
+}
+
+#[gpui_kit::test]
+fn when_nothing_matches_the_logs_tab_says_why(cx: &mut gpui_kit::TestAppContext) {
+    let mut ui = open_selected(cx);
+    ui.fake.reply("devservice.grep", json!({"lines": [], "traced": false}));
+    ui.click_within("capture-section-tabs", 3usize);
+    assert!(ui.has("empty-state") && !ui.has(("capture-log", 0usize)));
+    // The reason follows from the running dev servers (the fixture has one) and whether tracing stamped an id.
+    ui.fake.reply("devservice.list", json!({"services": []}));
+    ui.click("capture-c2");
+    ui.click_within("capture-section-tabs", 3usize);
+    assert!(ui.has("empty-state"));
+}

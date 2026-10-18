@@ -94,5 +94,13 @@
   "import.environment": "Environment",
   "import.keep": "Keep in requests",
   "import.new_vault": "New vault",
-  "import.kept": "Too short for a vault, left in the requests: {names}"
+  "import.kept": "Too short for a vault, left in the requests: {names}",
+  "tab.logs": "Logs",
+  "logs.loading": "Searching the dev servers' output…",
+  "logs.error": "Couldn't search the output",
+  "logs.approximate": "≈ approximate (matched by time and path)",
+  "logs.empty.title": "No log lines for this request",
+  "logs.empty.no_servers": "No dev server is running. Start one on the Services screen to see what it prints for a request.",
+  "logs.empty.not_traced": "Tracing is off for this request: it carries no trace id, so lines can only be matched by time and path.",
+  "logs.empty.none": "No line of the dev servers' output carries this request's trace id."
 }
