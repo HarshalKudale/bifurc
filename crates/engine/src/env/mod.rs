@@ -253,6 +253,10 @@ fn substitute<'a>(text: &str, env: Option<(&str, impl Fn(&str) -> Option<&'a str
         return String::new();
     }
     let Some((ws_id, lookup)) = env else { return resolve_randomizers(text) };
+    // Before the main pass: a quoted value must not be read as a `{{name}}`. Like a vault reference, it needs the
+    // workspace (so not `env.resolveText`'s, nor the REST pipeline's, which mints on the wire copy instead).
+    let minted = crate::jwt::expand(ws_id, text, None, &mut Vec::new());
+    let text = minted.as_str();
     static PATTERN: LazyLock<Regex> =
         LazyLock::new(|| Regex::new(r"\{\{(\w+)(?:\.(\w+))?\}\}").expect("a valid pattern"));
     let pattern = &*PATTERN;

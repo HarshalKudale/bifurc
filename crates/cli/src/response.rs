@@ -42,6 +42,8 @@ pub struct Response {
     pub reauthenticated: bool,
     /// The login was tried and failed: why (the response is the original 401).
     pub reauth_error: Option<String>,
+    /// Things the engine could not do for the request but sent it anyway (a `{{$jwt}}` it could not mint).
+    pub warnings: Vec<String>,
 }
 
 const GRPC_CODES: [&str; 17] = [
@@ -121,6 +123,7 @@ impl Response {
             failure: None,
             reauthenticated: false,
             reauth_error: None,
+            warnings: Vec::new(),
         }
     }
 
@@ -137,6 +140,13 @@ impl Response {
                 passed: test.get("passed").is_some_and(truthy),
                 error: test.get("error").and_then(Value::as_str).filter(|e| !e.is_empty()).map(str::to_string),
             })
+            .collect();
+        response.warnings = result
+            .get("warnings")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .map(|w| js_template(Some(w)))
             .collect();
         response.reauthenticated = result.get("reauthenticated").is_some_and(truthy);
         response.reauth_error = result
@@ -206,6 +216,7 @@ impl Response {
                 .then(|| said("error").or(said("statusMessage")).unwrap_or("the gRPC call failed").to_string()),
             reauthenticated: false,
             reauth_error: None,
+            warnings: Vec::new(),
         }
     }
 }
@@ -395,6 +406,9 @@ pub fn present(ctx: &mut Context, response: &Response) -> Result<String> {
         if response.reauthenticated {
             out["reauthenticated"] = json!(true);
         }
+        if !response.warnings.is_empty() {
+            out["warnings"] = json!(response.warnings);
+        }
         if let Some(error) = &response.reauth_error {
             out["reauthentication"] = json!({ "ok": false, "error": error });
         }
@@ -449,6 +463,7 @@ pub fn present(ctx: &mut Context, response: &Response) -> Result<String> {
                 parts.push("↻ re-authenticated".to_string());
             }
             lines.push(parts.join(" · "));
+            lines.extend(response.warnings.iter().map(|warning| format!("! {warning}")));
             if let Some(why) = &why {
                 lines.push(format!("✗ {why}"));
             }
