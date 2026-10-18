@@ -33,6 +33,7 @@ pub mod mail;
 pub mod mcp;
 pub mod named;
 pub mod openapi;
+pub mod policy;
 pub mod prompt;
 pub mod protocol;
 pub mod record;

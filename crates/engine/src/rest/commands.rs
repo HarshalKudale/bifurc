@@ -28,6 +28,8 @@ fn curl_error(message: &'static str) -> EngineError {
 pub fn register(registry: &mut CommandRegistry) {
     // The result carries no `durationMs` although the protocol declares it; clients time the call themselves.
     registry.register("request.replay", |params: Value, _| async move {
+        // Every REST send ends here, so this is where an agent's call is held to the workspace policy.
+        crate::workspace::policy::guard(str_of(&params, "method"), str_of(&params, "url")).await?;
         let headers: Headers = string_map(&params, "headers").into_iter().collect();
         let response = replay_streamed(
             str_of(&params, "method"),

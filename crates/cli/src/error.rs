@@ -24,6 +24,7 @@ pub(crate) const NOT_FOUND: i32 = 3;
 const NETWORK: i32 = 4;
 const ENGINE_UNREACHABLE: i32 = 5;
 const NEEDS_HUMAN: i32 = 6;
+const BLOCKED: i32 = 7;
 
 /// A result carrying a [`CliError`].
 pub type Result<T> = std::result::Result<T, CliError>;
@@ -59,6 +60,11 @@ impl CliError {
         CliError::Exit(NEEDS_HUMAN, message.into())
     }
 
+    /// A guardrail (`policy.yaml`) stopped the call (exit 7).
+    pub fn blocked(message: impl Into<String>) -> Self {
+        CliError::Exit(BLOCKED, message.into())
+    }
+
     /// The process exit code of this error.
     pub fn code(&self) -> i32 {
         match self {
@@ -66,6 +72,8 @@ impl CliError {
             CliError::Engine { code, .. } => match code.as_str() {
                 "NOT_FOUND" => NOT_FOUND,
                 "TIMEOUT" | "UPSTREAM_FAILED" => NETWORK,
+                "POLICY_BLOCKED" => BLOCKED,
+                "POLICY_APPROVAL" => NEEDS_HUMAN,
                 _ => 1,
             },
             CliError::Message(_) | CliError::Failed(_) => 1,
@@ -111,6 +119,9 @@ mod tests {
         assert_eq!(engine("TIMEOUT").code(), 4);
         assert_eq!(CliError::engine_unreachable("x").code(), 5);
         assert_eq!(CliError::needs_human("x").code(), 6);
+        assert_eq!(CliError::blocked("x").code(), 7);
+        assert_eq!(engine("POLICY_BLOCKED").code(), 7);
+        assert_eq!(engine("POLICY_APPROVAL").code(), 6);
         assert_eq!(engine("ENGINE_ERROR").code(), 1);
     }
 

@@ -36,6 +36,12 @@ pub fn carry<F: Future>(work: F) -> impl Future<Output = F::Output> {
     }
 }
 
+/// The client kind (`desktop-ui`, `cli`, `bifurc-extension`) the running command came from; empty for
+/// engine-internal work with no client.
+pub fn client_kind() -> String {
+    CLIENT.try_with(Clone::clone).unwrap_or_default()
+}
+
 /// `session:<name>` in a named session, else the client kind (`app`, `cli`, `extension`); `engine` when no
 /// client is known. The command line and MCP both connect as `cli`.
 pub fn by() -> String {

@@ -64,6 +64,7 @@ fn resolve_target(params: &Value) -> Result<Target> {
 pub fn register(registry: &mut CommandRegistry) {
     registry.register_sync("sse.connect", |params, _| {
         let target = resolve_target(&params)?;
+        crate::workspace::policy::guard_now(&target.method, &target.url)?;
         ok_result(connect_stream(
             str_of(&params, "workspaceId"),
             str_of(&params, "streamId"),

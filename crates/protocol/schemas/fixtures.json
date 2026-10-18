@@ -1182,6 +1182,21 @@
    "port": "x"
   }
  },
+ "policy.check": {
+  "valid": {
+   "workspaceId": "ws1",
+   "method": "DELETE",
+   "url": "https://api.example.com/orders/1",
+   "env": "prod"
+  },
+  "invalid": {}
+ },
+ "policy.show": {
+  "valid": {
+   "workspaceId": "ws1"
+  },
+  "invalid": {}
+ },
  "proxy.status": {
   "valid": {
    "workspaceId": "ws1"

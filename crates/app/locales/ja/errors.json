@@ -344,5 +344,8 @@
   "updates.too_large": "{url} は更新マニフェストとしては大きすぎます",
   "updates.not_manifest": "{url} は更新マニフェストではありません",
   "updates.client_failed": "更新の確認を開始できませんでした: {detail}",
-  "updates.no_address": "更新を確認するアドレスがありません。"
+  "updates.no_address": "更新を確認するアドレスがありません。",
+  "policy.blocked": "Blocked by policy \"{policy}\": {method} {url}",
+  "policy.approval": "Needs approval: policy \"{policy}\" ({method} {url})",
+  "policy.invalid": "The policy file is invalid: {reason}"
 }

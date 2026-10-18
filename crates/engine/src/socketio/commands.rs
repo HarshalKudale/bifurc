@@ -69,6 +69,7 @@ pub fn register(registry: &mut CommandRegistry) {
             auth: str_of(&source, "auth"),
             listeners: listeners_of(&source),
         };
+        crate::workspace::policy::guard_now("GET", target.url)?;
         ok_result(connect_connection(str_of(&params, "workspaceId"), str_of(&params, "connectionId"), &target))
     });
 

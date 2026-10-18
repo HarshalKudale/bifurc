@@ -404,6 +404,10 @@ fn runner_run(ctx: &mut Context) -> Result<String> {
 ",
         )
     });
+    // A run stopped by a guardrail exits like the call would have (7, or 6 when it waits for a person).
+    if let Some(key) = report.pointer("/stoppedByPolicy/errorKey").and_then(Value::as_str) {
+        return Err(CliError::Reported(if key == "policy.approval" { 6 } else { 7 }, text));
+    }
     if results.iter().all(|result| failure_of(result).is_none()) { Ok(text) } else { Err(CliError::Failed(text)) }
 }
 
@@ -624,6 +628,20 @@ mod tests {
         assert_eq!(out.unwrap_err().code(), 3);
         assert_eq!(started, None);
         assert_eq!(folder("gone").0.unwrap_err().code(), 3);
+    }
+
+    #[test]
+    fn a_run_a_policy_stopped_shows_the_blocked_step_and_exits_7() {
+        let mut blocked = row("Drop", "DELETE", "http://x/orders/1", 0, 0, json!([]), "");
+        blocked["status"] = Value::Null;
+        blocked["error"] = json!("blocked by policy \"no-deletes\": DELETE http://x/orders/1");
+        let mut status = finished(vec![row("List", "GET", "http://x/orders", 200, 5, json!([]), ""), blocked], 3);
+        status["report"]["stoppedByPolicy"] = json!({"requestName": "Drop", "errorKey": "policy.blocked"});
+        let err = go(&["runner", "run", "f1"], runner(status.clone())).0.unwrap_err();
+        assert_eq!(err.code(), 7);
+        assert!(err.to_string().contains("blocked by policy \"no-deletes\": DELETE http://x/orders/1"), "{err}");
+        status["report"]["stoppedByPolicy"]["errorKey"] = json!("policy.approval");
+        assert_eq!(go(&["runner", "run", "f1"], runner(status)).0.unwrap_err().code(), 6);
     }
 
     #[test]

@@ -16,6 +16,7 @@ pub mod git_store;
 pub mod kinds;
 pub mod models;
 pub mod paths;
+pub mod policy;
 pub mod response_history;
 pub mod settings;
 pub mod stamp;
