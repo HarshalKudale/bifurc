@@ -27,5 +27,11 @@
   "use": "Verwenden",
   "use_tooltip": "Variablen anhand dieser Umgebung auflösen",
   "title": "Umgebungen",
-  "description": "Sätze von Variablen, anhand derer {{name}}-Verweise in Anfragen aufgelöst werden. „Global“ gilt zusätzlich zu allen anderen."
+  "description": "Sätze von Variablen, anhand derer {{name}}-Verweise in Anfragen aufgelöst werden. „Global“ gilt zusätzlich zu allen anderen.",
+  "login": "Anmeldung",
+  "login_none": "Keine Anmeldung",
+  "login_flow": "{name} (Flow)",
+  "login_missing": "Fehlt: {id}",
+  "retry_on_401": "Bei 401 anmelden und erneut senden",
+  "login_help": "Antwortet ein Senden mit 401, führt die Engine diese Anfrage oder diesen Flow einmal aus und sendet die Anfrage erneut."
 }
