@@ -10,6 +10,7 @@
   "request.send.cancelled": "キャンセルしました",
   "validation.regex_invalid": "「{pattern}」は有効な正規表現ではありません。",
   "validation.required": "{field} は必須です。",
+  "claims.locked": "「{name}」は {claimedBy} が編集中のためロックされています。ロックを引き継ぐか、期限切れになるまでお待ちください。",
   "entity.update_required": "最後に Bifurc {version} で保存されました。これは現在のバージョン ({current}) より新しいものです。使用するには Bifurc を更新してください。",
   "folder.update_required": "このフォルダー内の項目が最後に Bifurc {version} で保存されました。これは現在のバージョン ({current}) より新しいものです。フォルダーを削除するには Bifurc を更新してください。",
   "mapping.domain_required": "ドメインは必須です。",

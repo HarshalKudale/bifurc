@@ -132,6 +132,7 @@ pub fn register(registry: &mut CommandRegistry) {
     registry.register_sync("entity.setEnabled", |params, ctx| {
         let (ws_id, kind, id) = (str_of(&params, "workspaceId"), str_of(&params, "kind"), str_of(&params, "id"));
         let enabled = truthy(&params, "enabled");
+        crate::workspace::claims::guard(ws_id, id)?;
         if let Some(version) = entity_lock(ws_id, to_engine_kind(kind), id) {
             return Err(stamp::update_required(&version));
         }
