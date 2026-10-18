@@ -280,7 +280,13 @@ async fn the_mock_server_serves_recorded_answers_and_leaves_the_rest_to_the_mock
         ]),
     );
     let registry = registry();
+    let seen = Arc::new(Mutex::new(Vec::<Value>::new()));
+    let sink = seen.clone();
+    let changes = bus().on("cassette.changed", move |state| sink.lock().push(state.clone()));
     call(&registry, "cassette.replayStart", json!({ "workspaceId": "ws1", "name": "checkout" })).await.unwrap();
+    // Replay state is global, so look for this test's cassette among other tests' events.
+    assert!(seen.lock().iter().any(|s| s["replay"]["replaying"]["name"] == "checkout"));
+    assert!(seen.lock().iter().all(|s| s["record"].get("recording").is_some()));
     let port = call(&registry, "mocks.serve", json!({ "workspaceId": "ws1", "port": 0, "detach": true })).await.unwrap()
         ["port"]
         .as_u64()
@@ -304,6 +310,8 @@ async fn the_mock_server_serves_recorded_answers_and_leaves_the_rest_to_the_mock
     assert_eq!(call(&registry, "cassette.replayStatus", json!({})).await.unwrap()["replaying"]["served"], 5);
 
     let stopped = call(&registry, "cassette.replayStop", json!({})).await.unwrap();
+    assert!(seen.lock().iter().any(|s| s["replay"]["replaying"].is_null()));
+    bus().off(changes);
     assert_eq!(
         (&stopped["served"], &stopped["passedThrough"], &stopped["unmatchedCount"]),
         (&json!(5), &json!(0), &json!(0))
