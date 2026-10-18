@@ -28,6 +28,7 @@ macro_rules! language {
                 ("components", include_str!(concat!("../locales/", $code, "/components.json"))),
                 ("errors", include_str!(concat!("../locales/", $code, "/errors.json"))),
                 ("environments", include_str!(concat!("../locales/", $code, "/environments.json"))),
+                ("faults", include_str!(concat!("../locales/", $code, "/faults.json"))),
                 ("flows", include_str!(concat!("../locales/", $code, "/flows.json"))),
                 ("healthbar", include_str!(concat!("../locales/", $code, "/healthbar.json"))),
                 ("licenses", include_str!(concat!("../locales/", $code, "/licenses.json"))),
