@@ -4667,6 +4667,36 @@
    ],
    "additionalProperties": false
   },
+  "jwt.mint": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "vault": {
+     "type": "string"
+    },
+    "secret": {
+     "type": "string"
+    },
+    "claims": {
+     "type": "object"
+    },
+    "exp": {
+     "type": "string"
+    },
+    "alg": {
+     "type": "string"
+    },
+    "header": {
+     "type": "object"
+    }
+   },
+   "required": [
+    "workspaceId",
+    "vault"
+   ]
+  },
   "mail.clear": {
    "type": "object",
    "properties": {},

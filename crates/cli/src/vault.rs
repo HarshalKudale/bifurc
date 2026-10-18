@@ -275,6 +275,14 @@ pub fn secrets_of(ctx: &mut Context, workspace: &str, name: &str) -> Result<Vec<
         .collect())
 }
 
+/// Unseal the vault `name` if it is sealed (a sealed vault without a terminal is exit 6); its secrets stay
+/// in the engine, which reads them itself (`jwt.mint`).
+pub fn unseal_named(ctx: &mut Context, workspace: &str, name: &str) -> Result<()> {
+    let listed = ctx.request("vault.list", json!({ "workspaceId": workspace }))?;
+    let vault = find_vault(&listed, name)?.clone();
+    unseal(ctx, workspace, &vault).map(drop)
+}
+
 /// The secrets of the vault `vault run` names.
 fn secrets_for(ctx: &mut Context) -> Result<Vec<(String, String)>> {
     ctx.accept(&["passphrase-stdin"], 1)?;

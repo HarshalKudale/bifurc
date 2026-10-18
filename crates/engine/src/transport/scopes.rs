@@ -69,6 +69,7 @@ const SCOPE_BY_COMMAND: &[(&str, Scope)] = &[
     ("vault.setSecret", Scope::Write),
     ("vault.deleteSecret", Scope::Write),
     ("vault.secrets", Scope::Execute),
+    ("jwt.mint", Scope::Execute),
     ("server.status", Scope::Read),
     ("server.start", Scope::Admin),
     ("server.stop", Scope::Admin),

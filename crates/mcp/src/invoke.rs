@@ -625,6 +625,12 @@ mod tests {
             ),
             ("webhooks", json!({"verb": "save", "id": "#k3f9", "as_request": true, "folder": "hooks"})),
             ("webhooks", json!({"verb": "save", "id": "#k3f9", "as_request": true, "name": "Stripe hook"})),
+            ("jwt", json!({"verb": "decode", "token": "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.c2ln", "check": true, "json": true})),
+            ("jwt", json!({"verb": "decode", "from_jar": "api.localhost"})),
+            (
+                "jwt",
+                json!({"verb": "mint", "key_from_vault": "jwt_dev", "secret": "JWT_KEY", "claims": "{\"role\":\"admin\"}", "exp": "5m", "alg": "HS256", "header": "{\"kid\":\"dev\"}"}),
+            ),
             ("types", with(json!({"request": "Get orders", "lang": "zod", "out": "src/o.ts", "name": "Order", "send": true, "env": "Dev"}))),
             ("openapi_infer", with(json!({"folder": "shop", "out": "o.json", "title": "Shop"}))),
             ("record", with(json!({"verb": "start", "hosts": "api.stripe.com,api.openai.com", "cassette": "checkout"}))),
@@ -714,8 +720,8 @@ mod tests {
             env_data_dir: None,
         };
         for (name, arguments) in examples() {
-            // Waiting for a port needs no engine: it tries the port.
-            if arguments.get("port").is_some() {
+            // Waiting for a port needs no engine: it tries the port. Nor does decoding a token.
+            if arguments.get("port").is_some() || arguments.get("token").is_some() {
                 continue;
             }
             let outcome = run(&tool(name), arguments.as_object().unwrap(), &settings);

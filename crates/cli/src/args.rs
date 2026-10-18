@@ -172,6 +172,8 @@ pub fn parse_args(argv: &[String]) -> Result<ParsedArgs, String> {
         // `mail show --html|--text`, `mail last --otp|--link` are switches.
         let mail_switch = matches!(name.as_str(), "html" | "text" | "otp" | "link")
             && parsed.positionals.first().is_some_and(|group| group == "mail");
+        // `jwt decode --check` is a switch.
+        let jwt_switch = name == "check" && parsed.positionals.first().is_some_and(|group| group == "jwt");
         // `env auth <env> --off` is a switch (`--off` elsewhere takes true or false).
         let auth_off = name == "off"
             && matches!(parsed.positionals.as_slice(), [group, verb, ..] if group == "env" && verb == "auth");
@@ -198,6 +200,7 @@ pub fn parse_args(argv: &[String]) -> Result<ParsedArgs, String> {
             || services_switch
             || mail_switch
             || auth_off
+            || jwt_switch
         {
             parsed.add(&name, "true".to_string());
             continue;
