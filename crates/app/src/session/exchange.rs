@@ -6,6 +6,8 @@
 //! The body is shown in a read-only code editor highlighted for its content type, either re-indented
 //! ("Pretty") or exactly as received ("Raw").
 
+use std::collections::HashSet;
+
 use base64::{Engine as _, engine::general_purpose::STANDARD};
 use bifurc_engine_client::EngineClient;
 use gpui_kit::component::{
@@ -20,9 +22,9 @@ use gpui_kit::component::{
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    AppContext as _, Context, Entity, InteractiveElement as _, IntoElement, ListAlignment, ListOffset, ListState,
-    ParentElement as _, Render, ScrollHandle, SharedString, StatefulInteractiveElement as _, Styled as _, Window, div,
-    list, px,
+    AppContext as _, ClipboardItem, Context, Entity, InteractiveElement as _, IntoElement, ListAlignment, ListOffset,
+    ListState, ParentElement as _, Render, ScrollHandle, SharedString, StatefulInteractiveElement as _, Styled as _,
+    Window, div, list, px,
 };
 use serde_json::{Value, json};
 
@@ -36,6 +38,7 @@ use crate::{
     engine::call_in,
     i18n::{t, t_with},
     model::{
+        cookies,
         history::{self, HistoryEntry},
         http::{BodyEncoding, HttpResponse, TestOutcome, pretty_json, status_text},
         media::{self, BodyClass},
@@ -49,9 +52,11 @@ enum Section {
     Body,
     Headers,
     Tests,
+    Cookies,
 }
 
-const SECTIONS: [Section; 3] = [Section::Body, Section::Headers, Section::Tests];
+/// The tabs of an HTTP response; the live (gRPC) tab bars use only the first three.
+const SECTIONS: [Section; 4] = [Section::Body, Section::Headers, Section::Tests, Section::Cookies];
 
 enum Phase {
     Idle,
@@ -162,6 +167,8 @@ pub struct Exchange {
     /// The latest outcome (a result, or the error), kept to come back to after looking at a past response.
     last: Option<Result<Value, String>>,
     section: Section,
+    /// The cookies of the response whose JWT is opened, as `name=value`.
+    cookies_open: HashSet<String>,
     body: Entity<BodyPane>,
     /// The body as bytes, when it is an image or other data rather than text.
     binary: Option<BinaryBody>,
@@ -187,6 +194,7 @@ impl Exchange {
             viewing: None,
             last: None,
             section: Section::Body,
+            cookies_open: HashSet::new(),
             body,
             binary: None,
             saved_note: None,
@@ -517,6 +525,129 @@ impl Exchange {
             .child(Tab::new().label(t("session.response.tab_body")))
             .child(Tab::new().label(t_with("session.response.tab_headers", &[("count", &response.headers.len())])))
             .child(Self::tests_tab(&response.tests))
+            .child(Tab::new().label(match cookies::from_headers(&response.headers).len() {
+                0 => t("cookies.tab").to_owned(),
+                count => t_with("cookies.tab_count", &[("count", &count)]),
+            }))
+    }
+
+    /// The cookies the response set, each with its attributes; a JWT value opens to what it holds.
+    fn render_cookies(&self, response: &HttpResponse, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
+        let list = cookies::from_headers(&response.headers);
+        if list.is_empty() {
+            return page::empty(t("cookies.empty_title"), t("cookies.empty_description"));
+        }
+        let theme = cx.theme().clone();
+        let now = u64::try_from(now_ms() / 1000).unwrap_or(0);
+        v_flex()
+            .id("response-cookies")
+            .overflow_y_scroll()
+            .size_full()
+            .p_3()
+            .gap_3()
+            .children(list.into_iter().enumerate().map(|(ix, cookie)| {
+                let key = format!("{}={}", cookie.name, cookie.value);
+                let jwt = cookies::decode_jwt(&cookie.value);
+                let open = jwt.is_some() && self.cookies_open.contains(&key);
+                let attributes: Vec<String> = [
+                    ("cookies.domain", cookie.domain.clone()),
+                    ("cookies.path", cookie.path.clone()),
+                    ("cookies.expires", cookie.expires.clone()),
+                    ("cookies.max_age", cookie.max_age.clone()),
+                    ("cookies.same_site", cookie.same_site.clone()),
+                ]
+                .into_iter()
+                .filter_map(|(label, value)| Some(format!("{}: {}", t(label), value?)))
+                .chain(cookie.secure.then(|| t("cookies.secure").to_owned()))
+                .chain(cookie.http_only.then(|| t("cookies.http_only").to_owned()))
+                .collect();
+                let (copy, toggle_key, value) = (cookie.value.clone(), key.clone(), cookie.value.clone());
+                v_flex()
+                    .gap_1()
+                    .child(
+                        h_flex()
+                            .gap_2()
+                            .items_center()
+                            .child(
+                                div()
+                                    .flex_none()
+                                    .font_weight(gpui_kit::FontWeight::SEMIBOLD)
+                                    .child(cookie.name.clone()),
+                            )
+                            .when_some(jwt.as_ref(), |this, jwt| {
+                                this.child(Tag::secondary().small().child(t("cookies.jwt")))
+                                    .when(jwt.is_expired(now), |this| {
+                                        this.child(Tag::danger().small().child(t("cookies.expired")))
+                                    })
+                            })
+                            .child(div().flex_1())
+                            .when(jwt.is_some(), |this| {
+                                this.child(
+                                    Button::new(("cookie-decode", ix))
+                                        .ghost()
+                                        .small()
+                                        .label(if open { t("cookies.hide") } else { t("cookies.decode") })
+                                        .on_click(cx.listener(move |this, _, _, cx| {
+                                            if !this.cookies_open.remove(&toggle_key) {
+                                                this.cookies_open.insert(toggle_key.clone());
+                                            }
+                                            cx.notify();
+                                        })),
+                                )
+                            })
+                            .child(
+                                Button::new(("cookie-copy", ix))
+                                    .ghost()
+                                    .small()
+                                    .icon(IconName::Copy)
+                                    .tooltip(t("cookies.copy"))
+                                    .on_click(cx.listener(move |_, _, _, cx| {
+                                        cx.write_to_clipboard(ClipboardItem::new_string(copy.clone()));
+                                    })),
+                            ),
+                    )
+                    .child(div().text_sm().min_w_0().overflow_hidden().text_ellipsis().child(value))
+                    .when(!attributes.is_empty(), |this| {
+                        this.child(div().text_xs().text_color(theme.muted_foreground).child(attributes.join("  ·  ")))
+                    })
+                    .when(open, |this| {
+                        let jwt = jwt.expect("open only for a JWT");
+                        this.child(
+                            v_flex()
+                                .id(("cookie-jwt", ix))
+                                .gap_1()
+                                .p_2()
+                                .rounded_md()
+                                .border_1()
+                                .border_color(theme.border)
+                                .text_sm()
+                                .child(div().text_color(theme.muted_foreground).child(t("cookies.header")))
+                                .child(jwt.header.clone())
+                                .child(div().text_color(theme.muted_foreground).child(t("cookies.payload")))
+                                .child(jwt.payload.clone())
+                                .child(
+                                    h_flex().child(
+                                        Button::new(("cookie-copy-payload", ix))
+                                            .ghost()
+                                            .small()
+                                            .icon(IconName::Copy)
+                                            .label(t("cookies.copy_payload"))
+                                            .on_click({
+                                                let payload = jwt.payload.clone();
+                                                cx.listener(move |_, _, _, cx| {
+                                                    cx.write_to_clipboard(ClipboardItem::new_string(payload.clone()));
+                                                })
+                                            }),
+                                    ),
+                                )
+                                .children(jwt.times.iter().map(|(claim, time)| div().child(format!("{claim}: {time}"))))
+                                .child(
+                                    div().text_xs().text_color(theme.muted_foreground).child(t("cookies.not_verified")),
+                                ),
+                        )
+                    })
+            }))
+            .into_any_element()
     }
 
     fn tests_tab(tests: &[TestOutcome]) -> Tab {
@@ -656,6 +787,7 @@ impl Exchange {
                 }))
                 .into_any_element(),
             Section::Tests => Self::render_tests(&response.tests, cx),
+            Section::Cookies => self.render_cookies(response, cx),
         };
 
         let can_find =
