@@ -5,6 +5,7 @@ mod capture;
 mod environments;
 mod fixtures;
 mod flows;
+mod mail;
 mod mappings;
 mod mocks;
 mod onboarding;

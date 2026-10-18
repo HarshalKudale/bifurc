@@ -9,9 +9,11 @@ use gpui_kit::Focusable as _;
 use gpui_kit::component::IndexPath;
 use gpui_kit::component::command::CommandState;
 use gpui_kit::component::{
-    IconName, WindowExt as _,
+    WindowExt as _,
     command::{Command, CommandGroup, CommandItem},
 };
+// The full icon catalog: the component crate's own enum has no mail icon.
+use gpui_kit::assets::IconName;
 use gpui_kit::{Action, Context, ParentElement as _, Styled as _, Window};
 
 use super::{Screen, Shell};
@@ -23,9 +25,10 @@ use crate::{
         NewSocketIoRequest, NewSseRequest, NewWebSocketRequest, NewWorkspace, NextItem, NextTab, OpenFinder,
         PreviousItem, PreviousTab, PublishChanges, Quit, RefreshServices, ReloadWorkspace, RenameEntity,
         RenameWorkspace, ReopenClosedTab, ResetZoom, RestartForwardProxy, RevertRequest, RunRequest, SaveRequest,
-        ShowAuditLog, ShowCapture, ShowEnvironments, ShowFlows, ShowHealthBar, ShowMappings, ShowMocks, ShowProxyRules,
-        ShowRequests, ShowServices, ShowSettings, ShowVaults, ShowWorkspaceConfig, SyncEntity, SyncWorkspace,
-        ToggleCapturePaused, ToggleFolderTree, ToggleForwardProxy, ToggleInspector, ToggleSidebar, ZoomIn, ZoomOut,
+        ShowAuditLog, ShowCapture, ShowEnvironments, ShowFlows, ShowHealthBar, ShowMail, ShowMappings, ShowMocks,
+        ShowProxyRules, ShowRequests, ShowServices, ShowSettings, ShowVaults, ShowWorkspaceConfig, SyncEntity,
+        SyncWorkspace, ToggleCapturePaused, ToggleFolderTree, ToggleForwardProxy, ToggleInspector, ToggleSidebar,
+        ZoomIn, ZoomOut,
     },
     i18n::{t, t_with},
     model::NodeRef,
@@ -132,6 +135,7 @@ fn command_groups() -> Vec<(&'static str, Vec<CommandRow>)> {
                 (t("shell.palette.go_mappings"), Screen::Mappings.icon(), Box::new(ShowMappings)),
                 (t("shell.palette.go_proxy_rules"), Screen::ProxyRules.icon(), Box::new(ShowProxyRules)),
                 (t("shell.palette.go_capture"), Screen::Capture.icon(), Box::new(ShowCapture)),
+                (t("shell.palette.go_mail"), Screen::Mail.icon(), Box::new(ShowMail)),
                 (t("shell.palette.go_requests"), Screen::Requests.icon(), Box::new(ShowRequests)),
                 (t("shell.palette.go_mocks"), Screen::Mocks.icon(), Box::new(ShowMocks)),
                 (t("shell.palette.go_flows"), Screen::Flows.icon(), Box::new(ShowFlows)),
