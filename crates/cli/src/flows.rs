@@ -515,7 +515,13 @@ fn run_flow(ctx: &mut Context, payload: Value, verbose: bool, max_body: usize) -
 ",
         )
     });
-    if passed { Ok(summary) } else { Err(CliError::Failed(summary)) }
+    // A run a guardrail stopped exits like the blocked call would have (7, or 6 when it waits for a person).
+    match report.get("errorKey").and_then(Value::as_str) {
+        Some("policy.approval") => Err(CliError::Reported(6, summary)),
+        Some(key) if key.starts_with("policy.") => Err(CliError::Reported(7, summary)),
+        _ if passed => Ok(summary),
+        _ => Err(CliError::Failed(summary)),
+    }
 }
 
 #[cfg(test)]
@@ -885,6 +891,18 @@ mod tests {
         let (out, _, _) = go(&["flows", "run", "f1"], with_get_user(engine()), events);
         let CliError::Failed(text) = out.unwrap_err() else { panic!("a failed step is a failed command") };
         assert!(text.ends_with("✗ HTTP 503\n  → {\"error\":\"down\"}\nflow failed at step 1 · 166ms"), "{text}");
+    }
+
+    #[test]
+    fn a_run_a_policy_stopped_exits_7_with_the_blocked_steps_reason() {
+        let said = "Get user: blocked by policy \"no-deletes\": GET http://x/users/1";
+        let down = get_user("failed", 0, "", json!(said));
+        let mut event = finished_nodes("failed", said, 0, json!([start_node(), down]));
+        event["payload"]["report"]["errorKey"] = json!("policy.blocked");
+        let (out, _, _) = go(&["flows", "run", "f1"], with_get_user(engine()), vec![event]);
+        let err = out.unwrap_err();
+        assert_eq!(err.code(), 7);
+        assert!(err.to_string().contains("blocked by policy \"no-deletes\""), "{err}");
     }
 
     #[test]

@@ -344,5 +344,8 @@
   "updates.too_large": "{url} is too large to be an update manifest",
   "updates.not_manifest": "{url} is not an update manifest",
   "updates.client_failed": "The update check could not start: {detail}",
-  "updates.no_address": "There is no address to look for updates at."
+  "updates.no_address": "There is no address to look for updates at.",
+  "policy.blocked": "Blocked by policy \"{policy}\": {method} {url}",
+  "policy.approval": "Needs approval: policy \"{policy}\" ({method} {url})",
+  "policy.invalid": "The policy file is invalid: {reason}"
 }

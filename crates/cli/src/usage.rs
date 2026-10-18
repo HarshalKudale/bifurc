@@ -28,9 +28,9 @@ Options
   --json  --data-dir <path>  -w, --workspace <id>  --session <name> (or BIFURC_SESSION)  --no-start  -h, --help
 
   bifurc help <group>             The verbs and options of a group
-  bifurc help <group> --examples  Copy-paste examples
+  bifurc help <group> --examples  Examples
   bifurc help --all               Every group and verb
-Exit codes: 0 ok, 1 a check failed, 2 usage, 3 not found, 4 network, 5 no engine, 6 needs a person";
+Exit codes: 0 ok, 1 failed, 2 usage, 3 not found, 4 network, 5 no engine, 6 needs a person, 7 policy";
 
 /// The full usage text, printed for `help --all`.
 pub const USAGE: &str = "Usage: bifurc <group> <verb> [arguments] [options]
@@ -89,6 +89,7 @@ Groups (bifurc <group> --help shows the arguments and options of each verb)
   mail          list | show | last | clear                            Mail the local SMTP sink caught; codes and links
   webhooks      listen | stop | list | show | replay | save | trigger  Receive webhooks locally, optionally forward them
   jwt           decode | mint                                         Read a token's claims and expiry; sign a test token
+  policy        show | check                                          Guardrails for agents: the workspace's policy.yaml
   types         <request> [--lang ts|zod|python|go] [--out f]         Types inferred from a request's responses
   openapi       infer [--folder f] [--out f] [--title t]             OpenAPI 3 file from saved requests, mocks, captures
   record        start | stop | status | list                           Record proxied traffic of chosen hosts into a cassette
@@ -127,7 +128,9 @@ Exit codes
     refused because another session changed the item since you showed it (--force overwrites)
   3 a named thing was not found    4 network error of what was sent (refused, DNS, timeout)
   5 the engine is not running and could not be started or reached
-  6 needs a person: a sealed vault and no terminal to ask on; vault run exits with the program's own code";
+  6 needs a person: a sealed vault and no terminal to ask on, or a call the workspace policy holds for approval;
+    vault run exits with the program's own code
+  7 blocked by the workspace policy (policy.yaml): `blocked by policy \"name\": METHOD url`; see: bifurc policy --help";
 
 const AGENT: &str = "Usage: bifurc agent init [--dir <repo>] [--target agents|claude|both] [--skill]
 
@@ -795,6 +798,37 @@ for mint). Without vault= the key is the JWT_KEY secret of the one unsealed vaul
 be made (vault sealed, no key, bad value) the text stays as written and the send says why on a `!` line
 (`warnings` with --json). No variables inside the pair list. A preview that never shows secrets leaves it as written.";
 
+const POLICY: &str = "Usage: bifurc policy <show|check>
+
+Guardrails for agents. The workspace's policy.yaml (or policy.json) limits what the command line and MCP may send;
+the desktop app is not held to it unless the file says so. Only a person edits the file: no command writes it.
+
+  show [--json]                          The policies, one line each (`no policy file` when there is none). A file
+                                         that cannot be read is printed as the error, exit 1
+  check <METHOD> <url> [--env name] [--json]
+                                         What a call would get, without sending it: exit 0 allow, 7 denied,
+                                         6 held for a person. --env judges by that environment instead of the
+                                         one selected
+
+apply_to: [cli, mcp]               # default; cli and mcp are one switch (both connect as cli); `app` adds the desktop app
+policies:
+  - name: no-prod-writes
+    deny: { env: prod, methods: [DELETE, PUT, PATCH, POST] }
+  - name: local-only
+    allow_hosts: [\"*.localhost\", localhost, 127.0.0.1]
+  - name: staging-deletes
+    require_human: { env: staging, methods: [DELETE] }
+
+deny and require_human match on env (environment name; glob or list), methods (case-insensitive, \"*\" any),
+hosts (globs; *.x.com is its subdomains; the port is ignored) and paths (globs on the URL path: * stays in a
+segment, ** crosses them); no key matches everything. A call to a host that allow_hosts does not list is blocked.
+Top-level deny:/allow_hosts:/require_human: with no policies list is one unnamed rule each. deny and allow_hosts
+are checked first (first in the file wins), then require_human. A blocked call exits 7 with
+`blocked by policy \"no-prod-writes\": DELETE https://api.prod.x/orders/1`; a held one exits 6 (approvals arrive in a
+later version). A run (runner, flows) stops at its first blocked request. A file that cannot be read blocks every
+guarded call (exit 7 `policy file invalid: ...`) until a person fixes it; quote a bare * in YAML. If policy.yaml and
+policy.json both exist, policy.yaml is used.";
+
 const WEBHOOKS: &str = "Usage: bifurc webhooks <verb>
 
 The engine receives webhooks on a local port (127.0.0.1) and captures each one with its exact headers and raw
@@ -913,6 +947,7 @@ pub fn group_usage(group: &str) -> Option<String> {
         "openapi" => OPENAPI,
         "webhooks" => WEBHOOKS,
         "jwt" => JWT,
+        "policy" => POLICY,
         "record" => RECORD,
         "replay" => REPLAY,
         "engine" => ENGINE,
@@ -1061,6 +1096,12 @@ pub fn examples(group: &str) -> Option<&'static [&'static str]> {
             r#"bifurc jwt mint --claims '{"role":"admin"}' --exp 5m --key-from-vault jwt_dev"#,
             "bifurc jwt mint --key-from-vault jwt_dev --secret JWT_KEY --alg HS512 --exp none",
         ],
+        "policy" => &[
+            "bifurc policy show",
+            "bifurc policy show --json",
+            "bifurc policy check DELETE https://api.prod.x/orders/1",
+            "bifurc policy check POST http://api.localhost/orders --env prod --json",
+        ],
         "record" => &[
             "bifurc record start --hosts api.stripe.com,api.openai.com --cassette checkout",
             "bifurc record start --hosts *.example.com --cassette example",
@@ -1129,8 +1170,8 @@ pub(crate) mod tests {
     fn every_example_is_a_known_group_and_verb_with_flags_its_help_names() {
         for group in [
             "agent", "curl", "requests", "capture", "mocks", "contract", "flows", "runner", "env", "cookies",
-            "session", "vars", "changes", "claim", "wait", "services", "mail", "webhooks", "jwt", "types", "openapi",
-            "record", "replay",
+            "session", "vars", "changes", "claim", "wait", "services", "mail", "webhooks", "jwt", "policy", "types",
+            "openapi", "record", "replay",
         ] {
             let list = examples(group).unwrap_or_else(|| panic!("{group} has no examples"));
             assert!((3..=5).contains(&list.len()), "{group}");

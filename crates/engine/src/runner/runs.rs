@@ -216,6 +216,7 @@ async fn run_collection(
 ) -> Value {
     let started_at = now_ms();
     let mut results: Vec<Value> = Vec::new();
+    let mut stopped_by: Option<Value> = None;
     for (index, request) in requests.iter().enumerate() {
         if run.lock()["cancelled"] == json!(true) {
             break;
@@ -225,6 +226,7 @@ async fn run_collection(
         }
         let result = run_one(&ctx, &ws_id, request).await;
         results.push(result.clone());
+        let policy_stop = result["errorKey"].as_str().is_some_and(|key| key.starts_with("policy."));
         let total = {
             let mut snapshot = run.lock();
             snapshot["results"].as_array_mut().expect("results is an array").push(result.clone());
@@ -235,11 +237,23 @@ async fn run_collection(
             "runner.progress",
             json!({ "workspaceId": ws_id, "folderId": folder_id, "index": index, "total": total, "result": result }),
         );
+        if policy_stop {
+            stopped_by = Some(result);
+            break;
+        }
         if bail && is_failed(&result) {
             break;
         }
     }
-    build_report(&ws_id, &folder_id, started_at, results)
+    let mut report = build_report(&ws_id, &folder_id, started_at, results);
+    // A guardrail stops the run at its first blocked request: the report names it.
+    if let Some(blocked) = stopped_by {
+        report["stoppedByPolicy"] = json!({
+            "requestId": blocked["requestId"], "requestName": blocked["requestName"], "error": blocked["error"],
+            "errorKey": blocked["errorKey"], "errorParams": blocked["errorParams"],
+        });
+    }
+    report
 }
 
 /// Start a run in the background. `{ ok: true, total }`, or `{ ok: false, error }` if the folder is already

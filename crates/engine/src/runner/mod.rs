@@ -262,6 +262,32 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn a_run_by_the_command_line_stops_at_the_first_request_a_policy_blocks() {
+        let root = scratch_data_root();
+        let base = test_server::start(HashMap::new()).await;
+        std::fs::write(
+            crate::workspace::fs::ws_dir(WS).join("policy.yaml"),
+            "policies: [{ name: no-b, deny: { paths: ['/b'] } }]",
+        )
+        .unwrap();
+        let url = |path: &str| format!("{base}{path}");
+        let requests = [("a", url("/a"), ""), ("b", url("/b"), ""), ("c", url("/c"), "")];
+        let held = crate::workspace::changes::as_client(Some("cli"), run_folder(&requests, json!({}))).await;
+        assert_eq!(held["completed"], 2, "c was never sent");
+        assert_eq!(held["results"][0]["status"], 200);
+        assert_eq!(held["results"][1]["errorKey"], "policy.blocked");
+        assert_eq!(held["report"]["stoppedByPolicy"]["requestName"], "b");
+        assert_eq!(held["report"]["stoppedByPolicy"]["errorParams"]["policy"], "no-b");
+        assert!(held["report"]["stoppedByPolicy"]["error"].as_str().unwrap().starts_with("blocked by policy \"no-b\""));
+
+        // The app's run of the same folder is not held.
+        let free = crate::workspace::changes::as_client(Some("desktop-ui"), run_folder(&requests, json!({}))).await;
+        assert_eq!(free["completed"], 3);
+        assert!(free["report"]["stoppedByPolicy"].is_null());
+        drop(root);
+    }
+
+    #[tokio::test]
     async fn a_run_can_bail_take_variables_an_environment_and_a_jar_of_its_own() {
         let _root = scratch_data_root();
         let base = test_server::start(HashMap::new()).await;
