@@ -32,7 +32,7 @@ use crate::{
 /// follows every write with the git state, and says `configChanged: false` when `entity.changed` already
 /// described the whole change; without that field (an older engine, or a pull, sync or import) it means
 /// "re-read the workspace".
-const EVENTS: [&str; 35] = [
+const EVENTS: [&str; 36] = [
     "event.request.stream",
     "event.flow.progress",
     "event.flow.finished",
@@ -49,6 +49,7 @@ const EVENTS: [&str; 35] = [
     "event.vault.changed",
     "event.cookies.changed",
     "event.faults.changed",
+    "event.devservice.changed",
     "event.cassette.changed",
     "event.approval.requested",
     "event.approval.decided",
@@ -230,6 +231,8 @@ pub enum ModelEvent {
     CompanionsChanged,
     /// `event.cookies.changed`: a response set or removed cookies, or the jar was cleared or reconfigured.
     CookiesChanged,
+    /// `event.devservice.changed`: a dev server was defined, started, stopped or removed, or exited by itself.
+    DevServiceChanged(Value),
     /// `event.approval.requested`: an agent's call is waiting for a person to approve or deny it.
     ApprovalRequested(Approval),
     /// The engine was stopped and started again: anything that lived only in the old one is gone.
@@ -603,6 +606,7 @@ impl AppModel {
                 }
                 "event.companions.changed" => cx.emit(ModelEvent::CompanionsChanged),
                 "event.cookies.changed" => cx.emit(ModelEvent::CookiesChanged),
+                "event.devservice.changed" => cx.emit(ModelEvent::DevServiceChanged(event.payload)),
                 "event.faults.changed" => {
                     self.faults = FaultRule::list_from_value(&event.payload);
                     cx.notify();
