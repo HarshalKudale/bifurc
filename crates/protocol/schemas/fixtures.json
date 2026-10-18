@@ -352,6 +352,17 @@
   },
   "invalid": {}
  },
+ "contract.check": {
+  "valid": {
+   "workspaceId": "ws1",
+   "mock": "m1",
+   "ignore": [
+    ".meta.*"
+   ],
+   "fromCapture": true
+  },
+  "invalid": {}
+ },
  "contract.fromOpenApi": {
   "valid": {
    "text": "openapi: 3.0.0"
@@ -1762,6 +1773,19 @@
   "valid": {},
   "invalid": {
    "extra": true
+  }
+ },
+ "types.generate": {
+  "valid": {
+   "workspaceId": "ws1",
+   "request": "Get orders",
+   "lang": "zod",
+   "send": true
+  },
+  "invalid": {
+   "workspaceId": "ws1",
+   "request": "r",
+   "lang": "rust"
   }
  },
  "update.check": {

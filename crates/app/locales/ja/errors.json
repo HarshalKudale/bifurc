@@ -348,5 +348,6 @@
   "updates.no_address": "更新を確認するアドレスがありません。",
   "policy.blocked": "Blocked by policy \"{policy}\": {method} {url}",
   "policy.approval": "Needs approval: policy \"{policy}\" ({method} {url})",
-  "policy.invalid": "The policy file is invalid: {reason}"
+  "policy.invalid": "The policy file is invalid: {reason}",
+  "types.no_samples": "\"{name}\" の JSON レスポンスはまだありません。先にリクエストを送信してください。"
 }

@@ -221,14 +221,7 @@ impl Response {
     }
 }
 
-/// `512B`, `4.2KB`, `1.3MB`.
-pub fn size(bytes: usize) -> String {
-    match bytes {
-        0..1024 => format!("{bytes}B"),
-        1024..1_048_576 => format!("{:.1}KB", bytes as f64 / 1024.0),
-        _ => format!("{:.1}MB", bytes as f64 / 1_048_576.0),
-    }
-}
+pub use bifurc_protocol::analysis::shape::{short_type, size};
 
 /// Whether something of this name (a header, a variable) holds a secret that is not printed.
 pub fn is_sensitive_name(name: &str) -> bool {
@@ -252,32 +245,6 @@ pub fn mask_header(name: &str, value: &str) -> String {
 /// Whether `--reveal` was given where a person reads: secrets never go to a pipe.
 pub fn revealed(args: &crate::args::ParsedArgs) -> bool {
     args.has("reveal") && std::io::stdout().is_terminal()
-}
-
-/// The short name of a body's type: json, html, xml, text, js, css, form, binary or the subtype; with no
-/// content type it is guessed from the body ("" for an empty one).
-pub(crate) fn short_type(content_type: &str, body: &[u8]) -> String {
-    let essence = content_type.split(';').next().unwrap_or_default().trim().to_ascii_lowercase();
-    let binary_type = ["image/", "audio/", "video/", "font/"].iter().any(|prefix| essence.starts_with(prefix))
-        || matches!(essence.as_str(), "application/octet-stream" | "application/pdf" | "application/zip");
-    if binary_type || std::str::from_utf8(body).is_err() {
-        return "binary".into();
-    }
-    let has = |word: &str| essence.contains(word);
-    match essence.as_str() {
-        "" if body.is_empty() => "",
-        "" if serde_json::from_slice::<Value>(body).is_ok() => "json",
-        "" | "text/plain" => "text",
-        _ if has("json") => "json",
-        _ if has("html") => "html",
-        _ if has("xml") => "xml",
-        _ if has("javascript") || has("ecmascript") => "js",
-        _ if essence.ends_with("/css") => "css",
-        "application/x-www-form-urlencoded" => "form",
-        _ if essence.starts_with("multipart/") => "form",
-        other => other.rsplit('/').next().unwrap_or_default(),
-    }
-    .to_string()
 }
 
 /// The first `limit` bytes of `text` (all of it when `limit` is 0), cut at a character, and how many bytes are left.
