@@ -183,3 +183,172 @@ async fn the_command_signs_with_a_vault_secret_and_refuses_a_sealed_vault() {
     assert_eq!(sealed.code, ErrorCode::Forbidden);
     assert_eq!(sealed.details.unwrap()["reason"], "vault_sealed");
 }
+
+// ── {{$jwt …}} ──────────────────────────────────────────────────────────────────────────────────────────
+
+fn args(text: &str) -> Vec<(String, String, bool)> {
+    parse_args(text).unwrap()
+}
+
+#[test]
+fn placeholder_arguments_are_pairs_with_optional_quotes() {
+    let pair = |k: &str, v: &str, q| (k.to_string(), v.to_string(), q);
+    assert_eq!(args("  role=admin  exp=5m "), [pair("role", "admin", false), pair("exp", "5m", false)]);
+    assert_eq!(
+        args(r#"name="John Doe" n="a \"b\" c" p="x\\y""#),
+        [pair("name", "John Doe", true), pair("n", r#"a "b" c"#, true), pair("p", r"x\y", true)]
+    );
+    assert_eq!(args(r#"roles=["a","b"] e="""#), [pair("roles", r#"["a","b"]"#, false), pair("e", "", true)]);
+    assert!(args("").is_empty());
+    for bad in ["role", "=x", "a=\"open", "a=\"x\"y", "a b=1"] {
+        assert!(parse_args(bad).is_err(), "{bad}");
+    }
+}
+
+#[test]
+fn claim_values_are_json_when_unquoted_and_text_otherwise() {
+    assert_eq!(claim_value("42", false), json!(42));
+    assert_eq!(claim_value("42", true), json!("42"));
+    assert_eq!(claim_value("-1.5", false), json!(-1.5));
+    assert_eq!(claim_value("true", false), json!(true));
+    assert_eq!(claim_value("null", false), json!(null));
+    assert_eq!(claim_value(r#"["a",1]"#, false), json!(["a", 1]));
+    assert_eq!(claim_value(r#"{"a":1}"#, false), json!({"a": 1}));
+    for text in ["admin", "007", "[oops", "1e999", "True"] {
+        assert_eq!(claim_value(text, false), json!(text));
+    }
+}
+
+#[test]
+fn placeholders_are_found_with_their_ranges() {
+    let text = "a {{$jwt role=admin}} b {{$jwt}} c {{$jwtx}} {{$jwt open";
+    let found: Vec<_> = placeholders(text).into_iter().map(|(r, a)| (&text[r], a)).collect();
+    assert_eq!(found, [("{{$jwt role=admin}}", " role=admin"), ("{{$jwt}}", "")]);
+}
+
+fn payload(token: &str) -> Value {
+    serde_json::from_slice(&URL_SAFE_NO_PAD.decode(token.split('.').nth(1).unwrap()).unwrap()).unwrap()
+}
+
+fn header_of(token: &str) -> Value {
+    serde_json::from_slice(&URL_SAFE_NO_PAD.decode(token.split('.').next().unwrap()).unwrap()).unwrap()
+}
+
+fn verified(token: &str, key: &str) -> bool {
+    let (input, signature) = parts(token);
+    ring::hmac::sign(&ring::hmac::Key::new(ring::hmac::HMAC_SHA256, key.as_bytes()), input.as_bytes()).as_ref()
+        == signature
+}
+
+async fn new_vault(registry: &Arc<CommandRegistry>, ws: &str, name: &str, secrets: &[(&str, &str)]) -> Value {
+    let new = json!({"workspaceId": ws, "name": name, "passphrase": "correct horse"});
+    let created = call(registry, "vault.create", new).await.unwrap();
+    for (secret, value) in secrets {
+        let set = json!({"workspaceId": ws, "id": created["id"], "name": secret, "value": value});
+        call(registry, "vault.setSecret", set).await.unwrap();
+    }
+    created["id"].clone()
+}
+
+fn echoed_headers(sent: &Value) -> Value {
+    let body = crate::utils::replay::decode_base64_lenient(sent["body"].as_str().unwrap());
+    serde_json::from_slice::<Value>(&body).unwrap()["headers"].clone()
+}
+
+#[tokio::test]
+async fn the_variable_picks_its_vault_and_reports_what_it_cannot_do() {
+    let root = scratch_data_root();
+    let ws = root.ws_id;
+    let mut registry = CommandRegistry::new();
+    crate::vault::register(&mut registry);
+    crate::env::register(&mut registry);
+    let registry = Arc::new(registry);
+    let env = crate::env::load_merged_environment(ws);
+    let resolve = |text: &str| crate::env::resolve_vars(text, env.as_ref());
+    let reason = |text: &str| {
+        let mut warnings = Vec::new();
+        assert_eq!(expand(ws, text, None, &mut warnings), text);
+        assert_eq!(warnings.len(), 1, "{warnings:?}");
+        warnings.remove(0)
+    };
+
+    assert!(reason("{{$jwt}}").starts_with("{{$jwt}}: no vault holds a JWT_KEY"));
+    let first = new_vault(&registry, ws, "first", &[("JWT_KEY", "key-one"), ("OTHER", "key-other")]).await;
+    let token = resolve("{{$jwt role=admin sub=42 id=\"7\" admin=true tags=[1,2] kid=k1 exp=5m}}");
+    assert!(verified(&token, "key-one"), "the only vault with JWT_KEY signs");
+    let (claims, header) = (payload(&token), header_of(&token));
+    assert_eq!((&claims["role"], &claims["sub"], &claims["id"]), (&json!("admin"), &json!(42), &json!("7")));
+    assert_eq!((&claims["admin"], &claims["tags"]), (&json!(true), &json!([1, 2])));
+    assert_eq!(claims["exp"].as_u64().unwrap() - claims["iat"].as_u64().unwrap(), 300);
+    assert_eq!((&header["kid"], &header["alg"]), (&json!("k1"), &json!("HS256")));
+
+    let default = payload(&resolve("{{$jwt}}"));
+    assert_eq!(default["exp"].as_u64().unwrap() - default["iat"].as_u64().unwrap(), 900);
+    assert!(payload(&resolve("{{$jwt exp=none}}")).get("exp").is_none());
+    assert!(verified(&resolve("{{$jwt vault=first secret=OTHER}}"), "key-other"));
+    let both = resolve("a {{$jwt name=\"John Doe\"}} b {{$jwt}} {{x}}");
+    assert!(both.starts_with("a ") && both.ends_with(" {{x}}") && !both.contains("{{$jwt"), "{both}");
+
+    let second = new_vault(&registry, ws, "second", &[("JWT_KEY", "key-two")]).await;
+    assert!(reason("{{$jwt}}").contains("several unsealed vaults hold JWT_KEY (first, second)"));
+    assert!(verified(&resolve("{{$jwt vault=second}}"), "key-two"));
+    assert!(reason("{{$jwt vault=nope}}").contains("no vault named \"nope\""));
+    assert!(reason("{{$jwt vault=first secret=NOPE}}").contains("NOPE"));
+    assert!(reason("{{$jwt exp=soon}}").contains("exp is 30s"));
+    assert!(reason("{{$jwt vault=first alg=RS256}}").contains("PEM"));
+    assert!(reason("{{$jwt role}}").contains("expected key=value"));
+
+    call(&registry, "vault.seal", json!({"workspaceId": ws, "id": first})).await.unwrap();
+    assert!(verified(&resolve("{{$jwt}}"), "key-two"), "a sealed vault is not a candidate");
+    assert!(reason("{{$jwt vault=first}}").contains("vault \"first\" is sealed (bifurc vault unseal first)"));
+    call(&registry, "vault.seal", json!({"workspaceId": ws, "id": second})).await.unwrap();
+    assert!(reason("{{$jwt}}").contains("holds JWT_KEY but is sealed (bifurc vault unseal first)"));
+
+    // Without a workspace (an environment without one, none at all, env.resolveText) it stays as written.
+    let blank = json!({ "variables": [], "workspaceId": "" });
+    assert_eq!(crate::env::resolve_vars("{{$jwt}}", Some(&blank)), "{{$jwt}}");
+    assert_eq!(crate::env::resolve_vars("{{$jwt}}", None), "{{$jwt}}");
+    call(&registry, "vault.unseal", json!({"workspaceId": ws, "id": second, "passphrase": "correct horse"}))
+        .await
+        .unwrap();
+    assert!(verified(&resolve("{{$jwt}}"), "key-two"));
+    let params = json!({"workspaceId": ws, "text": "{{$jwt}} {{random.uuid}}"});
+    let text = call(&registry, "env.resolveText", params).await.unwrap();
+    let text = text["text"].as_str().unwrap();
+    assert!(text.starts_with("{{$jwt}} ") && !text.contains("random"), "{text}");
+}
+
+#[tokio::test]
+async fn a_send_without_an_environment_mints_into_the_wire_header_only() {
+    let root = scratch_data_root();
+    let ws = root.ws_id;
+    let mut registry = CommandRegistry::new();
+    crate::vault::register(&mut registry);
+    crate::rest::register(&mut registry);
+    let registry = Arc::new(registry);
+    let id = new_vault(&registry, ws, "dev", &[("JWT_KEY", "wire-key")]).await;
+    let base = crate::rest::test_server::start(Default::default()).await;
+    let send = || {
+        let params = json!({"workspaceId": ws, "request": {"method": "GET", "url": format!("{base}/me"), "body": "",
+            "headers": {"Authorization": "Bearer {{$jwt role=admin name=\"John Doe\" exp=5m}}"}}, "scripts": {}});
+        call(&registry, "request.send", params)
+    };
+
+    let sent = send().await.unwrap();
+    let headers = echoed_headers(&sent);
+    let bearer = headers["authorization"].as_str().unwrap().strip_prefix("Bearer ").unwrap();
+    assert!(verified(bearer, "wire-key"));
+    let claims = payload(bearer);
+    assert_eq!((&claims["role"], &claims["name"]), (&json!("admin"), &json!("John Doe")));
+    assert_eq!(claims["exp"].as_u64().unwrap() - claims["iat"].as_u64().unwrap(), 300);
+    // What comes back to the client names the placeholder, as it does for a vault reference.
+    assert_eq!(sent["request"]["headers"]["Authorization"], "Bearer {{$jwt role=admin name=\"John Doe\" exp=5m}}");
+    assert!(sent.get("warnings").is_none());
+
+    call(&registry, "vault.seal", json!({"workspaceId": ws, "id": id})).await.unwrap();
+    let sent = send().await.unwrap();
+    assert!(echoed_headers(&sent)["authorization"].as_str().unwrap().contains("{{$jwt role=admin"));
+    let warnings = sent["warnings"].as_array().unwrap();
+    assert_eq!(warnings.len(), 1);
+    assert!(warnings[0].as_str().unwrap().starts_with("{{$jwt}}: vault \"dev\" holds JWT_KEY but is sealed"));
+}

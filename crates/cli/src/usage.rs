@@ -455,8 +455,9 @@ The JSON of a flow
 
 const VAULT: &str = "Usage: bifurc vault <verb>
 
-Encrypted secrets, used as {{vault.SECRET}}. A vault is sealed or unsealed. Unsealing takes its passphrase
-and lasts until the vault is sealed or the engine stops, whether it was unsealed here or in the desktop app.
+Encrypted secrets, used as {{vault.SECRET}} (and the signing key of {{$jwt …}}, see `jwt`). A vault is sealed or
+unsealed. Unsealing takes its passphrase and lasts until the vault is sealed or the engine stops, whether it
+was unsealed here or in the desktop app.
 A command that needs a sealed vault asks for the passphrase and unseals it; an unsealed one is used as it is.
 
   list                                   Vaults, whether each is sealed, and their secret names (never values)
@@ -784,7 +785,15 @@ const JWT: &str = "Usage: bifurc jwt <decode|mint>
                                          the only secret, else JWT_KEY). --alg HS256 HS384 HS512 RS256 ES256
                                          (default: from the key; a PEM private key signs RS256 or ES256, else
                                          the text is an HMAC secret). --header adds header members. A sealed
-                                         vault asks for its passphrase (--passphrase-stdin) or exits 6";
+                                         vault asks for its passphrase (--passphrase-stdin) or exits 6
+
+As a variable, in any request field: {{$jwt role=admin exp=5m}} is a fresh token (iat = now) each time it is
+sent. Space-separated key=value pairs; a value may be \"double quoted\" to hold spaces. Every key is a claim
+(sub=42 is the number 42, sub=\"42\" the text \"42\"; true, false, null, [..] and {..} are JSON) except
+exp (30s, 5m, 1h, 2d or none; default 15m), alg, kid (a header member), vault and secret (the key, chosen as
+for mint). Without vault= the key is the JWT_KEY secret of the one unsealed vault that has it. If no token can
+be made (vault sealed, no key, bad value) the text stays as written and the send says why on a `!` line
+(`warnings` with --json). No variables inside the pair list. A preview that never shows secrets leaves it as written.";
 
 const WEBHOOKS: &str = "Usage: bifurc webhooks <verb>
 
@@ -946,6 +955,7 @@ pub fn examples(group: &str) -> Option<&'static [&'static str]> {
             "bifurc curl -s http://api.localhost/users/1 --select .email",
             "bifurc curl http://api.localhost/health --expect-status 200",
             "bifurc curl -H 'Authorization: Bearer {{token}}' http://api.localhost/me --headers",
+            r#"bifurc curl http://localhost:3000/me -H 'authorization: Bearer {{$jwt role=admin exp=5m}}'"#,
         ],
         "requests" => &[
             "bifurc requests list --folder auth --grep user",

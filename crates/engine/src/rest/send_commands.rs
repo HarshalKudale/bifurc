@@ -131,7 +131,7 @@ async fn send_once(params: &Value, ctx: &CommandContext) -> Result<Value> {
         "tests": result["tests"],
         "testLogs": result["testLogs"],
     });
-    for key in ["preScriptError", "postScriptError"] {
+    for key in ["preScriptError", "postScriptError", "warnings"] {
         if let Some(error) = result.get(key) {
             out[key] = error.clone();
         }
