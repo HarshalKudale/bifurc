@@ -4776,6 +4776,56 @@
     "vault"
    ]
   },
+  "fault.add": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "target": {
+     "type": "string"
+    },
+    "latencyMs": {
+     "type": "integer",
+     "minimum": 1,
+     "maximum": 120000
+    },
+    "status": {
+     "type": "integer",
+     "minimum": 100,
+     "maximum": 599
+    },
+    "rate": {
+     "type": "number",
+     "exclusiveMinimum": 0,
+     "maximum": 100
+    },
+    "drop": {
+     "type": "boolean"
+    },
+    "reset": {
+     "type": "boolean"
+    }
+   },
+   "required": [
+    "target"
+   ],
+   "additionalProperties": false
+  },
+  "fault.list": {
+   "type": "object",
+   "properties": {},
+   "additionalProperties": false
+  },
+  "fault.clear": {
+   "type": "object",
+   "properties": {
+    "id": {
+     "type": "string"
+    }
+   },
+   "additionalProperties": false
+  },
   "mail.clear": {
    "type": "object",
    "properties": {},
