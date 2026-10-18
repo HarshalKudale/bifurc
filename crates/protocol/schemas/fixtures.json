@@ -1847,6 +1847,12 @@
   },
   "invalid": {}
  },
+ "webhook.fixtures": {
+  "valid": {},
+  "invalid": {
+   "extra": true
+  }
+ },
  "webhook.list": {
   "valid": {},
   "invalid": {
@@ -1879,6 +1885,28 @@
   },
   "invalid": {
    "id": 1
+  }
+ },
+ "webhook.trigger": {
+  "valid": {
+   "workspaceId": "ws1",
+   "fixture": "stripe.checkout.session.completed",
+   "to": "http://127.0.0.1:4021",
+   "vault": "hooks",
+   "secret": "STRIPE_WEBHOOK_SECRET",
+   "patch": [
+    {
+     "path": [
+      "data",
+      "object",
+      "amount_total"
+     ],
+     "value": 999
+    }
+   ]
+  },
+  "invalid": {
+   "workspaceId": "ws1"
   }
  },
  "workspace.add": {

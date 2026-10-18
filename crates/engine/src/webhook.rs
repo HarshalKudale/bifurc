@@ -3,6 +3,8 @@
 //! request on and returns the upstream's answer. Entries carry origin `webhook` and, when the listener is
 //! named, target `webhook:<name>` (no stored-shape change: both fields exist on every capture entry).
 
+mod fixtures;
+
 use std::{
     net::SocketAddr,
     sync::{
@@ -308,6 +310,7 @@ pub fn register(registry: &mut CommandRegistry) {
     registry.register_sync("webhook.listen", |params, ctx| listen(&params, ctx));
     registry.register_sync("webhook.stop", |params, _| stop(&params).inspect(|_| announce()));
     registry.register("webhook.replay", replay);
+    fixtures::register(registry);
     registry.register_sync("webhook.list", |_, _| Ok(list()));
 }
 
