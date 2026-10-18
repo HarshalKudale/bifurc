@@ -460,17 +460,20 @@ fn list(params: &Value) -> Result<Value> {
     Ok(json!({ "cassettes": cassettes }))
 }
 
+pub(super) fn status() -> Value {
+    json!({ "replaying": REPLAY.lock().as_ref().map(|r| json!({
+        "name": r.name, "workspaceId": r.workspace_id, "hosts": r.hosts, "served": r.served,
+        "unmatchedCount": r.unmatched_count, "passthrough": r.passthrough,
+    })) })
+}
+
 pub fn register(registry: &mut crate::kernel::CommandRegistry) {
-    registry.register_sync("cassette.replayStart", |params, _| start(&params));
+    registry.register_sync("cassette.replayStart", |params, _| start(&params).inspect(|_| super::announce()));
     registry.register_sync("cassette.list", |params, _| list(&params));
-    registry.register_sync("cassette.replayStatus", |_, _| {
-        Ok(json!({ "replaying": REPLAY.lock().as_ref().map(|r| json!({
-            "name": r.name, "workspaceId": r.workspace_id, "hosts": r.hosts, "served": r.served,
-            "unmatchedCount": r.unmatched_count, "passthrough": r.passthrough,
-        })) }))
-    });
+    registry.register_sync("cassette.replayStatus", |_, _| Ok(status()));
     registry.register_sync("cassette.replayStop", |_, _| {
         let r = REPLAY.lock().take().ok_or_else(|| EngineError::not_found("Nothing is replaying."))?;
+        super::announce();
         Ok(json!({
             "name": r.name, "served": r.served, "passedThrough": r.passed, "unmatched": r.unmatched,
             "unmatchedCount": r.unmatched_count,
