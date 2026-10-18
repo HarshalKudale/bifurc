@@ -113,5 +113,10 @@
   "agent.fault_separator": ", ",
   "agent.approval_timing": "Waiting {waited}, lapses in {left}",
   "agent.seconds": "{count} s",
-  "agent.minutes": "{count} min"
+  "agent.minutes": "{count} min",
+  "traffic.webhook": "Webhook",
+  "traffic.fault": "障害注入",
+  "traffic.cassette": "カセット",
+  "traffic.on_server": "{label}(サーバー)",
+  "traffic.handler_webhook_tooltip": "Webhook リスナーが受信しました"
 }
