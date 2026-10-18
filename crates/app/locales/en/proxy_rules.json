@@ -34,5 +34,6 @@
   "confirm.revert.consequence": "The changes saved since then are discarded.",
   "confirm.delete.title": "Delete rule “{name}”?",
   "empty.title": "No proxy rules",
-  "empty.description": "A rule sends traffic that matches a pattern to a mapping or to another server."
+  "empty.description": "A rule sends traffic that matches a pattern to a mapping or to another server.",
+  "tab.rules": "Rules"
 }

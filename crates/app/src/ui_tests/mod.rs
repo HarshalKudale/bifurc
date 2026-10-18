@@ -5,6 +5,7 @@ mod capture;
 mod environments;
 mod fixtures;
 mod flows;
+mod faults_policy;
 mod mail;
 mod mappings;
 mod mocks;
