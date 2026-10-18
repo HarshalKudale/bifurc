@@ -268,6 +268,8 @@ A mock created here is the whole response: nothing is asked of the real server.
                                          --detach keeps it running under the engine. The host part of a mock's
                                          pattern is ignored: /orders matches http://api.localhost/orders.
                                          No match: 404 with the closest mocks, or --fallthrough forwards.
+                                         With --fallthrough a partial mock answers only its mocked parts
+                                         (status, headers, body, delay); the rest comes from upstream.
   serve --stop [--port N] | --status      Stop the mock server(s) / list the running ones
 
 --method takes * for any method.

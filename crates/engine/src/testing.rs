@@ -25,6 +25,8 @@ pub fn scratch_data_root() -> ScratchRoot {
     let turn = STORE.lock().unwrap_or_else(|poisoned| poisoned.into_inner());
     let dir = tempfile::tempdir().expect("a temporary directory");
     set_data_root(dir.path()).expect("the data root is created");
+    // Jars are cached in memory by workspace id, and every scratch store reuses `ws1`.
+    crate::cookies::forget_all();
     let mut settings = load_settings();
     settings.set("workspaces", json!([{ "id": "ws1", "name": "Workspace 1", "activeEnvironmentId": null }]));
     settings.set("activeWorkspaceId", json!("ws1"));
