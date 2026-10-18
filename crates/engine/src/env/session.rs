@@ -45,6 +45,11 @@ pub fn named() -> Option<String> {
     CURRENT.try_with(|(_, name)| name.clone()).ok().filter(|name| !name.is_empty())
 }
 
+/// The workspace of the session the running command belongs to; `None` outside one (the app, engine-internal).
+pub fn current_workspace() -> Option<String> {
+    CURRENT.try_with(|(ws_id, _)| ws_id.clone()).ok()
+}
+
 /// The workspace a command runs for: its `workspaceId`, else the active one.
 pub fn workspace_of(payload: &Value) -> String {
     opt_str(payload, "workspaceId")

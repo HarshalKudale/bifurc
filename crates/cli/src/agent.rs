@@ -25,7 +25,7 @@ Bifurc sends the API calls of the user's workspace (shared cookies, environments
 - Call once and save it: `bifurc curl -X POST {{baseUrl}}/users -d '{"email":"a@b.co"}' --save "Create user" --folder auth`
 - Call it again: `bifurc requests send "Create user" --var email=x@y.co --expect-status 201 --select .id`; `bifurc requests list` lists the saved ones.
 - Output is one summary line (`201 Created · 142ms · 4.2KB json`); `--body`, `--headers` and `--select <path>` show more.
-- Exit codes: 0 ok, 1 a check failed, 2 usage, 3 not found, 4 network, 5 no engine, 6 needs a person: stop and ask.
+- Exit codes: 0 ok, 1 a check failed, 2 usage, 3 not found, 4 network, 5 no engine, 6 needs a person, 7 blocked by policy: stop and ask.
 - Traffic the proxies captured: `bifurc capture list --status 4xx --last 5`, then `bifurc capture show #k3f9 --select .error`
 - Mocks: `bifurc mocks list`, `bifurc mocks create http://api.localhost/users/1 --status 200 -d '{"id":1}'`, `bifurc mocks disable "Get user"`
 - Mock states: `bifurc mocks scenario "Get user" error500` (also empty, slow, timeout, notfound; default returns), `bifurc mocks status`

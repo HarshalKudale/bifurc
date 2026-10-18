@@ -18,10 +18,14 @@ pub enum ErrorCode {
     Unsupported,
     UnknownCommand,
     EngineError,
+    /// A guardrail (`policy.yaml`) stopped an agent's outbound call.
+    PolicyBlocked,
+    /// A guardrail holds the call until a human approves it.
+    PolicyApproval,
 }
 
 impl ErrorCode {
-    pub const ALL: [ErrorCode; 10] = [
+    pub const ALL: [ErrorCode; 12] = [
         ErrorCode::BadRequest,
         ErrorCode::NotFound,
         ErrorCode::Conflict,
@@ -32,6 +36,8 @@ impl ErrorCode {
         ErrorCode::Unsupported,
         ErrorCode::UnknownCommand,
         ErrorCode::EngineError,
+        ErrorCode::PolicyBlocked,
+        ErrorCode::PolicyApproval,
     ];
 
     /// The code a wire string names.
@@ -51,6 +57,8 @@ impl ErrorCode {
             ErrorCode::Unsupported => "UNSUPPORTED",
             ErrorCode::UnknownCommand => "UNKNOWN_COMMAND",
             ErrorCode::EngineError => "ENGINE_ERROR",
+            ErrorCode::PolicyBlocked => "POLICY_BLOCKED",
+            ErrorCode::PolicyApproval => "POLICY_APPROVAL",
         }
     }
 

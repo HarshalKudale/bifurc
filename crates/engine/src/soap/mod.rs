@@ -24,6 +24,7 @@ fn failure(message: String) -> EngineError {
 
 pub fn register(registry: &mut CommandRegistry) {
     registry.register("soap.fetchWsdl", |params: Value, _| async move {
+        crate::workspace::policy::guard("GET", str_of(&params, "url")).await?;
         let settings = RequestSettings::resolve(params.get("settings"));
         Ok(match exchange_with("GET", str_of(&params, "url"), &[], None, &settings).await {
             Ok(response) => json!({ "ok": true, "content": response.body }),
@@ -35,6 +36,7 @@ pub fn register(registry: &mut CommandRegistry) {
     });
 
     registry.register("soap.execute", |params: Value, _| async move {
+        crate::workspace::policy::guard("POST", str_of(&params, "endpointUrl")).await?;
         let mut headers = vec![("Content-Type".to_string(), "text/xml; charset=utf-8".to_string())];
         headers.extend(header_pairs(params.get("headers").unwrap_or(&Value::Null)));
         let action = str_of(&params, "soapAction");
