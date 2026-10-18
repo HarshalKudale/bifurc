@@ -230,6 +230,28 @@
   },
   "invalid": {}
  },
+ "cassette.recordStart": {
+  "valid": {
+   "workspaceId": "ws1",
+   "name": "checkout",
+   "hosts": [
+    "api.stripe.com"
+   ]
+  },
+  "invalid": {}
+ },
+ "cassette.recordStatus": {
+  "valid": {},
+  "invalid": {
+   "extra": true
+  }
+ },
+ "cassette.recordStop": {
+  "valid": {},
+  "invalid": {
+   "extra": true
+  }
+ },
  "changes.list": {
   "valid": {
    "workspaceId": "ws1",

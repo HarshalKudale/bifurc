@@ -48,4 +48,5 @@ pub mod update;
 pub mod usage;
 pub mod vault;
 pub mod wait;
+pub mod record;
 pub mod webhooks;

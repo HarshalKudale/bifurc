@@ -3209,6 +3209,40 @@
    ],
    "additionalProperties": false
   },
+  "cassette.recordStart": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "name": {
+     "type": "string"
+    },
+    "hosts": {
+     "minItems": 1,
+     "type": "array",
+     "items": {
+      "type": "string"
+     }
+    }
+   },
+   "required": [
+    "workspaceId",
+    "name",
+    "hosts"
+   ],
+   "additionalProperties": false
+  },
+  "cassette.recordStop": {
+   "type": "object",
+   "properties": {},
+   "additionalProperties": false
+  },
+  "cassette.recordStatus": {
+   "type": "object",
+   "properties": {},
+   "additionalProperties": false
+  },
   "changes.list": {
    "type": "object",
    "properties": {
