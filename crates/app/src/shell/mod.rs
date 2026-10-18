@@ -52,6 +52,7 @@ use crate::{
         services::ServicesScreen,
         settings::SettingsScreen,
         vaults::VaultsScreen,
+        webhooks::WebhooksScreen,
         workspace::WorkspaceScreen,
         workspace_setup::{Purpose, open_setup_dialog},
     },
@@ -91,6 +92,7 @@ pub struct Shell {
     proxy_rules: Entity<ProxyRulesScreen>,
     capture: Entity<CaptureScreen>,
     mail: Entity<MailScreen>,
+    webhooks: Entity<WebhooksScreen>,
     mappings: Entity<MappingsScreen>,
     environments: Entity<EnvironmentsScreen>,
     flows: Entity<FlowsScreen>,
@@ -117,6 +119,7 @@ impl Shell {
         let proxy_rules = cx.new(|cx| ProxyRulesScreen::new(model.clone(), window, cx));
         let capture = cx.new(|cx| CaptureScreen::new(model.clone(), window, cx));
         let mail = cx.new(|cx| MailScreen::new(model.clone(), window, cx));
+        let webhooks = cx.new(|cx| WebhooksScreen::new(model.clone(), window, cx));
         let mappings = cx.new(|cx| MappingsScreen::new(model.clone(), window, cx));
         let environments = cx.new(|cx| EnvironmentsScreen::new(model.clone(), window, cx));
         let flows = cx.new(|cx| FlowsScreen::new(model.clone(), window, cx));
@@ -143,7 +146,9 @@ impl Shell {
             cx.observe(&healthbar, |_, _, cx| cx.notify()),
             cx.observe(&capture, |_, _, cx| cx.notify()),
             cx.observe(&mail, |_, _, cx| cx.notify()),
+            cx.observe(&webhooks, |_, _, cx| cx.notify()),
             cx.subscribe_in(&capture, window, Self::on_capture_event),
+            cx.subscribe_in(&webhooks.read(cx).received().clone(), window, Self::on_capture_event),
         ];
 
         let handle = ShellHandle(cx.weak_entity());
@@ -166,6 +171,7 @@ impl Shell {
             proxy_rules,
             capture,
             mail,
+            webhooks,
             mappings,
             environments,
             flows,
@@ -254,6 +260,7 @@ impl Shell {
             | ModelEvent::DevServiceChanged(_)
             | ModelEvent::DevServiceOutput(_)
             | ModelEvent::MailChanged(_)
+            | ModelEvent::WebhookChanged(_)
             | ModelEvent::EngineRestarted
             | ModelEvent::ConfigPatched
             | ModelEvent::EntityReverted(_) => {}
@@ -314,6 +321,7 @@ impl Shell {
             Screen::ProxyRules => Some(self.proxy_rules.clone().into()),
             Screen::Capture => Some(self.capture.clone().into()),
             Screen::Mail => Some(self.mail.clone().into()),
+            Screen::Webhooks => Some(self.webhooks.clone().into()),
         }
     }
 
@@ -326,6 +334,9 @@ impl Shell {
             }
             if screen == Screen::Mail {
                 self.mail.update(cx, |mail, cx| mail.refresh(cx));
+            }
+            if screen == Screen::Webhooks {
+                self.webhooks.update(cx, |webhooks, cx| webhooks.refresh(window, cx));
             }
         }
         cx.notify();
