@@ -617,6 +617,10 @@ mod tests {
             ("webhooks", json!({"verb": "stop", "id": "stripe"})),
             (
                 "webhooks",
+                json!({"verb": "trigger", "id": "stripe", "vault": "hooks", "secret": "K", "patch": [".type=x"], "to": "http://localhost:3000"}),
+            ),
+            (
+                "webhooks",
                 json!({"verb": "replay", "id": "#k3f9", "show_body": true, "show_headers": true, "select": ".ok", "max_body": 0}),
             ),
             ("webhooks", json!({"verb": "save", "id": "#k3f9", "as_request": true, "folder": "hooks"})),
