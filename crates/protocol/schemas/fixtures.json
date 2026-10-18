@@ -230,6 +230,12 @@
   },
   "invalid": {}
  },
+ "cassette.list": {
+  "valid": {
+   "workspaceId": "ws1"
+  },
+  "invalid": {}
+ },
  "cassette.recordStart": {
   "valid": {
    "workspaceId": "ws1",
@@ -247,6 +253,26 @@
   }
  },
  "cassette.recordStop": {
+  "valid": {},
+  "invalid": {
+   "extra": true
+  }
+ },
+ "cassette.replayStart": {
+  "valid": {
+   "workspaceId": "ws1",
+   "name": "checkout",
+   "passthrough": true
+  },
+  "invalid": {}
+ },
+ "cassette.replayStatus": {
+  "valid": {},
+  "invalid": {
+   "extra": true
+  }
+ },
+ "cassette.replayStop": {
   "valid": {},
   "invalid": {
    "extra": true

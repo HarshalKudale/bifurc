@@ -28,6 +28,8 @@ use crate::{
     },
 };
 
+pub mod replay;
+
 pub const MASK: &str = "••••";
 const DIR: &str = "cassettes";
 
@@ -240,6 +242,24 @@ fn write_atomic(path: &Path, value: &Value) -> std::io::Result<()> {
 
 // ---- commands ---------------------------------------------------------------------------------------------
 
+/// The name of the cassette being recorded, if any.
+fn recording_name() -> Option<String> {
+    RECORDING.lock().as_ref().map(|r| r.name.clone())
+}
+
+/// What the user must know before recording or replaying `hosts`: the proxy intercepts HTTPS (and so sees paths and
+/// bodies) only with the TLS toggle on and a root certificate loaded, for every host alike; otherwise it only
+/// tunnels. Plain http:// is always seen.
+fn https_warnings(hosts: &[String]) -> Vec<String> {
+    let local = |h: &String| h == "localhost" || h.ends_with(".localhost") || h.parse::<std::net::IpAddr>().is_ok();
+    let intercepting = load_settings().tls_enabled() && crate::certificates::is_ca_loaded();
+    if intercepting || hosts.iter().all(local) {
+        return Vec::new();
+    }
+    vec!["HTTPS interception is off, so https:// traffic is only tunnelled, neither recorded nor replayed (see: bifurc tls status)"
+        .to_string()]
+}
+
 fn start(params: &Value) -> Result<Value> {
     let ws = str_of(params, "workspaceId");
     let name = str_of(params, "name");
@@ -260,6 +280,9 @@ fn start(params: &Value) -> Result<Value> {
             "hosts are names like api.stripe.com or *.example.com, without scheme or port.",
         ));
     }
+    if let Some(replaying) = replay::active_name() {
+        return Err(EngineError::conflict(format!("replaying \"{replaying}\"; bifurc replay stop before recording")));
+    }
     let mut guard = RECORDING.lock();
     if let Some(active) = guard.as_ref() {
         return Err(EngineError::conflict(format!("already recording \"{}\"; bifurc record stop", active.name)));
@@ -269,17 +292,7 @@ fn start(params: &Value) -> Result<Value> {
     let started_at = now_ms();
     let cassette = json!({ "version": 1, "name": name, "hosts": hosts, "recordedAt": started_at, "interactions": [] });
     write_atomic(&path, &cassette)?;
-    // The proxy intercepts HTTPS (and so sees paths and bodies) only with the TLS toggle on and a root certificate
-    // loaded, for every host alike; otherwise it only tunnels. Plain http:// is always seen.
-    let mut warnings = Vec::new();
-    let local = |h: &String| h == "localhost" || h.ends_with(".localhost") || h.parse::<std::net::IpAddr>().is_ok();
-    let intercepting = load_settings().tls_enabled() && crate::certificates::is_ca_loaded();
-    if !intercepting && !hosts.iter().all(local) {
-        warnings.push(
-            "HTTPS interception is off, so https:// traffic is only tunnelled and not recorded (see: bifurc tls status)"
-                .to_string(),
-        );
-    }
+    let warnings = https_warnings(&hosts);
     *guard = Some(Recording {
         name: name.to_string(),
         workspace_id: ws.to_string(),
@@ -296,6 +309,7 @@ fn start(params: &Value) -> Result<Value> {
 }
 
 pub fn register(registry: &mut CommandRegistry) {
+    replay::register(registry);
     registry.register_sync("cassette.recordStart", |params, _| start(&params));
 
     registry.register_sync("cassette.recordStatus", |_, _| {
