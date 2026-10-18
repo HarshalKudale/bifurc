@@ -192,6 +192,24 @@ pub fn parse_args(argv: &[String]) -> Result<ParsedArgs, String> {
             parsed.add(&name, value);
             continue;
         }
+        // `faults add --drop` is a switch that may carry a rate (`--drop 10%`): a next word that is only a number,
+        // with or without `%`, is taken as that rate (a target is never one).
+        if matches!(name.as_str(), "drop" | "reset") && parsed.positionals.first().is_some_and(|g| g == "faults") {
+            let rate = |w: &str| {
+                let n = w.strip_suffix('%').unwrap_or(w);
+                !n.is_empty() && n.chars().all(|c| c.is_ascii_digit() || c == '.')
+            };
+            let value = match (inline_value, argv.get(i).map(String::as_str)) {
+                (Some(value), _) => value,
+                (None, Some(next)) if rate(next) => {
+                    i += 1;
+                    next.to_string()
+                }
+                _ => "true".to_string(),
+            };
+            parsed.add(&name, value);
+            continue;
+        }
         if BOOLEAN_FLAGS.contains(&name.as_str())
             || (name == "body" && sends)
             || prints_curl
@@ -247,6 +265,15 @@ mod tests {
         assert_eq!(a.flag("method"), Some("POST"));
         assert_eq!(a.flags("header"), ["a: 1", "b: 2"]);
         assert_eq!(a.flag("data"), Some("{}"));
+    }
+
+    #[test]
+    fn faults_drop_and_reset_take_an_optional_rate() {
+        let a = ok(&["faults", "add", "h/p", "--drop", "10%", "--json"]);
+        assert_eq!((a.flag("drop"), a.positionals.len()), (Some("10%"), 3));
+        let a = ok(&["faults", "add", "--reset", "h/p"]);
+        assert_eq!((a.flag("reset"), a.positionals.len()), (Some("true"), 3));
+        assert_eq!(ok(&["faults", "add", "h", "--drop=5"]).flag("drop"), Some("5"));
     }
 
     #[test]

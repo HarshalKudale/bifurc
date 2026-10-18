@@ -247,13 +247,21 @@ fn recording_name() -> Option<String> {
     RECORDING.lock().as_ref().map(|r| r.name.clone())
 }
 
+/// Whether the proxy intercepts HTTPS (TLS toggle on and a root certificate loaded).
+pub(crate) fn https_seen() -> bool {
+    load_settings().tls_enabled() && crate::certificates::is_ca_loaded()
+}
+
+/// `localhost`, `*.localhost` or an IP address: reached over plain http by the local tools.
+pub(crate) fn is_local_host(h: &str) -> bool {
+    h == "localhost" || h.ends_with(".localhost") || h.parse::<std::net::IpAddr>().is_ok()
+}
+
 /// What the user must know before recording or replaying `hosts`: the proxy intercepts HTTPS (and so sees paths and
 /// bodies) only with the TLS toggle on and a root certificate loaded, for every host alike; otherwise it only
 /// tunnels. Plain http:// is always seen.
 fn https_warnings(hosts: &[String]) -> Vec<String> {
-    let local = |h: &String| h == "localhost" || h.ends_with(".localhost") || h.parse::<std::net::IpAddr>().is_ok();
-    let intercepting = load_settings().tls_enabled() && crate::certificates::is_ca_loaded();
-    if intercepting || hosts.iter().all(local) {
+    if https_seen() || hosts.iter().all(|h| is_local_host(h)) {
         return Vec::new();
     }
     vec!["HTTPS interception is off, so https:// traffic is only tunnelled, neither recorded nor replayed (see: bifurc tls status)"

@@ -276,6 +276,8 @@ pub struct StatusParts {
     pub replaying: Option<Value>,
     /// `approvals.list`: the calls a policy holds for a person.
     pub approvals: Option<Value>,
+    /// `fault.list`: the fault rules in force.
+    pub faults: Option<Value>,
 }
 
 impl StatusParts {
@@ -327,6 +329,7 @@ pub fn describe_status(engine: &RuntimeInfo, active_workspace: &Value, parts: &S
     first.extend(parts.environment().map(|name| format!("env {name}")));
     let mut second = Vec::new();
     second.extend(parts.approvals_pending().map(|n| format!("approvals {n} pending")));
+    second.extend(parts.faults.as_ref().and_then(crate::faults::brief));
     second.extend(parts.mocks().map(|n| format!("mocks {n} on")));
     let ports: Vec<String> = parts
         .mock_servers
@@ -559,6 +562,7 @@ boom"
             recording: None,
             replaying: None,
             approvals: None,
+            faults: None,
         }
     }
 
@@ -583,6 +587,7 @@ boom"
             recording: None,
             replaying: None,
             approvals: None,
+            faults: None,
         };
         assert_eq!(
             describe_status(&info, &workspace, &parts),
@@ -600,6 +605,7 @@ mocks 2 on · mock server :4010 · mail :1025 (3) · webhooks :4020 · capture 1
             recording: None,
             replaying: None,
             approvals: None,
+            faults: None,
         };
         assert_eq!(
             describe_status(&info, &json!(null), &parts),
@@ -617,6 +623,7 @@ mail :1025 off (Port 1025 is already in use) · capture 0/200 paused"
             recording: None,
             replaying: None,
             approvals: None,
+            faults: None,
         };
         assert_eq!(describe_status(&info, &workspace, &none), "engine 0.6.0 · workspace smoke · env none");
         let recording = StatusParts {
@@ -626,6 +633,9 @@ mail :1025 off (Port 1025 is already in use) · capture 0/200 paused"
         };
         let held = StatusParts { approvals: Some(json!({"pending": [{}, {}]})), ..none_again() };
         assert!(describe_status(&info, &workspace, &held).ends_with("approvals 2 pending"));
+        let faulty =
+            StatusParts { faults: Some(json!({"faults": [{"target": "a.test", "reset": true}]})), ..none_again() };
+        assert!(describe_status(&info, &workspace, &faulty).ends_with("faults 1 (a.test reset)"));
         assert!(describe_status(&info, &workspace, &recording).ends_with(
             "recording checkout · 1 interaction · a.com,b.com · replaying checkout · 3 served · 1 unmatched"
         ));

@@ -22,6 +22,7 @@ pub mod discovery;
 pub mod entities;
 pub mod error;
 pub mod extras;
+pub mod faults;
 pub mod flows;
 pub mod flowsteps;
 pub mod format;

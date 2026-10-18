@@ -93,6 +93,7 @@ Groups (bifurc <group> --help shows the arguments and options of each verb)
   approvals     list | approve | deny                                 Calls a policy holds for a person; decided at a terminal
   types         <request> [--lang ts|zod|python|go] [--out f]         Types inferred from a request's responses
   openapi       infer [--folder f] [--out f] [--title t]             OpenAPI 3 file from saved requests, mocks, captures
+  faults        add <target> [--latency ms] [--status n] | list | clear Inject latency, errors, drops into proxy traffic
   record        start | stop | status | list                           Record proxied traffic of chosen hosts into a cassette
   replay        <cassette> [--passthrough] | stop | status              Serve a recorded cassette instead of the real hosts
 
@@ -702,6 +703,25 @@ Who holds a TCP port on this machine: `3000 held by node (pid 4242)`, or `free` 
   free <port>                            Show the process holding the port
   free <port> --kill                     Stop it with everything it started";
 
+const FAULTS: &str = "Usage: bifurc faults <verb>
+
+Make the real backend misbehave, to check retries, timeouts and error screens. A fault is a rule on a target
+`host[:port][/path-prefix]` (`*.example.com` allowed) that hits proxy traffic: the forward proxy (http and
+intercepted https) and the reverse proxy. Not the local mock server, not `requests send` or `curl`. A plain
+https tunnel (interception off) only meets host-wide latency, drop and reset (see: bifurc tls status).
+Faults live in the running engine and are lost when it restarts; `bifurc status` lists them.
+
+  add <target> --latency <ms|2s>         Delay each matching request, then let it go on
+  add <target> --status <code> [--rate 30%]
+                                         Answer at once with that status (header x-bifurc-fault); upstream not called
+  add <target> --drop [10%]              Never answer (held open up to 60 s); bare = every request
+  add <target> --reset [5%]              Close the connection with no answer
+                                         --rate N% applies to latency and status (--latency and --status combine);
+                                         drop and reset take their own rate and stand alone. 0 < rate <= 100
+                                         Prints `fault #1k3f: api.localhost/orders → 429 at 30% (proxy traffic)`
+  list                                   `#1k3f  api.localhost/orders  429 at 30%  12 hits`, or `no faults`
+  clear [<id>]                           `cleared 2 faults`, or `cleared #1k3f`. Exit 3 for an unknown id";
+
 const RECORD: &str = "Usage: bifurc record <verb>
 
 Record the real answers of some hosts, as they pass through the proxy, into a cassette: the file
@@ -966,6 +986,7 @@ pub fn group_usage(group: &str) -> Option<String> {
         "jwt" => JWT,
         "policy" => POLICY,
         "approvals" => APPROVALS,
+        "faults" => FAULTS,
         "record" => RECORD,
         "replay" => REPLAY,
         "engine" => ENGINE,
@@ -1126,6 +1147,13 @@ pub fn examples(group: &str) -> Option<&'static [&'static str]> {
             "bifurc approvals approve 1k3f",
             "bifurc approvals deny 1k3f --reason \"not on a Friday\"",
         ],
+        "faults" => &[
+            "bifurc faults add api.localhost/orders --latency 2000",
+            "bifurc faults add api.localhost/orders --status 429 --rate 30%",
+            "bifurc faults add api.localhost/orders --drop 10%",
+            "bifurc faults add api.localhost/orders --reset",
+            "bifurc faults list",
+        ],
         "record" => &[
             "bifurc record start --hosts api.stripe.com,api.openai.com --cassette checkout",
             "bifurc record start --hosts *.example.com --cassette example",
@@ -1214,6 +1242,7 @@ pub(crate) mod tests {
             "jwt",
             "policy",
             "approvals",
+            "faults",
             "types",
             "openapi",
             "record",
