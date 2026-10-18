@@ -90,12 +90,29 @@ pub struct Session<S: Read + Write> {
     next_id: u64,
     /// Events that arrived while a call waited for its response, for [`Session::next_event`].
     pending: VecDeque<Value>,
+    /// Who the engine says a call of this session is by (`cli`, `session:<name>`), once `hello` ran: an
+    /// `approval.requested` for it is told to the person at the terminal.
+    by: Option<String>,
 }
 
 impl<S: Read + Write> Session<S> {
     /// Wrap a connected stream. Nothing is sent until [`Session::hello`] or [`Session::call`].
     pub fn new(stream: S) -> Self {
-        Self { stream, next_id: 1, pending: VecDeque::new() }
+        Self { stream, next_id: 1, pending: VecDeque::new(), by: None }
+    }
+
+    /// Tell the person at the terminal that a call of this session waits for approval (one stderr line); true for
+    /// an `approval.requested` event, of this session or not: it is not for the command to see.
+    fn approval_hint(&self, record: &Value) -> bool {
+        if record.get("event").and_then(Value::as_str) != Some("event.approval.requested") {
+            return false;
+        }
+        let item = &record["payload"];
+        if self.by.as_deref().is_some_and(|by| item["by"] == by) {
+            let (id, policy) = (item["id"].as_str().unwrap_or_default(), item["policy"].as_str().unwrap_or_default());
+            eprintln!("waiting for approval #{id} (policy \"{policy}\"): a person runs bifurc approvals approve {id}");
+        }
+        true
     }
 
     /// The next event, from those a call set aside first; `None` when the engine closed the connection.
@@ -106,6 +123,7 @@ impl<S: Read + Write> Session<S> {
         loop {
             match read_frame(&mut self.stream)? {
                 None => return Ok(None),
+                Some(record) if self.approval_hint(&record) => {}
                 Some(record) if record.get("event").is_some_and(Value::is_string) => return Ok(Some(record)),
                 Some(_) => {}
             }
@@ -122,6 +140,9 @@ impl<S: Read + Write> Session<S> {
             let Some(record) = read_frame(&mut self.stream)? else {
                 return Err(CliError::msg("the connection to the engine is closed"));
             };
+            if self.approval_hint(&record) {
+                continue;
+            }
             if record.get("event").is_some_and(Value::is_string) {
                 self.pending.push_back(record);
                 continue;
@@ -150,6 +171,7 @@ impl<S: Read + Write> Session<S> {
         if let Some(name) = session {
             payload["session"] = json!(name);
         }
+        self.by = Some(session.map_or_else(|| "cli".to_string(), |name| format!("session:{name}")));
         self.call("hello", payload)
     }
 }
@@ -262,6 +284,8 @@ pub fn connect(data_dir: &Path, client_version: &str, named: Option<&str>) -> Re
     let stream = open_stream(&info.address).map_err(|e| open_failed(e.to_string()))?;
     let mut session = Session::new(stream);
     session.hello(client_version, named).map_err(|e| open_failed(e.to_string()))?;
+    // So a call held for approval can say so; an engine that does not know the event simply refuses.
+    let _ = session.call("subscribe", json!({ "events": ["event.approval.requested"] }));
     Ok(EngineConnection { info, session })
 }
 
@@ -401,10 +425,26 @@ mod tests {
         assert_eq!(blocked.line(), "bifurc: blocked by policy \"no-prod-writes\": DELETE https://api.prod.x/orders/1");
         let held = go(
             "POLICY_APPROVAL",
-            "needs approval: policy \"staging-deletes\" (DELETE https://s.x/o/1); approvals arrive in a later version",
+            "needs approval: policy \"staging-deletes\" (DELETE https://s.x/o/1) — still pending as #m1abc; approve with: bifurc approvals approve m1abc",
         );
         assert_eq!(held.code(), 6);
         assert!(held.line().starts_with("bifurc: needs approval: policy \"staging-deletes\" (DELETE "));
+    }
+
+    #[test]
+    fn an_approval_request_during_a_call_is_told_and_kept_from_the_command() {
+        let asked = |by: &str| json!({"event": "event.approval.requested", "seq": 1, "payload": {"id": "m1x", "policy": "p", "by": by}});
+        let other = json!({"event": "event.log.entry", "seq": 2, "payload": {}});
+        let stream = Scripted::new(&[
+            asked("cli"),
+            asked("session:other"),
+            other.clone(),
+            json!({"id": "cli-1", "ok": true, "data": 1}),
+        ]);
+        let mut session = Session::new(stream);
+        session.by = Some("cli".into());
+        assert_eq!(session.call("request.send", json!({})).unwrap(), json!(1));
+        assert_eq!(session.next_event().unwrap(), Some(other), "approval events never reach the command");
     }
 
     #[test]

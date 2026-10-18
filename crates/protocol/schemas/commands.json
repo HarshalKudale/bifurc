@@ -605,6 +605,11 @@
      "type": "string",
      "maxLength": 64
     },
+    "approvalTimeoutSeconds": {
+     "type": "integer",
+     "minimum": 10,
+     "maximum": 3600
+    },
     "mailPort": {
      "type": "integer",
      "minimum": 1,
@@ -2364,6 +2369,45 @@
    "required": [
     "workspaceId",
     "relPath"
+   ],
+   "additionalProperties": false
+  },
+  "approvals.list": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "all": {
+     "type": "boolean"
+    }
+   },
+   "additionalProperties": false
+  },
+  "approvals.decide": {
+   "type": "object",
+   "properties": {
+    "id": {
+     "type": "string"
+    },
+    "decision": {
+     "type": "string",
+     "enum": [
+      "approve",
+      "deny"
+     ]
+    },
+    "reason": {
+     "type": "string"
+    },
+    "interactive": {
+     "type": "boolean"
+    }
+   },
+   "required": [
+    "id",
+    "decision",
+    "interactive"
    ],
    "additionalProperties": false
   },

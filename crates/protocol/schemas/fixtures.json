@@ -35,6 +35,26 @@
   },
   "invalid": {}
  },
+ "approvals.decide": {
+  "valid": {
+   "id": "m1abc",
+   "decision": "approve",
+   "reason": "checked the order",
+   "interactive": true
+  },
+  "invalid": {
+   "id": "m1abc"
+  }
+ },
+ "approvals.list": {
+  "valid": {
+   "workspaceId": "ws1",
+   "all": true
+  },
+  "invalid": {
+   "all": "yes"
+  }
+ },
  "audit.diff": {
   "valid": {
    "commitHash": "c1",
