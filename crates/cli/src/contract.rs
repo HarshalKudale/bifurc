@@ -53,7 +53,7 @@ pub(crate) fn path_of(url: &str) -> String {
     if rest.starts_with('/') { rest.to_string() } else { format!("/{rest}") }
 }
 
-fn is_var(segment: &str) -> bool {
+pub(crate) fn is_var(segment: &str) -> bool {
     (segment.starts_with("{{") && segment.ends_with("}}")) || (segment.starts_with(':') && segment.len() > 1)
 }
 
@@ -64,7 +64,7 @@ pub(crate) fn paths_match(a: &str, b: &str) -> bool {
     a.len() == b.len() && a.iter().zip(&b).all(|(x, y)| x == y || is_var(x) || is_var(y))
 }
 
-fn method_matches(mock: &str, request: &str) -> bool {
+pub(crate) fn method_matches(mock: &str, request: &str) -> bool {
     mock == "*" || mock.eq_ignore_ascii_case(request)
 }
 
