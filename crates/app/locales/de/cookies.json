@@ -1,0 +1,23 @@
+{
+  "tab": "Cookies",
+  "tab_count": "Cookies ({count})",
+  "empty_title": "Keine Cookies",
+  "empty_description": "Diese Antwort hat keine Cookies gesetzt.",
+  "copy": "Wert kopieren",
+  "copy_payload": "Payload kopieren",
+  "jwt": "JWT",
+  "expired": "Abgelaufen",
+  "decode": "Dekodieren",
+  "hide": "Ausblenden",
+  "header": "Header",
+  "payload": "Payload",
+  "not_verified": "Nur zum Lesen dekodiert. Die Signatur wird nicht geprüft.",
+  "domain": "Domain",
+  "path": "Pfad",
+  "expires": "Läuft ab",
+  "max_age": "Max-Age",
+  "same_site": "SameSite",
+  "secure": "Secure",
+  "http_only": "HttpOnly",
+  "session": "Sitzung"
+}

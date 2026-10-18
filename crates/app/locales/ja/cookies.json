@@ -1,0 +1,23 @@
+{
+  "tab": "Cookie",
+  "tab_count": "Cookie ({count})",
+  "empty_title": "Cookie はありません",
+  "empty_description": "このレスポンスは Cookie を設定しませんでした。",
+  "copy": "値をコピー",
+  "copy_payload": "ペイロードをコピー",
+  "jwt": "JWT",
+  "expired": "期限切れ",
+  "decode": "デコード",
+  "hide": "隠す",
+  "header": "ヘッダー",
+  "payload": "ペイロード",
+  "not_verified": "読み取り用にデコードしたものです。署名は検証されていません。",
+  "domain": "ドメイン",
+  "path": "パス",
+  "expires": "有効期限",
+  "max_age": "Max-Age",
+  "same_site": "SameSite",
+  "secure": "Secure",
+  "http_only": "HttpOnly",
+  "session": "セッション"
+}
