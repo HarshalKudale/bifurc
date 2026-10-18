@@ -212,7 +212,8 @@ impl FakeEngine {
             let answer = match reply.map(|reply| reply(&payload)) {
                 Some(Ok(data)) => json!({ "id": id, "ok": true, "data": data }),
                 Some(Err(message)) => {
-                    json!({ "id": id, "ok": false, "error": { "code": "ENGINE_ERROR", "message": message } })
+                    let code = if message.starts_with("NOT_FOUND") { "NOT_FOUND" } else { "ENGINE_ERROR" };
+                    json!({ "id": id, "ok": false, "error": { "code": code, "message": message } })
                 }
                 // Anything not canned succeeds with the shape most commands answer with.
                 None => json!({ "id": id, "ok": true, "data": { "ok": true } }),
