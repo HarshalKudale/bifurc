@@ -44,6 +44,8 @@ pub struct TrafficEntry {
     pub target: Option<String>,
     /// Kept beyond the engine's capture limit until it is unpinned.
     pub pinned: bool,
+    /// The mock that answered it (`via` is `mock`), when the engine says which.
+    pub mock_id: Option<String>,
 }
 
 /// What a response is, for the type filter of the list: the groups of a browser's Network tab, told apart by
@@ -196,6 +198,7 @@ impl TrafficEntry {
             origin: text("origin"),
             target: text("target").filter(|target| !target.is_empty()),
             pinned: value.get("pinned").and_then(Value::as_bool).unwrap_or(false),
+            mock_id: text("mockId"),
         })
     }
 

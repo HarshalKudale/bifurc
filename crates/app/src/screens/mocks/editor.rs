@@ -447,6 +447,16 @@ impl MockEditor {
         }
     }
 
+    /// The mock was switched on or off elsewhere (the tree, a scenario). Taken as it is unless the switch here
+    /// has an edit of its own waiting, so a later write does not undo the change.
+    pub fn follow_enabled(&mut self, enabled: bool, cx: &mut Context<Self>) {
+        if self.load == LoadState::Ready && self.enabled == self.baseline.enabled && self.enabled != enabled {
+            self.enabled = enabled;
+            self.baseline.enabled = enabled;
+            cx.notify();
+        }
+    }
+
     /// Writes an edit that is still waiting, now: the tab is about to close.
     pub fn flush(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         if self.saved_id.is_some() {

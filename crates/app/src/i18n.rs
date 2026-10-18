@@ -36,6 +36,7 @@ macro_rules! language {
                 ("mail", include_str!(concat!("../locales/", $code, "/mail.json"))),
                 ("mappings", include_str!(concat!("../locales/", $code, "/mappings.json"))),
                 ("mocks", include_str!(concat!("../locales/", $code, "/mocks.json"))),
+                ("mocks_live", include_str!(concat!("../locales/", $code, "/mocks_live.json"))),
                 ("model", include_str!(concat!("../locales/", $code, "/model.json"))),
                 ("onboarding", include_str!(concat!("../locales/", $code, "/onboarding.json"))),
                 ("proxy_rules", include_str!(concat!("../locales/", $code, "/proxy_rules.json"))),
