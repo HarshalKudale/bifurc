@@ -3,6 +3,7 @@
 mod audit;
 mod capture;
 mod cassettes;
+mod claims;
 mod environments;
 mod fixtures;
 mod flows;

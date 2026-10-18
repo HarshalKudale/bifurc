@@ -4,6 +4,7 @@
 //! are snapshots the views render from.
 
 pub mod agent;
+pub mod claims;
 pub mod config;
 pub mod cookies;
 pub mod explorer;

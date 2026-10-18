@@ -211,6 +211,10 @@ impl FakeEngine {
             };
             let answer = match reply.map(|reply| reply(&payload)) {
                 Some(Ok(data)) => json!({ "id": id, "ok": true, "data": data }),
+                // A reply that is a whole error object (`{code, message, details}`) goes out as it is.
+                Some(Err(message)) if message.starts_with('{') => {
+                    json!({ "id": id, "ok": false, "error": serde_json::from_str::<Value>(&message).expect("an error object") })
+                }
                 Some(Err(message)) => {
                     let code = if message.starts_with("NOT_FOUND") { "NOT_FOUND" } else { "ENGINE_ERROR" };
                     json!({ "id": id, "ok": false, "error": { "code": code, "message": message } })

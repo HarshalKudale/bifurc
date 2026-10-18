@@ -1,0 +1,8 @@
+{
+  "banner": "{by} is editing this. It is read-only here until they are done.",
+  "take_over": "Take over",
+  "confirm.title": "Take over \"{name}\" from {by}?",
+  "confirm.body": "{by} will no longer be able to save changes to it. What they have not saved yet is lost.",
+  "confirm.ok": "Take over",
+  "row.tooltip": "Claimed by {by}, until {until}"
+}
