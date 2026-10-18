@@ -20,7 +20,10 @@ use tokio::{
     task::JoinHandle,
 };
 
-use super::{is_streaming_mock, resolve_mock_only_response, serve_mock, serve_resolved_response, write_response};
+use super::{
+    is_fully_mocked, is_streaming_mock, merge_mock_with_upstream, resolve_mock_only_response, serve_mock,
+    serve_resolved_response, write_response,
+};
 use crate::{
     env::resolve_vars_in,
     kernel::{
@@ -29,7 +32,7 @@ use crate::{
     },
     protocol::{EngineError, Result},
     proxy::{
-        finished_entry, forward_streaming, log_body, log_outcome,
+        fetch_upstream_response, finished_entry, forward_streaming, log_body, log_outcome,
         wire::{Duplicates, parse_header_lines, read_body, read_head},
     },
     utils::{
@@ -177,7 +180,51 @@ async fn handle(served: Arc<Served>, bound: SocketAddr, mut socket: TcpStream) {
 
     let (routing, names) = snapshot(&served.workspace_id);
     let env = routing.env.as_ref();
-    if let Some(mock) = match_local(&routing.mocks, &head.method, &host, &target, env) {
+    let mock = match_local(&routing.mocks, &head.method, &host, &target, env);
+    if let (Some(mock), Some(origin)) = (mock, &served.fallthrough)
+        && !is_fully_mocked(mock)
+    {
+        // A partial mock replaces only the parts it marks as mocked; the rest is what the fallthrough answered.
+        let mut forwarded = headers;
+        forwarded.shift_remove("host");
+        let url = format!("{}{target}", origin.trim_end_matches('/'));
+        let upstream = fetch_upstream_response(&head.method, &url, "", &forwarded, &body, None, "").await;
+        let (resolved, duration) = match upstream {
+            Ok(upstream) => {
+                let merged = merge_mock_with_upstream(mock, &upstream, env);
+                let duration = upstream.duration_ms + merged.delay_ms as i64;
+                (merged, duration)
+            }
+            Err(_) => {
+                let body = format!("could not reach the fallthrough {origin} for partial mock {}", mock.id);
+                let mut res_headers = Headers::new();
+                res_headers.insert("content-type".into(), "text/plain".into());
+                res_headers.insert("content-length".into(), body.len().to_string());
+                res_headers.insert("connection".into(), "close".into());
+                emit_log(&finished_entry(
+                    &base,
+                    502,
+                    "error",
+                    None,
+                    now_ms() - t0,
+                    res_headers.clone(),
+                    log_body(body.as_bytes()),
+                ));
+                let _ = write_response(&mut socket, 502, &res_headers, body.as_bytes()).await;
+                return;
+            }
+        };
+        emit_log(&finished_entry(
+            &base,
+            resolved.status,
+            "mock",
+            Some(format!("mock:{}", mock.id)),
+            duration,
+            resolved.headers.clone(),
+            log_body(&resolved.body),
+        ));
+        let _ = serve_resolved_response(&mut socket, &resolved).await;
+    } else if let Some(mock) = mock {
         let resolved = resolve_mock_only_response(mock, env);
         emit_log(&finished_entry(
             &base,
@@ -464,6 +511,41 @@ mod tests {
         assert!(get(port, "/orders").await.ends_with("body of m1"));
         let entry = logs.of(port, "/real?a=1").await;
         assert_eq!((entry["via"].as_str(), entry["origin"].as_str()), (Some("proxy"), Some("server")));
+        call(&registry, "mocks.serveStop", json!({})).await.unwrap();
+    }
+
+    #[tokio::test]
+    async fn a_partial_mock_is_laid_over_the_fallthrough_answer() {
+        let _root = scratch_data_root();
+        // Only the status is mocked: the body is the upstream's.
+        put("s1", "Status only", "http://api.localhost/status", json!({ "responseBodyMocked": false }));
+        // Only the body and one header are mocked: the status is the upstream's.
+        put(
+            "b1",
+            "Body only",
+            "http://api.localhost/body",
+            json!({ "responseStatusMocked": false, "responseHeaders": { "x-mocked": "yes" },
+                    "mockedResponseHeaders": ["x-mocked"] }),
+        );
+        let canned = HashMap::from([
+            ("/status".to_string(), ("text/plain".to_string(), "real status body".to_string())),
+            ("/body".to_string(), ("text/plain".to_string(), "real body".to_string())),
+        ]);
+        let upstream = test_server::start(canned).await;
+        let registry = registry();
+        let port = start(&registry, json!({ "fallthrough": upstream })).await;
+
+        let answer = get(port, "/status").await;
+        assert!(answer.starts_with("HTTP/1.1 201 ") && answer.ends_with("real status body"), "{answer}");
+        let answer = get(port, "/body").await;
+        assert!(answer.starts_with("HTTP/1.1 200 ") && answer.ends_with("body of b1"), "{answer}");
+        assert!(answer.to_lowercase().contains("x-mocked: yes"), "{answer}");
+        call(&registry, "mocks.serveStop", json!({})).await.unwrap();
+
+        // Without a fallthrough there is nothing to merge with: the mock answers alone, as before.
+        let port = start(&registry, json!({})).await;
+        let answer = get(port, "/status").await;
+        assert!(answer.starts_with("HTTP/1.1 201 ") && answer.ends_with("body of s1"), "{answer}");
         call(&registry, "mocks.serveStop", json!({})).await.unwrap();
     }
 

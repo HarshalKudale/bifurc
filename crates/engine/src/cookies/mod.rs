@@ -70,6 +70,11 @@ pub fn jar_of(ws_id: &str) -> String {
     }
 }
 
+/// Forget every jar held in memory, so a new data root (a test's scratch store) starts without cookies.
+pub fn forget_all() {
+    JARS.lock().clear();
+}
+
 /// Empty the jar of the named session `name` in `ws_id`.
 pub fn reset_session(ws_id: &str, name: &str) {
     JARS.lock().remove(&format!("{ws_id}#session:{name}"));
