@@ -54,6 +54,7 @@ const SCOPE_BY_COMMAND: &[(&str, Scope)] = &[
     ("cookies.set", Scope::Write),
     ("changes.list", Scope::Read),
     ("claims.set", Scope::Write),
+    ("claims.release", Scope::Write),
     ("claims.list", Scope::Read),
     ("session.get", Scope::Read),
     ("session.setVariables", Scope::Write),

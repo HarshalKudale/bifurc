@@ -1339,7 +1339,7 @@ pub fn catalog() -> Vec<Tool> {
             name: "claim",
             words: &["claim"],
             summary: "Claim an item you are editing (a lock for other agents) or release the claim.",
-            details: "Advisory only: nothing is blocked, but another session's update of it prints a warning. Lapses after 30 minutes.",
+            details: "A lock: others can read and use the item, but their update, delete or enable is refused (exit 2) naming the holder. Your own writes renew it; it lapses after 30 minutes. Claiming what another session holds is refused unless `force` (take over). Calls without a session name share one holder, `cli`.",
             effect: Effect::Changes,
             upfront: false,
             scoped: true,
@@ -1353,6 +1353,7 @@ pub fn catalog() -> Vec<Tool> {
                 },
                 operand("name", "The item's name.").required(),
                 switch("release", "release", None, "Release the claim instead of taking it."),
+                switch("force", "force", None, "Take over a claim another session holds (or release it)."),
             ],
         },
         Row {
