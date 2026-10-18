@@ -163,7 +163,13 @@ fn add(params: &Value) -> Result<Value> {
         created_at: now_ms(),
         hits: 0,
     };
-    let shown = rule.json();
+    let mut shown = rule.json();
+    let wildcard = rule.host.trim_start_matches("*.");
+    if !crate::cassettes::is_local_host(wildcard) && !crate::cassettes::https_seen() {
+        shown["warnings"] = json!([
+            "https:// traffic is only tunnelled: only host-wide latency, drop and reset apply (see: bifurc tls status)"
+        ]);
+    }
     RULES.lock().push(rule);
     ANY.store(true, Ordering::Release);
     Ok(shown)
@@ -398,17 +404,17 @@ mod tests {
 
     #[test]
     fn add_list_hits_and_clear_by_id() {
-        let a = add(&json!({ "target": "unit-add.test/p", "latencyMs": 5, "status": 503, "rate": 50 })).unwrap();
+        let a = add(&json!({ "target": "unit-add.localhost/p", "latencyMs": 5, "status": 503, "rate": 50 })).unwrap();
         assert_eq!((a["rate"].clone(), a["status"].clone(), a["hits"].clone()), (json!(50.0), json!(503), json!(0)));
         let id = a["id"].as_str().unwrap().to_string();
-        let b = add(&json!({ "target": "unit-add.test", "reset": true })).unwrap();
+        let b = add(&json!({ "target": "unit-add.localhost", "reset": true })).unwrap();
         assert_eq!(b["rate"], 100.0);
         // Rate 100 always fires, and the hit is counted on the first matching rule only.
-        let hit = pick("unit-add.test", None, Some("/q"), false).unwrap();
+        let hit = pick("unit-add.localhost", None, Some("/q"), false).unwrap();
         assert_eq!(hit.id, b["id"].as_str().unwrap());
         assert!(RULES.lock().iter().any(|r| r.id == hit.id && r.hits == 1));
         // A tunnel skips path and status rules.
-        assert!(pick("unit-add.test", Some(443), None, true).is_some_and(|h| h.reset));
+        assert!(pick("unit-add.localhost", Some(443), None, true).is_some_and(|h| h.reset));
         assert_eq!(clear(&json!({ "id": id })).unwrap()["cleared"], 1);
         assert!(clear(&json!({ "id": id })).is_err());
         assert_eq!(clear(&json!({ "id": b["id"] })).unwrap()["cleared"], 1);
