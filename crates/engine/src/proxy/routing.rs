@@ -75,6 +75,10 @@ pub fn log_outcome(base: &RequestLogEntry, via: &str, target: Option<String>, ou
             entry.req_headers.shift_remove(&name);
         }
     }
+    if base.fault.is_some() {
+        // An injected delay came before the upstream call, which the outcome's own timing does not cover.
+        entry.duration_ms = Some(now_ms() - base.ts);
+    }
     mask_secrets(&mut entry);
     emit_log(&entry);
 }

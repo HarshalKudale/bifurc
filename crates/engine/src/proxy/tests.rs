@@ -552,3 +552,114 @@ async fn with_https_on_the_one_port_serves_tls_clients_and_plain_ones() {
     assert!(secure.starts_with("HTTP/1.1 200 OK\r\n") && secure.ends_with("hello"), "{secure}");
     proxy.stop();
 }
+
+// ---- faults -----------------------------------------------------------------------------------------------
+
+fn fault(params: Value) -> String {
+    crate::faults::add_for_tests(&params)
+}
+
+/// The request line through the proxy to `127.0.0.1:{upstream}{path}`.
+fn get(upstream: u16, path: &str) -> String {
+    format!("GET http://127.0.0.1:{upstream}{path} HTTP/1.1\r\nHost: 127.0.0.1:{upstream}\r\n\r\n")
+}
+
+#[tokio::test]
+async fn a_status_fault_answers_without_the_upstream() {
+    let _root = scratch_data_root();
+    let logs = Logs::capture();
+    let (upstream, seen) = canned_upstream(http_ok("", "real")).await;
+    let proxy_port = free_port().await;
+    let proxy = start_proxy(proxy_port);
+    let id = fault(json!({ "target": format!("127.0.0.1:{upstream}/orders"), "status": 429 }));
+
+    let answer = through(proxy_port, &get(upstream, "/orders/1?x=1")).await;
+    assert!(answer.starts_with("HTTP/1.1 429 "), "{answer}");
+    let lower = answer.to_lowercase();
+    assert!(lower.contains("retry-after: 1") && lower.contains(&format!("x-bifurc-fault: {id}")));
+    assert!(lower.contains("content-type: application/json"));
+    assert!(answer.contains(&format!("{{\"error\":\"fault injected by bifurc\",\"fault\":\"{id}\",\"status\":429}}")));
+    assert!(seen.lock().is_empty(), "the upstream was contacted");
+    let entry = logs.find(&format!("http://127.0.0.1:{upstream}/orders/1?x=1")).await;
+    assert_eq!((entry["via"].clone(), entry["status"].clone()), (json!("mock"), json!(429)));
+    assert_eq!(entry["target"], format!("fault:{id}"));
+
+    // Another path is untouched; the hits are counted; a cleared rule stops applying.
+    assert!(through(proxy_port, &get(upstream, "/ordersx")).await.ends_with("real"));
+    assert_eq!(seen.lock().len(), 1);
+    assert_eq!(crate::faults::hits_for_tests(&id), 1);
+    crate::faults::clear_for_tests(&id);
+    assert!(through(proxy_port, &get(upstream, "/orders")).await.ends_with("real"));
+    proxy.stop();
+}
+
+#[tokio::test]
+async fn a_latency_fault_delays_and_still_reaches_the_upstream() {
+    let _root = scratch_data_root();
+    let logs = Logs::capture();
+    let (upstream, _seen) = canned_upstream(http_ok("", "real")).await;
+    let proxy_port = free_port().await;
+    let proxy = start_proxy(proxy_port);
+    let id = fault(json!({ "target": format!("127.0.0.1:{upstream}"), "latencyMs": 300 }));
+
+    let started = std::time::Instant::now();
+    let answer = through(proxy_port, &get(upstream, "/slow")).await;
+    assert!(started.elapsed() >= Duration::from_millis(300));
+    assert!(answer.starts_with("HTTP/1.1 200 OK") && answer.ends_with("real"), "{answer}");
+    let entry = logs.find(&format!("http://127.0.0.1:{upstream}/slow")).await;
+    assert_eq!((entry["via"].clone(), entry["fault"].clone()), (json!("proxy"), json!(id)));
+    assert!(entry["durationMs"].as_i64().unwrap() >= 300);
+    crate::faults::clear_for_tests(&id);
+    proxy.stop();
+}
+
+#[tokio::test]
+async fn a_reset_fault_closes_without_an_answer_and_a_drop_holds_the_client() {
+    let _root = scratch_data_root();
+    let logs = Logs::capture();
+    let (upstream, seen) = canned_upstream(http_ok("", "real")).await;
+    let proxy_port = free_port().await;
+    let proxy = start_proxy(proxy_port);
+    let reset = fault(json!({ "target": format!("127.0.0.1:{upstream}/reset"), "reset": true }));
+    let drop = fault(json!({ "target": format!("127.0.0.1:{upstream}/drop"), "drop": true }));
+
+    assert_eq!(through(proxy_port, &get(upstream, "/reset")).await, "");
+    let entry = logs.find(&format!("http://127.0.0.1:{upstream}/reset")).await;
+    assert_eq!((entry["via"].clone(), entry["status"].clone()), (json!("error"), Value::Null));
+    assert_eq!(entry["target"], format!("fault:{reset}"));
+
+    let mut socket = TcpStream::connect(("127.0.0.1", proxy_port)).await.unwrap();
+    socket.write_all(get(upstream, "/drop").as_bytes()).await.unwrap();
+    let mut buf = [0u8; 16];
+    assert!(tokio::time::timeout(Duration::from_millis(500), socket.read(&mut buf)).await.is_err(), "answered");
+    drop_socket(socket);
+    let entry = logs.find(&format!("http://127.0.0.1:{upstream}/drop")).await;
+    assert_eq!(entry["target"], format!("fault:{drop}"));
+    assert!(seen.lock().is_empty());
+    crate::faults::clear_for_tests(&reset);
+    crate::faults::clear_for_tests(&drop);
+    proxy.stop();
+}
+
+fn drop_socket(socket: TcpStream) {
+    drop(socket);
+}
+
+#[tokio::test]
+async fn a_blind_tunnel_meets_only_host_rules_without_a_status() {
+    let _root = scratch_data_root();
+    let proxy_port = free_port().await;
+    let proxy = start_proxy(proxy_port);
+    let status = fault(json!({ "target": "tunnel-status.test", "status": 500 }));
+    let reset = fault(json!({ "target": "tunnel-reset.test:443", "reset": true }));
+    // A status rule is skipped: the tunnel is attempted (the host does not resolve: 502 from the tunnel).
+    let answer =
+        through(proxy_port, "CONNECT tunnel-status.test:443 HTTP/1.1\r\nHost: tunnel-status.test:443\r\n\r\n").await;
+    assert!(answer.starts_with("HTTP/1.1 502"), "{answer}");
+    let answer =
+        through(proxy_port, "CONNECT tunnel-reset.test:443 HTTP/1.1\r\nHost: tunnel-reset.test:443\r\n\r\n").await;
+    assert_eq!(answer, "");
+    crate::faults::clear_for_tests(&status);
+    crate::faults::clear_for_tests(&reset);
+    proxy.stop();
+}
