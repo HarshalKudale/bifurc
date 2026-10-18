@@ -31,6 +31,7 @@ pub mod logtrace;
 pub mod mail;
 pub mod mcp;
 pub mod named;
+pub mod openapi;
 pub mod prompt;
 pub mod protocol;
 pub mod record;
