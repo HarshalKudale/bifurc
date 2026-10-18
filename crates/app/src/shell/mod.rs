@@ -246,6 +246,7 @@ impl Shell {
             | ModelEvent::AccountChanged(_)
             | ModelEvent::CompanionsChanged
             | ModelEvent::CookiesChanged
+            | ModelEvent::DevServiceChanged(_)
             | ModelEvent::EngineRestarted
             | ModelEvent::ConfigPatched
             | ModelEvent::EntityReverted(_) => {}
@@ -312,6 +313,9 @@ impl Shell {
         if self.screen != screen {
             self.screen = screen;
             self.sync_right_sidebar(window, cx);
+            if screen == Screen::Services {
+                self.services.update(cx, |services, cx| services.refresh_dev(cx));
+            }
         }
         cx.notify();
     }
