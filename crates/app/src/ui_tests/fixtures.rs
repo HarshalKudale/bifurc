@@ -88,6 +88,15 @@ pub fn populated(fake: &FakeEngine) {
         ]),
     );
     fake.reply(
+        "devservice.list",
+        json!({"services": [
+            {"name": "api", "cmd": "npm run api", "port": 3000, "env": {"A": "1"}, "state": "running", "pid": 21, "listening": true},
+            {"name": "db", "cmd": "pg start", "vault": "Locked", "state": "stopped"},
+            {"name": "web", "cmd": "npm run dev", "port": 5173, "vault": "Prod", "state": "stopped"},
+            {"name": "worker", "cmd": "node worker.js", "state": "crashed", "exitCode": 2},
+        ]}),
+    );
+    fake.reply(
         "healthbar.getServices",
         json!([
             {"id": "h1", "name": "API", "url": "http://localhost:3000/health"},

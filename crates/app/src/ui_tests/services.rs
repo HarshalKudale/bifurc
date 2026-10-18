@@ -121,3 +121,122 @@ fn selecting_a_row_shows_its_response_and_the_close_button_hides_it(cx: &mut gpu
     ui.click("health-close-detail");
     assert!(!ui.has("health-close-detail"));
 }
+
+#[gpui_kit::test]
+fn dev_servers_are_listed_with_the_action_their_state_allows(cx: &mut gpui_kit::TestAppContext) {
+    let mut ui = open_populated(cx);
+    ui.show(Screen::Services);
+    assert!(ui.has("dev-row-api") && ui.has("dev-row-web") && ui.has("dev-row-worker"));
+    assert!(ui.has("dev-stop-api") && ui.has("dev-restart-api") && !ui.has("dev-start-api"));
+    assert!(ui.has("dev-start-web") && ui.has("dev-start-worker") && !ui.has("dev-stop-web"));
+    assert!(!ui.has("dev-empty-add"));
+}
+
+#[gpui_kit::test]
+fn without_dev_servers_the_section_explains_and_offers_to_add_one(cx: &mut gpui_kit::TestAppContext) {
+    let mut ui = open_empty(cx);
+    ui.show(Screen::Services);
+    assert!(ui.has("dev-empty-add") && ui.has("add-dev-server"));
+}
+
+#[gpui_kit::test]
+fn start_asks_the_engine_to_bring_the_service_up(cx: &mut gpui_kit::TestAppContext) {
+    let mut ui = open_populated(cx);
+    ui.show(Screen::Services);
+    ui.fake.forget_calls();
+    ui.click("dev-start-worker");
+    assert_eq!(ui.fake.sent("devservice.up"), [json!({"workspaceId": "w1", "name": "worker"})]);
+    ui.click("dev-stop-api");
+    assert_eq!(ui.fake.sent("devservice.down"), [json!({"workspaceId": "w1", "name": "api"})]);
+}
+
+#[gpui_kit::test]
+fn a_changed_event_updates_that_row_and_other_workspaces_are_ignored(cx: &mut gpui_kit::TestAppContext) {
+    let mut ui = open_populated(cx);
+    ui.show(Screen::Services);
+    let worker = |workspace: &str, state: &str| json!({"workspaceId": workspace, "name": "worker", "service": {"name": "worker", "cmd": "node worker.js", "state": state, "pid": 5}});
+    ui.fake.emit("event.devservice.changed", worker("w2", "running"));
+    ui.settle();
+    assert!(ui.has("dev-start-worker"));
+    ui.fake.emit("event.devservice.changed", worker("w1", "running"));
+    ui.settle();
+    assert!(ui.has("dev-stop-worker") && !ui.has("dev-start-worker"));
+    ui.fake.emit("event.devservice.changed", json!({"workspaceId": "w1", "name": "worker", "service": null}));
+    ui.settle();
+    assert!(!ui.has("dev-row-worker"));
+}
+
+#[gpui_kit::test]
+fn editing_a_dev_server_sends_the_whole_definition_with_its_env(cx: &mut gpui_kit::TestAppContext) {
+    let mut ui = open_populated(cx);
+    ui.show(Screen::Services);
+    ui.click("dev-edit-api");
+    ui.fake.forget_calls();
+    ui.answer_prompt(&["npm run api2", "3001"]);
+    let defined = ui.fake.sent("devservice.define");
+    assert_eq!(
+        defined,
+        [json!({"workspaceId": "w1", "name": "api", "cmd": "npm run api2", "port": 3001, "env": {"A": "1"}})]
+    );
+}
+
+#[gpui_kit::test]
+fn adding_a_dev_server_checks_the_name_and_port_before_calling_the_engine(cx: &mut gpui_kit::TestAppContext) {
+    let mut ui = open_populated(cx);
+    ui.show(Screen::Services);
+    ui.click("add-dev-server");
+    ui.fake.forget_calls();
+    ui.answer_prompt(&["bad name", "npm start"]);
+    assert!(ui.fake.sent("devservice.define").is_empty());
+    // The dialog opens again with what was typed, so only the name needs fixing.
+    ui.answer_prompt(&["good-name"]);
+    assert_eq!(
+        ui.fake.sent("devservice.define"),
+        [json!({"workspaceId": "w1", "name": "good-name", "cmd": "npm start"})]
+    );
+}
+
+#[gpui_kit::test]
+fn removing_asks_first(cx: &mut gpui_kit::TestAppContext) {
+    let mut ui = open_populated(cx);
+    ui.show(Screen::Services);
+    ui.fake.forget_calls();
+    ui.click("dev-remove-worker");
+    assert!(ui.fake.sent("devservice.remove").is_empty());
+    ui.press("enter");
+    assert_eq!(ui.fake.sent("devservice.remove"), [json!({"workspaceId": "w1", "name": "worker"})]);
+}
+
+#[gpui_kit::test]
+fn freeing_a_port_confirms_then_stops_the_holder_and_lists_again(cx: &mut gpui_kit::TestAppContext) {
+    let mut ui = open_populated(cx);
+    ui.show(Screen::Services);
+    ui.fake.forget_calls();
+    ui.click(("free-port", 5432usize));
+    assert!(ui.fake.sent("devservice.freePort").is_empty());
+    ui.press("enter");
+    assert_eq!(ui.fake.sent("devservice.freePort"), [json!({"port": 5432, "kill": true})]);
+    assert_eq!(ui.fake.sent("services.discover").len(), 1);
+}
+
+#[gpui_kit::test]
+fn a_service_with_an_unsealed_vault_starts_without_the_app_reading_its_secrets(cx: &mut gpui_kit::TestAppContext) {
+    let mut ui = open_populated(cx);
+    ui.show(Screen::Services);
+    ui.fake.forget_calls();
+    ui.click("dev-start-web");
+    assert!(ui.fake.sent("vault.secrets").is_empty());
+    assert_eq!(ui.fake.sent("devservice.up"), [json!({"workspaceId": "w1", "name": "web"})]);
+}
+
+#[gpui_kit::test]
+fn a_sealed_vault_asks_for_its_passphrase_before_the_service_starts(cx: &mut gpui_kit::TestAppContext) {
+    let mut ui = open_populated(cx);
+    ui.show(Screen::Services);
+    ui.fake.forget_calls();
+    ui.click("dev-start-db");
+    assert!(ui.fake.sent("devservice.up").is_empty());
+    ui.answer_prompt(&["hunter2"]);
+    assert_eq!(ui.fake.sent("vault.unseal"), [json!({"workspaceId": "w1", "id": "vt2", "passphrase": "hunter2"})]);
+    assert_eq!(ui.fake.sent("devservice.up"), [json!({"workspaceId": "w1", "name": "db"})]);
+}
