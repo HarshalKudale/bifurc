@@ -5,6 +5,7 @@
 //! its own state, kept alive while another screen is in front, so coming back to Requests finds its tabs as
 //! they were. The workspace comes from [`AppModel`].
 
+mod agents;
 mod chrome;
 mod nav;
 mod palette;
@@ -188,6 +189,19 @@ impl Shell {
             ModelEvent::ConfigChanged | ModelEvent::WorkspaceSwitched => {
                 self.sync_right_sidebar(window, cx);
                 cx.notify();
+            }
+            // Clicking it opens the approvals; nothing opens by itself, so typing is not interrupted.
+            ModelEvent::ApprovalRequested(item) => {
+                let shell = cx.weak_entity();
+                let request = format!("{} {}", item.method, item.url);
+                window.push_notification(
+                    Notification::warning(t_with("shell.agents.toast", &[("by", &item.by), ("request", &request)]))
+                        .title(t("shell.agents.toast_title"))
+                        .on_click(move |_, window, cx| {
+                            shell.update(cx, |shell, cx| shell.open_approvals(window, cx)).ok();
+                        }),
+                    cx,
+                );
             }
             ModelEvent::Notice(text) => window.push_notification(Notification::warning(text.clone()), cx),
             ModelEvent::AskSyncMessage(scope) => {
