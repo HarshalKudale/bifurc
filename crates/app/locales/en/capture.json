@@ -102,5 +102,15 @@
   "logs.empty.title": "No log lines for this request",
   "logs.empty.no_servers": "No dev server is running. Start one on the Services screen to see what it prints for a request.",
   "logs.empty.not_traced": "Tracing is off for this request: it carries no trace id, so lines can only be matched by time and path.",
-  "logs.empty.none": "No line of the dev servers' output carries this request's trace id."
+  "logs.empty.none": "No line of the dev servers' output carries this request's trace id.",
+  "pin": "Pin",
+  "unpin": "Unpin",
+  "pin_tooltip": "Keep this exchange beyond the capture limit",
+  "unpin_tooltip": "Let this exchange age out with the others",
+  "pinned_marker": "Pinned",
+  "pin_checked": "Pin",
+  "unpin_checked": "Unpin",
+  "error.pin": "Could not pin:",
+  "error.unpin": "Could not unpin:",
+  "pinned_only": "Pinned only"
 }

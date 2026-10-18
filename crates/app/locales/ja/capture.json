@@ -102,5 +102,15 @@
   "logs.empty.title": "No log lines for this request",
   "logs.empty.no_servers": "No dev server is running. Start one on the Services screen to see what it prints for a request.",
   "logs.empty.not_traced": "Tracing is off for this request: it carries no trace id, so lines can only be matched by time and path.",
-  "logs.empty.none": "No line of the dev servers' output carries this request's trace id."
+  "logs.empty.none": "No line of the dev servers' output carries this request's trace id.",
+  "pin": "ピン留め",
+  "unpin": "ピン解除",
+  "pin_tooltip": "キャプチャ上限を超えてこの通信を保持します",
+  "unpin_tooltip": "この通信を他と同様に古いものから消します",
+  "pinned_marker": "ピン留め済み",
+  "pin_checked": "ピン留め",
+  "unpin_checked": "ピン解除",
+  "error.pin": "ピン留めできませんでした:",
+  "error.unpin": "ピン解除できませんでした:",
+  "pinned_only": "ピン留めのみ"
 }

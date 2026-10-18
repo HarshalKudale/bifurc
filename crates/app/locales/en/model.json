@@ -113,5 +113,10 @@
   "agent.fault_separator": ", ",
   "agent.approval_timing": "Waiting {waited}, lapses in {left}",
   "agent.seconds": "{count} s",
-  "agent.minutes": "{count} min"
+  "agent.minutes": "{count} min",
+  "traffic.webhook": "Webhook",
+  "traffic.fault": "Fault",
+  "traffic.cassette": "Cassette",
+  "traffic.on_server": "{label} (server)",
+  "traffic.handler_webhook_tooltip": "Received by a webhook listener"
 }

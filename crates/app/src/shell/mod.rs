@@ -332,6 +332,10 @@ impl Shell {
             if screen == Screen::Services {
                 self.services.update(cx, |services, cx| services.refresh_dev(cx));
             }
+            if screen == Screen::Capture {
+                // The capture limit can change in Settings.
+                self.capture.update(cx, |capture, cx| capture.reload(window, cx));
+            }
             if screen == Screen::Mail {
                 self.mail.update(cx, |mail, cx| mail.refresh(cx));
             }

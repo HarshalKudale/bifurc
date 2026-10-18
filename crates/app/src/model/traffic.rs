@@ -7,15 +7,15 @@ use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde_json::Value;
 
 use crate::{
-    i18n::t,
+    i18n::{t, t_with},
     model::{
         http::split_query,
         media::{self, BodyClass},
     },
 };
 
-/// The engine keeps the last 200 exchanges; the view mirrors the bound so a long session stays bounded here
-/// too.
+/// The engine keeps this many unpinned exchanges unless `captureLimit` says otherwise (`capture.list` reports
+/// the limit in force); the view mirrors the bound so a long session stays bounded here too.
 pub const MAX_ENTRIES: usize = 200;
 
 /// The engine keeps this many bytes of a response body; a body of exactly this size was probably cut.
@@ -37,8 +37,13 @@ pub struct TrafficEntry {
     pub content_type: String,
     /// The response body's size in bytes.
     pub size: Option<u64>,
-    /// `forward` or `reverse`: the listener that took the request. Entries recorded before the engine said so have none.
+    /// `forward`, `reverse`, `server` (a mock server on its own port) or `webhook`: what took the request.
+    /// Entries recorded before the engine said so have none.
     pub origin: Option<String>,
+    /// What answered, as the engine names it: `mock:<id>`, `fault:<id>`, `cassette:<name>`, `webhook:<name>`, a host.
+    pub target: Option<String>,
+    /// Kept beyond the engine's capture limit until it is unpinned.
+    pub pinned: bool,
 }
 
 /// What a response is, for the type filter of the list: the groups of a browser's Network tab, told apart by
@@ -109,16 +114,19 @@ pub enum Handler {
     /// Traffic sent through the forward proxy to its real target.
     Proxy,
     Mock,
+    /// Received by a webhook listener.
+    Webhook,
 }
 
 impl Handler {
-    pub const ALL: [Handler; 3] = [Handler::Mapping, Handler::Proxy, Handler::Mock];
+    pub const ALL: [Handler; 4] = [Handler::Mapping, Handler::Proxy, Handler::Mock, Handler::Webhook];
 
     pub fn label(self) -> &'static str {
         t(match self {
             Handler::Mapping => "model.traffic.mapping",
             Handler::Proxy => "model.traffic.proxy",
             Handler::Mock => "model.traffic.mock",
+            Handler::Webhook => "model.traffic.webhook",
         })
     }
 
@@ -127,6 +135,7 @@ impl Handler {
             Handler::Mapping => "model.traffic.handler_mapping_tooltip",
             Handler::Proxy => "model.traffic.handler_proxy_tooltip",
             Handler::Mock => "model.traffic.handler_mock_tooltip",
+            Handler::Webhook => "model.traffic.handler_webhook_tooltip",
         })
     }
 }
@@ -140,12 +149,26 @@ impl TrafficEntry {
         }
     }
 
-    /// Who answered it: a mock, a mapping, or the forward proxy. A failed exchange belongs to the side it came in on.
+    /// The engine's `target` starts with this prefix (`fault:`, `cassette:`).
+    fn target_is(&self, prefix: &str) -> bool {
+        self.target.as_deref().is_some_and(|target| target.starts_with(prefix))
+    }
+
+    /// Who answered it: a webhook listener, a mock, a mapping, or the forward proxy. An injected fault or a
+    /// failed exchange belongs to the side it came in on; a mock server's own failures are the mock's.
     pub fn handler(&self) -> Handler {
+        let origin = self.origin.as_deref();
+        if origin == Some("webhook") || self.via == "webhook" {
+            return Handler::Webhook;
+        }
+        if self.target_is("fault:") {
+            return if self.is_local() { Handler::Mapping } else { Handler::Proxy };
+        }
         match self.via.as_str() {
             "mock" => Handler::Mock,
             "rfc6761" | "mapping" => Handler::Mapping,
             "proxy" | "rule" => Handler::Proxy,
+            _ if origin == Some("server") => Handler::Mock,
             _ if self.is_local() => Handler::Mapping,
             _ => Handler::Proxy,
         }
@@ -171,12 +194,30 @@ impl TrafficEntry {
             content_type: text("contentType").unwrap_or_default(),
             size: value.get("size").and_then(Value::as_u64),
             origin: text("origin"),
+            target: text("target").filter(|target| !target.is_empty()),
+            pinned: value.get("pinned").and_then(Value::as_bool).unwrap_or(false),
         })
     }
 
-    /// A word for how the proxy handled the exchange.
-    pub fn via_label(&self) -> &'static str {
+    /// A word for how the exchange was handled: injected faults and cassette replays are said so, and an
+    /// exchange a mock server took on its own port is marked as such.
+    pub fn via_label(&self) -> String {
+        if self.target_is("fault:") {
+            return t("model.traffic.fault").to_owned();
+        }
+        if self.target_is("cassette:") {
+            return t("model.traffic.cassette").to_owned();
+        }
+        let label = self.plain_via_label();
+        if self.origin.as_deref() == Some("server") && !label.is_empty() {
+            return t_with("model.traffic.on_server", &[("label", &label)]);
+        }
+        label.to_owned()
+    }
+
+    fn plain_via_label(&self) -> &'static str {
         match self.via.as_str() {
+            "webhook" => t("model.traffic.webhook"),
             "rfc6761" => t("model.traffic.localhost"),
             "mapping" => t("model.traffic.mapping"),
             "proxy" => t("model.traffic.proxy"),
@@ -348,16 +389,24 @@ pub fn only_workspace(entries: Vec<TrafficEntry>, active: &str) -> Vec<TrafficEn
 }
 
 /// Puts `incoming` (oldest first, as batches arrive) at the front of `entries`, newest first. An entry the
-/// list already holds replaces its old row, which is how a request's status arrives after it was logged.
-pub fn merge_live(entries: &mut Vec<TrafficEntry>, incoming: Vec<TrafficEntry>) {
-    for entry in incoming {
+/// list already holds replaces its old row, which is how a request's status arrives after it was logged (a
+/// pin survives it). Like the engine, keeps every pinned entry and the newest `limit` unpinned ones.
+pub fn merge_live(entries: &mut Vec<TrafficEntry>, incoming: Vec<TrafficEntry>, limit: usize) {
+    for mut entry in incoming {
         if let Some(position) = entries.iter().position(|e| e.id == entry.id) {
+            entry.pinned |= entries[position].pinned;
             entries[position] = entry;
         } else {
             entries.insert(0, entry);
         }
     }
-    entries.truncate(MAX_ENTRIES);
+    let mut unpinned = 0;
+    entries.retain(|entry| {
+        entry.pinned || {
+            unpinned += 1;
+            unpinned <= limit
+        }
+    });
 }
 
 /// The current time in epoch milliseconds.
@@ -415,8 +464,8 @@ mod tests {
     #[test]
     fn live_entries_go_to_the_front_and_an_update_replaces_its_row() {
         let mut entries = vec![entry("old", Some(200))];
-        merge_live(&mut entries, vec![entry("new", None)]);
-        merge_live(&mut entries, vec![entry("new", Some(404))]);
+        merge_live(&mut entries, vec![entry("new", None)], MAX_ENTRIES);
+        merge_live(&mut entries, vec![entry("new", Some(404))], MAX_ENTRIES);
         assert_eq!(entries.iter().map(|e| e.id.as_str()).collect::<Vec<_>>(), ["new", "old"]);
         assert_eq!(entries[0].status, Some(404));
     }
@@ -425,7 +474,7 @@ mod tests {
     fn the_history_is_bounded() {
         let mut entries = Vec::new();
         let batch = (0..MAX_ENTRIES + 10).map(|n| entry(&n.to_string(), None)).collect();
-        merge_live(&mut entries, batch);
+        merge_live(&mut entries, batch, MAX_ENTRIES);
         assert_eq!(entries.len(), MAX_ENTRIES);
     }
 
@@ -529,6 +578,66 @@ mod tests {
         assert_eq!(handler(json!({ "id": "a", "via": "rule" })), Handler::Proxy);
         assert_eq!(handler(json!({ "id": "a", "origin": "reverse", "via": "error" })), Handler::Mapping);
         assert_eq!(handler(json!({ "id": "a", "origin": "forward", "via": "error" })), Handler::Proxy);
+    }
+
+    /// Every `via` and `origin` the engine writes into a capture entry (see the report of this change).
+    #[test]
+    fn each_kind_of_exchange_the_engine_records_is_sorted_and_labelled_truthfully() {
+        let read = |value: Value| {
+            let entry = TrafficEntry::from_value(&value).unwrap();
+            (entry.handler(), entry.via_label())
+        };
+        let word = |key: &str| t(key).to_owned();
+        let on_server = |label: &str| t_with("model.traffic.on_server", &[("label", &label)]);
+        // A webhook listener's own answer, its forward, and a forward that failed.
+        for via in ["webhook", "proxy", "error"] {
+            assert_eq!(read(json!({ "id": "a", "origin": "webhook", "via": via })).0, Handler::Webhook, "{via}");
+        }
+        assert_eq!(
+            read(json!({ "id": "a", "origin": "webhook", "via": "webhook", "target": "webhook:x" })).1,
+            word("model.traffic.webhook")
+        );
+        // A mock server on its own port: its mock, its fallthrough to the real origin, its 404.
+        assert_eq!(
+            read(json!({ "id": "a", "origin": "server", "via": "mock", "target": "mock:m1" })),
+            (Handler::Mock, on_server(&word("model.traffic.mock")))
+        );
+        assert_eq!(
+            read(json!({ "id": "a", "origin": "server", "via": "proxy" })),
+            (Handler::Proxy, on_server(&word("model.traffic.proxy")))
+        );
+        assert_eq!(
+            read(json!({ "id": "a", "origin": "server", "via": "error" })),
+            (Handler::Mock, on_server(&word("model.traffic.error")))
+        );
+        // A cassette replay (a hit is logged as a mock, a miss as an error) is a cassette on either proxy.
+        for origin in ["forward", "reverse", "server"] {
+            let (handler, label) = read(json!({ "id": "a", "origin": origin, "via": "mock", "target": "cassette:c" }));
+            assert_eq!((handler, label), (Handler::Mock, word("model.traffic.cassette")), "{origin}");
+        }
+        // An injected fault answers as a mock (status) or an error (drop, reset), but is the proxy's, not a mock's.
+        for via in ["mock", "error"] {
+            let fault = |origin: &str| json!({ "id": "a", "origin": origin, "via": via, "target": "fault:f1" });
+            assert_eq!(read(fault("forward")), (Handler::Proxy, word("model.traffic.fault")));
+            assert_eq!(read(fault("reverse")), (Handler::Mapping, word("model.traffic.fault")));
+        }
+        // Without an origin (older entries) the via decides, as before.
+        assert_eq!(
+            read(json!({ "id": "a", "via": "mock", "target": "mock:m1" })),
+            (Handler::Mock, word("model.traffic.mock"))
+        );
+        assert_eq!(read(json!({ "id": "a", "via": "error" })), (Handler::Proxy, word("model.traffic.error")));
+    }
+
+    #[test]
+    fn a_pin_is_read_and_survives_the_update_of_its_row_and_the_bound() {
+        let pinned = |id: &str| TrafficEntry::from_value(&json!({ "id": id, "pinned": true })).unwrap();
+        assert!(pinned("a").pinned && !entry("a", None).pinned);
+        let mut entries = vec![pinned("keep")];
+        merge_live(&mut entries, vec![entry("keep", Some(200))], 2);
+        assert!(entries[0].pinned);
+        merge_live(&mut entries, (0..5).map(|n| entry(&n.to_string(), None)).collect(), 2);
+        assert_eq!(entries.iter().map(|e| e.id.as_str()).collect::<Vec<_>>(), ["4", "3", "keep"]);
     }
 
     #[test]
