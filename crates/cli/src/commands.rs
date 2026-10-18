@@ -593,8 +593,20 @@ pub fn status(ctx: &mut Context) -> Result<String> {
     let recording = ctx.request("cassette.recordStatus", json!({})).ok();
     let replaying = ctx.request("cassette.replayStatus", json!({})).ok();
     let approvals = ctx.request("approvals.list", json!({})).ok();
-    let mut parts =
-        StatusParts { server, config, capture, cookies, mock_servers, mail, webhooks, recording, replaying, approvals };
+    let faults = ctx.request("fault.list", json!({})).ok();
+    let mut parts = StatusParts {
+        server,
+        config,
+        capture,
+        cookies,
+        mock_servers,
+        mail,
+        webhooks,
+        recording,
+        replaying,
+        approvals,
+        faults,
+    };
     // In a named session the environment is the session's own, when it chose one.
     let session = crate::session::session_name(ctx.args)?;
     if session.is_some()
@@ -616,6 +628,7 @@ pub fn status(ctx: &mut Context) -> Result<String> {
     value["recording"] = parts.recording.as_ref().map_or(Value::Null, |r| r["recording"].clone());
     value["replaying"] = parts.replaying.as_ref().map_or(Value::Null, |r| r["replaying"].clone());
     value["webhooks"] = parts.webhooks.as_ref().map_or(Value::Null, |w| w["listeners"].clone());
+    value["faults"] = parts.faults.as_ref().map_or(Value::Null, |f| f["faults"].clone());
     value["approvals"] = parts.approvals.as_ref().map_or(Value::Null, |a| a["pending"].clone());
     Ok(ctx.print(&value, || {
         let text = describe_status(&info, &active, &parts);
