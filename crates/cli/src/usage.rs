@@ -88,6 +88,7 @@ Groups (bifurc <group> --help shows the arguments and options of each verb)
   port          free <port> [--kill]                                  What holds a port, and stopping it
   mail          list | show | last | clear                            Mail the local SMTP sink caught; codes and links
   webhooks      listen | stop | list | show | replay | save | trigger  Receive webhooks locally, optionally forward them
+  record        start | stop | status                                  Record proxied traffic of chosen hosts into a cassette
 
 Engine
   engine start [--transport socket|ws] [--no-tray]   Start a standalone engine in the background
@@ -690,6 +691,21 @@ Who holds a TCP port on this machine: `3000 held by node (pid 4242)`, or `free` 
   free <port>                            Show the process holding the port
   free <port> --kill                     Stop it with everything it started";
 
+const RECORD: &str = "Usage: bifurc record <verb>
+
+Record the real answers of some hosts, as they pass through the proxy, into a cassette: the file
+`cassettes/<name>.json` of the workspace. Only proxied traffic counts (not mocks, not the mock server, not
+webhooks); https:// hosts need HTTPS interception (see: bifurc tls status). Secrets in headers, query
+parameters and JSON or form bodies are masked as `••••` while recording. One recording at a time.
+
+  start --hosts a.com,b.com --cassette <name>
+                                         Start recording; `*.example.com` matches subdomains. A cassette of the
+                                         same name is replaced (the old one is in the history). Exit 2 when
+                                         one is already recording
+  stop                                   Save and commit it: `saved cassettes/x.json · 12 interactions · 3 values
+                                         masked`. Exit 3 when nothing records
+  status                                 `recording x · 12 interactions · a.com`, or `not recording`";
+
 const WEBHOOKS: &str = "Usage: bifurc webhooks <verb>
 
 The engine receives webhooks on a local port (127.0.0.1) and captures each one with its exact headers and raw
@@ -805,6 +821,7 @@ pub fn group_usage(group: &str) -> Option<String> {
         "port" => PORT,
         "mail" => MAIL,
         "webhooks" => WEBHOOKS,
+        "record" => RECORD,
         "engine" => ENGINE,
         "update" => UPDATE,
         "folders" => FOLDERS,
@@ -930,6 +947,12 @@ pub fn examples(group: &str) -> Option<&'static [&'static str]> {
             "bifurc webhooks replay k3f9 --to http://localhost:3000 --expect-status 200",
             "bifurc webhooks trigger stripe --vault app --patch '.data.object.amount_total=500' --expect-status 200",
         ],
+        "record" => &[
+            "bifurc record start --hosts api.stripe.com,api.openai.com --cassette checkout",
+            "bifurc record start --hosts *.example.com --cassette example",
+            "bifurc record status",
+            "bifurc record stop",
+        ],
         "mail" => &[
             "bifurc mail clear",
             "bifurc mail list --to dana@x.test --last 5",
@@ -985,7 +1008,7 @@ pub(crate) mod tests {
     fn every_example_is_a_known_group_and_verb_with_flags_its_help_names() {
         for group in [
             "agent", "curl", "requests", "capture", "mocks", "contract", "flows", "runner", "env", "cookies",
-            "session", "vars", "changes", "claim", "wait", "services", "mail", "webhooks",
+            "session", "vars", "changes", "claim", "wait", "services", "mail", "webhooks", "record",
         ] {
             let list = examples(group).unwrap_or_else(|| panic!("{group} has no examples"));
             assert!((3..=5).contains(&list.len()), "{group}");

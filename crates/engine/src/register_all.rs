@@ -33,6 +33,7 @@ pub fn register_all_engine_commands(registry: &mut CommandRegistry) {
     crate::capture::register(registry);
     crate::mail::register(registry);
     crate::webhook::register(registry);
+    crate::cassettes::register(registry);
     crate::vault::register(registry);
     crate::cookies::register(registry);
     crate::updates::register(registry);
