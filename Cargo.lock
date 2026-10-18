@@ -770,6 +770,7 @@ dependencies = [
  "rcgen",
  "regress",
  "reqwest",
+ "ring",
  "rmcp",
  "rquickjs",
  "rusqlite",

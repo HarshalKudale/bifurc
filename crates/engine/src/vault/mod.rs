@@ -142,6 +142,19 @@ pub(crate) async fn read_unsealed(ws_id: &str, id: &str) -> Result<(String, Vec<
     .await
 }
 
+/// The secrets of the unsealed vault named `name`, for the engine's own use (`jwt.mint` signs with one).
+/// A missing vault is NOT_FOUND, a sealed one the usual "sealed" error. Never handed to a client.
+pub(crate) async fn secrets_by_name(ws_id: &str, name: &str) -> Result<Vec<(String, String)>> {
+    let (ws_id, name) = (ws_id.to_string(), name.to_string());
+    blocking(move || {
+        let vault = store::find_by_name(&ws_id, &name)
+            .ok_or_else(|| EngineError::not_found(format!("No vault named \"{name}\".")))?;
+        let key = ready_key(&ws_id, &vault)?;
+        Ok(vault.read_all(&key).into_iter().map(|(name, value)| (name, value.to_string())).collect())
+    })
+    .await
+}
+
 /// Seal `secrets` into an unsealed vault, as `vault.setSecret` does for one.
 pub(crate) async fn add_secrets(ws_id: &str, id: &str, secrets: Vec<(String, String)>) -> Result<()> {
     if secrets.is_empty() {

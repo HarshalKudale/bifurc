@@ -463,7 +463,7 @@ mod tests {
         let ran = call(&server, CALL_TOOL, json!({"name": "vault_unseal"}));
         assert_eq!(
             ran.text,
-            "no tool \"vault_unseal\"; did you mean: vault_list, vault_rename, vault_unset, vault_delete, services"
+            "no tool \"vault_unseal\"; did you mean: vault_list, vault_rename, vault_unset, vault_delete, jwt"
         );
         assert_eq!(call(&server, CALL_TOOL, json!({})).text, "call_tool: missing \"name\"");
     }
