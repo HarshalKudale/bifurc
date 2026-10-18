@@ -1,13 +1,13 @@
 //! `record start|stop|status`: record the real answers of chosen hosts, as they pass through the proxy, into a
 //! cassette of the workspace (`cassettes/<name>.json`, see `engine/src/cassettes.rs`). Secrets are masked by the
-//! engine as it records. Replaying a cassette is a later verb.
+//! engine as it records. `replay` serves one back.
 
 use serde_json::{Value, json};
 
 use crate::{
     commands::{Context, need, unknown_verb, workspace_id},
     error::{CliError, Result},
-    format::js_template,
+    format::{aligned, js_template},
 };
 
 pub fn record(ctx: &mut Context, sub: Option<&str>) -> Result<String> {
@@ -15,6 +15,7 @@ pub fn record(ctx: &mut Context, sub: Option<&str>) -> Result<String> {
         Some("start") => start(ctx),
         Some("stop") => stop(ctx),
         Some("status") => status(ctx),
+        Some("list") => list(ctx),
         other => Err(unknown_verb("record", other.unwrap_or(""))),
     }
 }
@@ -61,6 +62,34 @@ fn status(ctx: &mut Context) -> Result<String> {
     Ok(ctx.print(&answer, || match answer.get("recording").filter(|r| r.is_object()) {
         Some(r) => format!("recording {}", summary(r)),
         None => "not recording".to_string(),
+    }))
+}
+
+fn list(ctx: &mut Context) -> Result<String> {
+    ctx.accept(&[], 0)?;
+    let payload = json!({ "workspaceId": workspace_id(ctx)? });
+    let answer = ctx.request("cassette.list", payload)?;
+    Ok(ctx.print(&answer, || {
+        let rows: Vec<Vec<String>> = answer["cassettes"]
+            .as_array()
+            .into_iter()
+            .flatten()
+            .map(|c| {
+                let n = c["interactions"].as_u64().unwrap_or(0);
+                let hosts: Vec<String> =
+                    c["hosts"].as_array().into_iter().flatten().map(|h| js_template(Some(h))).collect();
+                let at = c["recordedAt"]
+                    .as_u64()
+                    .map_or(String::new(), |ms| format!("recorded {}", crate::webhooks::format_time(ms / 1000)));
+                vec![
+                    js_template(c.get("name")),
+                    format!("{n} interaction{}", if n == 1 { "" } else { "s" }),
+                    hosts.join(","),
+                    at,
+                ]
+            })
+            .collect();
+        if rows.is_empty() { "(none)".to_string() } else { aligned(&rows) }
     }))
 }
 
@@ -145,5 +174,24 @@ mod tests {
         let (out, _) =
             go(&["record", "status", "--json"], vec![("cassette.recordStatus", Ok(json!({"recording": null})))]);
         assert!(out.unwrap().contains("\"recording\": null"));
+    }
+
+    #[test]
+    fn list_prints_aligned_rows() {
+        let rows = json!({"cassettes": [
+            {"name": "checkout", "interactions": 12, "hosts": ["api.stripe.com", "api.openai.com"], "recordedAt": 1_792_229_400_000i64},
+            {"name": "x", "interactions": 1, "hosts": ["a.com"], "recordedAt": 0}]});
+        let answers = vec![("config.get", Ok(config())), ("cassette.list", Ok(rows))];
+        let (out, calls) = go(&["record", "list"], answers);
+        assert_eq!(
+            out.unwrap(),
+            "checkout  12 interactions  api.stripe.com,api.openai.com  recorded 2026-10-17T09:30:00Z
+x         1 interaction    a.com                          recorded 1970-01-01T00:00:00Z"
+        );
+        assert_eq!(payloads(&calls, "cassette.list"), [json!({"workspaceId": "w1"})]);
+        let answers = vec![("config.get", Ok(config())), ("cassette.list", Ok(json!({"cassettes": []})))];
+        assert_eq!(go(&["record", "list"], answers).0.unwrap(), "(none)");
+        let answers = vec![("config.get", Ok(config())), ("cassette.list", Ok(json!({"cassettes": []})))];
+        assert!(go(&["record", "list", "--json"], answers).0.unwrap().contains("\"cassettes\": []"));
     }
 }

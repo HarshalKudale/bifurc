@@ -272,6 +272,8 @@ pub struct StatusParts {
     pub webhooks: Option<Value>,
     /// `cassette.recordStatus`: the cassette being recorded, if any.
     pub recording: Option<Value>,
+    /// `cassette.replayStatus`: the cassette being replayed, if any.
+    pub replaying: Option<Value>,
 }
 
 impl StatusParts {
@@ -347,6 +349,9 @@ pub fn describe_status(engine: &RuntimeInfo, active_workspace: &Value, parts: &S
     }
     if let Some(rec) = parts.recording.as_ref().and_then(|r| r.get("recording")).filter(|r| r.is_object()) {
         second.push(format!("recording {}", crate::record::summary(rec)));
+    }
+    if let Some(rep) = parts.replaying.as_ref().and_then(|r| r.get("replaying")).filter(|r| r.is_object()) {
+        second.push(format!("replaying {}", crate::replay::progress(rep)));
     }
     if let Some(capture) = &parts.capture {
         let limit = capture.get("limit").and_then(Value::as_u64).unwrap_or(MAX_CAPTURE);
@@ -552,6 +557,7 @@ boom"
             mail: Some(json!({"port": 1025, "running": true, "count": 3})),
             webhooks: Some(json!({"listeners": [{"port": 4020}]})),
             recording: None,
+            replaying: None,
         };
         assert_eq!(
             describe_status(&info, &workspace, &parts),
@@ -567,6 +573,7 @@ mocks 2 on · mock server :4010 · mail :1025 (3) · webhooks :4020 · capture 1
             mail: Some(json!({"port": 1025, "running": false, "error": "Port 1025 is already in use", "count": 0})),
             webhooks: None,
             recording: None,
+            replaying: None,
         };
         assert_eq!(
             describe_status(&info, &json!(null), &parts),
@@ -582,15 +589,16 @@ mail :1025 off (Port 1025 is already in use) · capture 0/200 paused"
             mail: None,
             webhooks: None,
             recording: None,
+            replaying: None,
         };
         assert_eq!(describe_status(&info, &workspace, &none), "engine 0.6.0 · workspace smoke · env none");
         let recording = StatusParts {
             recording: Some(json!({"recording": {"name": "checkout", "interactions": 1, "hosts": ["a.com", "b.com"]}})),
+            replaying: Some(json!({"replaying": {"name": "checkout", "served": 3, "unmatchedCount": 1}})),
             ..none
         };
-        assert!(
-            describe_status(&info, &workspace, &recording)
-                .ends_with("recording checkout · 1 interaction · a.com,b.com")
-        );
+        assert!(describe_status(&info, &workspace, &recording).ends_with(
+            "recording checkout · 1 interaction · a.com,b.com · replaying checkout · 3 served · 1 unmatched"
+        ));
     }
 }

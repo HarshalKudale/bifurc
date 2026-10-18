@@ -339,7 +339,7 @@ fn fixture(name: &str, now: u64) -> Value {
 }
 
 /// `2026-10-18T09:30:00Z` for unix seconds (civil-from-days).
-fn format_time(secs: u64) -> String {
+pub(crate) fn format_time(secs: u64) -> String {
     let (days, rem) = ((secs / 86400) as i64, secs % 86400);
     let z = days + 719_468;
     let era = z.div_euclid(146_097);
