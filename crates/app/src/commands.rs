@@ -76,6 +76,7 @@ actions!(
         ShowProxyRules,
         ShowCapture,
         ShowMail,
+        ShowWebhooks,
         ShowRequests,
         ShowMocks,
         ShowFlows,
@@ -139,7 +140,7 @@ fn keys() -> Vec<KeyBinding> {
         KeyBinding::new("secondary-b", ToggleSidebar, None),
         KeyBinding::new("secondary-shift-b", ToggleInspector, None),
         KeyBinding::new("secondary-shift-e", ToggleFolderTree, None),
-        // The sidebar's screens from the top, 1 to 9. Mail, Vaults, Config, Audit log and Settings have no key: Ctrl+0 is zoom reset, and Mail was added after 1 to 9 were taken.
+        // The sidebar's screens from the top, 1 to 9. Mail, Webhooks, Vaults, Config, Audit log and Settings have no key: Ctrl+0 is zoom reset, and Mail and Webhooks were added after 1 to 9 were taken.
         KeyBinding::new("secondary-1", ShowServices, None),
         KeyBinding::new("secondary-2", ShowHealthBar, None),
         KeyBinding::new("secondary-3", ShowMappings, None),
@@ -282,6 +283,7 @@ pub fn register_actions(cx: &mut App) {
     show::<ShowRequests>(cx, Screen::Requests);
     show::<ShowMocks>(cx, Screen::Mocks);
     show::<ShowFlows>(cx, Screen::Flows);
+    show::<ShowWebhooks>(cx, Screen::Webhooks);
     show::<ShowEnvironments>(cx, Screen::Environments);
     show::<ShowVaults>(cx, Screen::Vaults);
     show::<ShowWorkspaceConfig>(cx, Screen::WorkspaceConfig);

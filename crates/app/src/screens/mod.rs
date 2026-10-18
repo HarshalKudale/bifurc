@@ -16,5 +16,6 @@ pub mod requests;
 pub mod services;
 pub mod settings;
 pub mod vaults;
+pub mod webhooks;
 pub mod workspace;
 pub mod workspace_setup;

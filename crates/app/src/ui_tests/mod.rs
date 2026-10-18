@@ -15,6 +15,7 @@ mod services;
 mod settings;
 mod shell;
 mod vaults;
+mod webhooks;
 mod workspace;
 
 use gpui_kit::TestAppContext;
