@@ -3209,6 +3209,18 @@
    ],
    "additionalProperties": false
   },
+  "cassette.list": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "workspaceId"
+   ],
+   "additionalProperties": false
+  },
   "cassette.recordStart": {
    "type": "object",
    "properties": {
@@ -3239,6 +3251,35 @@
    "additionalProperties": false
   },
   "cassette.recordStatus": {
+   "type": "object",
+   "properties": {},
+   "additionalProperties": false
+  },
+  "cassette.replayStart": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "name": {
+     "type": "string"
+    },
+    "passthrough": {
+     "type": "boolean"
+    }
+   },
+   "required": [
+    "workspaceId",
+    "name"
+   ],
+   "additionalProperties": false
+  },
+  "cassette.replayStop": {
+   "type": "object",
+   "properties": {},
+   "additionalProperties": false
+  },
+  "cassette.replayStatus": {
    "type": "object",
    "properties": {},
    "additionalProperties": false

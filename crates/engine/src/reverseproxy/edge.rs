@@ -173,6 +173,14 @@ async fn route<W: AsyncRead + AsyncWrite + Unpin>(
         return;
     };
     base.workspace_id = Some(str_of(&cfg, "activeWorkspaceId").to_string());
+    // A cassette being replayed answers first, for its hosts (as on the forward proxy).
+    let target = url::Url::parse(&url).map_or_else(
+        |_| req_path.to_string(),
+        |u| format!("{}{}", u.path(), u.query().map(|q| format!("?{q}")).unwrap_or_default()),
+    );
+    if crate::cassettes::replay::serve(out, &base, true, &target, body, t0).await {
+        return;
+    }
     let forwarded = forwarded_headers(&headers, &base.id);
 
     let routing = Routing::from_cfg(&cfg);
