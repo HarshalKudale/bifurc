@@ -87,7 +87,7 @@ Groups (bifurc <group> --help shows the arguments and options of each verb)
   logs          <service> [--errors] [--since 2m] [--grep x] [--last 50]   A dev server's output, filtered
   port          free <port> [--kill]                                  What holds a port, and stopping it
   mail          list | show | last | clear                            Mail the local SMTP sink caught; codes and links
-  webhooks      listen | stop | list | show | replay | save           Receive webhooks locally, optionally forward them
+  webhooks      listen | stop | list | show | replay | save | trigger  Receive webhooks locally, optionally forward them
 
 Engine
   engine start [--transport socket|ws] [--no-tray]   Start a standalone engine in the background
@@ -712,7 +712,15 @@ body (origin webhook), so a signature check still passes when it is sent again. 
                                          the response as `requests send` does (--body, --headers, --select,
                                          --expect-status ...); refused: exit 4
   save <id> --as-request [--name x] [--folder f]
-                                         Save it as a request";
+                                         Save it as a request
+  fixtures                               The sample events: stripe.checkout.session.completed, github.push
+  trigger <fixture> [--to <url>] [--name x] [--vault v [--secret KEY]] [--patch '<path>=<value>'] [output flags]
+                                         Send a sample event (fresh ids, compact JSON). Goes to --to, else the
+                                         one running listener (--name picks) so it is captured and forwarded.
+                                         --vault signs it with that secret (default STRIPE_WEBHOOK_SECRET or
+                                         GITHUB_WEBHOOK_SECRET): stripe-signature or x-hub-signature-256.
+                                         --patch edits the payload before signing. Prints the response as
+                                         `replay` does";
 
 const MAIL: &str = "Usage: bifurc mail <verb>
 
@@ -917,10 +925,10 @@ pub fn examples(group: &str) -> Option<&'static [&'static str]> {
         ],
         "webhooks" => &[
             "bifurc webhooks listen --name stripe --forward http://api.localhost/webhooks/stripe --detach",
-            "bifurc webhooks listen --port 4020",
             "bifurc webhooks stop stripe",
             "bifurc webhooks list --name stripe --last 5",
             "bifurc webhooks replay k3f9 --to http://localhost:3000 --expect-status 200",
+            "bifurc webhooks trigger stripe --vault app --patch '.data.object.amount_total=500' --expect-status 200",
         ],
         "mail" => &[
             "bifurc mail clear",
