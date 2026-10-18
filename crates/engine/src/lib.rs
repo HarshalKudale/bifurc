@@ -11,6 +11,7 @@ pub mod cassettes;
 pub mod certificates;
 pub mod cookies;
 pub mod env;
+pub mod faults;
 pub mod features;
 pub mod fileops;
 pub mod flows;

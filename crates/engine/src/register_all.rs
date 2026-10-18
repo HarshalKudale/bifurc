@@ -35,6 +35,7 @@ pub fn register_all_engine_commands(registry: &mut CommandRegistry) {
     crate::mail::register(registry);
     crate::webhook::register(registry);
     crate::cassettes::register(registry);
+    crate::faults::register(registry);
     crate::vault::register(registry);
     crate::cookies::register(registry);
     crate::jwt::register(registry);

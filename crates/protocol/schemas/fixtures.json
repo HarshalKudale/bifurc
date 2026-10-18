@@ -669,6 +669,29 @@
    "extra": true
   }
  },
+ "fault.add": {
+  "valid": {
+   "target": "api.localhost/orders",
+   "status": 429,
+   "rate": 30
+  },
+  "invalid": {
+   "target": "api.localhost",
+   "rate": 0
+  }
+ },
+ "fault.clear": {
+  "valid": {},
+  "invalid": {
+   "id": 1
+  }
+ },
+ "fault.list": {
+  "valid": {},
+  "invalid": {
+   "extra": true
+  }
+ },
  "flow.cancel": {
   "valid": {
    "workspaceId": "ws1",
