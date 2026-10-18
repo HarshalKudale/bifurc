@@ -1863,6 +1863,16 @@
   },
   "invalid": {}
  },
+ "webhook.replay": {
+  "valid": {
+   "workspaceId": "ws1",
+   "id": "k3f9",
+   "to": "http://127.0.0.1:4021"
+  },
+  "invalid": {
+   "workspaceId": "ws1"
+  }
+ },
  "webhook.stop": {
   "valid": {
    "id": "k3f9"
