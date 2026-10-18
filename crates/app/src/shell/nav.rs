@@ -30,6 +30,7 @@ pub enum Screen {
     Requests,
     Mocks,
     Flows,
+    Webhooks,
     Environments,
     Vaults,
     WorkspaceConfig,
@@ -49,6 +50,7 @@ impl Screen {
             Screen::Requests => "shell.screen.requests",
             Screen::Mocks => "shell.screen.mocks",
             Screen::Flows => "shell.screen.flows",
+            Screen::Webhooks => "shell.screen.webhooks",
             Screen::Environments => "shell.screen.environments",
             Screen::Vaults => "shell.screen.vaults",
             Screen::WorkspaceConfig => "shell.screen.config",
@@ -68,6 +70,7 @@ impl Screen {
             Screen::Requests => IconName::Globe,
             Screen::Mocks => IconName::GalleryVerticalEnd,
             Screen::Flows => IconName::LayoutDashboard,
+            Screen::Webhooks => IconName::Webhook,
             Screen::Environments => IconName::Asterisk,
             Screen::Vaults => IconName::EyeOff,
             Screen::WorkspaceConfig => IconName::Settings2,
@@ -100,6 +103,7 @@ impl Screen {
             Screen::Services
             | Screen::Capture
             | Screen::Mail
+            | Screen::Webhooks
             | Screen::Settings
             | Screen::WorkspaceConfig
             | Screen::AuditLog => &[],
@@ -120,6 +124,7 @@ impl Screen {
             | Screen::Vaults
             | Screen::Capture
             | Screen::Mail
+            | Screen::Webhooks
             | Screen::Settings
             | Screen::WorkspaceConfig
             | Screen::AuditLog => 0,
@@ -132,7 +137,7 @@ impl Screen {
 const GROUPS: [(&str, &[Screen]); 4] = [
     ("shell.group.applications", &[Screen::Services, Screen::HealthBar]),
     ("shell.group.routing", &[Screen::Mappings, Screen::ProxyRules, Screen::Capture, Screen::Mail]),
-    ("shell.group.api", &[Screen::Requests, Screen::Mocks, Screen::Flows]),
+    ("shell.group.api", &[Screen::Requests, Screen::Mocks, Screen::Flows, Screen::Webhooks]),
     ("shell.group.workspace", &[Screen::Environments, Screen::Vaults, Screen::WorkspaceConfig, Screen::AuditLog]),
 ];
 
