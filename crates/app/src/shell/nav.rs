@@ -4,13 +4,15 @@
 //! its top, the screens in groups, and Settings pinned at its foot; collapsed, it keeps the icons.
 
 use gpui_kit::component::{
-    ActiveTheme as _, Collapsible as _, Icon, IconName, Sizable as _, StyledExt as _, h_flex,
+    ActiveTheme as _, Collapsible as _, Icon, Sizable as _, StyledExt as _, h_flex,
     menu::{DropdownMenu as _, PopupMenuItem},
     sidebar::{
         Sidebar, SidebarCollapsible, SidebarGroup, SidebarHeader, SidebarItem as _, SidebarMenu, SidebarMenuItem,
     },
     v_flex,
 };
+// The full icon catalog: the component crate's own enum has no mail icon.
+use gpui_kit::assets::IconName;
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{Context, IntoElement, ParentElement as _, Styled as _, Window, div};
 
@@ -24,6 +26,7 @@ pub enum Screen {
     Mappings,
     ProxyRules,
     Capture,
+    Mail,
     Requests,
     Mocks,
     Flows,
@@ -42,6 +45,7 @@ impl Screen {
             Screen::Mappings => "shell.screen.mappings",
             Screen::ProxyRules => "shell.screen.proxy_rules",
             Screen::Capture => "shell.screen.capture",
+            Screen::Mail => "shell.screen.mail",
             Screen::Requests => "shell.screen.requests",
             Screen::Mocks => "shell.screen.mocks",
             Screen::Flows => "shell.screen.flows",
@@ -60,6 +64,7 @@ impl Screen {
             Screen::Mappings => IconName::Replace,
             Screen::ProxyRules => IconName::Network,
             Screen::Capture => IconName::Inbox,
+            Screen::Mail => IconName::Mail,
             Screen::Requests => IconName::Globe,
             Screen::Mocks => IconName::GalleryVerticalEnd,
             Screen::Flows => IconName::LayoutDashboard,
@@ -92,7 +97,12 @@ impl Screen {
             Screen::Environments => &["environments/"],
             Screen::Vaults => &["vaults/"],
             Screen::HealthBar => &["healthbar/"],
-            Screen::Services | Screen::Capture | Screen::Settings | Screen::WorkspaceConfig | Screen::AuditLog => &[],
+            Screen::Services
+            | Screen::Capture
+            | Screen::Mail
+            | Screen::Settings
+            | Screen::WorkspaceConfig
+            | Screen::AuditLog => &[],
         }
     }
 
@@ -109,6 +119,7 @@ impl Screen {
             | Screen::HealthBar
             | Screen::Vaults
             | Screen::Capture
+            | Screen::Mail
             | Screen::Settings
             | Screen::WorkspaceConfig
             | Screen::AuditLog => 0,
@@ -120,7 +131,7 @@ impl Screen {
 /// The sidebar's groups, in order. Settings is not here: it is pinned to the foot.
 const GROUPS: [(&str, &[Screen]); 4] = [
     ("shell.group.applications", &[Screen::Services, Screen::HealthBar]),
-    ("shell.group.routing", &[Screen::Mappings, Screen::ProxyRules, Screen::Capture]),
+    ("shell.group.routing", &[Screen::Mappings, Screen::ProxyRules, Screen::Capture, Screen::Mail]),
     ("shell.group.api", &[Screen::Requests, Screen::Mocks, Screen::Flows]),
     ("shell.group.workspace", &[Screen::Environments, Screen::Vaults, Screen::WorkspaceConfig, Screen::AuditLog]),
 ];

@@ -108,6 +108,23 @@ pub fn populated(fake: &FakeEngine) {
         {"id": "c1", "timestamp": 1, "method": "GET", "url": "https://api.test/users", "status": 200, "via": "proxy"},
         {"id": "c2", "timestamp": 2, "method": "POST", "url": "https://api.test/orders", "status": 500, "via": "mock"},
     ]}));
+    fake.reply("mail.status", json!({"port": 1025, "running": true, "error": null, "count": 2}));
+    fake.reply("mail.list", json!({"matched": 2, "mails": [
+        {"id": "m2", "timestamp": 2000, "from": "billing@shop.test", "to": ["bob@dev.test"], "subject": "Your receipt"},
+        {"id": "m1", "timestamp": 1000, "from": "noreply@app.test", "to": ["ann@dev.test"], "subject": "Verify your email"},
+    ]}));
+    fake.reply_with("mail.get", |payload| match payload["id"].as_str() {
+        Some("m1") => Ok(json!({
+            "id": "m1", "timestamp": 1000, "from": "noreply@app.test", "to": ["ann@dev.test"],
+            "subject": "Verify your email", "text": "Your code is 482913", "html": "<p>Your code is 482913</p>",
+            "otp": "482913", "link": "https://app.test/verify?t=abc",
+        })),
+        Some("m2") => Ok(json!({
+            "id": "m2", "timestamp": 2000, "from": "billing@shop.test", "to": ["bob@dev.test"],
+            "subject": "Your receipt", "text": "", "html": "<b>Paid</b>", "otp": null, "link": null,
+        })),
+        _ => Err("NOT_FOUND: dropped".to_owned()),
+    });
     fake.reply("audit.list", json!({"total": 2, "entries": [
         {"commitHash": "aaa111", "ts": 1, "action": "create", "entity": "requests", "entityName": "Ping", "message": "Add Ping", "actor": "me", "changedFields": ["name"]},
         {"commitHash": "bbb222", "ts": 2, "action": "update", "entity": "mocks", "entityName": "Users mock", "message": "Edit mock", "actor": "me", "changedFields": []},
