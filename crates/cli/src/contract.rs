@@ -54,7 +54,7 @@ pub(crate) fn path_of(url: &str) -> String {
 }
 
 fn is_var(segment: &str) -> bool {
-    segment.starts_with("{{") && segment.ends_with("}}")
+    (segment.starts_with("{{") && segment.ends_with("}}")) || (segment.starts_with(':') && segment.len() > 1)
 }
 
 /// Whether two paths are the same call: equal segment by segment, a `{{var}}` segment on either side matching
