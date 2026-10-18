@@ -689,6 +689,25 @@
    ],
    "additionalProperties": false
   },
+  "webhook.replay": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "id": {
+     "type": "string"
+    },
+    "to": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "workspaceId",
+    "id"
+   ],
+   "additionalProperties": false
+  },
   "webhook.stop": {
    "type": "object",
    "properties": {
