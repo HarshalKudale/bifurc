@@ -284,9 +284,15 @@ async fn start(params: &Value) -> Result<Value> {
     if let Some(cwd) = cwd {
         command.current_dir(cwd);
     }
-    // The vault's secrets come with the call and are never kept.
+    // The vault's secrets come with the call (the CLI) or from the unsealed vault (the app, which is never given
+    // secret values), and are never kept.
     for (key, value) in def["env"].as_object().into_iter().chain(params["secrets"].as_object()).flatten() {
         command.env(key, value.as_str().unwrap_or_default());
+    }
+    if let Some(vault) = def["vault"].as_str().filter(|v| !v.is_empty() && params["secrets"].is_null()) {
+        for (key, value) in crate::vault::secrets_by_name(str_of(params, "workspaceId"), vault).await? {
+            command.env(key, value);
+        }
     }
     let mut child =
         wrap.spawn().map_err(|e| EngineError::upstream(format!("Cannot start \"{}\": {e}", str_of(&def, "cmd"))))?;
@@ -537,6 +543,43 @@ mod tests {
         call(&registry, "devservice.remove", json!({"workspaceId": ws, "name": "api"})).await.unwrap();
         let listed = call(&registry, "devservice.list", json!({"workspaceId": ws})).await.unwrap();
         assert!(listed["services"].as_array().unwrap().is_empty());
+    }
+
+    #[tokio::test]
+    async fn a_service_without_secrets_in_the_call_reads_its_unsealed_vault() {
+        let root = scratch_data_root();
+        let mut registry = CommandRegistry::new();
+        register(&mut registry);
+        crate::vault::register(&mut registry);
+        let (registry, ws) = (Arc::new(registry), root.ws_id);
+        let vault = call(
+            &registry,
+            "vault.create",
+            json!({"workspaceId": ws, "name": "keys", "passphrase": "correct horse battery"}),
+        )
+        .await
+        .unwrap();
+        let id = vault["id"].clone();
+        let secret = json!({"workspaceId": ws, "id": id, "name": "API_KEY", "value": "key-123456"});
+        call(&registry, "vault.setSecret", secret).await.unwrap();
+        let cmd = if cfg!(windows) { "echo %API_KEY%" } else { "echo $API_KEY" };
+        let define = json!({"workspaceId": ws, "name": "vaulted", "cmd": cmd, "vault": "keys"});
+        call(&registry, "devservice.define", define).await.unwrap();
+        let named = json!({"workspaceId": ws, "name": "vaulted"});
+        call(&registry, "devservice.up", named.clone()).await.unwrap();
+        let mut text = Value::Null;
+        for _ in 0..100 {
+            text = call(&registry, "devservice.logs", named.clone()).await.unwrap()["lines"][0]["text"].clone();
+            if !text.is_null() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        assert_eq!(text, "key-123456");
+        // Sealed, the engine has no secrets to give and refuses to start it without them.
+        call(&registry, "vault.seal", json!({"workspaceId": ws, "id": id})).await.unwrap();
+        assert!(call(&registry, "devservice.up", named.clone()).await.is_err());
+        call(&registry, "devservice.remove", named).await.unwrap();
     }
 
     /// This test's events of `event`: the bus is global, so keep only those for `name` in `ws1`.
