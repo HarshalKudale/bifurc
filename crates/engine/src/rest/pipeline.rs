@@ -141,7 +141,8 @@ where
 
     let send_start = Instant::now();
     let mut wire = resolved.clone();
-    resolve_value_allowed(ws_id, &mut wire, &allowed);
+    let mut warnings: Vec<String> = Vec::new();
+    resolve_value_allowed(ws_id, &mut wire, &allowed, &mut warnings);
     let response = send(wire).await?;
     let duration_ms = send_start.elapsed().as_millis() as u64;
 
@@ -214,6 +215,9 @@ where
         "testLogs": test_logs,
         "durationMs": duration_ms,
     });
+    if !warnings.is_empty() {
+        out["warnings"] = json!(warnings);
+    }
     if let Some(error) = pre_script_error {
         out["preScriptError"] = json!(error);
     }
