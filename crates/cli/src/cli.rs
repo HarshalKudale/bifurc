@@ -20,7 +20,7 @@ use crate::{
     error::{CliError, Result},
     extras, flows, health,
     locate::locate_engine,
-    mail, named, requests,
+    mail, named, record, requests,
     session::{Engine, connect, session_name},
     setup,
     supervisor::{RESTART_TIMEOUT, START_TIMEOUT, STOP_TIMEOUT, restart_engine, start_engine, stop_engine},
@@ -163,6 +163,7 @@ fn dispatch(args: &ParsedArgs, data_dir: &Path, stdout: &mut dyn Write) -> Resul
         "logs" => devservices::logs(&mut ctx),
         "mail" => mail::mail(&mut ctx, sub),
         "webhooks" => webhooks::webhooks(&mut ctx, sub, stdout),
+        "record" => record::record(&mut ctx, sub),
         "port" => devservices::port(&mut ctx, sub),
         "vault" => vault::vaults(&mut ctx, sub),
         "update" => update::update(&mut ctx, sub),
@@ -231,7 +232,7 @@ pub fn run_with_env(
                 0
             }
             None => {
-                let message = "examples exist for: agent, curl, requests, capture, mocks, flows, runner, env, cookies, wait, services, mail, webhooks";
+                let message = "examples exist for: agent, curl, requests, capture, mocks, flows, runner, env, cookies, wait, services, mail, webhooks, record";
                 let _ = writeln!(stderr, "{}", CliError::usage(message).line());
                 2
             }
