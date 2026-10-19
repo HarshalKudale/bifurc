@@ -3,7 +3,7 @@
 
 It is published as updates/v1/stable.json in the public releases repository and served at
 https://bifurc.app/updates/v1/stable.json. What each field means to an install is in
-packages/engine-rust/src/updates/manifest.rs.
+crates/engine/src/updates/manifest.rs.
 
   update_manifest.py release --manifest stable.json --version 0.5.0 --tag v0.5.0 \\
       --repo HarshalKudale/bifurc-releases --assets <folder of the release's files> \\
