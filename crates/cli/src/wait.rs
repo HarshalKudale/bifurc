@@ -1,7 +1,7 @@
 //! `bifurc wait`: block until a URL answers, a TCP port accepts, or a new matching capture entry arrives.
 
 use std::{
-    net::{TcpStream, ToSocketAddrs},
+    net::{Ipv4Addr, Ipv6Addr, SocketAddr, TcpStream, ToSocketAddrs},
     time::{Duration, Instant},
 };
 
@@ -35,13 +35,26 @@ pub(crate) fn duration(raw: &str, flag: &str) -> Result<Duration> {
 
 /// One try at connecting to `host:port`; why not, when it fails.
 pub(crate) fn probe_port(host: &str, port: u16) -> std::result::Result<(), String> {
-    let mut addrs = (host, port).to_socket_addrs().map_err(|e| e.to_string())?;
-    let addr = addrs.next().ok_or("no address")?;
-    TcpStream::connect_timeout(&addr, Duration::from_millis(500)).map(|_| ()).map_err(|e| match e.kind() {
-        std::io::ErrorKind::ConnectionRefused => "connection refused".to_string(),
-        std::io::ErrorKind::TimedOut => "timed out".to_string(),
-        _ => e.to_string(),
-    })
+    // localhost means either loopback: dev servers like Vite bind [::1] only.
+    let addrs: Vec<SocketAddr> = if host == "localhost" {
+        vec![(Ipv4Addr::LOCALHOST, port).into(), (Ipv6Addr::LOCALHOST, port).into()]
+    } else {
+        (host, port).to_socket_addrs().map_err(|e| e.to_string())?.collect()
+    };
+    let mut last = "no address".to_string();
+    for addr in addrs {
+        match TcpStream::connect_timeout(&addr, Duration::from_millis(500)) {
+            Ok(_) => return Ok(()),
+            Err(e) => {
+                last = match e.kind() {
+                    std::io::ErrorKind::ConnectionRefused => "connection refused".to_string(),
+                    std::io::ErrorKind::TimedOut => "timed out".to_string(),
+                    _ => e.to_string(),
+                }
+            }
+        }
+    }
+    Err(last)
 }
 
 /// What one attempt found: the success line, or why not yet.
@@ -85,7 +98,7 @@ pub fn wait(ctx: &mut Context) -> Result<String> {
     let mut attempt: Probe = if let Some(port) = args.flag("port") {
         let port: u16 =
             port.parse().map_err(|_| CliError::usage(format!("--port is a port number, not \"{port}\"")))?;
-        let host = args.flag("host").unwrap_or("127.0.0.1").to_string();
+        let host = args.flag("host").unwrap_or("localhost").to_string();
         Box::new(move |_| {
             // No engine: the CLI connects itself.
             let connected = probe_port(&host, port);
@@ -230,6 +243,17 @@ mod tests {
         let err = go(&["wait", "--port", &port, "--timeout", "0"], vec![]).0.unwrap_err();
         assert_eq!(err.code(), 4);
         assert!(err.line().starts_with("bifurc: timed out after 0s — last: "), "{}", err.line());
+    }
+
+    #[test]
+    fn a_port_bound_only_to_ipv6_loopback_is_found_unless_an_ipv4_host_is_named() {
+        let Ok(listener) = std::net::TcpListener::bind("[::1]:0") else { return }; // no IPv6 on this machine
+        let port = listener.local_addr().unwrap().port().to_string();
+        let (out, _) = go(&["wait", "--port", &port], vec![]);
+        assert!(out.unwrap().starts_with(&format!("ready · port {port} · ")));
+        assert!(go(&["wait", "--port", &port, "--host", "localhost"], vec![]).0.is_ok());
+        let err = go(&["wait", "--port", &port, "--host", "127.0.0.1", "--timeout", "0"], vec![]).0.unwrap_err();
+        assert_eq!(err.code(), 4);
     }
 
     #[test]

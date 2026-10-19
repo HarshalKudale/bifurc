@@ -175,7 +175,7 @@ Run           --var KEY=VALUE   A variable for this run (repeatable)    --env <n
               --extract name=<path>   Keep a value of the response for later {{name}} (see: bifurc session --help)";
 
 const WAIT: &str = "Usage: bifurc wait <url|health check> [--status <code>] [--timeout 30s] [--interval 500ms]
-       bifurc wait --port <n> [--host 127.0.0.1] [--timeout 30s] [--interval 500ms]
+       bifurc wait --port <n> [--host localhost] [--timeout 30s] [--interval 500ms]
        bifurc wait --capture [--method M] [--host H] [--path P*] [--status 4xx] [--origin real|mock|mapped|rule|error|server|webhook]
                    [--grep text] [--timeout 30s] [--interval 500ms]
 
@@ -183,7 +183,8 @@ Polls until the thing is ready, then prints one line (`ready · http://api.local
 exits 0. After --timeout it exits 4 and says why the last attempt failed.
   <url>       Ready when the URL answers with any status, or with --status. A health check's name means its URL;
               {{variables}} are resolved. http:// is added to an address without a scheme.
-  --port      Ready when a TCP connection is accepted. Needs no engine.
+  --port      Ready when a TCP connection is accepted. Needs no engine. localhost (the default) tries
+              127.0.0.1 and [::1]; an IP --host tries only that address.
   --capture   Ready when a new request that matches the filters of capture list is captured.
 Durations are 500ms, 30s, 2m or a number of seconds.";
 
