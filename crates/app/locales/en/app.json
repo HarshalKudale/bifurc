@@ -2,6 +2,7 @@
   "model.read_only_notice": "This workspace is read-only: your account has read access to its repository. Your changes are saved on this device. Ask the owner for write access to sync them.",
   "model.check_updates_failed": "Couldn't check for updates. {error}",
   "model.skip_version_failed": "Couldn't skip the version. {error}",
+  "model.apply_update_failed": "Couldn't start the update. {error}",
   "model.live_updates_unavailable": "Live updates are unavailable: {error}",
   "model.read_workspace_failed": "Couldn't read the workspace. {error}",
   "model.reverse_proxy_failed": "Couldn't change the reverse proxy. {error}",

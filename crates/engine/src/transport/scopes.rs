@@ -160,6 +160,7 @@ const SCOPE_BY_COMMAND: &[(&str, Scope)] = &[
     ("update.status", Scope::Read),
     ("update.check", Scope::Execute),
     ("update.skip", Scope::Write),
+    ("update.apply", Scope::Admin),
     ("capture.list", Scope::Read),
     ("capture.get", Scope::Read),
     ("capture.setPaused", Scope::Write),

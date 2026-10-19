@@ -2,6 +2,7 @@
   "model.read_only_notice": "このワークスペースは読み取り専用です。お使いのアカウントにはリポジトリの読み取り権限しかありません。変更はこのデバイスに保存されます。同期するには、オーナーに書き込み権限を依頼してください。",
   "model.check_updates_failed": "更新を確認できませんでした。{error}",
   "model.skip_version_failed": "このバージョンをスキップできませんでした。{error}",
+  "model.apply_update_failed": "更新を開始できませんでした。{error}",
   "model.live_updates_unavailable": "ライブ更新を利用できません: {error}",
   "model.read_workspace_failed": "ワークスペースを読み込めませんでした。{error}",
   "model.reverse_proxy_failed": "リバースプロキシを変更できませんでした。{error}",

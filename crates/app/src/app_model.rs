@@ -21,7 +21,7 @@ use crate::{
         claims::{Claim, Claims},
         config::AccountInfo,
         git::GitStatus,
-        update::UpdateStatus,
+        update::{UpdateProgress, UpdateStatus},
         vault::VaultInfo,
     },
 };
@@ -38,7 +38,7 @@ impl Global for ModelHandle {}
 /// follows every write with the git state, and says `configChanged: false` when `entity.changed` already
 /// described the whole change; without that field (an older engine, or a pull, sync or import) it means
 /// "re-read the workspace".
-const EVENTS: [&str; 41] = [
+const EVENTS: [&str; 42] = [
     "event.request.stream",
     "event.flow.progress",
     "event.flow.finished",
@@ -47,6 +47,7 @@ const EVENTS: [&str; 41] = [
     "event.account.changed",
     "event.companions.changed",
     "event.update.changed",
+    "event.update.progress",
     "event.engine.stopping",
     "event.ui.activate",
     "event.entity.changed",
@@ -282,6 +283,8 @@ pub struct AppModel {
     setup: SetupState,
     /// What the engine knows about newer versions.
     update: UpdateStatus,
+    /// How far the updater is, once "Update now" was pressed.
+    update_progress: Option<UpdateProgress>,
     /// The engine is being stopped and started again; its connection closing is expected.
     restarting_engine: bool,
     load: Load,
@@ -314,6 +317,7 @@ impl AppModel {
             claims: Claims::default(),
             setup: SetupState::default(),
             update: UpdateStatus::default(),
+            update_progress: None,
             restarting_engine: false,
             load: Load::Loading,
             refreshing: false,
@@ -336,6 +340,27 @@ impl AppModel {
 
     pub fn update(&self) -> &UpdateStatus {
         &self.update
+    }
+
+    pub fn update_progress(&self) -> Option<&UpdateProgress> {
+        self.update_progress.as_ref()
+    }
+
+    /// Has the updater install the newer version. It closes this window, installs, and opens Bifurc again.
+    pub fn apply_update(&mut self, cx: &mut Context<Self>) {
+        if self.update_progress.as_ref().is_some_and(UpdateProgress::busy) {
+            return;
+        }
+        self.update_progress = Some(UpdateProgress { state: "starting".to_owned(), ..UpdateProgress::default() });
+        cx.notify();
+        let client = self.engine.client.clone();
+        call(&client, cx, "update.apply", json!({}), |this, outcome, cx| {
+            if let Err(error) = outcome {
+                this.update_progress = None;
+                cx.emit(ModelEvent::Notice(t_with("app.model.apply_update_failed", &[("error", &describe(&error))])));
+            }
+            cx.notify();
+        });
     }
 
     /// Re-reads what the engine last found about newer versions. It asks nobody: the engine looks once a day.
@@ -661,6 +686,10 @@ impl AppModel {
                 "event.approval.decided" => self.refresh_approvals(cx),
                 "event.update.changed" => {
                     self.update = UpdateStatus::from_value(&event.payload);
+                    cx.notify();
+                }
+                "event.update.progress" => {
+                    self.update_progress = Some(UpdateProgress::from_value(&event.payload));
                     cx.notify();
                 }
                 "event.server.error" => self.refresh_proxy(cx),

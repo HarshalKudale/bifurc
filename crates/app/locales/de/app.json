@@ -2,6 +2,7 @@
   "model.read_only_notice": "Dieser Arbeitsbereich ist schreibgeschützt: Das Konto hat nur Lesezugriff auf das Repository. Änderungen werden auf diesem Gerät gespeichert. Für die Synchronisierung beim Eigentümer Schreibzugriff anfragen.",
   "model.check_updates_failed": "Updates konnten nicht geprüft werden. {error}",
   "model.skip_version_failed": "Die Version konnte nicht übersprungen werden. {error}",
+  "model.apply_update_failed": "Das Update konnte nicht gestartet werden. {error}",
   "model.live_updates_unavailable": "Live-Updates sind nicht verfügbar: {error}",
   "model.read_workspace_failed": "Der Arbeitsbereich konnte nicht gelesen werden. {error}",
   "model.reverse_proxy_failed": "Der Reverse-Proxy konnte nicht geändert werden. {error}",

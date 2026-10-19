@@ -13,6 +13,40 @@ pub enum UpdateAction {
     Command(String),
     /// A file to download and run.
     Download(String),
+    /// The updater beside the engine downloads it, installs it and opens Bifurc again.
+    Updater,
+}
+
+/// How far the updater is (`event.update.progress`).
+#[derive(Debug, Clone, Default, PartialEq)]
+pub struct UpdateProgress {
+    /// `starting`, `downloading`, `installing`, `done` or `failed`.
+    pub state: String,
+    pub received: u64,
+    pub total: u64,
+    pub error: Option<String>,
+}
+
+impl UpdateProgress {
+    pub fn from_value(value: &Value) -> Self {
+        let number = |key: &str| value.get(key).and_then(Value::as_u64).unwrap_or(0);
+        Self {
+            state: value.get("state").and_then(Value::as_str).unwrap_or_default().to_owned(),
+            received: number("received"),
+            total: number("total"),
+            error: value.get("error").and_then(Value::as_str).filter(|e| !e.is_empty()).map(str::to_owned),
+        }
+    }
+
+    /// The updater is working, so another run must not start.
+    pub fn busy(&self) -> bool {
+        matches!(self.state.as_str(), "starting" | "downloading" | "installing")
+    }
+
+    /// The part of the download that is in, when its size is known.
+    pub fn percent(&self) -> Option<u64> {
+        (self.state == "downloading" && self.total > 0).then(|| (self.received * 100 / self.total).min(100))
+    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -85,6 +119,7 @@ impl UpdateStatus {
             "store" => Some(UpdateAction::Store(text(action, "url")?)),
             "command" => Some(UpdateAction::Command(text(action, "command")?)),
             "download" => Some(UpdateAction::Download(text(action, "url")?)),
+            "updater" => Some(UpdateAction::Updater),
             _ => None,
         });
         Self {
@@ -141,6 +176,20 @@ mod tests {
             update.steps().as_deref(),
             Some("This version cannot be updated to 0.6.0 in one step. Install 0.5.0 first, then 0.6.0.")
         );
+    }
+
+    #[test]
+    fn the_updater_is_an_action_and_reports_its_progress() {
+        let status = UpdateStatus::from_value(&json!({
+            "available": { "version": "0.6.0", "path": ["0.6.0"] }, "action": { "kind": "updater" },
+        }));
+        assert_eq!(status.action, Some(UpdateAction::Updater));
+        let progress = UpdateProgress::from_value(&json!({ "state": "downloading", "received": 25, "total": 100 }));
+        assert!(progress.busy());
+        assert_eq!(progress.percent(), Some(25));
+        let failed = UpdateProgress::from_value(&json!({ "state": "failed", "error": "no checksum" }));
+        assert!(!failed.busy() && failed.percent().is_none());
+        assert_eq!(failed.error.as_deref(), Some("no checksum"));
     }
 
     #[test]

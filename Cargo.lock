@@ -863,6 +863,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "bifurc-updater"
+version = "0.6.0"
+dependencies = [
+ "hex",
+ "reqwest",
+ "rustls",
+ "serde_json",
+ "sha2 0.10.9",
+ "tokio",
+]
+
+[[package]]
 name = "bit-set"
 version = "0.9.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"

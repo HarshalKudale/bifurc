@@ -35,6 +35,8 @@
 //! bifurc-ui[.exe]      the interface
 //! bifurc-engine[.exe]  the engine
 //! bifurc-tray[.exe]    the engine's tray icon (Windows), menu-bar icon (macOS) or StatusNotifierItem (Linux)
+//! bifurc-updater[.exe] replaces this install with a newer release; every package but the Store's has it, and
+//!                      an engine that finds it beside itself offers "Update now" (`crates/updater`)
 //! bin/bifurc[.exe]     the `bifurc` command (`crates/bifurc`: the CLI, or the MCP server with `--mcp`) — the only
 //!                      folder that goes on PATH
 //! ```
@@ -474,7 +476,7 @@ fn build(ctx: &Ctx) -> Result<()> {
     let mut cargo = Command::new("cargo");
     cargo
         .args(["build", "--release", "--locked"])
-        .args(["-p", "bifurc-engine", "-p", "bifurc", "-p", "bifurc-tray", "-p", "bifurc-ui"])
+        .args(["-p", "bifurc-engine", "-p", "bifurc", "-p", "bifurc-tray", "-p", "bifurc-updater", "-p", "bifurc-ui"])
         .env("RUSTFLAGS", release_rustflags(ctx))
         .current_dir(&ctx.repo);
     exec(cargo, false)
@@ -522,6 +524,9 @@ fn stage(ctx: &Ctx) -> Result<PathBuf> {
     copy_file(&cargo_output(ctx, &format!("bifurc-ui{EXE}"))?, &dir.join(format!("bifurc-ui{EXE}")))?;
     copy_file(&cargo_output(ctx, &format!("bifurc-tray{EXE}"))?, &dir.join(format!("bifurc-tray{EXE}")))?;
     make_executable(&dir.join(format!("bifurc-tray{EXE}")))?;
+    // Left out of the Store package by `package_msix`: the Store owns those files.
+    copy_file(&cargo_output(ctx, &format!("bifurc-updater{EXE}"))?, &dir.join(format!("bifurc-updater{EXE}")))?;
+    make_executable(&dir.join(format!("bifurc-updater{EXE}")))?;
     // `bin/bifurc` finds the engine above its `bin/` (`cli/src/locate.rs`).
     copy_file(&cargo_output(ctx, &format!("bifurc{EXE}"))?, &dir.join("bin").join(format!("bifurc{EXE}")))?;
     copy_file(&cargo_output(ctx, &format!("bifurc-engine{EXE}"))?, &dir.join(format!("bifurc-engine{EXE}")))?;
@@ -556,7 +561,13 @@ fn smoke_test(dir: &Path) -> Result<()> {
         Ok(out) => return Err(format!("the staged engine does not run:\n{}", String::from_utf8_lossy(&out.stderr))),
         Err(e) => return Err(format!("the staged engine does not run:\n{e}")),
     }
-    println!("staged CLI, MCP server and engine start");
+    let updater = Command::new(dir.join(format!("bifurc-updater{EXE}"))).arg("--version").output();
+    match updater {
+        Ok(out) if out.status.success() => {}
+        Ok(out) => return Err(format!("the staged updater does not run:\n{}", String::from_utf8_lossy(&out.stderr))),
+        Err(e) => return Err(format!("the staged updater does not run:\n{e}")),
+    }
+    println!("staged CLI, MCP server, engine and updater start");
     Ok(())
 }
 
@@ -620,6 +631,8 @@ fn package_msix(ctx: &Ctx, staged: &Path) -> Result<PathBuf> {
     let layout = ctx.out_dir.join("msix-layout");
     empty_dir(&layout)?;
     copy_dir(staged, &layout)?;
+    // The Store updates this package, and installs it where an updater could not replace it.
+    let _ = fs::remove_file(layout.join(format!("bifurc-updater{EXE}")));
     mark(&layout, "msix")?;
     // The icons are indexed from a folder of their own, so indexing never reads file names in the layout as
     // resource qualifiers.
