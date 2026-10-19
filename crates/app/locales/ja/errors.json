@@ -306,6 +306,7 @@
   "entity.deleted_revert": "削除されています。変更するには削除を元に戻してください。",
   "env.cannot_delete_global": "グローバル環境は削除できません。",
   "env.cannot_activate_global": "グローバルは常に有効です。別の環境を選んでください。",
+  "session.none": "Session commands are for the command line: this connection has no session.",
   "folder.kind_unknown": "不明なフォルダーの種類 \"{kind}\" です。",
   "folder.failed": "フォルダーを変更できませんでした: {detail}",
   "github.rejected": "GitHub はこのサインインを受け付けなくなりました。もう一度サインインしてください。",
@@ -343,5 +344,8 @@
   "updates.too_large": "{url} は更新マニフェストとしては大きすぎます",
   "updates.not_manifest": "{url} は更新マニフェストではありません",
   "updates.client_failed": "更新の確認を開始できませんでした: {detail}",
-  "updates.no_address": "更新を確認するアドレスがありません。"
+  "updates.no_address": "更新を確認するアドレスがありません。",
+  "policy.blocked": "Blocked by policy \"{policy}\": {method} {url}",
+  "policy.approval": "Needs approval: policy \"{policy}\" ({method} {url})",
+  "policy.invalid": "The policy file is invalid: {reason}"
 }

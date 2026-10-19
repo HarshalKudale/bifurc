@@ -838,4 +838,24 @@ mod tests {
         assert_eq!(parse_curl_strict("curl -X POST").unwrap_err(), "The cURL command names no URL.");
         assert_eq!(strict("$ curl http://h/").url, "http://h/");
     }
+
+    /// What `bifurc curl` writes for each word (the same pairs are in the CLI's `curl.rs` tests): the tokenizer
+    /// has to read exactly that word back, whatever it holds.
+    #[test]
+    fn words_quoted_by_the_cli_read_back_exactly() {
+        let quoted = [
+            ("plain-word_1", r"plain-word_1"),
+            ("", r"''"),
+            ("a b", r"'a b'"),
+            ("it's", r"'it'\''s'"),
+            ("$HOME `x` \"y\" \\n", r#"'$HOME `x` "y" \n'"#),
+            ("héllo ✓", "'héllo ✓'"),
+            ("a^\nb\t'c'\\", r"$'a^\nb\t\'c\'\\'"),
+            ("-d", r"-d"),
+        ];
+        for (word, written) in quoted {
+            let tokens = tokenize_curl(&format!("curl --data-raw {written} --url u"));
+            assert_eq!(tokens, ["curl", "--data-raw", word, "--url", "u"], "{written}");
+        }
+    }
 }

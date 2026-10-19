@@ -803,7 +803,7 @@ impl CaptureScreen {
         let folder = new_folder_name();
         let mut payload = json!({
             "workspaceId": model.workspace_id(), "ids": ids, "secrets": to.wire(), "cookiesToJar": jar, "flow": flow,
-            "folderName": folder,
+            "folderName": folder, "keepAll": true,
         });
         if let Some(vault_id) = vault_id {
             payload["vaultId"] = json!(vault_id);

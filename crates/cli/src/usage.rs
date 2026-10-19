@@ -2,7 +2,37 @@
 
 use crate::direct;
 
-/// The usage text, printed for `--help`, `help` and no command, and appended to an unknown-command error.
+/// The short overview, printed for `--help`, `help` and no command, and appended to an unknown-command error.
+pub const OVERVIEW: &str = "Usage: bifurc <group> <verb> [arguments] [options]
+
+Runs requests, mocks, flows and the proxies of a Bifurc workspace; starts an engine when none runs.
+
+  agent     init [--skill]                                 Teach an AI agent this CLI: a cheat sheet in AGENTS.md / CLAUDE.md
+  curl      <curl arguments> [--save <name>]               A curl command through the engine, one summary line
+  requests  list | show | send | create | update | delete  Saved requests of every type
+  capture   list | show | diff | watch | pin | mock | request | clear
+  mocks     list | show | create | update | enable | disable | scenario | status | hits | serve
+  flows     list | show | run | validate | loadtest         Saved chains of requests
+  runner    run <folder> [--bail]                          Run a folder's requests
+  contract  check | update-mock | snapshot                 Do the mocks still match the real API? Sends requests
+  env       list | show | use | set | unset                Environments and their variables
+  cookies   list | set | clear                             The cookie jar (yours in a --session)
+  session   show | reset · vars list | set | clear         Your own cookies, variables and env (--session <name>)
+  changes   [--since <seq|2m|1h>] [--mine]                 What others changed since you last asked
+  wait      <url|check> | --port <n> | --capture           Block until something is ready
+  status                                                   Engine, proxy, mocks, capture and cookies, two lines
+  Also: setup, workspaces, mappings, rules, folders, health, sync, history, export, import, vault, account, proxy,
+  settings, tls, services, engine, update, call, commands
+
+Options
+  --json  --data-dir <path>  -w, --workspace <id>  --session <name> (or BIFURC_SESSION)  --no-start  -h, --help
+
+  bifurc help <group>             The verbs and options of a group
+  bifurc help <group> --examples  Examples
+  bifurc help --all               Every group and verb
+Exit codes: 0 ok, 1 failed, 2 usage, 3 not found, 4 network, 5 no engine, 6 needs a person, 7 policy";
+
+/// The full usage text, printed for `help --all`.
 pub const USAGE: &str = "Usage: bifurc <group> <verb> [arguments] [options]
 
 Talks to the Bifurc engine that serves a data directory, over its socket (a named pipe on Windows).
@@ -15,25 +45,32 @@ and enable|disable or the verb that runs it (send, run) where that applies. An i
 by its name.
 
 Groups (bifurc <group> --help shows the arguments and options of each verb)
+  agent         init                                                  A cheat sheet of this CLI for AI agents, in the repo
   workspaces    list | show | create | update | use | sync | publish | import | delete
   env           list | show | use | create | set | unset | patch | duplicate | delete
   mappings      list | show | create | update | patch | enable | disable | duplicate | delete
                                                                       <sub>.localhost → target
   rules         list | show | create | update | patch | enable | disable | duplicate | delete
                                                                       Forward-proxy rules
-  mocks         list | show | create | update | patch | enable | disable | duplicate | delete
+  mocks         list | show | create | update | patch | enable | disable | scenario | status | hits | serve | duplicate | delete
                                                                       Mocked responses
   requests      list | show | create | update | patch | send | reflect | duplicate | delete
                                                                       REST, GraphQL, gRPC, SOAP, WebSocket, SSE, Socket.IO, MCP
   folders       list | create | rename | move | delete | confirm | restore
                                                                       Folders of the request, mock, flow and rule trees
-  runner        run | status | cancel | config | configure             Send every request of a folder
+  runner        run | status | cancel | config | configure             Run a folder's requests, a line each
+  contract      check | update-mock | snapshot                        Compare mocks with what the real API answers
   flows         list | show | create | update | validate | run | loadtest | loadstatus | loadcancel | status | cancel | duplicate | delete
                                                                       Saved chains of requests
   health        list | show | create | update | run | delete          Health checks
-  capture       list | show | mock | request | secrets | import | remove | clear | pause | resume | cache
+  capture       list | show | diff | watch | pin | unpin | mock | request | secrets | import | remove | clear | pause | resume | cache
                                                                       Traffic the proxies captured
-  cookies       list | clear | configure                              The cookie jar of the workspace's requests
+  cookies       list | set | clear | configure                       The cookie jar of the workspace's requests
+  session       show | reset                                          Your named session: cookies, variables, environment
+  changes       [--since <seq|time>] [--mine]                         What others changed since you last asked
+  claim         [--release] <request|mock|flow|env> <name>            Mark an item you are editing (30 minutes)
+  claims                                                              The live claims
+  vars          list | set | clear                                    The runtime variables of the session
   sync          status | changes | pull | push | commit | diff | discard | confirm | restore
                                                                       Git: what changed, and the remote
   history       log | file | show | export                            The audit log and a file's commits
@@ -46,17 +83,32 @@ Groups (bifurc <group> --help shows the arguments and options of each verb)
   settings      show | update                                         Ports, HTTPS, telemetry
   tls           status | generate | export | importcert | importkey | remove
                                                                       The root certificate of HTTPS interception
-  services      list                                                  Local processes listening on a port
+  services      list | define | up | down | restart | remove | ps | show   Dev servers the engine runs; local ports
+  logs          <service> [--errors] [--since 2m] [--grep x] [--last 50]   A dev server's output, filtered
+  port          free <port> [--kill]                                  What holds a port, and stopping it
+  mail          list | show | last | clear                            Mail the local SMTP sink caught; codes and links
+  webhooks      listen | stop | list | show | replay | save | trigger  Receive webhooks locally, optionally forward them
+  jwt           decode | mint                                         Read a token's claims and expiry; sign a test token
+  policy        show | check                                          Guardrails for agents: the workspace's policy.yaml
+  approvals     list | approve | deny                                 Calls a policy holds for a person; decided at a terminal
+  types         <request> [--lang ts|zod|python|go] [--out f]         Types inferred from a request's responses
+  openapi       infer [--folder f] [--out f] [--title t]             OpenAPI 3 file from saved requests, mocks, captures
+  faults        add <target> [--latency ms] [--status n] | list | clear Inject latency, errors, drops into proxy traffic
+  record        start | stop | status | list                           Record proxied traffic of chosen hosts into a cassette
+  replay        <cassette> [--passthrough] | stop | status              Serve a recorded cassette instead of the real hosts
 
 Engine
   engine start [--transport socket|ws] [--no-tray]   Start a standalone engine in the background
   engine stop                            Stop it gracefully; the interfaces using it close too
   engine restart                         Stop it and start it again; the interfaces reconnect
   engine status                          Where it runs, without opening a session
-  status                                 Engine, proxy and active workspace
+  status                                 Engine, proxy, workspace, environment, mocks, capture and cookies in two lines
+  wait <url|check> | --port <n> | --capture   Block until a URL answers, a port accepts, or a request is captured
+  setup [--accept-terms --accept-privacy] [--workspace <name>]   First-run setup without the app (see: bifurc help setup)
   update [check | skip <version>]        Whether a newer Bifurc exists and how this install gets it; check asks now
 
 Anything else
+  curl <curl arguments> [--save <name>]  Run a curl command through the engine: shared cookie jar, environments, one summary line
   call <command> [<json-payload>]        Any engine command, e.g. call server.status
   commands                               List every engine command
   --mcp                                  First argument: serve these commands as tools for an AI agent (MCP, stdio)
@@ -65,12 +117,90 @@ Anything else
 Options
   --data-dir <path>    Default: the desktop app's data directory (or BIFURC_DATA_DIR)
   -w, --workspace <id> Default: the active workspace
+  --session <name>     Work in a named session: its own cookie jar, runtime variables and environment (or
+                       BIFURC_SESSION). Without one you share the desktop app's jar and selected environment
   --no-start           Fail instead of starting an engine when none is running
   --json               Machine-readable output
   -h, --help
 
-Exit code: 0 when the command succeeded, 1 when it failed or what it ran failed (a request's failed test,
-a failed gRPC call, a health check that does not answer, a flow or a folder run with a failure).";
+Exit codes
+  0 succeeded    1 ran, but a test, expectation, script or check failed (a flow or folder run with a failure,
+                 a health check that does not answer)
+  2 usage error (unknown command, verb or option; missing or bad argument; ambiguous name), or an update
+    refused because another session changed the item since you showed it (--force overwrites)
+  3 a named thing was not found    4 network error of what was sent (refused, DNS, timeout)
+  5 the engine is not running and could not be started or reached
+  6 needs a person: a sealed vault and no terminal to ask on, or a call the workspace policy holds for approval;
+    vault run exits with the program's own code
+  7 blocked by the workspace policy (policy.yaml): `blocked by policy \"name\": METHOD url`; see: bifurc policy --help";
+
+const AGENT: &str = "Usage: bifurc agent init [--dir <repo>] [--target agents|claude|both] [--skill]
+
+Teaches an AI agent this CLI in one read: a short cheat sheet, then the names in the workspace (environments,
+request folders, flows), written between <!-- bifurc:begin --> and <!-- bifurc:end -->. Run it again to refresh
+the block in place; the rest of the file is not touched.
+
+  init                 Write the block into the repo's AGENTS.md and/or CLAUDE.md
+  --dir <repo>         The repo (default: the current directory)
+  --target <files>     agents, claude or both. Default: the one that exists, both when both do, AGENTS.md when none
+  --skill              Also write .claude/skills/bifurc/SKILL.md (overwritten): the same sheet as a skill
+With --no-start and no engine running, the workspace names are left out.";
+
+const CURL: &str = "Usage: bifurc curl <curl arguments> [options]
+
+curl's own arguments, run by the engine (its cookie jar, its environments), printing the summary line of
+requests send. A leading `curl` word is ignored, and the whole command may be one quoted string.
+
+  bifurc curl -X POST https://api.localhost/users -H 'Content-Type: application/json'
+      -d '{\"email\":\"a@b.co\"}' --save \"Create user\" --folder auth   (all on one line)
+  bifurc curl -s https://api.localhost/users/1 --select .email
+
+curl options  -X -H -d/--data --data-raw --data-binary --data-ascii --data-urlencode --json -F --form-string
+              -G -u -A -e -b --url --oauth2-bearer, -k (no certificate check), -L (follow redirects),
+              -m/--max-time <seconds>. Accepted and ignored: -s -S -v --compressed --connect-timeout.
+              -c/--cookie-jar <file> is ignored too: the engine's jar keeps the cookies. -d @file, --json @file
+              and -F name=@file are read here. -i shows the headers, -I sends HEAD, -o <file> is --out,
+              -f exits 1 on a status of 400 or more. Any other curl option is refused (exit 2).
+Save          --save <name>     Save the request, then send the saved one
+              --save-only       Save without sending
+              --folder <path>   A folder of the request tree, e.g. auth/admin; missing ones are created
+              --update          Replace the request of that name (its id, folder, scripts and tests stay)
+              --no-templatize   Save as written. Otherwise a base URL, a credential or a value of the
+                                environment becomes {{variable}}; a credential nobody holds becomes {{token}}
+Output        --body --headers --select <path> --out <file> --max-body <bytes> --raw --quiet
+              --expect-status <code> --expect '<path> <op> <value>'
+              --bifurc-json     The machine-readable result (--json is curl's: data to send)
+Run           --var KEY=VALUE   A variable for this run (repeatable)    --env <name>   Another environment
+              --no-jar          Send without the workspace's cookie jar   --fresh-session   An empty throwaway jar
+              --extract name=<path>   Keep a value of the response for later {{name}} (see: bifurc session --help)";
+
+const WAIT: &str = "Usage: bifurc wait <url|health check> [--status <code>] [--timeout 30s] [--interval 500ms]
+       bifurc wait --port <n> [--host 127.0.0.1] [--timeout 30s] [--interval 500ms]
+       bifurc wait --capture [--method M] [--host H] [--path P*] [--status 4xx] [--origin real|mock|mapped|rule|error|server|webhook]
+                   [--grep text] [--timeout 30s] [--interval 500ms]
+
+Polls until the thing is ready, then prints one line (`ready · http://api.localhost/health 200 · 2.4s`) and
+exits 0. After --timeout it exits 4 and says why the last attempt failed.
+  <url>       Ready when the URL answers with any status, or with --status. A health check's name means its URL;
+              {{variables}} are resolved. http:// is added to an address without a scheme.
+  --port      Ready when a TCP connection is accepted. Needs no engine.
+  --capture   Ready when a new request that matches the filters of capture list is captured.
+Durations are 500ms, 30s, 2m or a number of seconds.";
+
+const SETUP: &str =
+    "Usage: bifurc setup [--accept-terms --accept-privacy] [--workspace <name>] [--port <n> --proxy-port <n>]
+
+The app's first-run setup, for a machine that has no app (a container, CI). Every other command is refused
+until it is done. Never run implicitly.
+  (no flags)        Print the state and the URLs of the terms and the privacy policy; exit 0 when the setup is
+                    finished, 6 when it is not.
+  --accept-terms --accept-privacy
+                    Record that YOU accept the terms of service and the privacy policy at the URLs it prints.
+                    Both are required; with one, that one is recorded and the other is named (exit 6).
+  --workspace       Name of the first workspace (default Default); made only when there is none.
+  --port            Reverse proxy port (default 80)    --proxy-port   Forward proxy port (default 8080)
+Order, as in the app: accept terms, accept privacy, start the proxies, create the workspace, complete.
+Run again when finished, it only prints the state.";
 
 const WORKSPACES: &str = "Usage: bifurc workspaces <verb>
 
@@ -89,11 +219,13 @@ Global is always applied; the selected environment overrides it; a lone extra en
 without being asked for.
 
   list
-  show                                   The merged variables a request resolves against
+  show [--reveal]                        The merged variables; secret-looking names are masked
   use <id|name>
   set <id|name> <KEY=VALUE>...           Set variables of one environment (Global is named Global), adding
                                          the ones it does not have
-  unset <id|name> <KEY>...               Remove variables of one environment";
+  unset <id|name> <KEY>...               Remove variables of one environment
+  auth <id|name> --login <request|flow> [--flow <name>] [--retry true|false] | --off
+                                         Run that login once on a 401, then send again (`↻ re-authenticated`)";
 
 const MAPPINGS: &str = "Usage: bifurc mappings <verb>
 
@@ -123,22 +255,48 @@ A mock created here is the whole response: nothing is asked of the real server.
   list
   show <id|name>
   create <url-pattern> [--method GET] [--name <text>] [--status 200] [-H \"k: v\"]...
-                       [--body <text> | --body-file <f>] [--delay <ms>] [--regex] [--disabled]
+                       [-d, --data <text> | --body-file <f>] [--delay <ms>] [--regex] [--disabled]
   create --curl <command> [--name <text>] [--disabled]
                                          A mock of the call a cURL command makes, answering an empty 200
+  create --from-request <request> [--name <text>] [--var k=v]... [--env <name>] [--disabled]
+                                         Send the saved REST request once and mock the answer it got
+  create --from-capture <entry> [--name <text>] [--disabled]
+                                         Mock a captured exchange (same as: capture mock <entry>)
   update <id|name> [--url <pattern>] [--method <m>] [--name <text>] [--status <code>] [-H \"k: v\"]...
-                   [--body <text> | --body-file <f>] [--delay <ms>] [--regex | --no-regex]
+                   [-d, --data <text> | --body-file <f>] [--delay <ms>] [--regex | --no-regex]
                                          Only what is given changes; -H \"k:\" removes a header
   enable|disable <id|name>               Enabling a mock disables another enabled mock of the same call
+  scenario <mock> [<scenario>] [--list] [--delay <ms>]
+                                         Switch a call between its answers; no scenario (or --list) lists them
+  status                                 A line per call: name, method, pattern, active scenario, on/off, hits
+  hits <mock> [--last 5]                 Captured requests this call's mocks answered: did the app hit the mock?
+  serve [--port 4010] [--host 127.0.0.1] [--fallthrough <base-url>] [--detach] [--quiet]
+                                         The enabled mocks over plain HTTP on a local port, no proxy or
+                                         certificate (for Node tests, CI, backends). Scenarios apply. Blocks and
+                                         prints a line per request; stops with Ctrl+C or the end of the command;
+                                         --detach keeps it running under the engine. The host part of a mock's
+                                         pattern is ignored: /orders matches http://api.localhost/orders.
+                                         No match: 404 with the closest mocks, or --fallthrough forwards.
+                                         With --fallthrough a partial mock answers only its mocked parts
+                                         (status, headers, body, delay); the rest comes from upstream.
+  serve --stop [--port N] | --status      Stop the mock server(s) / list the running ones
 
---method takes * for any method.";
+--method takes * for any method.
+
+Scenarios: the mocks of one call (same method and URL pattern) are the answers of that call, one enabled.
+The one named plainly is `default`; a scenario is named \"<default name> · <scenario>\" (Get orders · empty).
+A scenario that does not exist and is a preset is created from the default mock, then switched on:
+  error500 (500) | error401 (401) | notfound (404) | empty (200 [] or {}) | slow (default answer + --delay,
+  3000 ms) | timeout (default answer + a 60000 ms delay, longer than common client timeouts)";
 
 const REQUESTS: &str = "Usage: bifurc requests <verb>
 
 Saved requests of every type: rest (the default), graphql, grpc, soap, websocket, sse, socketio, mcp.
+A request is named by its id, its name, a unique start of its name (get -> Get order) or of its id (4+).
 
-  list [--type <type>]
-  show <id|name> [--type <type>]
+  list [--type <type>] [--folder <path>] [--grep <text>] [--ids]
+                                         One line each: folder, method, URL, name
+  show <name> [--curl] [--reveal]        Summary of a request; --curl prints it as a curl command (REST)
   create [--type <type>] --url <url> [--name <text>] [-H \"k: v\"]... <options of the type>
   create --curl <command> [--name <text>]   The request a cURL command describes, of the type it turns out to be
   update <id|name> [--type <type>] <the options of create>
@@ -146,24 +304,43 @@ Saved requests of every type: rest (the default), graphql, grpc, soap, websocket
   send <id|name> [--type <type>]         Send a saved request; the engine resolves it and runs its scripts
   send [--type <type>] --url <url> <the options of create>
                                          Send a request that is not saved
+  --extract name=<path>                  After the send, keep the value at <path> of the JSON body (or `status`)
+                                         as the session's variable {{name}}; repeatable; exit 1 if it is absent
+  --fresh-session                        Send (rest) with an empty throwaway cookie jar
+  --var KEY=VALUE                        Send with this variable ({{KEY}}) over the environment's; repeatable
+  --env <id|name>                        Send with this environment instead of the selected one
+  --data <text|@file>                    On a saved send: replaces its body (graphql: variables)
+  --patch '<path>=<value>'               On a saved send: sets a field of its JSON body, e.g. '.qty=2'; repeatable
   reflect <address>                      Services and methods a gRPC server reports through reflection
 
+Output of send (rest, graphql, soap, grpc): one line such as \"201 Created · 142ms · 4.2KB json · tests 3/3 ✓\";
+a failure adds a reason line (\"✗ …\") and exits 1, and an error status shows up to 384 bytes of the body
+  --body                                 The body, up to --max-body <bytes> (default 2048; 0 = all); text only
+  --headers                              The response headers; secrets are masked (--reveal shows them on a terminal)
+  --select <path>                        Only what a jq-style path picks from the JSON body, one value per line
+  --out <file>                           Save the whole body to a file
+  --raw                                  Exactly the body bytes, nothing else
+  --quiet                                Nothing printed; the exit code says it
+  --expect-status <code>                 Exit 1 unless the status is this
+  --expect '<path> <op> <value>'         Exit 1 unless it holds, e.g. 'status < 300' or '.items | length > 0'; repeatable
+  --json                                 {schemaVersion, status, statusText, durationMs, size, contentType, tests, body, …}
+
 Options of each type
-  rest        [-X, --method GET] [-d, --body <text> | --body-file <f>]
+  rest        [-X, --method GET] [-d, --data <text|@file> | --body-file <f>]
   graphql     (--query <text> | --query-file <f>) [--variables <json>] [--operation <name>]
-  grpc        --method <pkg.Service/Method> [-d, --body <json> | --body-file <f>]
+  grpc        --method <pkg.Service/Method> [-d, --data <json|@file> | --body-file <f>]
               [--proto <protoFileId> | --reflection]
               --url is the server address; -H is metadata; a client-streaming method takes a JSON array of
               messages; without --proto the method is found through reflection
-  soap        [--action <SOAPAction>] [-d, --body <xml> | --body-file <f>]
-  websocket   send takes [-d, --body <message>] [--wait <seconds, default 2>]: it connects, sends the
+  soap        [--action <SOAPAction>] [-d, --data <xml|@file> | --body-file <f>]
+  websocket   send takes [-d, --data <message>] [--wait <seconds, default 2>]: it connects, sends the
               message, prints what was sent and received in that time, and disconnects
-  sse         [-X, --method GET] [-d, --body <text> | --body-file <f>]; send takes [--wait <seconds, default 5>]:
+  sse         [-X, --method GET] [-d, --data <text|@file> | --body-file <f>]; send takes [--wait <seconds, default 5>]:
               it opens the stream, prints the events that arrive in that time (or until the server ends it),
               and closes it
   socketio    [--namespace </ns>] [--path </socket.io>] [--auth <json object>] [--listen <event>]...;
               only the events named with --listen are printed (every event when none is named); send takes
-              [--event <name> [-d, --body <arguments>] [--ack]] [--wait <seconds, default 2>]: it connects,
+              [--event <name> [-d, --data <arguments>] [--ack]] [--wait <seconds, default 2>]: it connects,
               emits the event, prints what was emitted and received in that time, and disconnects. The
               arguments are a JSON array (one per element), any other JSON value or plain text (one argument);
               --ack asks the server to acknowledge the event
@@ -191,8 +368,23 @@ A health check is a URL, with {{variables}}, that answers or does not.
 
 const FLOWS: &str = "Usage: bifurc flows <verb>
 
-A flow is a saved graph of nodes: each node's output is the next one's input. It is written as JSON
-(create, update) and checked with validate, which names every problem and the ports of each node.
+A flow is a saved graph of nodes: each node's output is the next one's input. A straight line of requests
+is written as steps (create --steps); any graph as JSON (create, update). validate names every problem and
+the ports of each node.
+
+Steps (YAML or JSON), compiled into the graph; `flows show` prints a line flow back as steps
+  name: Checkout happy path
+  steps:
+    - request: Login as admin        a saved request by name: exact, any case or a unique prefix
+    - request: Create cart
+      extract: { cartId: .id }       later steps can use {{cartId}} in the URL, headers and body
+    - request: Add item
+      vars: { qty: 2 }               variables for this step only
+      expect: [ status == 201, .items | length == 1 ]   == != < <= > >= contains; a miss fails the run
+                                     in [ ], quote one with an index: '.items[0].qty == 2'
+    - inline: POST {{baseUrl}}/orders      a request made here, saved as <flow> · <n>; headers:, body:
+    - mail: { to: \"{{email}}\", timeout: 30s, extract: { otp: otp } }   wait for mail in the local sink (bifurc
+                                       mail); extract takes otp, link, subject, id; saved as an inline request
 
 The JSON of a flow
   {\"name\": \"Login then list\", \"folderId\": \"<folder of the flow tree, optional>\",
@@ -235,15 +427,28 @@ The JSON of a flow
   (what an earlier node did), {{flow.<input>}} (an input of the run) and {{variables}} of the environment.
 
   list
-  show <id|name>                         Inputs with their defaults, the nodes with the request each runs,
-                                         and what the engine finds wrong with the flow
-  run <id|name> [--input <name=value>]... [--timeout <seconds>] [--max-events <n>]
-                                         Run it and print each node as it finishes, then a summary. Exits 1
-                                         when the run does not succeed or a test fails.
+  create --steps <file|-> [--name <text>] [--folder <path>]
+                                         Compile a step file into a new flow (`-` reads stdin); prints one line
+                                         per step, then `saved flow \"Checkout\" · 4 steps`. A problem (exit 2
+                                         for a bad step, 3 for an unknown request) saves nothing.
+  update <id|name> --steps <file> [--name <text>]
+                                         Compile the file again into that flow, keeping its id and inputs
+  show <id|name> [--steps]               Inputs with their defaults, a line flow as steps
+                                         (`2 POST /carts  Create cart  extract cartId=.id`) or else the nodes
+                                         with the request each runs, and what the engine finds wrong.
+                                         --steps prints the step file (exit 2 when the flow is not a line)
+  run <id|name> [--input <name=value>]... [--var <k=v>]... [--env <name>] [--fresh-session] [--verbose]
+      [--timeout <seconds>] [--max-events <n>] [--max-body <bytes>]
+                                         Run it; one line per request (or failed node), then `flow passed · 5
+                                         steps · 166ms` or `flow failed at step 3`. Only a failed step shows
+                                         its body (384 bytes); exits 1 when the run or a test fails.
                                          --input: a value for an input the flow declares (repeatable)
+                                         --var, --env: variables / environment over the environment's, as on a send
+                                         --fresh-session: cookies of a jar of its own, dropped at the end
+                                         --verbose: every step's body, cut at --max-body (default 2048; 0: all)
                                          --timeout: stop the run after that long (0: no limit)
                                          --max-events: stop after that many stream messages
-                                         With --json nothing is printed until the end, then the run's report
+                                         With --json nothing is printed but the run's report
   loadtest <id|name> --instances <n> [--input <name=value>]... [--timeout <seconds>] [--max-events <n>]
                                          Run it <n> times at once (1 to 10000) and print how many passed and
                                          failed, how long an instance and each node took, and what failed how
@@ -255,8 +460,9 @@ The JSON of a flow
 
 const VAULT: &str = "Usage: bifurc vault <verb>
 
-Encrypted secrets, used as {{vault.SECRET}}. A vault is sealed or unsealed. Unsealing takes its passphrase
-and lasts until the vault is sealed or the engine stops, whether it was unsealed here or in the desktop app.
+Encrypted secrets, used as {{vault.SECRET}} (and the signing key of {{$jwt …}}, see `jwt`). A vault is sealed or
+unsealed. Unsealing takes its passphrase and lasts until the vault is sealed or the engine stops, whether it
+was unsealed here or in the desktop app.
 A command that needs a sealed vault asks for the passphrase and unseals it; an unsealed one is used as it is.
 
   list                                   Vaults, whether each is sealed, and their secret names (never values)
@@ -292,19 +498,136 @@ const RUNNER: &str = "Usage: bifurc runner <verb>
 
 Sends every request of a folder of the request tree, in order, with its scripts and tests.
 
-  run <folder>                           Run it and print how each request did; exits 1 when a request
-                                         fails or a test does";
+  run <folder> [--bail] [--var <k=v>]... [--env <name>] [--fresh-session] [--verbose] [--max-body <bytes>]
+                                         <folder>: id, path (auth/admin) or name. One line per request, then
+                                         `5 run · 4 passed · 1 failed · 812ms`; only a failed one shows its
+                                         body. Exits 1 when a request fails or a test does.
+                                         --bail: stop after the first failure; --verbose: every body";
+
+const CONTRACT: &str = "Usage: bifurc contract check | update-mock <mock> | snapshot [options]
+
+Do the mocks the frontend relies on still match what the backend really answers? Each enabled mock is paired
+with a saved REST request of the same method and path ({{var}} segments match any one segment, query and host
+are ignored). The request is sent, and status, content type and body shape (keys, types, array elements; never
+values or headers) are compared.
+
+  check                                  One line per paired mock, the differences under a drifted one, then a count
+  --mock <name>                          Only this mock (also when disabled); its reason is shown when unpaired
+  --folder <mock folder>                 Only the mocks in this folder and below
+  --all                                  Disabled mocks too
+  --ignore <glob>                        Leave out differences whose path matches; * is any run of characters,
+                                         e.g. '.meta.*' or '.items[].debug'. Repeatable
+  --from-capture                         Compare with the newest captured real answer (not a mock's) instead
+  --from-snapshot                        Compare with the stored snapshots only; sends nothing
+  --openapi <file>                       Compare with an OpenAPI 3 / Swagger 2 file (JSON or YAML) instead: the
+                                         first 2xx JSON response schema of the operation with the mock's method
+                                         and path ({id} matches any one segment; the servers[0].url / basePath
+                                         prefix is optional). Sends and stores nothing; rows end `(openapi)`;
+                                         a mock without an operation is unpaired (`not in the spec`). In an
+                                         object with a `required` list only those properties count (a mock may
+                                         omit or carry optional ones); without one, all do. Not with the two above
+  --var k=v  --env <name>  --fresh-session   As for requests send
+  --json  --quiet                        Machine-readable; or nothing but the exit code
+
+check SENDS the paired real requests (POST, DELETE and the like too); --from-capture sends nothing. A send is
+never answered by a mock. Left is the mock, right the real answer: `+ .items[].discount (number)` means the real
+API has it and the mock lacks it, `- .x` the reverse, `~ status 201 → 200` mock then real.
+Mocks with no single saved request (none, several, or a regex pattern) are counted as unpaired; --json lists them.
+Exit: 1 any drift, else 4 a real request failed, else 0.
+When a real request cannot be reached and a snapshot of it exists, the mock is compared with the snapshot and
+the row ends `(snapshot)`; that counts as ok or drifted, not failed.
+
+  update-mock <mock>                     Rewrite the mock's body to the real shape, keeping its values where a key
+                                         stays; also its status when it differs. Headers stay. Sends the request
+                                         (or --from-capture). Prints the fixed differences, then `updated mock`
+  snapshot [--mock] [--folder] [--all]   Store the shape of each paired request's answer in the workspace
+                                         (contracts/, committed with it): types only, never a value. Sends each
+                                         request once. Exit 4 if a send failed, after saving the rest";
 
 const CAPTURE: &str = "Usage: bifurc capture <verb>
 
 What went through the proxies: each exchange with its request and its response.
 
+  list [--last N] [--status 4xx|422|!2xx] [--method M] [--host H] [--path P*] [--since 2m|1h|#id]
+       [--origin real|mock|mapped|rule|error|server|webhook] [--grep text] [--pinned]
+                                         One line per entry, newest first (default 20): #id time method
+                                         host/path status duration origin. Times are UTC; #id* is pinned.
+  show <entry> [--body] [--headers] [--req-body] [--req-headers] [--select <path>] [--max-body N]
+                                         The response as `requests send` prints it (--out, --raw, --quiet,
+                                         --expect* too); --req-* show the request (secrets masked)
+  show <entry> --logs [--context N] [--service <name>]
+                                         Only the dev-service log lines that carry the entry's trace id (the
+                                         proxies send it as x-bifurc-trace; settings update --traceheader); no
+                                         line has it: lines near the request mentioning its path, marked ≈
+  diff <a> [<b>] [--mock <name>] [--request <name>] [--shape] [--var K=V] [--env <name>]
+                                         Two sides (entries, a mock, a saved request that is sent now):
+                                         + .new (number), - .gone, ~ .a 1 → 2; --shape: no values
+  watch [filters] [--count N] [--timeout S]
+                                         One JSON line per new matching entry until stopped
+  pin <entry>...                         Keep entries beyond the buffer limit (200; settings update
+                                         --capturelimit N); pinned ones do not count toward it
+  unpin <entry>...                       Let them age out again
+  An <entry> is a full id, #tail or tail (the end of the id, as `list` prints it).
   mock <entry>                           Save a mock that answers as the captured exchange did
   request <entry>                        Save a request like the captured one";
 
 const COOKIES: &str = "Usage: bifurc cookies <verb>
 
-The cookies the workspace's requests were given and send back.";
+The cookies the workspace's requests were given and send back. Values print masked.
+
+  list [--domain <d>] [--reveal]         One line per cookie; --reveal shows values on a terminal
+  set <domain|url> <name>=<value>        Seed a cookie (host-only, path /), e.g. a feature flag
+  clear [--domain <d>]                   Forget all cookies, or one domain's
+  configure --clear true|false           Forget cookies when the engine restarts";
+
+const SESSION: &str = "Usage: bifurc session [show | reset]
+
+A named session (--session <name> or BIFURC_SESSION) keeps its own cookie jar, runtime variables and, with
+`env use`, its own environment, so two agents (or an agent and you) never clash. Saved requests, mocks, flows
+and environments stay shared. Without a name you are the default session: the app's jar and selected
+environment. The jar and the variables live as long as the engine and are never written to disk.
+
+  show                                   `session frontend · 2 variables · env dev · cookies 1 domain`
+  reset                                  Empty the session's jar and variables and forget its environment
+                                         (the default session: only the variables --extract and vars set kept)
+Resolution: --var, then the session's variables, then the environment, then Global. A script's
+bc.environment.set in a named session stays in the session and not in the environment's file.";
+
+const CHANGES: &str = "Usage: bifurc changes [--since <seq|2m|1h|time>] [--mine] [--json]
+
+What changed in the workspace since this session last asked, oldest first, one line each: the kind, the name,
+what was done (and which fields), who did it (`session:<name>`, `cli`, `app`) and when. Your own changes are
+left out (--mine includes them). Held in memory since the engine started (the audit log keeps the full
+history; `history log` shows the session of each commit).
+Name the session with --session <name> or BIFURC_SESSION; without one the cursor is the command line's own.
+
+  (no option)                            Show what is new and move this session's cursor past it
+  --since <seq|2m|1h|2d|time>            Show everything after a sequence number, a time ago or a UTC time;
+                                         the cursor stays
+  --mine                                 Include the changes this session made itself
+  --json                                 {schemaVersion, changes: [{seq, ts, kind, id, name, action, fields, by}], cursor}";
+
+const CLAIM: &str = "Usage: bifurc claim [--release] <request|mock|flow|env> <name> | bifurc claims
+
+Tell the other agents which item you are editing. Advisory only, nothing is blocked: when someone else updates
+a claimed item the update goes through and prints `bifurc: warning: \"Get orders\" is claimed by session:frontend
+(3m ago)` on stderr (exit code unchanged). Claims live in the engine's memory and lapse after 30 minutes;
+claiming again renews. Deleting the item drops its claim. Name the session with --session or BIFURC_SESSION.
+
+  claim <kind> <name>                    `claimed mock \"Get orders\"`, or `… — was held by session:frontend 3m ago`
+  claim --release <kind> <name>          `released mock \"Get orders\"` (anyone may release)
+  claims                                 One line per claim: `mock  \"Get orders\"  by session:backend  3m ago`
+  --json                                 {schemaVersion, claim, previous} / {schemaVersion, claims: [{id, kind, name, by, ts}]}";
+
+const VARS: &str = "Usage: bifurc vars <verb>
+
+The runtime variables of the session, in memory: what --extract name=<path> on requests send and curl stores,
+and what you set. In the default session they are the command line's own: the app never sees them.
+Name the session with --session <name> or BIFURC_SESSION.
+
+  list [--reveal]                        KEY value lines; secret-looking names print masked
+  set <KEY=VALUE>...                     Set variables; {{KEY}} resolves in the session's requests
+  clear [<KEY>...]                       Remove the named variables, or all of them";
 
 const SYNC: &str = "Usage: bifurc sync <verb>
 
@@ -337,9 +660,264 @@ const TLS: &str = "Usage: bifurc tls <verb>
 The root certificate HTTPS interception signs with. HTTPS itself is switched with bifurc settings update
 --https true|false.";
 
-const SERVICES: &str = "Usage: bifurc services list
+const SERVICES: &str = "Usage: bifurc services <verb>
 
-Local processes listening on a port.";
+Dev servers the engine runs in the background (they outlive this command, end with the engine, and are
+stopped as a whole process tree). A definition is saved in the workspace (devservices/); the output of each
+is kept in memory, last 5000 lines. Read it with: bifurc logs <service> [--errors] [--since 2m] [--grep x] [--last 50]
+(--errors: warn/error lines and stack traces, repeats as `line ×42`). Free a port with: bifurc port free <port> [--kill]
+
+  list                                   Local processes listening on a port (any process, not only these)
+  define <name> --cmd <command> [--port <n>] [--cwd <dir>] [--vault <vault>] [--env KEY=VALUE]... [--log-file <path>]
+                                         Save a service; --cwd is stored as an absolute path. Do not put secrets
+                                         in --env (it is a workspace file): use --vault, whose secrets are
+                                         injected like `vault run` (sealed and no terminal: exit 6)
+                                         --log-file: a file the service writes; the engine follows it into the same
+                                         output (stream file) while the service runs
+  up [<name>|--all] [--wait] [--timeout 30s]   Start (default: all); --wait blocks until the port listens, exit 4 on
+                                         timeout with the last lines of output
+  down <name>|--all                      Stop the whole process tree
+  restart <name> [--wait] [--timeout 30s]   Stop and start again
+  remove <name>                          Stop and delete the definition
+  ps                                     One line each: name, state, port, pid, uptime, health. A crashed service
+                                         shows `crashed (exit 1) 12s ago` and its last 5 error lines
+  show <name>                            The definition; secret-looking env values masked
+  snippet <express|fastify|next|fastapi|django|go>
+                                         A one-line middleware that logs the trace header, for
+                                         bifurc capture show <id> --logs. Unknown stack: exit 2
+  --passphrase-stdin                     With up, restart: the vault passphrase from stdin";
+
+const LOGS: &str = "Usage: bifurc logs <service> [--errors] [--since 2m] [--grep x] [--last 50]
+
+The recent output of a dev server (bifurc services), plain lines, the last 50 by default.
+
+  --errors                               Only warn/error lines and stack traces; repeated lines as `line ×42`
+  --since <30s|2m|1h>                    Only lines from that long ago
+  --grep <text>                          Only lines containing the text (any case)
+  --last <n>                             At most the last n lines (default 50)";
+
+const PORT: &str = "Usage: bifurc port free <port> [--kill]
+
+Who holds a TCP port on this machine: `3000 held by node (pid 4242)`, or `free` (exit 0).
+
+  free <port>                            Show the process holding the port
+  free <port> --kill                     Stop it with everything it started";
+
+const FAULTS: &str = "Usage: bifurc faults <verb>
+
+Make the real backend misbehave, to check retries, timeouts and error screens. A fault is a rule on a target
+`host[:port][/path-prefix]` (`*.example.com` allowed) that hits proxy traffic: the forward proxy (http and
+intercepted https) and the reverse proxy. Not the local mock server, not `requests send` or `curl`. A plain
+https tunnel (interception off) only meets host-wide latency, drop and reset (see: bifurc tls status).
+Faults live in the running engine and are lost when it restarts; `bifurc status` lists them.
+
+  add <target> --latency <ms|2s>         Delay each matching request, then let it go on
+  add <target> --status <code> [--rate 30%]
+                                         Answer at once with that status (header x-bifurc-fault); upstream not called
+  add <target> --drop [10%]              Never answer (held open up to 60 s); bare = every request
+  add <target> --reset [5%]              Close the connection with no answer
+                                         --rate N% applies to latency and status (--latency and --status combine);
+                                         drop and reset take their own rate and stand alone. 0 < rate <= 100
+                                         Prints `fault #1k3f: api.localhost/orders → 429 at 30% (proxy traffic)`
+  list                                   `#1k3f  api.localhost/orders  429 at 30%  12 hits`, or `no faults`
+  clear [<id>]                           `cleared 2 faults`, or `cleared #1k3f`. Exit 3 for an unknown id";
+
+const RECORD: &str = "Usage: bifurc record <verb>
+
+Record the real answers of some hosts, as they pass through the proxy, into a cassette: the file
+`cassettes/<name>.json` of the workspace. Only proxied traffic counts (not mocks, not the mock server, not
+webhooks); https:// hosts need HTTPS interception (see: bifurc tls status). Secrets in headers, query
+parameters and JSON or form bodies are masked as `••••` while recording. One recording at a time.
+
+  start --hosts a.com,b.com --cassette <name>
+                                         Start recording; `*.example.com` matches subdomains. A cassette of the
+                                         same name is replaced (the old one is in the history). Exit 2 when
+                                         one is already recording
+  stop                                   Save and commit it: `saved cassettes/x.json · 12 interactions · 3 values
+                                         masked`. Exit 3 when nothing records
+  status                                 `recording x · 12 interactions · a.com`, or `not recording`
+  list                                   The cassettes of the workspace: name, interactions, hosts, when recorded
+                                         (see: bifurc replay --help)";
+
+const REPLAY: &str = "Usage: bifurc replay <cassette> [--passthrough] | stop | status
+
+Serve a recorded cassette (see: bifurc record --help) instead of the real hosts, through the proxy and the
+local mock server (there, with no hosts to go by, only recorded requests are answered and the rest go on to
+the mocks). A request matches a recorded one by method, path, query and body; headers are never
+compared. Masked values (`••••`) match anything; timestamps, idempotency keys, nonces and request ids are
+ignored. The same request repeated gets the recorded answers in order, then the last one again. A replayed
+answer shows in `capture` as via mock, target `cassette:<name>`. One replay at a time, and not while recording.
+https:// hosts need HTTPS interception (see: bifurc tls status).
+
+  <cassette> [--passthrough]             Start replaying `cassettes/<cassette>.json`: `replaying checkout · 12
+                                         interactions · api.stripe.com`. A request the cassette does not hold
+                                         is a 404 `x-bifurc-cassette: unmatched` naming the nearest recorded
+                                         ones; with --passthrough it goes to the real host instead. Exit 3
+                                         when there is no such cassette, 2 when one is already running
+  stop                                   `stopped x · 10 served · 0 unmatched`; lists each unmatched request
+                                         (`✗ GET url`) and exits 1 when there were any. Exit 3 when nothing
+                                         replays
+  status                                 `replaying x · 3 served · 1 unmatched`, or `not replaying`";
+
+const TYPES: &str =
+    "Usage: bifurc types <request> [--lang ts|zod|python|go] [--out <file>] [--name <TypeName>] [--send]
+
+The type of what a saved REST request answers, inferred from its recorded responses and the captured calls with
+the same method and path ({{var}} and :var segments match any one segment), merged: a field missing from some
+samples is optional, null adds `| null`, 1 and 1.5 together are a number, different kinds make a union. Only
+2xx JSON bodies count. Prints the code and nothing else, so it can be piped.
+
+  --lang <ts|zod|python|go>              The language (default ts); --ts --zod --python --go are shorthands
+  --out <file>                           Write the code there and print `saved <file> (N samples)`
+  --name <TypeName>                      The type's name (default: the request's name in PascalCase + Response)
+  --send                                 Send the request first and use that answer too
+  --var k=v  --env <name>  --fresh-session   With --send, as for requests send
+  --json                                 {schemaVersion, name, lang, samples, code}
+
+The first line states the source. Python needs 3.11+ (NotRequired). Exit 3 when there is no JSON response yet.";
+
+const OPENAPI: &str = "Usage: bifurc openapi infer [--folder <folder>] [--out <file>] [--title <text>]
+
+Builds an OpenAPI 3.0.3 document (JSON) from the saved REST requests, their recorded and captured answers, and the
+enabled mocks. One operation per method and path ({{id}} and :id segments become {id}); per status, a schema
+merged from every JSON answer seen (a field missing from some is not required, null makes it nullable, 1 and 1.5
+together are a number); a JSON request body gives requestBody; the URL's query gives parameters. A mock with no
+saved request is an operation too; regex mocks are skipped. The first http(s) host seen is `servers[0]`.
+`contract check --openapi <file>` accepts the result.
+
+  --folder <folder>                      Only the requests in this folder and below (and the mocks of their paths)
+  --out <file>                           Write the document there and print
+                                         `saved f.json · 4 operations · 6 responses from 11 samples`
+  --title <text>                         info.title (default \"Bifurc API\")
+  --json                                 {schemaVersion, operations, responses, samples, document}
+
+Without --out the document is printed and nothing else. Exit 3 when there is no request to describe.";
+
+const JWT: &str = "Usage: bifurc jwt <decode|mint>
+
+  decode <token> [--check] [--json]
+  decode --from-jar <host> [--check] [--json]
+                                         Header, claims, and exp / nbf / iat as a time and how far away it is.
+                                         The signature is not verified. --from-jar decodes the JWT-shaped
+                                         cookies of the host (or a parent domain) in this session's jar and
+                                         prints `cookie <name>` first; none is exit 3. --check exits 1 when the
+                                         token is expired or not valid yet. Not a JWT, or encrypted (JWE): exit 2
+  mint --key-from-vault <vault> [--claims '<json>'] [--exp 5m|none] [--secret KEY] [--alg A] [--header '<json>']
+                                         Sign a token with a vault secret and print only the token. --claims is
+                                         a JSON object; iat is added, and exp (default 15m; 30s, 5m, 1h, 2d, or
+                                         none) unless the claims have their own. --secret picks the key (default:
+                                         the only secret, else JWT_KEY). --alg HS256 HS384 HS512 RS256 ES256
+                                         (default: from the key; a PEM private key signs RS256 or ES256, else
+                                         the text is an HMAC secret). --header adds header members. A sealed
+                                         vault asks for its passphrase (--passphrase-stdin) or exits 6
+
+As a variable, in any request field: {{$jwt role=admin exp=5m}} is a fresh token (iat = now) each time it is
+sent. Space-separated key=value pairs; a value may be \"double quoted\" to hold spaces. Every key is a claim
+(sub=42 is the number 42, sub=\"42\" the text \"42\"; true, false, null, [..] and {..} are JSON) except
+exp (30s, 5m, 1h, 2d or none; default 15m), alg, kid (a header member), vault and secret (the key, chosen as
+for mint). Without vault= the key is the JWT_KEY secret of the one unsealed vault that has it. If no token can
+be made (vault sealed, no key, bad value) the text stays as written and the send says why on a `!` line
+(`warnings` with --json). No variables inside the pair list. A preview that never shows secrets leaves it as written.";
+
+const POLICY: &str = "Usage: bifurc policy <show|check>
+
+Guardrails for agents. The workspace's policy.yaml (or policy.json) limits what the command line and MCP may send;
+the desktop app is not held to it unless the file says so. Only a person edits the file: no command writes it.
+
+  show [--json]                          The policies, one line each (`no policy file` when there is none). A file
+                                         that cannot be read is printed as the error, exit 1
+  check <METHOD> <url> [--env name] [--json]
+                                         What a call would get, without sending it: exit 0 allow, 7 denied,
+                                         6 held for a person. --env judges by that environment instead of the
+                                         one selected
+
+apply_to: [cli, mcp]               # default; cli and mcp are one switch (both connect as cli); `app` adds the desktop app
+policies:
+  - name: no-prod-writes
+    deny: { env: prod, methods: [DELETE, PUT, PATCH, POST] }
+  - name: local-only
+    allow_hosts: [\"*.localhost\", localhost, 127.0.0.1]
+  - name: staging-deletes
+    require_human: { env: staging, methods: [DELETE] }
+
+deny and require_human match on env (environment name; glob or list), methods (case-insensitive, \"*\" any),
+hosts (globs; *.x.com is its subdomains; the port is ignored) and paths (globs on the URL path: * stays in a
+segment, ** crosses them); no key matches everything. A call to a host that allow_hosts does not list is blocked.
+Top-level deny:/allow_hosts:/require_human: with no policies list is one unnamed rule each. deny and allow_hosts
+are checked first (first in the file wins), then require_human. A blocked call exits 7 with
+`blocked by policy \"no-prod-writes\": DELETE https://api.prod.x/orders/1`; a require_human call waits for a
+person (see: bifurc approvals --help), exit 6 if nobody answers in time. A run (runner, flows) stops at its first
+blocked request. A file that cannot be read blocks every
+guarded call (exit 7 `policy file invalid: ...`) until a person fixes it; quote a bare * in YAML. If policy.yaml and
+policy.json both exist, policy.yaml is used.";
+
+const APPROVALS: &str = "Usage: bifurc approvals <list|approve|deny>
+
+Calls a require_human policy holds (see: bifurc policy --help). The agent's call waits in the engine, by default 5
+minutes (setting approvalTimeoutSeconds, 10-3600); a person decides here, in their own terminal.
+
+  list [--all] [-w workspace] [--json]   What waits for a person, oldest first; --all adds the last 100 decided
+  approve <id> [--reason text]           Let the call through. <id> is the id, #tail or tail that list shows
+  deny <id> [--reason text]              Refuse it; the agent's call fails with exit 7 and says who and why
+
+approve and deny need stdin and stdout to be a terminal, else exit 2: an agent's shell cannot approve its own call.
+They are not in MCP. If nobody answered in time the call exits 6 with `still pending as #<id>`; the item stays
+pending for 30 minutes, and approving it late lets the same call, repeated within 10 minutes, through once.
+`bifurc status` shows `approvals N pending`. Every block, request and decision is kept, one JSON line each, in
+<data dir>/audit/policy.jsonl (also the engine log and `bifurc changes`).";
+
+const WEBHOOKS: &str = "Usage: bifurc webhooks <verb>
+
+The engine receives webhooks on a local port (127.0.0.1) and captures each one with its exact headers and raw
+body (origin webhook), so a signature check still passes when it is sent again. See them with
+`capture list --origin webhook` and `capture show <id>`; `status` shows `webhooks :4020`.
+
+  listen [--port N] [--name x] [--forward <url>] [--detach] [--quiet]
+                                         Any method and path is accepted and answered 200 {\"ok\":true}. With
+                                         --forward the request goes on unchanged (the path it came on is appended
+                                         to the URL's path) and the upstream's answer comes back; refused: 502.
+                                         Blocks and prints a line per request until Ctrl+C or the end of the
+                                         command; --detach keeps it running under the engine. No --port: a free one
+  stop [<name|port>]                     Stop that listener, or every one
+  list [--name x] [--last 20]            #id, time, method, URL, status, origin, listener; newest first
+  show <id> [capture show flags]         As `capture show`, for a webhook only (--req-body, --req-headers, ...)
+  replay <id> [--to <url>] [output flags]
+                                         Send it again with its method, exact headers and raw body, to where it
+                                         was forwarded (else its own URL). --to replaces scheme, host and port
+                                         and keeps the path and query, unless it has a path of its own. Prints
+                                         the response as `requests send` does (--body, --headers, --select,
+                                         --expect-status ...); refused: exit 4
+  save <id> --as-request [--name x] [--folder f]
+                                         Save it as a request (to the forward URL when it had one)
+  fixtures                               The sample events: stripe.checkout.session.completed, github.push
+  trigger <fixture> [--to <url>] [--name x] [--vault v [--secret KEY]] [--patch '<path>=<value>'] [output flags]
+                                         Send a sample event (fresh ids, compact JSON). Goes to --to, else the
+                                         one running listener (--name picks) so it is captured and forwarded.
+                                         --vault signs it with that secret (default STRIPE_WEBHOOK_SECRET or
+                                         GITHUB_WEBHOOK_SECRET): stripe-signature or x-hub-signature-256.
+                                         --patch edits the payload before signing. Prints the response as
+                                         `replay` does";
+
+const MAIL: &str = "Usage: bifurc mail <verb>
+
+The engine runs an SMTP server on 127.0.0.1:1025 (settings update --mailport), no login, no TLS: point the
+app under test at it and read what it \"sent\". The last 200 mails are kept in memory (gone when the engine
+stops). `status` shows `mail :1025 (3)`; `off (reason)` when the port could not be bound.
+
+  list [--to <address>] [--last 20]      #id, time, recipient, subject; newest first. --to is a whole address,
+                                         or part of one when it has no @
+  show <id> [--html|--text]              From, To, Subject and the text; with a flag only that body. <id> is
+                                         the #tail that list shows
+  last [--to <address>] [--wait 30s]     The newest mail (as show). Exit 3 when there is none; --wait holds on
+                                         for one (exit 3 after the time). A mail from before the command
+                                         counts: run `mail clear` before the app sends
+      --otp                              Print only the first standalone 4-8 digit code (subject, then text,
+                                         then html); exit 1 when the mail has none
+      --link [--link-match <text>]       Print only the first http(s) link, or the first containing the text;
+                                         exit 1 when there is none
+  clear                                  Drop every mail
+
+A flow waits for mail with a step: - mail: { to: \"{{email}}\", timeout: 30s, extract: { otp: otp, link: link } }";
 
 const ENGINE: &str = "Usage: bifurc engine <verb>
 
@@ -377,6 +955,7 @@ pub fn canonical_group(group: &str) -> &str {
         "audit" => "history",
         "setting" | "config" => "settings",
         "cert" | "certificate" | "https" => "tls",
+        "webhook" => "webhooks",
         other => other,
     }
 }
@@ -391,18 +970,35 @@ pub fn group_usage(group: &str) -> Option<String> {
         "mappings" => MAPPINGS,
         "rules" => RULES,
         "mocks" => MOCKS,
+        "contract" => CONTRACT,
         "requests" => REQUESTS,
         "health" => HEALTH,
         "flows" => FLOWS,
         "vault" => VAULT,
         "account" => ACCOUNT,
         "services" => SERVICES,
+        "logs" => LOGS,
+        "port" => PORT,
+        "mail" => MAIL,
+        "types" => TYPES,
+        "openapi" => OPENAPI,
+        "webhooks" => WEBHOOKS,
+        "jwt" => JWT,
+        "policy" => POLICY,
+        "approvals" => APPROVALS,
+        "faults" => FAULTS,
+        "record" => RECORD,
+        "replay" => REPLAY,
         "engine" => ENGINE,
         "update" => UPDATE,
         "folders" => FOLDERS,
         "runner" => RUNNER,
         "capture" => CAPTURE,
         "cookies" => COOKIES,
+        "session" => SESSION,
+        "vars" => VARS,
+        "changes" => CHANGES,
+        "claim" | "claims" => CLAIM,
         "sync" => SYNC,
         "history" => HISTORY,
         "export" => EXPORT,
@@ -410,15 +1006,257 @@ pub fn group_usage(group: &str) -> Option<String> {
         "proxy" => PROXY,
         "settings" => SETTINGS,
         "tls" => TLS,
+        "agent" => AGENT,
+        "curl" => CURL,
+        "wait" => WAIT,
+        "setup" => SETUP,
         _ => return None,
     };
     let rows = direct::usage(group);
     Some(if rows.is_empty() { own.to_string() } else { format!("{own}\n\n{rows}") })
 }
 
+/// Copy-paste examples of the groups agents use most, one command per line.
+pub fn examples(group: &str) -> Option<&'static [&'static str]> {
+    Some(match canonical_group(group) {
+        "agent" => &[
+            "bifurc agent init",
+            "bifurc agent init --target both --skill",
+            "bifurc agent init --dir ../api-repo --target claude",
+        ],
+        "curl" => &[
+            r#"bifurc curl -X POST {{baseUrl}}/users -d '{"email":"a@b.co"}' --save "Create user" --folder auth"#,
+            "bifurc curl -s http://api.localhost/users/1 --select .email",
+            "bifurc curl http://api.localhost/health --expect-status 200",
+            "bifurc curl -H 'Authorization: Bearer {{token}}' http://api.localhost/me --headers",
+            r#"bifurc curl http://localhost:3000/me -H 'authorization: Bearer {{$jwt role=admin exp=5m}}'"#,
+        ],
+        "requests" => &[
+            "bifurc requests list --folder auth --grep user",
+            r#"bifurc requests send "Create user" --var email=x@y.co --expect-status 201 --select .id"#,
+            r#"bifurc requests send "Get order" --env staging --body --max-body 500"#,
+            "bifurc requests send --url http://api.localhost/ping --expect 'status < 300'",
+            r#"bifurc requests show "Create user" --curl"#,
+        ],
+        "capture" => &[
+            "bifurc capture list --status 4xx --last 5",
+            "bifurc capture show #k3f9 --select .error",
+            "bifurc capture list --host api.localhost --path /orders* --since 2m",
+            "bifurc capture show #k3f9 --logs --context 5",
+            r#"bifurc capture diff #k3f9 --mock "Get order" --shape"#,
+        ],
+        "contract" => &[
+            "bifurc contract check",
+            r#"bifurc contract check --mock "Get orders" --ignore '.meta.*'"#,
+            "bifurc contract check --openapi openapi.yaml",
+            r#"bifurc contract update-mock "Get orders""#,
+            "bifurc contract snapshot --folder shop",
+        ],
+        "mocks" => &[
+            r#"bifurc mocks create http://api.localhost/users/1 --status 200 -d '{"id":1}' -H "Content-Type: application/json""#,
+            r#"bifurc mocks scenario "Get user" error500"#,
+            "bifurc mocks serve --port 4010 --detach",
+            r#"bifurc mocks hits "Get user" --last 5"#,
+            r#"bifurc mocks create --from-request "Get user" --name "Get user""#,
+        ],
+        "flows" => &[
+            "bifurc flows list",
+            r#"bifurc flows validate "Login then list""#,
+            r#"bifurc flows run "Login then list" --input user=ann --env dev"#,
+            r#"bifurc flows run "Login then list" --fresh-session --verbose"#,
+        ],
+        "runner" => &[
+            "bifurc runner run auth",
+            "bifurc runner run auth/admin --bail --env staging",
+            "bifurc runner run auth --var email=x@y.co --verbose",
+        ],
+        "env" => &[
+            "bifurc env list",
+            "bifurc env use dev",
+            "bifurc env show",
+            "bifurc env set dev baseUrl=http://api.localhost token=abc",
+            r#"bifurc env auth dev --login "Login as admin""#,
+        ],
+        "cookies" => &[
+            "bifurc cookies list",
+            "bifurc cookies list --domain api.localhost",
+            "bifurc cookies clear --domain api.localhost",
+            "bifurc cookies clear",
+        ],
+        "session" => &[
+            "bifurc session show --session frontend",
+            "bifurc session reset --session frontend",
+            "bifurc session show --json",
+        ],
+        "vars" => &[
+            "bifurc vars list --session frontend",
+            "bifurc vars set userId=7 --session frontend",
+            "bifurc vars clear userId",
+        ],
+        "changes" => {
+            &["bifurc changes --session frontend", "bifurc changes --since 10m", "bifurc changes --mine --json"]
+        }
+        "claim" | "claims" => &[
+            r#"bifurc claim mock "Get orders" --session backend"#,
+            r#"bifurc claim --release mock "Get orders" --session backend"#,
+            r#"bifurc claim request "Create user" --json"#,
+        ],
+        "services" => &[
+            r#"bifurc services define api --cmd "npm run dev" --port 3000 --cwd ./api --vault dev"#,
+            "bifurc services up --all --wait --timeout 60s",
+            "bifurc services ps",
+            "bifurc services down api",
+            "bifurc services snippet express",
+        ],
+        "types" => &[
+            r#"bifurc types "Get orders""#,
+            r#"bifurc types "Get orders" --lang zod --out src/schemas/orders.ts"#,
+            r#"bifurc types "Get orders" --ts --out src/types/orders.ts --send"#,
+            r#"bifurc types "Get orders" --python --name Order"#,
+            r#"bifurc types "Get orders" --go --json"#,
+        ],
+        "openapi" => &[
+            "bifurc openapi infer",
+            "bifurc openapi infer --out openapi.json",
+            "bifurc openapi infer --folder shop --title \"Shop API\" --out shop.json",
+            "bifurc openapi infer --json",
+        ],
+        "webhooks" => &[
+            "bifurc webhooks listen --name stripe --forward http://api.localhost/webhooks/stripe --detach",
+            "bifurc webhooks stop stripe",
+            "bifurc webhooks list --name stripe --last 5",
+            "bifurc webhooks replay k3f9 --to http://localhost:3000 --expect-status 200",
+            "bifurc webhooks trigger stripe --vault app --patch '.data.object.amount_total=500' --expect-status 200",
+        ],
+        "jwt" => &[
+            "bifurc jwt decode eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.c2ln",
+            "bifurc jwt decode --from-jar api.localhost --check",
+            "bifurc jwt decode --from-jar api.localhost --json",
+            r#"bifurc jwt mint --claims '{"role":"admin"}' --exp 5m --key-from-vault jwt_dev"#,
+            "bifurc jwt mint --key-from-vault jwt_dev --secret JWT_KEY --alg HS512 --exp none",
+        ],
+        "policy" => &[
+            "bifurc policy show",
+            "bifurc policy show --json",
+            "bifurc policy check DELETE https://api.prod.x/orders/1",
+            "bifurc policy check POST http://api.localhost/orders --env prod --json",
+        ],
+        "approvals" => &[
+            "bifurc approvals list",
+            "bifurc approvals list --all --json",
+            "bifurc approvals approve 1k3f",
+            "bifurc approvals deny 1k3f --reason \"not on a Friday\"",
+        ],
+        "faults" => &[
+            "bifurc faults add api.localhost/orders --latency 2000",
+            "bifurc faults add api.localhost/orders --status 429 --rate 30%",
+            "bifurc faults add api.localhost/orders --drop 10%",
+            "bifurc faults add api.localhost/orders --reset",
+            "bifurc faults list",
+        ],
+        "record" => &[
+            "bifurc record start --hosts api.stripe.com,api.openai.com --cassette checkout",
+            "bifurc record start --hosts *.example.com --cassette example",
+            "bifurc record status",
+            "bifurc record stop",
+            "bifurc record list",
+        ],
+        "replay" => &[
+            "bifurc replay checkout",
+            "bifurc replay checkout --passthrough",
+            "bifurc replay status",
+            "bifurc replay stop",
+        ],
+        "mail" => &[
+            "bifurc mail clear",
+            "bifurc mail list --to dana@x.test --last 5",
+            "bifurc mail last --to dana@x.test --otp --wait 30s",
+            "bifurc mail last --link --link-match /verify --wait 30s",
+            "bifurc mail show #k3f9 --html",
+        ],
+        "wait" => &[
+            "bifurc wait http://api.localhost/health --timeout 30s",
+            "bifurc wait api-health --status 200",
+            "bifurc wait --port 3000 --timeout 1m",
+            "bifurc wait --capture --method POST --path /orders* --timeout 2m",
+        ],
+        _ => return None,
+    })
+}
+
 #[cfg(test)]
-mod tests {
+pub(crate) mod tests {
     use super::*;
+
+    fn words(text: &str) -> Vec<&str> {
+        text.split(|c: char| !c.is_alphanumeric() && c != '-').collect()
+    }
+
+    /// A `bifurc …` command line parses, names a verb its group's help has, and only flags that help names.
+    pub(crate) fn check_command(line: &str) {
+        let argv = crate::curl::shell_words(line);
+        assert_eq!(argv[0], "bifurc", "{line}");
+        let group = argv[1].as_str();
+        let Some(help) = group_usage(group) else { return assert_eq!(group, "status", "{line}") };
+        let parsed = crate::args::parse_args(&argv[1..]).unwrap_or_else(|e| panic!("{line}: {e}"));
+        let verb = parsed.positional(1).unwrap_or_default();
+        assert!(matches!(group, "curl" | "wait" | "types") || help.contains(verb), "{line}: verb {verb}");
+        for flag in parsed.names().into_iter().filter(|f| !["json", "help"].contains(f)) {
+            let aliased = ["header", "data", "method"].contains(&flag);
+            assert!(aliased || help.contains(&format!("--{flag}")), "{line}: --{flag}");
+        }
+    }
+
+    #[test]
+    fn the_short_overview_is_at_most_30_lines_and_names_the_commands_agents_use() {
+        assert!(OVERVIEW.lines().count() <= 30, "{} lines", OVERVIEW.lines().count());
+        for group in [
+            "agent", "curl", "requests", "capture", "mocks", "flows", "runner", "env", "cookies", "session", "wait",
+            "status",
+        ] {
+            assert!(words(OVERVIEW).contains(&group), "{group}");
+        }
+    }
+
+    #[test]
+    fn every_example_is_a_known_group_and_verb_with_flags_its_help_names() {
+        for group in [
+            "agent",
+            "curl",
+            "requests",
+            "capture",
+            "mocks",
+            "contract",
+            "flows",
+            "runner",
+            "env",
+            "cookies",
+            "session",
+            "vars",
+            "changes",
+            "claim",
+            "wait",
+            "services",
+            "mail",
+            "webhooks",
+            "jwt",
+            "policy",
+            "approvals",
+            "faults",
+            "types",
+            "openapi",
+            "record",
+            "replay",
+        ] {
+            let list = examples(group).unwrap_or_else(|| panic!("{group} has no examples"));
+            assert!((3..=5).contains(&list.len()), "{group}");
+            for line in list {
+                assert_eq!(crate::curl::shell_words(line)[1], group, "{line}");
+                check_command(line);
+            }
+        }
+        assert_eq!(examples("status"), None);
+    }
 
     #[test]
     fn every_group_of_the_overview_has_its_own_help() {
@@ -426,6 +1264,7 @@ mod tests {
         groups.extend(direct::verbs().iter().map(|verb| verb.words[0]).filter(|group| *group != "update"));
         for group in groups {
             assert!(USAGE.contains(&format!("\n  {group} ")), "{group} is not in the overview");
+            assert!(words(OVERVIEW).contains(&group), "{group} is not in the short overview");
             let help = group_usage(group).unwrap_or_else(|| panic!("{group} has no help"));
             assert!(help.starts_with(&format!("Usage: bifurc {group} ")), "{group}");
         }

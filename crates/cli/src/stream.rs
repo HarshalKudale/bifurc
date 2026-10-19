@@ -240,7 +240,7 @@ mod tests {
         for (argv, message) in [
             (
                 vec!["requests", "send", "e1", "-d", "x"],
-                "a saved request is sent as it is saved, without --body; change it with: bifurc requests update",
+                "a saved request is sent as it is saved, without --data; change it with: bifurc requests update",
             ),
             (vec!["requests", "send", "e1", "--wait", "soon"], "--wait must be a number of seconds, not \"soon\""),
             (
@@ -253,7 +253,7 @@ mod tests {
             ),
         ] {
             let (out, calls) = run(&argv, engine(), |c| requests(c, sub(&argv)));
-            assert_eq!(out.unwrap_err(), CliError::msg(message), "{argv:?}");
+            assert_eq!(out.unwrap_err(), CliError::usage(message), "{argv:?}");
             assert!(payloads(&calls, "sse.connect").is_empty(), "{argv:?}");
         }
     }
@@ -290,6 +290,6 @@ mod tests {
     fn list_shows_the_method_and_the_url() {
         let argv = ["requests", "list", "--type", "sse"];
         let (out, _) = run(&argv, engine(), |c| requests(c, sub(&argv)));
-        assert_eq!(out.unwrap(), "ID  TYPE  NAME  METHOD  URL\ne1  sse   Feed  GET     http://x/events");
+        assert_eq!(out.unwrap(), "GET  http://x/events  Feed");
     }
 }

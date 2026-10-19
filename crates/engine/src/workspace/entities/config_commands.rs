@@ -42,6 +42,7 @@ pub fn register(registry: &mut CommandRegistry) {
         notify_config_changed();
         bus().emit("settings.changed", json!({}));
         rebind_changed_listeners(&next, &prev);
+        crate::capture::refresh_capture_limit();
         Ok(json!({ "ok": true }))
     });
 

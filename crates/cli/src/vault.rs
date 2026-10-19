@@ -33,7 +33,7 @@ pub fn find_vault<'v>(list: &'v Value, name: &str) -> Result<&'v Value> {
             } else {
                 format!("known: {}", known.join(", "))
             };
-            Err(CliError::msg(format!("no vault named \"{name}\" ({hint})")))
+            Err(CliError::not_found(format!("no vault named \"{name}\" ({hint})")))
         }
     }
 }
@@ -63,6 +63,11 @@ fn passphrase(args: &ParsedArgs, vault: &str, attempt: usize) -> Result<String> 
     }
     if attempt > 0 {
         eprintln!("bifurc: wrong passphrase, try again");
+    }
+    if !prompt::interactive() {
+        return Err(CliError::needs_human(format!(
+            "vault \"{vault}\" is sealed — ask the user to unseal it in Bifurc (or: bifurc vault unseal {vault} in a terminal)"
+        )));
     }
     prompt::secret(&format!("Passphrase for vault {vault}: "))
 }
@@ -202,7 +207,7 @@ pub fn vaults(ctx: &mut Context, sub: Option<&str>) -> Result<String> {
         // With a command after `--` this is `run` below; here there was none.
         "run" => {
             let name = ctx.args.positional(2).unwrap_or("<vault>");
-            Err(CliError::msg(format!("missing the command to run, e.g.: bifurc vault run {name} -- npm run dev")))
+            Err(CliError::usage(format!("missing the command to run, e.g.: bifurc vault run {name} -- npm run dev")))
         }
         other => Err(unknown_verb("vault", other)),
     }
@@ -256,11 +261,11 @@ fn resolve_program(program: &str) -> std::path::PathBuf {
     std::path::PathBuf::from(program)
 }
 
-/// The secrets of the vault `vault run` names, unsealing it first if it is sealed.
-fn secrets_for(ctx: &mut Context) -> Result<Vec<(String, String)>> {
-    ctx.accept(&["passphrase-stdin"], 1)?;
-    let (workspace, vault) = named(ctx)?;
-    unseal(ctx, &workspace, &vault)?;
+/// The secrets of the vault `name`, unsealing it first if it is sealed.
+pub fn secrets_of(ctx: &mut Context, workspace: &str, name: &str) -> Result<Vec<(String, String)>> {
+    let listed = ctx.request("vault.list", json!({ "workspaceId": workspace }))?;
+    let vault = find_vault(&listed, name)?.clone();
+    unseal(ctx, workspace, &vault)?;
     let read = ctx.request("vault.secrets", json!({ "workspaceId": workspace, "id": vault["id"] }))?;
     Ok(read["secrets"]
         .as_object()
@@ -270,13 +275,31 @@ fn secrets_for(ctx: &mut Context) -> Result<Vec<(String, String)>> {
         .collect())
 }
 
+/// Unseal the vault `name` if it is sealed (a sealed vault without a terminal is exit 6); its secrets stay
+/// in the engine, which reads them itself (`jwt.mint`).
+pub fn unseal_named(ctx: &mut Context, workspace: &str, name: &str) -> Result<()> {
+    let listed = ctx.request("vault.list", json!({ "workspaceId": workspace }))?;
+    let vault = find_vault(&listed, name)?.clone();
+    unseal(ctx, workspace, &vault).map(drop)
+}
+
+/// The secrets of the vault `vault run` names.
+fn secrets_for(ctx: &mut Context) -> Result<Vec<(String, String)>> {
+    ctx.accept(&["passphrase-stdin"], 1)?;
+    let name = need(ctx.args.positional(2), "vault name")?;
+    let workspace = workspace_id(ctx)?;
+    secrets_of(ctx, &workspace, &name)
+}
+
 /// `vault run <vault> -- <command…>`: run `command` with the vault's secrets as environment variables and
 /// return its exit code. The passphrase is asked for only if the vault is sealed, and the vault is left
 /// unsealed. `ctx` holds what came before the `--`.
 pub fn run(ctx: &mut Context, command: &[String]) -> Result<i32> {
     let Some((program, program_args)) = command.split_first() else {
         let name = ctx.args.positional(2).unwrap_or("<vault>");
-        return Err(CliError::msg(format!("missing the command to run, e.g.: bifurc vault run {name} -- npm run dev")));
+        return Err(CliError::usage(format!(
+            "missing the command to run, e.g.: bifurc vault run {name} -- npm run dev"
+        )));
     };
     let secrets = secrets_for(ctx)?;
 
@@ -323,6 +346,20 @@ mod tests {
     }
 
     #[test]
+    fn a_sealed_vault_without_a_terminal_needs_a_human() {
+        // The prompt is real when run from a terminal; this is about the agent case.
+        if prompt::interactive() || std::env::var_os(PASSPHRASE_ENV).is_some() {
+            return;
+        }
+        let argv = ["vault", "unseal", "db"];
+        let (out, calls) = with_engine(&argv, engine("sealed"), |c| vaults(c, sub(&argv)));
+        let err = out.unwrap_err();
+        assert_eq!(err.code(), 6);
+        assert!(err.to_string().starts_with("vault \"db\" is sealed"), "{err}");
+        assert!(payloads(&calls, "vault.unseal").is_empty());
+    }
+
+    #[test]
     fn list_says_sealed_or_unsealed_and_names_the_secrets() {
         let argv = ["vault", "list"];
         let (out, _) = with_engine(&argv, engine("unsealed"), |c| vaults(c, sub(&argv)));
@@ -361,25 +398,25 @@ mod tests {
         let argv = ["vault", "run", "nope"];
         let command = ["npm".to_string()];
         let (out, calls) = with_engine(&argv, engine("unsealed"), |c| run(c, &command).map(|code| code.to_string()));
-        assert_eq!(out.unwrap_err(), CliError::msg("no vault named \"nope\" (known: api_keys, db)"));
+        assert_eq!(out.unwrap_err(), CliError::not_found("no vault named \"nope\" (known: api_keys, db)"));
         assert!(payloads(&calls, "vault.secrets").is_empty());
 
         let argv = ["vault", "run", "keys"];
         let (out, calls) = with_engine(&argv, vec![], |c| run(c, &[]).map(|code| code.to_string()));
         assert_eq!(
             out.unwrap_err(),
-            CliError::msg("missing the command to run, e.g.: bifurc vault run keys -- npm run dev")
+            CliError::usage("missing the command to run, e.g.: bifurc vault run keys -- npm run dev")
         );
         assert!(calls.is_empty());
         let (out, _) = with_engine(&argv, vec![], |c| vaults(c, sub(&argv)));
         assert_eq!(
             out.unwrap_err(),
-            CliError::msg("missing the command to run, e.g.: bifurc vault run keys -- npm run dev")
+            CliError::usage("missing the command to run, e.g.: bifurc vault run keys -- npm run dev")
         );
 
         let argv = ["vault", "run"];
         let (out, _) = with_engine(&argv, vec![], |c| run(c, &command).map(|code| code.to_string()));
-        assert_eq!(out.unwrap_err(), CliError::msg("missing vault name"));
+        assert_eq!(out.unwrap_err(), CliError::usage("missing vault name"));
     }
 
     #[test]

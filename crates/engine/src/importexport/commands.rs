@@ -151,6 +151,10 @@ async fn import_commit(params: &Value) -> Value {
 }
 
 pub fn register(registry: &mut CommandRegistry) {
+    registry.register_sync("contract.fromOpenApi", |params, _| {
+        super::importers::requests::contract_operations(str_of(&params, "text"))
+            .map_err(|text| EngineError::bad_request(text.clone()).keyed("import.failed", json!({ "detail": text })))
+    });
     registry.register_sync("export.formats", |_, _| Ok(all_formats()));
     registry.register_sync("export.create", |params, _| Ok(export_create(&params)));
     registry.register_sync("import.preflight", |params, _| Ok(import_preflight(&params)));
