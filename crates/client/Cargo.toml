@@ -1,0 +1,30 @@
+[package]
+name = "bifurc-client"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "What every Bifurc client shares with the engine: data-directory defaults, runtime.json discovery and socket framing."
+
+[lib]
+name = "bifurc_client"
+path = "src/lib.rs"
+
+[dependencies]
+serde_json = { version = "1", features = ["preserve_order"] }
+
+[target.'cfg(unix)'.dependencies]
+libc = "0.2"
+
+[target.'cfg(windows)'.dependencies]
+windows-sys = { version = "0.59", features = [
+    "Win32_Foundation",
+    "Win32_System_Pipes",
+    "Win32_System_Threading",
+] }
+
+[dev-dependencies]
+tempfile = "3"
+
+[lints]
+workspace = true
