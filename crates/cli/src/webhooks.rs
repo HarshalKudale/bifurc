@@ -4,13 +4,11 @@
 
 use std::{collections::HashSet, io::Write, time::Instant};
 
-use base64::{Engine as _, engine::general_purpose::STANDARD};
 use serde_json::{Value, json};
-use sha2::{Digest, Sha256};
 
 use crate::{
     capture,
-    commands::{Context, created, find_one, need, unknown_verb, workspace_id},
+    commands::{Context, created, need, unknown_verb, workspace_id},
     error::{CliError, NOT_FOUND, Result},
     format::js_template,
     response::{Response, present, size},
@@ -31,10 +29,15 @@ pub fn webhooks(ctx: &mut Context, sub: Option<&str>, out: &mut dyn Write) -> Re
         Some("save") => save(ctx),
         Some("fixtures") => {
             ctx.accept(&[], 0)?;
-            let rows: Vec<Value> =
-                FIXTURES.iter().map(|(name, about)| json!({ "name": name, "description": about })).collect();
-            Ok(ctx.print(&json!({ "fixtures": rows }), || {
-                FIXTURES.iter().map(|(name, about)| format!("{name}  {about}")).collect::<Vec<_>>().join("\n")
+            let listed = ctx.request("webhook.fixtures", json!({}))?;
+            Ok(ctx.print(&listed, || {
+                let rows = listed["fixtures"].as_array().into_iter().flatten();
+                rows.map(|f| format!("{}  {}", js_template(f.get("name")), js_template(f.get("description"))))
+                    .collect::<Vec<_>>()
+                    .join(
+                        "
+",
+                    )
             }))
         }
         Some("trigger") => trigger(ctx),
@@ -193,27 +196,14 @@ fn split_origin(url: &str) -> (&str, &str) {
     url.split_at(end)
 }
 
-/// Where a webhook is sent again: `--to` (host only: the entry's path and query go on it; with a path of its
-/// own: used whole), else the listener's forward URL, else the URL it came in on.
-fn replay_target(entry_url: &str, forward: Option<&str>, to: Option<&str>) -> Result<String> {
+/// A request URL aimed at a listener's forward URL: the request's path is appended to the forward URL's path,
+/// like the listener's own forwarding.
+fn forwarded_url(entry_url: &str, forward: &str) -> String {
     let path = match split_origin(entry_url).1 {
         "" => "/",
         path => path,
     };
-    if let Some(to) = to {
-        let (origin, rest) = split_origin(to);
-        if !to.contains("://") || origin.ends_with("://") {
-            return Err(CliError::usage(format!("--to is a URL like http://127.0.0.1:4021, not \"{to}\"")));
-        }
-        return Ok(if matches!(rest, "" | "/") { format!("{origin}{path}") } else { to.to_string() });
-    }
-    // Like the listener's own forwarding: the request's path is appended to the forward URL's path.
-    Ok(match forward {
-        Some(forward) => {
-            format!("{}{path}", forward.split(['?', '#']).next().unwrap_or_default().trim_end_matches('/'))
-        }
-        None => entry_url.to_string(),
-    })
+    format!("{}{path}", forward.split(['?', '#']).next().unwrap_or_default().trim_end_matches('/'))
 }
 
 /// `webhooks replay <id> [--to <url>]`: the captured request again, with its method, headers and raw body bytes.
@@ -225,117 +215,18 @@ fn replay(ctx: &mut Context) -> Result<String> {
     let wanted = need(ctx.args.positional(2), "the webhook's id (see: bifurc webhooks list)")?;
     let workspace = workspace_id(ctx)?;
     let id = webhook_id(ctx, &workspace, &wanted)?;
-    let got = ctx.request("capture.get", json!({ "workspaceId": workspace, "id": id }))?;
-    let Some(entry) = got.get("entry").filter(|entry| entry.is_object()) else {
-        return Err(CliError::not_found(format!("no webhook \"{id}\" (see: bifurc webhooks list)")));
-    };
-    let to = ctx.args.flag("to").map(str::to_string);
-    // The entry's own forward (new entries); older entries fall back to the running listener's.
-    let mut forward = entry["forward"].as_str().map(str::to_string);
-    let mut stopped = None;
-    if to.is_none()
-        && forward.is_none()
-        && let Some(name) = entry["target"].as_str().and_then(|t| t.strip_prefix("webhook:"))
-    {
-        let listeners = ctx.request("webhook.list", json!({}))?;
-        let running =
-            listeners["listeners"].as_array().into_iter().flatten().find(|l| l["name"].as_str() == Some(name));
-        forward = running.and_then(|l| l["forward"].as_str().map(str::to_string));
-        if running.is_none() {
-            stopped = Some(name.to_string());
-        }
+    let mut payload = json!({ "workspaceId": workspace, "id": id });
+    if let Some(to) = ctx.args.flag("to") {
+        payload["to"] = json!(to);
     }
-    let url = replay_target(&js_template(entry.get("url")), forward.as_deref(), to.as_deref())?;
-    // The body was read whole (no chunking), and the HTTP client sets its own host and length.
-    let headers: serde_json::Map<String, Value> = entry["reqHeaders"]
-        .as_object()
-        .into_iter()
-        .flatten()
-        .filter(|(name, _)| !["host", "content-length", "transfer-encoding"].contains(&name.to_lowercase().as_str()))
-        .map(|(name, value)| (name.clone(), json!(js_template(Some(value)))))
-        .collect();
-    send(ctx, &js_template(entry.get("method")), &url, &headers, entry["reqBody"].as_str().unwrap_or_default()).map_err(
-        |err| match (stopped, err.code()) {
-            // Only a listener without a stored forward lands here: its own port is what refused.
-            (Some(name), 4) => CliError::network(format!("{err}; the listener \"{name}\" is stopped, use --to <url>")),
-            _ => err,
-        },
-    )
-}
-
-/// Send `method url` with these headers and a base64 body through `request.replay` and print the answer.
-fn send(
-    ctx: &mut Context,
-    method: &str,
-    url: &str,
-    headers: &serde_json::Map<String, Value>,
-    body: &str,
-) -> Result<String> {
-    let payload = json!({ "method": method, "url": url, "headers": headers, "body": body });
     let started = Instant::now();
-    let mut sent = ctx.request("request.replay", payload)?;
+    let mut sent = ctx.request("webhook.replay", payload).map_err(|err| match err {
+        CliError::Engine { code, message } if code == "BAD_REQUEST" => CliError::usage(message),
+        CliError::Engine { code, message } if code == "NOT_FOUND" => CliError::not_found(message),
+        other => other,
+    })?;
     sent["durationMs"] = json!(started.elapsed().as_millis() as u64);
     present(ctx, &Response::from_rest(&sent))
-}
-
-const FIXTURES: [(&str, &str); 2] = [
-    ("stripe.checkout.session.completed", "A paid Stripe Checkout session (checkout.session.completed event)"),
-    ("github.push", "A GitHub push event with one commit"),
-];
-
-fn unix_secs() -> u64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |since| since.as_secs())
-}
-
-/// `len` random-looking characters of `alphabet`.
-// shortcut: seeded from the clock (xorshift), not a CSPRNG; fine for fake ids, use a real RNG if one is ever needed.
-fn random_chars(alphabet: &str, len: usize) -> String {
-    use std::sync::atomic::{AtomicU64, Ordering};
-    static COUNTER: AtomicU64 = AtomicU64::new(0x9e37_79b9_7f4a_7c15);
-    let nanos = std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(1, |s| s.as_nanos() as u64);
-    let mut x = (nanos ^ COUNTER.fetch_add(0x9e37_79b9_7f4a_7c15, Ordering::Relaxed)) | 1;
-    let chars: Vec<char> = alphabet.chars().collect();
-    (0..len)
-        .map(|_| {
-            x ^= x << 13;
-            x ^= x >> 7;
-            x ^= x << 17;
-            chars[(x % chars.len() as u64) as usize]
-        })
-        .collect()
-}
-
-const ALNUM: &str = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-const HEX: &str = "0123456789abcdef";
-
-/// The event of a fixture, with fresh ids and times.
-fn fixture(name: &str, now: u64) -> Value {
-    if name == "github.push" {
-        let (before, after) = (random_chars(HEX, 40), random_chars(HEX, 40));
-        let commit = json!({ "id": after, "message": "Update README", "timestamp": format_time(now),
-            "url": format!("https://github.com/octo/demo/commit/{after}"),
-            "author": { "name": "Octo Cat", "email": "octocat@example.com", "username": "octocat" },
-            "added": [], "removed": [], "modified": ["README.md"] });
-        return json!({ "ref": "refs/heads/main", "before": before, "after": after,
-            "repository": { "id": 100_000_001, "name": "demo", "full_name": "octo/demo", "private": false,
-                "owner": { "login": "octo", "id": 1_000_001 }, "html_url": "https://github.com/octo/demo",
-                "default_branch": "main" },
-            "pusher": { "name": "octocat", "email": "octocat@example.com" },
-            "sender": { "login": "octocat", "id": 583_231 },
-            "created": false, "deleted": false, "forced": false,
-            "compare": format!("https://github.com/octo/demo/compare/{}...{}", &before[..12], &after[..12]),
-            "commits": [commit.clone()], "head_commit": commit });
-    }
-    json!({ "id": format!("evt_{}", random_chars(ALNUM, 24)), "object": "event", "api_version": "2024-06-20",
-        "created": now, "type": "checkout.session.completed", "livemode": false, "pending_webhooks": 1,
-        "request": { "id": null, "idempotency_key": null },
-        "data": { "object": { "id": format!("cs_test_{}", random_chars(ALNUM, 40)), "object": "checkout.session",
-            "amount_subtotal": 2000, "amount_total": 2000, "currency": "usd",
-            "customer": format!("cus_{}", random_chars(ALNUM, 14)),
-            "customer_details": { "email": "jenny@example.com", "name": "Jenny Rosen" },
-            "mode": "payment", "payment_status": "paid", "status": "complete", "metadata": {},
-            "payment_intent": format!("pi_{}", random_chars(ALNUM, 24)), "client_reference_id": null,
-            "created": now, "success_url": "https://example.com/success" } } })
 }
 
 /// `2026-10-18T09:30:00Z` for unix seconds (civil-from-days).
@@ -351,46 +242,6 @@ pub(crate) fn format_time(secs: u64) -> String {
     let month = if mp < 10 { mp + 3 } else { mp - 9 };
     let year = yoe + era * 400 + i64::from(month <= 2);
     format!("{year:04}-{month:02}-{day:02}T{:02}:{:02}:{:02}Z", rem / 3600, rem % 3600 / 60, rem % 60)
-}
-
-/// RFC 2104 HMAC over SHA-256.
-fn hmac_sha256(key: &[u8], data: &[u8]) -> [u8; 32] {
-    let mut block = [0u8; 64];
-    if key.len() > 64 {
-        block[..32].copy_from_slice(&Sha256::digest(key));
-    } else {
-        block[..key.len()].copy_from_slice(key);
-    }
-    let pad = |byte: u8| block.map(|b| b ^ byte);
-    let inner = Sha256::new().chain_update(pad(0x36)).chain_update(data).finalize();
-    Sha256::new().chain_update(pad(0x5c)).chain_update(inner).finalize().into()
-}
-
-fn hex(bytes: &[u8]) -> String {
-    bytes.iter().map(|b| format!("{b:02x}")).collect()
-}
-
-/// Where a trigger goes: `--to`, else the one running listener (or `--name`) on its own address.
-fn trigger_target(ctx: &mut Context) -> Result<String> {
-    if let Some(to) = ctx.args.flag("to") {
-        return Ok(to.to_string());
-    }
-    let listed = ctx.request("webhook.list", json!({}))?;
-    let all: Vec<&Value> = listed["listeners"].as_array().into_iter().flatten().collect();
-    let chosen = if let Some(name) = ctx.args.flag("name") {
-        all.iter()
-            .find(|l| l["name"].as_str() == Some(name))
-            .ok_or_else(|| CliError::not_found(format!("no webhook listener \"{name}\" is running")))?
-    } else {
-        match all.as_slice() {
-            [] => {
-                return Err(CliError::usage("no webhook listener running; use --to <url> or bifurc webhooks listen"));
-            }
-            [one] => one,
-            _ => return Err(CliError::usage("several listeners running; pick one with --name")),
-        }
-    };
-    Ok(format!("http://127.0.0.1:{}/", js_template(chosen.get("port"))))
 }
 
 /// `webhooks trigger <fixture> [--to <url>] [--name x] [--vault v [--secret KEY]] [--patch '<path>=<value>']`.
@@ -417,67 +268,35 @@ fn trigger(ctx: &mut Context) -> Result<String> {
         1,
     )?;
     let wanted = need(ctx.args.positional(2), "the fixture's name (see: bifurc webhooks fixtures)")?;
-    let rows: Vec<Value> = FIXTURES.iter().map(|(name, _)| json!({ "name": name, "id": name })).collect();
-    let name = find_one(&rows, &wanted, &["name"], "fixture", "webhooks")
-        .map(|row| js_template(row.get("name")))
-        .map_err(|err| match err {
-            CliError::Exit(NOT_FOUND, _) => {
-                let names: Vec<&str> = FIXTURES.iter().map(|(name, _)| *name).collect();
-                CliError::usage(format!("no fixture \"{wanted}\"; fixtures: {}", names.join(", ")))
-            }
-            other => other,
-        })?;
     let vault = ctx.args.flag("vault").map(str::to_string);
     if vault.is_none() && ctx.args.flag("secret").is_some() {
         return Err(CliError::usage("--secret needs --vault <vault> to read the secret from"));
     }
-    let now = unix_secs();
-    let mut payload = fixture(&name, now);
+    let mut patches = Vec::new();
     for patch in ctx.args.flags("patch") {
-        crate::select::patch(&mut payload, patch).map_err(CliError::usage)?;
+        let (path, value) = crate::select::patch_edit(patch).map_err(CliError::usage)?;
+        patches.push(json!({ "path": path, "value": value }));
     }
-    let stripe = name.starts_with("stripe.");
-    let default_key = if stripe { "STRIPE_WEBHOOK_SECRET" } else { "GITHUB_WEBHOOK_SECRET" };
-    let key_name = ctx.args.flag("secret").unwrap_or(default_key).to_string();
-    let secret = match &vault {
-        Some(vault) => {
-            let workspace = workspace_id(ctx)?;
-            let secrets = crate::vault::secrets_of(ctx, &workspace, vault)?;
-            let found = secrets.into_iter().find(|(key, _)| *key == key_name).map(|(_, value)| value);
-            Some(found.ok_or_else(|| {
-                CliError::not_found(format!(
-                    "no secret \"{key_name}\" in vault \"{vault}\" (pick another with --secret)"
-                ))
-            })?)
-        }
-        None => None,
-    };
-    let url = trigger_target(ctx)?;
-
-    // These exact bytes are signed and sent.
-    let body = serde_json::to_vec(&payload).map_err(|err| CliError::msg(err.to_string()))?;
-    let mut headers = serde_json::Map::new();
-    let mut put = |name: &str, value: String| headers.insert(name.to_string(), json!(value));
-    if stripe {
-        put("content-type", "application/json; charset=utf-8".into());
-        put("user-agent", "Stripe/1.0 (+https://stripe.com/docs/webhooks)".into());
-        if let Some(secret) = &secret {
-            let mut signed = format!("{now}.").into_bytes();
-            signed.extend(&body);
-            put("stripe-signature", format!("t={now},v1={}", hex(&hmac_sha256(secret.as_bytes(), &signed))));
-        }
-    } else {
-        let id = [8, 4, 4, 4, 12].map(|n| random_chars(HEX, n)).join("-");
-        put("content-type", "application/json".into());
-        put("user-agent", "GitHub-Hookshot/bifurc".into());
-        put("x-github-event", "push".into());
-        put("x-github-delivery", id);
-        put("x-github-hook-id", random_chars("0123456789", 9));
-        if let Some(secret) = &secret {
-            put("x-hub-signature-256", format!("sha256={}", hex(&hmac_sha256(secret.as_bytes(), &body))));
+    let workspace = workspace_id(ctx)?;
+    let mut payload = json!({ "workspaceId": workspace, "fixture": wanted, "patch": patches });
+    for flag in ["to", "name", "secret"] {
+        if let Some(value) = ctx.args.flag(flag) {
+            payload[flag] = json!(value);
         }
     }
-    send(ctx, "POST", &url, &headers, &STANDARD.encode(&body))
+    if let Some(vault) = &vault {
+        // The engine reads the signing secret itself, so only the unsealing happens here.
+        crate::vault::unseal_named(ctx, &workspace, vault)?;
+        payload["vault"] = json!(vault);
+    }
+    let started = Instant::now();
+    let mut sent = ctx.request("webhook.trigger", payload).map_err(|err| match err {
+        CliError::Engine { code, message } if code == "BAD_REQUEST" => CliError::usage(message),
+        CliError::Engine { code, message } if code == "NOT_FOUND" => CliError::not_found(message),
+        other => other,
+    })?;
+    sent["durationMs"] = json!(started.elapsed().as_millis() as u64);
+    present(ctx, &Response::from_rest(&sent))
 }
 
 /// `webhooks save <id> --as-request [--name x] [--folder f]`: a saved request like the webhook.
@@ -494,7 +313,7 @@ fn save(ctx: &mut Context) -> Result<String> {
     // Aim it at the handler the listener forwarded to, not the listener's own (short-lived) port.
     let got = ctx.request("capture.get", json!({ "workspaceId": workspace, "id": id }))?;
     if let (Some(forward), Some(url)) = (got["entry"]["forward"].as_str(), entity["url"].as_str()) {
-        entity["url"] = json!(replay_target(url, Some(forward), None)?);
+        entity["url"] = json!(forwarded_url(url, forward));
     }
     if let Some(name) = ctx.args.flag("name") {
         entity["name"] = json!(name);
@@ -514,6 +333,8 @@ fn save(ctx: &mut Context) -> Result<String> {
 
 #[cfg(test)]
 mod tests {
+    use base64::{Engine as _, engine::general_purpose::STANDARD};
+
     use super::*;
     use crate::testing::{Answer, config, payloads, run_with_events};
 
@@ -626,81 +447,31 @@ mod tests {
     }
 
     #[test]
-    fn the_replay_goes_to_the_forward_url_else_the_original_or_to() {
-        let came = "http://127.0.0.1:4020/hooks/a?x=1";
-        assert_eq!(replay_target(came, None, None).unwrap(), came);
-        assert_eq!(
-            replay_target(came, Some("http://api.localhost/webhooks/stripe/?y=2"), None).unwrap(),
-            "http://api.localhost/webhooks/stripe/hooks/a?x=1"
-        );
-        for host_only in ["http://127.0.0.1:4021", "http://127.0.0.1:4021/"] {
-            assert_eq!(
-                replay_target(came, Some("http://f.test"), Some(host_only)).unwrap(),
-                "http://127.0.0.1:4021/hooks/a?x=1"
-            );
-        }
-        assert_eq!(replay_target(came, None, Some("https://app.test/in?z=1")).unwrap(), "https://app.test/in?z=1");
-        assert_eq!(replay_target("http://h:1", None, Some("http://app.test")).unwrap(), "http://app.test/");
-        assert_eq!(replay_target(came, None, Some("localhost:3000")).unwrap_err().code(), 2);
-    }
-
-    #[test]
-    fn replay_sends_the_raw_body_and_headers_unchanged() {
-        use base64::{Engine as _, engine::general_purpose::STANDARD};
-        let raw = [0xff, 0xfe, 0x00, 0x80, b'{', 0xc3, 0xa9];
-        let mut entry = hook("mg1a1111", Some("stripe"), "webhook");
-        entry["reqBody"] = json!(STANDARD.encode(raw));
-        entry["reqHeaders"] = json!({"Host": "127.0.0.1:4020", "Content-Length": "7", "stripe-signature": "t=1,v1=ab",
-                                     "x-dup": "a, b", "content-type": "application/octet-stream"});
+    fn replay_asks_the_engine_and_prints_its_answer_as_before() {
         let reply = json!({"status": 200, "headers": {"content-type": "application/json"}, "body": STANDARD.encode("{\"ok\":true}")});
         let mut answers = buffer();
-        answers.extend([
-            ("capture.get", Ok(json!({"entry": entry}))),
-            ("webhook.list", Ok(json!({"listeners": [{"name": "stripe", "forward": "http://api.localhost/in"}]}))),
-            ("request.replay", Ok(reply)),
-        ]);
-        let (out, calls, _) = go(&["webhooks", "replay", "1111"], answers.clone(), vec![]);
-        assert!(out.unwrap().starts_with("200 OK"));
-        let sent = &payloads(&calls, "request.replay")[0];
-        assert_eq!(sent["url"], "http://api.localhost/in/hooks/a?x=1");
-        assert_eq!(sent["method"], "POST");
-        assert_eq!(sent["body"], STANDARD.encode(raw));
-        assert_eq!(
-            sent["headers"],
-            json!({"stripe-signature": "t=1,v1=ab", "x-dup": "a, b", "content-type": "application/octet-stream"})
-        );
-        // --to skips the listener lookup.
-        let (_, calls, _) =
+        answers.push(("webhook.replay", Ok(reply)));
+        let (out, calls, _) =
             go(&["webhooks", "replay", "1111", "--to", "http://127.0.0.1:4021"], answers.clone(), vec![]);
-        assert!(payloads(&calls, "webhook.list").is_empty());
-        assert_eq!(payloads(&calls, "request.replay")[0]["url"], "http://127.0.0.1:4021/hooks/a?x=1");
-        answers.insert(0, ("request.replay", Err(CliError::network("refused"))));
-        let (out, _, _) = go(&["webhooks", "replay", "1111"], answers.clone(), vec![]);
-        assert_eq!(out.unwrap_err().code(), 4);
-        // A stopped listener with no stored forward: the refusal says so.
-        answers.retain(|(action, _)| *action != "webhook.list");
-        answers.push(("webhook.list", Ok(json!({"listeners": []}))));
-        let (out, _, _) = go(&["webhooks", "replay", "1111"], answers, vec![]);
-        let err = out.unwrap_err();
-        assert_eq!(err.code(), 4);
-        assert!(err.line().contains("\"stripe\" is stopped, use --to <url>"), "{}", err.line());
-    }
-
-    #[test]
-    fn replay_uses_the_forward_stored_on_the_entry_without_the_listener() {
-        use base64::{Engine as _, engine::general_purpose::STANDARD};
-        let mut entry = hook("mg1a1111", Some("stripe"), "webhook");
-        entry["forward"] = json!("http://api.localhost/in");
-        entry["reqBody"] = json!(STANDARD.encode("{}"));
-        let reply = json!({"status": 200, "headers": {}, "body": ""});
-        let mut answers = buffer();
-        answers.extend([("capture.get", Ok(json!({"entry": entry}))), ("request.replay", Ok(reply))]);
-        let (out, calls, _) = go(&["webhooks", "replay", "1111"], answers.clone(), vec![]);
-        out.unwrap();
-        assert!(payloads(&calls, "webhook.list").is_empty());
-        assert_eq!(payloads(&calls, "request.replay")[0]["url"], "http://api.localhost/in/hooks/a?x=1");
-        let (_, calls, _) = go(&["webhooks", "replay", "1111", "--to", "http://127.0.0.1:4021"], answers, vec![]);
-        assert_eq!(payloads(&calls, "request.replay")[0]["url"], "http://127.0.0.1:4021/hooks/a?x=1");
+        assert!(out.unwrap().starts_with("200 OK"));
+        assert_eq!(
+            payloads(&calls, "webhook.replay"),
+            [json!({"workspaceId": "w1", "id": "mg1a1111", "to": "http://127.0.0.1:4021"})]
+        );
+        let refused = |code: &str, message: &str| Err(CliError::Engine { code: code.into(), message: message.into() });
+        for (code, exit, line) in [
+            ("BAD_REQUEST", 2, "bifurc: --to is a URL"),
+            ("NOT_FOUND", 3, "bifurc: no webhook"),
+            ("UPSTREAM_FAILED", 4, "bifurc: UPSTREAM_FAILED: refused"),
+        ] {
+            let mut answers = buffer();
+            answers.push((
+                "webhook.replay",
+                refused(code, line.trim_start_matches("bifurc: UPSTREAM_FAILED: ").trim_start_matches("bifurc: ")),
+            ));
+            let err = go(&["webhooks", "replay", "1111"], answers, vec![]).0.unwrap_err();
+            assert_eq!((err.code(), err.line().as_str()), (exit, line));
+        }
     }
 
     #[test]
@@ -747,125 +518,57 @@ mod tests {
         assert_eq!(payloads(&calls, "capture.list")[0]["origin"], "webhook");
     }
 
-    fn hmac_hex(key: &[u8], data: &[u8]) -> String {
-        hex(&hmac_sha256(key, data))
-    }
-
-    #[test]
-    fn hmac_matches_rfc_4231() {
-        assert_eq!(
-            hmac_hex(b"Jefe", b"what do ya want for nothing?"),
-            "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"
-        );
-        assert_eq!(
-            hmac_hex(&[0xaa; 131], b"Test Using Larger Than Block-Size Key - Hash Key First"),
-            "60e431591ee0b67f0d8a26aacbf5b77f8e0bc6213728c5140546040f0ee37f54"
-        );
-    }
-
-    /// Answers for a trigger: a vault holding `secrets`, one listener, and the target's reply.
-    fn triggering(listeners: Value) -> Vec<Answer> {
+    /// Answers for a trigger: a vault, and the engine's reply to `webhook.trigger`.
+    fn triggering() -> Vec<Answer> {
         vec![
             ("config.get", Ok(config())),
             ("vault.list", Ok(json!([{"id": "v1", "name": "hooks", "state": "unsealed"}]))),
-            (
-                "vault.secrets",
-                Ok(json!({"secrets": {"STRIPE_WEBHOOK_SECRET": "whsec_abc", "GITHUB_WEBHOOK_SECRET": "gh-s3cret"}})),
-            ),
-            ("webhook.list", Ok(json!({ "listeners": listeners }))),
-            ("request.replay", Ok(json!({"status": 200, "headers": {}, "body": ""}))),
+            ("webhook.trigger", Ok(json!({"status": 200, "headers": {}, "body": ""}))),
         ]
     }
 
-    fn one_listener() -> Value {
-        json!([{"id": "k1", "port": 4020, "name": "stripe"}])
-    }
-
-    /// The method, url, headers and decoded body of the one `request.replay` call.
-    fn sent(calls: &[(String, Value)]) -> (Value, Vec<u8>) {
-        let call = payloads(calls, "request.replay").remove(0);
-        let body = STANDARD.decode(call["body"].as_str().unwrap()).unwrap();
-        (call, body)
-    }
-
     #[test]
-    fn trigger_stripe_signs_the_exact_bytes() {
-        let argv = ["webhooks", "trigger", "stripe", "--vault", "hooks"];
-        let (out, calls, _) = go(&argv, triggering(one_listener()), vec![]);
+    fn trigger_asks_the_engine_and_prints_its_answer_as_before() {
+        let argv = ["webhooks", "trigger", "stripe", "--vault", "hooks", "--name", "s", "--patch", ".a.b[-1]=9"];
+        let (out, calls, _) = go(&argv, triggering(), vec![]);
         assert!(out.unwrap().starts_with("200 OK"));
-        let (call, body) = sent(&calls);
-        assert_eq!((call["method"].as_str(), call["url"].as_str()), (Some("POST"), Some("http://127.0.0.1:4020/")));
-        let event: Value = serde_json::from_slice(&body).unwrap();
-        assert_eq!(event["type"], "checkout.session.completed");
-        assert!(event["id"].as_str().unwrap().starts_with("evt_"));
-        let header = call["headers"]["stripe-signature"].as_str().unwrap();
-        let (t, v1) = header.strip_prefix("t=").unwrap().split_once(",v1=").unwrap();
-        let mut signed = format!("{t}.").into_bytes();
-        signed.extend(&body);
-        assert_eq!(v1, hmac_hex(b"whsec_abc", &signed));
-        assert_eq!(call["headers"]["content-type"], "application/json; charset=utf-8");
-        // Without --vault nothing is signed.
-        let (_, calls, _) = go(&["webhooks", "trigger", "stripe"], triggering(one_listener()), vec![]);
-        assert!(sent(&calls).0["headers"].get("stripe-signature").is_none());
-    }
-
-    #[test]
-    fn trigger_github_signs_the_body_and_names_the_event() {
-        let argv = ["webhooks", "trigger", "github.push", "--vault", "hooks", "--to", "http://localhost:3000/gh"];
-        let (out, calls, _) = go(&argv, triggering(json!([])), vec![]);
-        out.unwrap();
-        assert!(payloads(&calls, "webhook.list").is_empty());
-        let (call, body) = sent(&calls);
-        assert_eq!(call["url"], "http://localhost:3000/gh");
-        assert_eq!(call["headers"]["x-github-event"], "push");
-        assert_eq!(call["headers"]["x-hub-signature-256"], format!("sha256={}", hmac_hex(b"gh-s3cret", &body)));
-        assert_eq!(serde_json::from_slice::<Value>(&body).unwrap()["ref"], "refs/heads/main");
-    }
-
-    #[test]
-    fn trigger_finds_its_listener_or_fails_clearly() {
-        let argv = ["webhooks", "trigger", "github.push"];
-        let two = json!([{"port": 4020, "name": "a"}, {"port": 4021, "name": "b"}]);
-        let (out, _, _) = go(&argv, triggering(json!([])), vec![]);
-        assert_eq!(out.unwrap_err().code(), 2);
-        let (out, _, _) = go(&argv, triggering(two.clone()), vec![]);
-        assert_eq!(out.unwrap_err().code(), 2);
-        let (out, calls, _) = go(&[argv[0], argv[1], argv[2], "--name", "b"], triggering(two.clone()), vec![]);
-        out.unwrap();
-        assert_eq!(sent(&calls).0["url"], "http://127.0.0.1:4021/");
-        let (out, _, _) = go(&[argv[0], argv[1], argv[2], "--name", "zz"], triggering(two), vec![]);
-        assert_eq!(out.unwrap_err().code(), 3);
-    }
-
-    #[test]
-    fn trigger_patch_secret_and_fixture_errors() {
-        let (out, calls, _) = go(
-            &["webhooks", "trigger", "stripe", "--vault", "hooks", "--patch", ".data.object.amount_total=999"],
-            triggering(one_listener()),
-            vec![],
+        assert_eq!(
+            payloads(&calls, "webhook.trigger"),
+            [json!({"workspaceId": "w1", "fixture": "stripe", "name": "s", "vault": "hooks",
+                "patch": [{"path": ["a", "b", -1], "value": 9}]})]
         );
-        out.unwrap();
-        let (call, body) = sent(&calls);
-        assert_eq!(serde_json::from_slice::<Value>(&body).unwrap()["data"]["object"]["amount_total"], 999);
-        let mut signed =
-            format!("{}.", call["headers"]["stripe-signature"].as_str().unwrap()[2..].split(',').next().unwrap())
-                .into_bytes();
-        signed.extend(&body);
-        assert!(call["headers"]["stripe-signature"].as_str().unwrap().ends_with(&hmac_hex(b"whsec_abc", &signed)));
+        let (_, calls, _) = go(&["webhooks", "trigger", "github.push", "--to", "http://h:1/x"], triggering(), vec![]);
+        assert_eq!(
+            payloads(&calls, "webhook.trigger"),
+            [json!({"workspaceId": "w1", "fixture": "github.push", "to": "http://h:1/x", "patch": []})]
+        );
+        assert!(payloads(&calls, "vault.list").is_empty());
+    }
 
-        let err = |argv: &[&str]| go(argv, triggering(one_listener()), vec![]).0.unwrap_err();
-        assert_eq!(err(&["webhooks", "trigger", "paypal"]).code(), 2);
+    #[test]
+    fn trigger_maps_the_engines_refusals_to_exit_codes() {
+        let refused = |code: &str, message: &str| Err(CliError::Engine { code: code.into(), message: message.into() });
+        for (code, exit) in [("BAD_REQUEST", 2), ("NOT_FOUND", 3), ("UPSTREAM_FAILED", 4)] {
+            let mut answers = triggering();
+            answers.pop();
+            answers.push(("webhook.trigger", refused(code, "no")));
+            assert_eq!(go(&["webhooks", "trigger", "stripe"], answers, vec![]).0.unwrap_err().code(), exit);
+        }
+        let err = |argv: &[&str]| go(argv, triggering(), vec![]).0.unwrap_err();
         assert_eq!(err(&["webhooks", "trigger", "stripe", "--secret", "K"]).code(), 2);
-        let missing = err(&["webhooks", "trigger", "stripe", "--vault", "hooks", "--secret", "NOPE"]);
-        assert_eq!(missing.code(), 3);
-        assert!(missing.line().contains("NOPE") && missing.line().contains("hooks"), "{}", missing.line());
+        assert_eq!(err(&["webhooks", "trigger", "stripe", "--patch", "nope"]).code(), 2);
     }
 
     #[test]
     fn fixtures_lists_both() {
-        let (out, _, _) = go(&["webhooks", "fixtures"], vec![], vec![]);
-        let out = out.unwrap();
-        assert!(out.lines().next().unwrap().starts_with("stripe.checkout.session.completed  "), "{out}");
-        assert!(out.lines().nth(1).unwrap().starts_with("github.push  "), "{out}");
+        let listed = json!({"fixtures": [
+            {"name": "stripe.checkout.session.completed", "description": "A paid Stripe Checkout session"},
+            {"name": "github.push", "description": "A GitHub push event"}]});
+        let (out, _, _) = go(&["webhooks", "fixtures"], vec![("webhook.fixtures", Ok(listed))], vec![]);
+        assert_eq!(
+            out.unwrap(),
+            "stripe.checkout.session.completed  A paid Stripe Checkout session
+github.push  A GitHub push event"
+        );
     }
 }

@@ -19,7 +19,7 @@ use tokio::{
 
 use super::discovery::discover_services;
 use crate::{
-    kernel::CommandRegistry,
+    kernel::{CommandRegistry, bus},
     mcp::client::shell_command,
     protocol::{EngineError, Result},
     utils::{
@@ -54,6 +54,8 @@ struct Run {
     running: bool,
     code: i32,
     lines: VecDeque<Line>,
+    /// Lines pushed since the flusher last announced them.
+    outbox: Vec<Value>,
     stop: Option<oneshot::Sender<()>>,
 }
 
@@ -95,7 +97,35 @@ fn push(run: &Shared, stream: &'static str, mut text: String) {
     if run.lines.len() == RING {
         run.lines.pop_front();
     }
-    run.lines.push_back(Line { ts: now_ms(), stream, text });
+    let ts = now_ms();
+    run.outbox.push(json!({ "ts": ts, "stream": stream, "text": text }));
+    run.lines.push_back(Line { ts, stream, text });
+}
+
+/// Tell clients a service changed; `service` is what `devservice.list` shows for it, null once removed.
+fn announce(workspace: &str, name: &str, service: Value) {
+    bus().emit("devservice.changed", json!({ "workspaceId": workspace, "name": name, "service": service }));
+}
+
+/// Announce the run's new lines at most every 250 ms, in push order, until it ends and one more tick has passed
+/// (the log tail may still push once after the run stops).
+fn flush(workspace: String, name: String, run: Shared) {
+    tokio::spawn(async move {
+        loop {
+            tokio::time::sleep(Duration::from_millis(250)).await;
+            let ended = !lock(&run).running;
+            if ended {
+                tokio::time::sleep(Duration::from_millis(250)).await;
+            }
+            let lines = std::mem::take(&mut lock(&run).outbox);
+            if !lines.is_empty() {
+                bus().emit("devservice.output", json!({ "workspaceId": workspace, "name": name, "lines": lines }));
+            }
+            if ended {
+                break;
+            }
+        }
+    });
 }
 
 /// Read `stream` line by line into the run's ring until it closes.
@@ -254,9 +284,15 @@ async fn start(params: &Value) -> Result<Value> {
     if let Some(cwd) = cwd {
         command.current_dir(cwd);
     }
-    // The vault's secrets come with the call and are never kept.
+    // The vault's secrets come with the call (the CLI) or from the unsealed vault (the app, which is never given
+    // secret values), and are never kept.
     for (key, value) in def["env"].as_object().into_iter().chain(params["secrets"].as_object()).flatten() {
         command.env(key, value.as_str().unwrap_or_default());
+    }
+    if let Some(vault) = def["vault"].as_str().filter(|v| !v.is_empty() && params["secrets"].is_null()) {
+        for (key, value) in crate::vault::secrets_by_name(str_of(params, "workspaceId"), vault).await? {
+            command.env(key, value);
+        }
     }
     let mut child =
         wrap.spawn().map_err(|e| EngineError::upstream(format!("Cannot start \"{}\": {e}", str_of(&def, "cmd"))))?;
@@ -269,6 +305,7 @@ async fn start(params: &Value) -> Result<Value> {
         running: true,
         code: 0,
         lines: VecDeque::new(),
+        outbox: Vec::new(),
         stop: Some(stop),
     }));
     let readers: Vec<_> = [
@@ -282,7 +319,10 @@ async fn start(params: &Value) -> Result<Value> {
     if let Some(path) = def["logFile"].as_str().filter(|p| !p.is_empty()) {
         tail(path.to_string(), run.clone());
     }
+    let (workspace, name) = (str_of(params, "workspaceId").to_string(), str_of(params, "name").to_string());
+    flush(workspace.clone(), name.clone(), run.clone());
     let watched = run.clone();
+    let exited = def.clone();
     tokio::spawn(async move {
         let waited = tokio::select! { status = child.wait() => Some(status), _ = stopped => None };
         let status = match waited {
@@ -294,9 +334,12 @@ async fn start(params: &Value) -> Result<Value> {
         };
         // Let the readers take what is left of the output, but not wait for a grandchild that holds the pipe.
         let _ = tokio::time::timeout(Duration::from_millis(300), futures::future::join_all(readers)).await;
-        let mut run = lock(&watched);
-        run.code = status.ok().and_then(|s| s.code()).unwrap_or(-1);
-        (run.ended, run.running) = (now_ms(), false);
+        {
+            let mut run = lock(&watched);
+            run.code = status.ok().and_then(|s| s.code()).unwrap_or(-1);
+            (run.ended, run.running) = (now_ms(), false);
+        }
+        announce(&workspace, &name, describe(&exited, Some(watched)).await);
     });
     Ok(describe(&def, Some(run)).await)
 }
@@ -357,6 +400,7 @@ pub fn register(registry: &mut CommandRegistry) {
         std::fs::create_dir_all(&dir)?;
         write_json_pretty(&file, &def)?;
         commit(&params, if existed { "update" } else { "create" }, name).await;
+        announce(str_of(&params, "workspaceId"), name, describe(&def, run_of(&params)).await);
         Ok(json!({ "service": def }))
     });
 
@@ -376,11 +420,20 @@ pub fn register(registry: &mut CommandRegistry) {
         std::fs::remove_file(dir_of(&params)?.join(format!("{name}.json")))?;
         lock(&RUNS).remove(&(str_of(&params, "workspaceId").to_string(), name.to_string()));
         commit(&params, "delete", name).await;
+        announce(str_of(&params, "workspaceId"), name, Value::Null);
         Ok(json!({ "removed": name }))
     });
 
-    registry.register("devservice.up", |params, _| async move { Ok(json!({ "service": start(&params).await? })) });
-    registry.register("devservice.down", |params, _| async move { Ok(json!({ "service": stop(&params).await? })) });
+    registry.register("devservice.up", |params, _| async move {
+        let service = start(&params).await?;
+        announce(str_of(&params, "workspaceId"), str_of(&params, "name"), service.clone());
+        Ok(json!({ "service": service }))
+    });
+    registry.register("devservice.down", |params, _| async move {
+        let service = stop(&params).await?;
+        announce(str_of(&params, "workspaceId"), str_of(&params, "name"), service.clone());
+        Ok(json!({ "service": service }))
+    });
 
     registry.register("devservice.logs", |params, _| async move {
         definition(&params)?;
@@ -492,6 +545,128 @@ mod tests {
         assert!(listed["services"].as_array().unwrap().is_empty());
     }
 
+    #[tokio::test]
+    async fn a_service_without_secrets_in_the_call_reads_its_unsealed_vault() {
+        let root = scratch_data_root();
+        let mut registry = CommandRegistry::new();
+        register(&mut registry);
+        crate::vault::register(&mut registry);
+        let (registry, ws) = (Arc::new(registry), root.ws_id);
+        let vault = call(
+            &registry,
+            "vault.create",
+            json!({"workspaceId": ws, "name": "keys", "passphrase": "correct horse battery"}),
+        )
+        .await
+        .unwrap();
+        let id = vault["id"].clone();
+        let secret = json!({"workspaceId": ws, "id": id, "name": "API_KEY", "value": "key-123456"});
+        call(&registry, "vault.setSecret", secret).await.unwrap();
+        let cmd = if cfg!(windows) { "echo %API_KEY%" } else { "echo $API_KEY" };
+        let define = json!({"workspaceId": ws, "name": "vaulted", "cmd": cmd, "vault": "keys"});
+        call(&registry, "devservice.define", define).await.unwrap();
+        let named = json!({"workspaceId": ws, "name": "vaulted"});
+        call(&registry, "devservice.up", named.clone()).await.unwrap();
+        let mut text = Value::Null;
+        for _ in 0..100 {
+            text = call(&registry, "devservice.logs", named.clone()).await.unwrap()["lines"][0]["text"].clone();
+            if !text.is_null() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        assert_eq!(text, "key-123456");
+        // Sealed, the engine has no secrets to give and refuses to start it without them.
+        call(&registry, "vault.seal", json!({"workspaceId": ws, "id": id})).await.unwrap();
+        assert!(call(&registry, "devservice.up", named.clone()).await.is_err());
+        call(&registry, "devservice.remove", named).await.unwrap();
+    }
+
+    /// This test's events of `event`: the bus is global, so keep only those for `name` in `ws1`.
+    fn collect(event: &str, name: &'static str) -> Arc<Mutex<Vec<Value>>> {
+        let seen = Arc::new(Mutex::new(Vec::new()));
+        let sink = seen.clone();
+        bus().on(event, move |p| {
+            if p["workspaceId"] == "ws1" && p["name"] == name {
+                lock(&sink).push(p.clone());
+            }
+        });
+        seen
+    }
+
+    async fn wait_for(what: impl Fn() -> bool) {
+        for _ in 0..100 {
+            if what() {
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+    }
+
+    #[tokio::test]
+    async fn define_up_down_remove_and_a_process_exiting_on_its_own_are_announced() {
+        let _root = scratch_data_root();
+        let mut registry = CommandRegistry::new();
+        register(&mut registry);
+        let registry = Arc::new(registry);
+        let changed = collect("devservice.changed", "ann");
+        let state = |at: usize| lock(&changed)[at]["service"]["state"].clone();
+        let id = json!({"workspaceId": "ws1", "name": "ann"});
+        call(&registry, "devservice.define", json!({"workspaceId": "ws1", "name": "ann", "cmd": "echo bye"}))
+            .await
+            .unwrap();
+        assert_eq!((state(0), lock(&changed)[0]["service"]["cmd"].clone()), (json!("stopped"), json!("echo bye")));
+        call(&registry, "devservice.up", id.clone()).await.unwrap();
+        // The process ends by itself, which the watcher announces after `up` has.
+        wait_for(|| lock(&changed).len() >= 3).await;
+        assert_eq!(lock(&changed).len(), 3);
+        assert_eq!(state(2), "stopped");
+        assert_eq!(lock(&changed)[2]["service"]["exitCode"], 0);
+        call(&registry, "devservice.down", id.clone()).await.unwrap();
+        assert_eq!(lock(&changed).last().unwrap()["service"]["state"], "stopped");
+        call(&registry, "devservice.remove", id).await.unwrap();
+        assert!(lock(&changed).last().unwrap()["service"].is_null());
+    }
+
+    #[tokio::test]
+    async fn a_failing_process_is_announced_as_crashed() {
+        let _root = scratch_data_root();
+        let mut registry = CommandRegistry::new();
+        register(&mut registry);
+        let registry = Arc::new(registry);
+        let changed = collect("devservice.changed", "crash");
+        call(&registry, "devservice.define", json!({"workspaceId": "ws1", "name": "crash", "cmd": "exit 3"}))
+            .await
+            .unwrap();
+        call(&registry, "devservice.up", json!({"workspaceId": "ws1", "name": "crash"})).await.unwrap();
+        wait_for(|| lock(&changed).iter().any(|p| p["service"]["state"] == "crashed")).await;
+        let last = lock(&changed).last().unwrap().clone();
+        assert_eq!(
+            (last["service"]["state"].clone(), last["service"]["exitCode"].clone()),
+            (json!("crashed"), json!(3))
+        );
+    }
+
+    #[tokio::test]
+    async fn output_is_announced_in_batches_in_order_and_complete() {
+        let _root = scratch_data_root();
+        let mut registry = CommandRegistry::new();
+        register(&mut registry);
+        let registry = Arc::new(registry);
+        let output = collect("devservice.output", "out");
+        let cmd = "echo one && echo two && echo three && echo four && echo five";
+        call(&registry, "devservice.define", json!({"workspaceId": "ws1", "name": "out", "cmd": cmd})).await.unwrap();
+        call(&registry, "devservice.up", json!({"workspaceId": "ws1", "name": "out"})).await.unwrap();
+        tokio::time::sleep(Duration::from_millis(1000)).await;
+        let batches = lock(&output).clone();
+        let texts: Vec<&str> =
+            batches.iter().flat_map(|b| b["lines"].as_array().unwrap()).map(|l| l["text"].as_str().unwrap()).collect();
+        assert_eq!(texts, ["one", "two", "three", "four", "five"]);
+        assert!(batches.len() < 5, "lines are batched");
+        assert_eq!(batches[0]["lines"][0]["stream"], "stdout");
+        assert!(batches[0]["lines"][0]["ts"].is_i64());
+    }
+
     fn lines(texts: &[(i64, &str)]) -> Vec<Line> {
         texts.iter().map(|(ts, text)| Line { ts: *ts, stream: "stdout", text: text.to_string() }).collect()
     }
@@ -520,6 +695,7 @@ mod tests {
             running: true,
             code: 0,
             lines: VecDeque::new(),
+            outbox: Vec::new(),
             stop: None,
         }));
         tail(file.display().to_string(), run.clone());

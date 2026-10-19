@@ -21,24 +21,25 @@ const MAX_NAMES: usize = 15;
 
 /// The cheat sheet. Every `bifurc …` in backticks is parsed against the help texts by a test.
 const SHEET: &str = r#"## Bifurc
-Bifurc sends the API calls of the user's workspace (shared cookies, environments, mocks, captured traffic). Use it instead of curl.
-- Call once and save it: `bifurc curl -X POST {{baseUrl}}/users -d '{"email":"a@b.co"}' --save "Create user" --folder auth`
-- Call it again: `bifurc requests send "Create user" --var email=x@y.co --expect-status 201 --select .id`; `bifurc requests list` lists the saved ones.
-- Output is one summary line (`201 Created · 142ms · 4.2KB json`); `--body`, `--headers` and `--select <path>` show more.
-- Exit codes: 0 ok, 1 a check failed, 2 usage, 3 not found, 4 network, 5 no engine, 6 needs a person, 7 blocked by policy: stop and ask.
-- Traffic the proxies captured: `bifurc capture list --status 4xx --last 5`, then `bifurc capture show #k3f9 --select .error`
-- Mocks: `bifurc mocks list`, `bifurc mocks create http://api.localhost/users/1 --status 200 -d '{"id":1}'`, `bifurc mocks disable "Get user"`
-- Mock states: `bifurc mocks scenario "Get user" error500` (also empty, slow, timeout, notfound; default returns), `bifurc mocks status`
+Bifurc runs on this machine. Use `bifurc` instead of curl or a throwaway script to call the API, fake its answers for the UI, and read what the browser sent: it keeps cookies and values between calls, prints one line per response, and a saved request is repeated with one short command.
+- Wait until the app is up before the first call: `bifurc wait http://localhost:3000/health` (any URL of the app; exit 4 when it never answers). `bifurc status` shows Bifurc itself.
+- Call once and save it: `bifurc curl -X POST {{baseUrl}}/login -H 'Content-Type: application/json' -d '{"email":"a@b.co"}' --save "Login" --folder auth`
+- Repeat it, never retype it: `bifurc requests send "Login" --expect-status 200`; `bifurc requests list` shows the saved ones (check it first). `--save` refuses a name that exists: send that one, or add `--update`.
+- Each response is one line (`201 Created · 142ms · 4.2KB json`). `--expect-status 403`, `--expect '.status == "cancelled"'` exit 1 when wrong; `--select .id`, `--body`, `--headers` show more.
+- Several users or roles: one cookie jar each by adding `--session alice` to any command (or BIFURC_SESSION=alice); `--extract csrf=.csrfToken` keeps a value as {{csrf}} for that session (`-H 'X-CSRF-Token: {{csrf}}'`); `--fresh-session` sends without cookies; `bifurc cookies clear` empties the jar.
+- Exit codes: 0 ok, 1 a check failed, 2 usage, 3 not found, 4 network (is the server up?), 5 no engine, 6 needs a person, 7 blocked by policy: stop and ask.
+- Browser calls pass through Bifurc when the API has a `*.localhost` name, with no browser or proxy setup: `bifurc mappings create api localhost:4000` serves it at the URL under Mappings below. Point the app's API base URL there; mocks, faults and capture then apply to what the browser sends.
+- UI states without changing the backend: `bifurc mocks create https://api.localhost/orders -d '[]' --name "Orders"` (the URL is matched exactly: scheme and port as under Mappings, a query string needs `--regex`), then `bifurc mocks scenario "Orders" error500` (also empty, slow, timeout, notfound; default goes back) and `bifurc mocks hits "Orders"` to see the app got it. Mocks add CORS for the page's origin and answer its preflights, so a page on another origin reads them as is.
+- Or make the real backend misbehave: `bifurc faults add api.localhost/orders --status 500` (or `--latency 800`, `--reset` for a network error); `bifurc faults clear` when done.
+- What the browser sent and got: `bifurc capture list --status 4xx --last 5`, then `bifurc capture show #k3f9 --req-body --body`; `bifurc capture request #k3f9` saves it to send again.
+- Hosts that are not `*.localhost` reach mocks, faults and capture only through the forward proxy: `bifurc proxy status`.
 - Flows: `bifurc flows create --steps checkout.yaml`; `bifurc flows run "Checkout"`. A folder of requests: `bifurc runner run auth --bail`
-- Variables: `bifurc env show`; a send takes `--env <name>`; `bifurc env auth dev --login Login` re-logs in on a 401.
-- Set BIFURC_SESSION=<your role> (e.g. frontend) so your cookies, variables and env never clash with another agent or the user; `--extract id=.id` keeps a value for later {{id}}. `bifurc changes` lists what others changed since you last asked.
-- Cookies: `bifurc cookies list`, `bifurc cookies clear --domain api.localhost`
-- Wait for a service: `bifurc wait http://api.localhost/health`, `bifurc wait --port 3000`. What is on: `bifurc status`
+- Variables: `bifurc env show`; a send takes `--env <name>`; `bifurc env auth dev --login Login` logs in again on a 401; `bifurc changes` lists what others changed since you last asked.
 - Secrets print masked and vault values never print. Do not paste tokens into commands: use {{variables}}.
 - Windows Git Bash rewrites arguments that start with `/`: set `MSYS_NO_PATHCONV=1` or use a glob: `bifurc capture list --path '*/orders'`
 - More: bifurc <group> --help, bifurc help <group> --examples."#;
 
-const SKILL_HEAD: &str = "---\nname: bifurc\ndescription: Use for API calls, mocks, captured traffic and flows of the user's Bifurc workspace, instead of curl.\n---\n\n";
+const SKILL_HEAD: &str = "---\nname: bifurc\ndescription: Use for every HTTP call to the app's API instead of curl, to fake API answers (empty, error, slow) when testing UI states, and to read the requests a browser sent. Covers the user's Bifurc workspace: saved requests, sessions, mocks, faults, captured traffic, flows.\n---\n\n";
 
 /// `<label>: a, b, c` for the names, cut at [`MAX_NAMES`]; `None` when there are none.
 fn fact(label: &str, names: Vec<String>, suffix: &str) -> Option<String> {
@@ -73,6 +74,30 @@ fn facts(ctx: &mut Context) -> Option<Vec<String>> {
         .collect();
     lines.extend(fact("Request folders", top, "/"));
     lines.extend(fact("Flows", rows("flows").iter().map(name).collect(), ""));
+    // The URL a browser uses, so the agent never guesses the scheme or the reverse proxy's port.
+    let tls = config.get("tlsEnabled").is_some_and(|v| v == true);
+    let port = config.get("port").and_then(Value::as_u64).unwrap_or(if tls { 443 } else { 80 });
+    let base = match (tls, port) {
+        (true, 443) | (false, 80) => String::new(),
+        (_, port) => format!(":{port}"),
+    };
+    let scheme = if tls { "https" } else { "http" };
+    let mappings = rows("mappings")
+        .iter()
+        .filter(|m| m["enabled"] != false)
+        .map(|m| format!("{scheme}://{}{base} → {}", js_template(m.get("domain")), js_template(m.get("target"))))
+        .collect();
+    // The sheet points at this line, so it is there even when empty.
+    lines.push(fact("Mappings", mappings, "").unwrap_or_else(|| "Mappings: none yet".to_string()));
+    // One name per call: a scenario is named "<default> · <scenario>".
+    let mut mocks: Vec<String> = Vec::new();
+    for mock in rows("mocks") {
+        let call = name(&mock).split(" · ").next().unwrap_or_default().to_string();
+        if !call.is_empty() && !mocks.contains(&call) {
+            mocks.push(call);
+        }
+    }
+    lines.extend(fact("Mocks", mocks, ""));
     Some(lines)
 }
 
@@ -186,8 +211,35 @@ mod tests {
                     {"id": "f4", "name": "old", "deleted": true},
                 ],
                 "flows": [{"id": "x", "name": "Checkout"}, {"id": "y", "name": "Signup"}],
+                "tlsEnabled": true,
+                "port": 443,
+                "mappings": [
+                    {"id": "m1", "domain": "api.localhost", "target": "localhost:4000", "enabled": true},
+                    {"id": "m2", "domain": "old.localhost", "target": "localhost:9", "enabled": false},
+                ],
+                "mocks": [{"name": "Orders"}, {"name": "Orders · empty"}, {"name": "Get user"}],
             })),
         )]
+    }
+
+    #[test]
+    fn mappings_show_the_browser_url_and_mocks_one_name_per_call() {
+        let dir = tempfile::tempdir().unwrap();
+        init(dir.path(), &[], engine()).unwrap();
+        let text = read(dir.path(), "AGENTS.md");
+        assert!(
+            text.contains("\nMappings: https://api.localhost → localhost:4000\nMocks: Orders, Get user\n"),
+            "{text}"
+        );
+
+        let plain = vec![(
+            "config.get",
+            Ok(
+                json!({"tlsEnabled": false, "port": 8088, "mappings": [{"domain": "web.localhost", "target": "localhost:5173"}]}),
+            ),
+        )];
+        init(dir.path(), &[], plain).unwrap();
+        assert!(read(dir.path(), "AGENTS.md").contains("\nMappings: http://web.localhost:8088 → localhost:5173\n"));
     }
 
     /// `agent init` in `dir` with the scripted engine (or none); the output and what the engine was asked.
@@ -280,7 +332,9 @@ mod tests {
         assert_eq!(out, "created AGENTS.md\nwrote .claude/skills/bifurc/SKILL.md");
         let skill = read(dir.path(), SKILL);
         assert!(
-            skill.starts_with("---\nname: bifurc\ndescription: Use for API calls, mocks, captured traffic and flows")
+            skill.starts_with(
+                "---\nname: bifurc\ndescription: Use for every HTTP call to the app's API instead of curl"
+            )
         );
         assert!(skill.contains("\n---\n\n## Bifurc\n") && skill.contains("Flows: Checkout, Signup"));
         assert!(!skill.contains(BEGIN));

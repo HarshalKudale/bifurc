@@ -116,3 +116,68 @@ fn a_deleted_environment_is_brought_back_or_deleted_for_good(cx: &mut gpui_kit::
     ui.click("deleted-revert");
     assert_eq!(ui.fake.sent("entity.revertDelete"), [json!({"workspaceId": "w1", "kind": "environments", "id": "e4"})]);
 }
+
+/// The populated window where Staging logs in with the request `r1` and retries on 401; Environments in front.
+fn open_with_login(cx: &mut gpui_kit::TestAppContext) -> crate::test_support::Ui {
+    let mut ui = crate::test_support::Ui::open(cx, |fake| {
+        super::fixtures::populated(fake);
+        let auth = json!({"login": {"kind": "request", "id": "r1"}, "retryOn401": false});
+        let mut config = super::fixtures::config();
+        config["environments"][1]["auth"] = auth.clone();
+        fake.config(config);
+        fake.entity(
+            "environments",
+            json!({"id": "e1", "name": "Staging", "variables": [{"id": "v1", "key": "HOST", "value": "stg.test"}], "auth": auth}),
+        );
+    });
+    ui.show(Screen::Environments);
+    ui
+}
+
+#[gpui_kit::test]
+fn the_login_is_shown_and_the_retry_choice_is_written_with_it(cx: &mut gpui_kit::TestAppContext) {
+    let mut ui = open_with_login(cx);
+    assert!(ui.has("environment-login") && ui.has("environment-retry-401"));
+    ui.fake.forget_calls();
+    ui.click("environment-retry-401");
+    ui.advance(Duration::from_millis(700));
+    let updates = ui.fake.sent("entity.update");
+    assert_eq!(updates.len(), 1);
+    assert_eq!(updates[0]["entity"]["auth"], json!({"login": {"kind": "request", "id": "r1"}, "retryOn401": true}));
+}
+
+#[gpui_kit::test]
+fn a_variable_edit_omits_the_login_key_when_there_is_none(cx: &mut gpui_kit::TestAppContext) {
+    let mut ui = open_populated(cx);
+    ui.show(Screen::Environments);
+    ui.fake.forget_calls();
+    ui.click(("remove-pair", 1u64));
+    ui.advance(Duration::from_millis(700));
+    assert!(ui.fake.sent("entity.update")[0]["entity"].get("auth").is_none(), "stored files stay as they were");
+}
+
+#[gpui_kit::test]
+fn the_global_environment_has_no_login(cx: &mut gpui_kit::TestAppContext) {
+    let mut ui = open_populated(cx);
+    ui.show(Screen::Environments);
+    assert!(ui.has("environment-login"));
+    ui.click("environment-__global__");
+    assert!(!ui.has("environment-login"));
+}
+
+#[gpui_kit::test]
+fn a_login_is_picked_among_requests_and_flows(cx: &mut gpui_kit::TestAppContext) {
+    let mut ui = open_populated(cx);
+    ui.show(Screen::Environments);
+    ui.fake.forget_calls();
+    ui.click("environment-login");
+    // Rest requests first, by name (List users, Ping), then the flows.
+    ui.press("down");
+    ui.press("down");
+    ui.press("down");
+    ui.press("enter");
+    ui.advance(Duration::from_millis(700));
+    let updates = ui.fake.sent("entity.update");
+    assert_eq!(updates.len(), 1, "{updates:?}");
+    assert_eq!(updates[0]["entity"]["auth"], json!({"login": {"kind": "flow", "id": "fl1"}, "retryOn401": false}));
+}

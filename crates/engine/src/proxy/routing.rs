@@ -10,8 +10,8 @@ use super::{
 use crate::{
     kernel::traffic::{Headers, RequestLogEntry, emit_log},
     mocks::{
-        is_fully_mocked, is_streaming_mock, match_mock, merge_mock_with_upstream, resolve_mock_only_response,
-        serve_mock, serve_resolved_response,
+        add_cors, cors_preflight, is_fully_mocked, is_streaming_mock, match_mock, merge_mock_with_upstream,
+        resolve_mock_only_response, serve_mock, serve_resolved_response,
     },
     utils::{
         id::now_ms,
@@ -110,11 +110,27 @@ pub async fn handle_proxy_routing<W: AsyncWrite + Unpin>(out: &mut W, ex: &Excha
     let rule = match_proxy_rule(&routing.rules, ex.rule_match_target, &routing.mappings);
     let rule_target = rule.target.clone().filter(|t| !t.is_empty());
 
-    // Mocks come first.
+    // Mocks come first; a browser's preflight for a mocked call is answered here too.
+    if let Some(preflight) =
+        cors_preflight(ex.method, ex.headers, |m| match_mock(&routing.mocks, m, ex.url, env).is_some())
+    {
+        emit_log(&finished_entry(
+            ex.base,
+            preflight.status,
+            "mock",
+            None,
+            now_ms() - ex.t0,
+            preflight.headers.clone(),
+            log_body(&preflight.body),
+        ));
+        let _ = serve_resolved_response(out, &preflight).await;
+        return true;
+    }
     if let Some(mock) = match_mock(&routing.mocks, ex.method, ex.url, env) {
         let mock_target = Some(format!("mock:{}", mock.id));
         if is_fully_mocked(mock) {
-            let resolved = resolve_mock_only_response(mock, env);
+            let mut resolved = resolve_mock_only_response(mock, env);
+            add_cors(&mut resolved.headers, ex.headers);
             emit_log(&finished_entry(
                 ex.base,
                 resolved.status,
@@ -125,7 +141,7 @@ pub async fn handle_proxy_routing<W: AsyncWrite + Unpin>(out: &mut W, ex: &Excha
                 log_body(&resolved.body),
             ));
             let _ = if is_streaming_mock(mock) {
-                serve_mock(out, mock, env).await
+                serve_mock(out, mock, env, ex.headers).await
             } else {
                 serve_resolved_response(out, &resolved).await
             };
@@ -161,7 +177,8 @@ pub async fn handle_proxy_routing<W: AsyncWrite + Unpin>(out: &mut W, ex: &Excha
         };
         match upstream {
             Ok(upstream) => {
-                let merged = merge_mock_with_upstream(mock, &upstream, env);
+                let mut merged = merge_mock_with_upstream(mock, &upstream, env);
+                add_cors(&mut merged.headers, ex.headers);
                 emit_log(&finished_entry(
                     ex.base,
                     merged.status,

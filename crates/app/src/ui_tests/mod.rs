@@ -2,9 +2,13 @@
 
 mod audit;
 mod capture;
+mod cassettes;
+mod claims;
 mod environments;
+mod faults_policy;
 mod fixtures;
 mod flows;
+mod mail;
 mod mappings;
 mod mocks;
 mod onboarding;
@@ -14,6 +18,7 @@ mod services;
 mod settings;
 mod shell;
 mod vaults;
+mod webhooks;
 mod workspace;
 
 use gpui_kit::TestAppContext;

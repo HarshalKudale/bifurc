@@ -4,7 +4,9 @@
 //! It has the shape of the Requests screen for the same reason: a mock is a saved entity in folders, opened
 //! to be edited. The tree comes from the model's snapshot; an open mock is a [`MockEditor`].
 
+mod contract;
 mod editor;
+mod live;
 mod tree;
 
 use std::rc::Rc;
@@ -19,13 +21,16 @@ use gpui_kit::component::{
     v_flex,
 };
 use gpui_kit::{
-    AnyView, App, AppContext as _, Context, Entity, IntoElement, ParentElement as _, Render, ScrollStrategy,
-    Styled as _, Subscription, WeakEntity, Window, div, px,
+    AnyView, App, AppContext as _, ClipboardItem, Context, ElementId, Entity, InteractiveElement as _, IntoElement,
+    ParentElement as _, Render, ScrollStrategy, Styled as _, Subscription, TestSupportExt as _, WeakEntity, Window,
+    div, px,
 };
 use serde_json::{Map, Value, json};
 
 use self::{
+    contract::ContractState,
     editor::{MockEditor, MockEvent},
+    live::{Hits, Server, group_of, servers_of},
     tree::{MockExtra, MockTree, MockTreeEvent, deleted_target, is_deleted, locked_to},
 };
 use crate::{
@@ -39,9 +44,12 @@ use crate::{
         },
         entity_bar, page, tab_strip,
     },
-    engine::{call, call_in, failure, patch_entity},
+    engine::{call, call_in, describe, failure, patch_entity},
     i18n::{t, t_with},
-    model::tree::{TreeKey, folder_path},
+    model::{
+        traffic,
+        tree::{TreeKey, folder_path},
+    },
     panels::host::{HostPanel, PartView, remember_pane_size},
     preferences::Preferences,
     session::SaveMode,
@@ -53,6 +61,15 @@ use crate::{
 enum TabKey {
     Saved(String),
     Draft(u64),
+}
+
+impl TabKey {
+    fn saved_id(&self) -> Option<&str> {
+        match self {
+            TabKey::Saved(id) => Some(id),
+            TabKey::Draft(_) => None,
+        }
+    }
 }
 
 struct OpenTab {
@@ -87,6 +104,16 @@ pub struct MocksScreen {
     next_draft: u64,
     /// Saved mocks the user closed, for Ctrl+Shift+T. Drafts are discarded for good.
     closed: ClosedTabs<String>,
+    /// The workspace's mocks as the engine lists them, to find the scenarios of the open one.
+    mock_rows: Vec<Value>,
+    /// How many captured exchanges each mock answered.
+    hits: Hits,
+    /// The mock servers of this workspace.
+    servers: Vec<Server>,
+    /// Contract checks: the latest for the open mock and the latest over many.
+    contract: ContractState,
+    /// The screen has been in front, so the extras above are worth keeping current.
+    shown: bool,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -127,10 +154,34 @@ impl MocksScreen {
         let subscriptions = vec![
             remember_pane_size(&dock, "mocks-dock", 0, cx),
             cx.subscribe(&model, |this, _, event: &ModelEvent, cx| match event {
-                ModelEvent::ConfigChanged => this.close_vanished_tabs(cx),
+                ModelEvent::ConfigChanged => {
+                    this.close_vanished_tabs(cx);
+                    this.sync_enabled(cx);
+                    if this.shown {
+                        this.load_mock_rows(cx);
+                    }
+                }
                 ModelEvent::WorkspaceSwitched => {
                     this.tabs.clear();
                     this.set_active(None, cx);
+                    this.mock_rows.clear();
+                    this.hits = Hits::default();
+                    this.servers.clear();
+                    this.contract = ContractState::default();
+                    if this.shown {
+                        this.refresh(cx);
+                    }
+                }
+                ModelEvent::EngineRestarted if this.shown => this.refresh(cx),
+                // A mock's answer is counted as it is logged. The servers' own hit counts ride on
+                // `mocks.serveStatus` only: the engine sends no event when one starts, stops or answers.
+                ModelEvent::Traffic(payload) if this.shown => {
+                    let entries = traffic::parse_event(payload);
+                    this.hits.add(&entries);
+                    if entries.iter().any(|entry| entry.origin.as_deref() == Some("server")) {
+                        this.load_servers(cx);
+                    }
+                    cx.notify();
                 }
                 _ => {}
             }),
@@ -149,8 +200,264 @@ impl MocksScreen {
             response_panel,
             next_draft: 1,
             closed: ClosedTabs::new(),
+            mock_rows: Vec::new(),
+            hits: Hits::default(),
+            servers: Vec::new(),
+            contract: ContractState::default(),
+            shown: false,
             _subscriptions: subscriptions,
         }
+    }
+
+    /// Reads the scenarios, hit counts and servers again: the screen was brought to the front, or the
+    /// workspace changed.
+    pub fn refresh(&mut self, cx: &mut Context<Self>) {
+        self.shown = true;
+        self.load_mock_rows(cx);
+        self.load_hits(cx);
+        self.load_servers(cx);
+    }
+
+    fn workspace(&self, cx: &App) -> String {
+        self.model.read(cx).workspace_id().to_owned()
+    }
+
+    fn load_mock_rows(&mut self, cx: &mut Context<Self>) {
+        let workspace = self.workspace(cx);
+        if workspace.is_empty() {
+            return;
+        }
+        let client = self.model.read(cx).client().clone();
+        let payload = json!({ "workspaceId": workspace, "kind": "mocks" });
+        call(&client, cx, "entity.list", payload, move |this, outcome, cx| {
+            if let Ok(result) = outcome
+                && this.workspace(cx) == workspace
+            {
+                this.mock_rows = result.get("entities").and_then(Value::as_array).cloned().unwrap_or_default();
+                cx.notify();
+            }
+        });
+    }
+
+    fn load_hits(&mut self, cx: &mut Context<Self>) {
+        let workspace = self.workspace(cx);
+        if workspace.is_empty() {
+            return;
+        }
+        let client = self.model.read(cx).client().clone();
+        let payload = json!({ "workspaceId": workspace, "summary": true, "via": "mock" });
+        call(&client, cx, "capture.list", payload, move |this, outcome, cx| {
+            if let Ok(result) = outcome
+                && this.workspace(cx) == workspace
+            {
+                this.hits.replace(&traffic::parse_list(&result));
+                cx.notify();
+            }
+        });
+    }
+
+    fn load_servers(&mut self, cx: &mut Context<Self>) {
+        let workspace = self.workspace(cx);
+        if workspace.is_empty() {
+            return;
+        }
+        let client = self.model.read(cx).client().clone();
+        call(&client, cx, "mocks.serveStatus", json!({}), move |this, outcome, cx| {
+            if let Ok(result) = outcome
+                && this.workspace(cx) == workspace
+            {
+                this.servers = servers_of(&result, &workspace);
+                cx.notify();
+            }
+        });
+    }
+
+    /// A mock can be switched on or off from the tree or by choosing a scenario, behind an open editor's back.
+    /// The editor takes the new state, so its next write does not undo it.
+    fn sync_enabled(&mut self, cx: &mut Context<Self>) {
+        for tab in &self.tabs {
+            let TabKey::Saved(id) = &tab.key else { continue };
+            if let Some(mock) = self.model.read(cx).config().mock(id) {
+                let enabled = mock.enabled;
+                tab.editor.update(cx, |editor, cx| editor.follow_enabled(enabled, cx));
+            }
+        }
+    }
+
+    /// Makes `id` the scenario that answers; the engine switches off the others of its call.
+    fn choose_scenario(&mut self, id: &str, cx: &mut Context<Self>) {
+        self.model.update(cx, |model, cx| model.set_enabled("mocks", id, true, cx));
+    }
+
+    fn prompt_serve(&mut self, draft: Option<Vec<String>>, window: &mut Window, cx: &mut Context<Self>) {
+        let initial = draft.unwrap_or_else(|| vec![String::new(); 2]);
+        let fields = vec![
+            PromptField::new(t("mocks_live.serve.port"), t("mocks_live.serve.port_placeholder")).optional(),
+            PromptField::new(t("mocks_live.serve.fallthrough"), t("mocks_live.serve.fallthrough_placeholder"))
+                .optional(),
+        ];
+        let fields = fields.into_iter().zip(initial).map(|(field, value)| field.initial(value)).collect();
+        prompt(
+            cx.weak_entity(),
+            window,
+            cx,
+            t("mocks_live.serve.title"),
+            t("mocks_live.serve.confirm"),
+            fields,
+            |this, values, window, cx| {
+                let port = match values[0].as_str() {
+                    "" => None,
+                    text => match text.parse::<u16>() {
+                        Ok(port) => Some(port),
+                        // The dialog has closed; it opens again with what was typed.
+                        Err(_) => {
+                            this.report(t("mocks_live.serve.failed"), t("mocks_live.serve.bad_port").to_owned(), cx);
+                            return this.prompt_serve(Some(values), window, cx);
+                        }
+                    },
+                };
+                // Detached: a server the app's session owned would stop with it.
+                let mut payload = json!({ "workspaceId": this.workspace(cx), "detach": true });
+                if let Some(port) = port {
+                    payload["port"] = json!(port);
+                }
+                if !values[1].is_empty() {
+                    payload["fallthrough"] = json!(values[1]);
+                }
+                let client = this.model.read(cx).client().clone();
+                call(&client, cx, "mocks.serve", payload, |this, outcome, cx| {
+                    if let Some(message) = failure(&outcome) {
+                        this.report(t("mocks_live.serve.failed"), message, cx);
+                    }
+                    // No event says a server started.
+                    this.load_servers(cx);
+                });
+            },
+        );
+    }
+
+    fn stop_server(&mut self, port: u64, cx: &mut Context<Self>) {
+        let client = self.model.read(cx).client().clone();
+        call(&client, cx, "mocks.serveStop", json!({ "port": port }), |this, outcome, cx| {
+            if let Err(error) = &outcome {
+                this.report(t("mocks_live.serve.stop_failed"), describe(error), cx);
+            }
+            this.load_servers(cx);
+        });
+    }
+
+    /// The scenarios of the open mock and how often it answered, above its editor. Nothing when there is neither.
+    fn render_scenarios(&self, cx: &mut Context<Self>) -> Option<gpui_kit::AnyElement> {
+        let id = self.active_editor()?.read(cx).saved_id()?.to_owned();
+        let group = group_of(&self.mock_rows, &id);
+        let hits = self.hits.of(&id);
+        if group.len() < 2 && hits == 0 {
+            return None;
+        }
+        let theme = cx.theme().clone();
+        let buttons: Vec<_> = group
+            .iter()
+            .map(|sibling| {
+                let on = self.model.read(cx).config().mock(&sibling.id).is_some_and(|m| m.enabled);
+                let target = sibling.id.clone();
+                Button::new(ElementId::Name(format!("mock-scenario-{}", sibling.id).into()))
+                    .small()
+                    .label(sibling.scenario.clone())
+                    .selected(on)
+                    .on_click(cx.listener(move |this, _, _, cx| this.choose_scenario(&target, cx)))
+            })
+            .collect();
+        let bar = h_flex().id("mock-scenarios").test_support().flex_none().gap_2().px_3().py_1().text_sm();
+        let bar = if buttons.len() >= 2 {
+            bar.child(div().text_color(theme.muted_foreground).child(t("mocks_live.scenario.label")))
+                .child(h_flex().gap_1().children(buttons))
+        } else {
+            bar
+        };
+        Some(
+            bar.border_b_1()
+                .border_color(theme.border)
+                .child(div().flex_1())
+                .child(
+                    div()
+                        .id("mock-hits")
+                        .test_support()
+                        .text_color(theme.muted_foreground)
+                        .child(t_with("mocks_live.hits", &[("count", &hits)])),
+                )
+                .into_any_element(),
+        )
+    }
+
+    /// The servers that are running, one line each, under the tabs. Nothing when none is.
+    fn render_servers(&self, cx: &mut Context<Self>) -> Option<gpui_kit::AnyElement> {
+        if self.servers.is_empty() {
+            return None;
+        }
+        let theme = cx.theme().clone();
+        let rows: Vec<_> = self
+            .servers
+            .iter()
+            .map(|server| {
+                let key = |part: &str| ElementId::Name(format!("mock-server-{part}-{}", server.port).into());
+                let (url, port) = (server.url(), server.port);
+                let route = match &server.fallthrough {
+                    Some(upstream) => t_with("mocks_live.server.fallthrough", &[("url", upstream)]),
+                    None => String::new(),
+                };
+                h_flex()
+                    .gap_3()
+                    .px_3()
+                    .py_1()
+                    .text_sm()
+                    .child(div().font_family(theme.mono_font_family.clone()).child(server.url()))
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_w_0()
+                            .overflow_hidden()
+                            .text_ellipsis()
+                            .whitespace_nowrap()
+                            .text_color(theme.muted_foreground)
+                            .child(route),
+                    )
+                    .child(
+                        div()
+                            .flex_none()
+                            .text_color(theme.muted_foreground)
+                            .child(t_with("mocks_live.hits", &[("count", &server.hits)])),
+                    )
+                    .child(
+                        Button::new(key("copy"))
+                            .small()
+                            .ghost()
+                            .icon(IconName::Copy)
+                            .tooltip(t("mocks_live.server.copy"))
+                            .on_click(move |_, window, cx| {
+                                use gpui_kit::component::{WindowExt as _, notification::Notification};
+                                cx.write_to_clipboard(ClipboardItem::new_string(url.clone()));
+                                window.push_notification(Notification::success(t("mocks_live.server.copied")), cx);
+                            }),
+                    )
+                    .child(
+                        Button::new(key("stop"))
+                            .small()
+                            .icon(IconName::Square)
+                            .label(t("mocks_live.server.stop"))
+                            .on_click(cx.listener(move |this, _, _, cx| this.stop_server(port, cx))),
+                    )
+            })
+            .collect();
+        Some(
+            v_flex()
+                .id("mock-servers")
+                .test_support()
+                .flex_none()
+                .border_b_1()
+                .border_color(theme.border)
+                .children(rows)
+                .into_any_element(),
+        )
     }
 
     pub fn active_editor(&self) -> Option<&Entity<MockEditor>> {
@@ -370,6 +677,8 @@ impl MocksScreen {
                 self.closed.push(id.clone());
             }
         }
+        let ids: Vec<String> = keys.iter().filter_map(|key| key.saved_id().map(str::to_owned)).collect();
+        self.model.update(cx, |model, cx| model.release_claims(&ids, cx));
         self.tabs.retain(|tab| !keys.contains(&tab.key));
         let next = match front.and_then(|key| self.tabs.iter().position(|tab| tab.key == key)) {
             Some(ix) => Some(ix),
@@ -674,6 +983,7 @@ impl MocksScreen {
             MockTreeEvent::Open(TreeKey::Folder(_)) => {}
             MockTreeEvent::Extra(MockExtra::NewMock { folder }) => self.new_mock(folder, window, cx),
             MockTreeEvent::Extra(MockExtra::ImportCurl { folder }) => self.import_curl(folder, window, cx),
+            MockTreeEvent::Extra(MockExtra::CheckContract { folder }) => self.prompt_contract(Some(folder), window, cx),
             MockTreeEvent::NewFolder { parent } => self.prompt_new_folder(parent, window, cx),
             MockTreeEvent::Rename(key) => self.prompt_rename(key, window, cx),
             MockTreeEvent::Duplicate(TreeKey::Item(id)) => self.duplicate(id, window, cx),
@@ -744,14 +1054,33 @@ impl MocksScreen {
                     cx.notify();
                 })),
         );
-        let suffix = h_flex().flex_none().px_1().child(
-            Button::new("new-mock-tab")
-                .icon(IconName::Plus)
-                .ghost()
-                .small()
-                .tooltip(t("mocks.new_mock"))
-                .dropdown_menu(move |menu, _, _| new_tab_menu(menu, &this)),
-        );
+        let suffix = h_flex()
+            .flex_none()
+            .px_1()
+            .child(
+                Button::new("mock-check-all")
+                    .icon(IconName::CircleCheck)
+                    .ghost()
+                    .small()
+                    .tooltip(t("contract.check_all_tooltip"))
+                    .on_click(cx.listener(|this, _, window, cx| this.prompt_contract(None, window, cx))),
+            )
+            .child(
+                Button::new("mock-serve")
+                    .icon(IconName::Play)
+                    .ghost()
+                    .small()
+                    .tooltip(t("mocks_live.serve.tooltip"))
+                    .on_click(cx.listener(|this, _, window, cx| this.prompt_serve(None, window, cx))),
+            )
+            .child(
+                Button::new("new-mock-tab")
+                    .icon(IconName::Plus)
+                    .ghost()
+                    .small()
+                    .tooltip(t("mocks.new_mock"))
+                    .dropdown_menu(move |menu, _, _| new_tab_menu(menu, &this)),
+            );
         tab_strip(self, strip, prefix, suffix, window, cx)
     }
 }
@@ -827,6 +1156,10 @@ impl Render for MocksScreen {
             .size_full()
             .bg(cx.theme().background)
             .child(self.render_tab_strip(tree_open, window, cx))
+            .children(self.render_servers(cx))
+            .children(self.render_contract_report(cx))
+            .children(self.render_scenarios(cx).filter(|_| curl.is_none()))
+            .children(self.render_contract_bar(cx).filter(|_| curl.is_none()))
             .child(div().flex_1().min_h_0().child(body))
             .children(footer);
         // The split's sizes are physical starting points the user resizes, not part of the rem scale.

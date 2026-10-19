@@ -646,6 +646,7 @@ mod tests {
             ("replay", with(json!({"target": "stop"}))),
             ("changes", with(json!({"since": "2m", "mine": true}))),
             ("claim", with(json!({"kind": "mock", "name": "M", "release": true}))),
+            ("claim", with(json!({"kind": "mock", "name": "M", "force": true}))),
             ("claims", all.clone()),
             ("env_auth", with(json!({"environment": "Dev", "login": "L", "flow": "F", "retry": "false", "off": true, "force": true}))),
             ("requests_update", with(json!({"request": "Ping", "force": true}))),

@@ -4,6 +4,7 @@ use serde_json::json;
 
 use super::open_populated;
 use crate::shell::Screen;
+use crate::test_support::Ui;
 
 /// The sidebar entries of the settings pages, in order: Appearance, Companions, Servers, Requests, HTTPS, About,
 /// Licenses.
@@ -87,4 +88,102 @@ fn a_license_group_opens_its_notices_in_a_dialog(cx: &mut gpui_kit::TestAppConte
     assert!(ui.has("notices-close"), "the notices are shown");
     ui.click("notices-close");
     assert!(!ui.has("notices-close"));
+}
+
+/// The Servers page over a config that holds `stored`.
+fn servers_page(cx: &mut gpui_kit::TestAppContext, stored: serde_json::Value) -> crate::test_support::Ui {
+    let mut ui = Ui::open(cx, |fake| {
+        super::fixtures::populated(fake);
+        let mut config = super::fixtures::config();
+        config.as_object_mut().unwrap().extend(stored.as_object().cloned().unwrap());
+        fake.config(config);
+    });
+    ui.show(Screen::Settings);
+    ui.click("0-2");
+    ui
+}
+
+/// Scrolls the page down until the row is in view.
+fn reveal(ui: &mut Ui, id: &str) {
+    for _ in 0..30 {
+        if ui.visible(id.to_owned()) {
+            return;
+        }
+        ui.scroll_at(900., 500., 4.);
+    }
+    panic!("{id} never came into view");
+}
+
+/// Types `text` over whatever the row holds and commits it with Enter.
+fn type_into(ui: &mut crate::test_support::Ui, id: &str, text: &str) {
+    reveal(ui, id);
+    ui.click(id.to_owned());
+    ui.press("ctrl-a");
+    if text.is_empty() {
+        ui.press("backspace");
+    } else {
+        ui.input(text);
+    }
+    ui.fake.forget_calls();
+    ui.press("enter");
+}
+
+#[gpui_kit::test]
+fn the_four_rows_write_their_engine_keys(cx: &mut gpui_kit::TestAppContext) {
+    let mut ui = servers_page(cx, json!({}));
+    for (id, key, text, value) in [
+        ("setting-capture-limit", "captureLimit", "500", json!(500)),
+        ("setting-trace-header", "traceHeader", "X-Req-Id", json!("X-Req-Id")),
+        ("setting-mail-port", "mailPort", "2525", json!(2525)),
+        ("setting-approval-timeout", "approvalTimeoutSeconds", "60", json!(60)),
+    ] {
+        type_into(&mut ui, id, text);
+        assert_eq!(ui.fake.sent("settings.update"), [json!({ key: value })], "{key}");
+    }
+}
+
+#[gpui_kit::test]
+fn a_blank_row_goes_back_to_the_default(cx: &mut gpui_kit::TestAppContext) {
+    let mut ui = servers_page(
+        cx,
+        json!({"captureLimit": 500, "mailPort": 2525, "approvalTimeoutSeconds": 60, "traceHeader": "x-id"}),
+    );
+    for (id, key) in [
+        ("setting-capture-limit", "captureLimit"),
+        ("setting-trace-header", "traceHeader"),
+        ("setting-mail-port", "mailPort"),
+        ("setting-approval-timeout", "approvalTimeoutSeconds"),
+    ] {
+        type_into(&mut ui, id, "");
+        // The engine reads null as unset, which is the default.
+        assert_eq!(ui.fake.sent("settings.update"), [json!({ key: null })], "{key}");
+    }
+}
+
+#[gpui_kit::test]
+fn a_value_outside_the_engines_bounds_is_not_sent(cx: &mut gpui_kit::TestAppContext) {
+    let mut ui = servers_page(cx, json!({}));
+    for (id, text) in [
+        ("setting-capture-limit", "5"),
+        ("setting-capture-limit", "10001"),
+        ("setting-mail-port", "70000"),
+        ("setting-approval-timeout", "9"),
+        ("setting-trace-header", "not a header"),
+    ] {
+        type_into(&mut ui, id, text);
+        assert!(ui.fake.sent("settings.update").is_empty(), "{id} = {text}");
+    }
+}
+
+#[test]
+fn what_was_typed_becomes_the_value_to_send() {
+    use crate::screens::settings::{Accepts, setting_value};
+    let ports = Accepts::Number { min: 1, max: 65_535 };
+    assert_eq!(setting_value(ports, " 2525 "), Some(json!(2525)));
+    assert_eq!(setting_value(ports, ""), Some(serde_json::Value::Null));
+    assert_eq!(setting_value(ports, "0"), None);
+    assert_eq!(setting_value(ports, "65536"), None);
+    assert_eq!(setting_value(ports, "-1"), None);
+    assert_eq!(setting_value(Accepts::HeaderName, "X-Req_Id"), Some(json!("X-Req_Id")));
+    assert_eq!(setting_value(Accepts::HeaderName, "x id"), None);
 }

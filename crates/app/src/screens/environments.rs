@@ -9,11 +9,13 @@
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use gpui_kit::component::{
-    ActiveTheme as _, Disableable as _, Icon, IconName, Sizable as _,
+    ActiveTheme as _, Disableable as _, Icon, IconName, IndexPath, Sizable as _,
     button::{Button, ButtonVariants as _},
+    checkbox::Checkbox,
     h_flex,
     input::{InputEvent, InputState},
     list::ListItem,
+    select::{Select, SelectEvent, SelectState},
     tag::Tag,
     v_flex,
 };
@@ -35,18 +37,69 @@ use crate::{
     },
     engine::{call, failure, patch_entity},
     i18n::{t, t_with},
-    model::config::EnvironmentInfo,
+    model::{
+        config::{ConfigSnapshot, EnvLogin, EnvironmentInfo},
+        kind::RequestKind,
+    },
     session::SaveMode,
     shell::ActiveTarget,
 };
 
-type Edit = (String, Vec<(String, String)>);
+/// The name, the variables and the login as the controls hold them.
+type Edit = (String, Vec<(String, String)>, Option<EnvLogin>);
+
+/// A request or flow the login can be.
+#[derive(Debug, Clone, PartialEq)]
+struct LoginOption {
+    flow: bool,
+    id: String,
+    label: String,
+}
+
+/// What the login picker lists: the workspace's REST requests (the only ones the engine can log in with) and
+/// its flows, and `held` too when it names one that is no longer there, so saving does not drop it.
+fn login_options(config: &ConfigSnapshot, held: Option<&EnvLogin>) -> Vec<LoginOption> {
+    let mut requests: Vec<LoginOption> = config
+        .requests
+        .iter()
+        .filter(|r| r.kind == RequestKind::Rest && !r.deleted && r.locked.is_none())
+        .map(|r| LoginOption { flow: false, id: r.id.clone(), label: r.name.clone() })
+        .collect();
+    let mut flows: Vec<LoginOption> = config
+        .flows
+        .iter()
+        .filter(|f| !f.deleted && f.locked.is_none())
+        .map(|f| LoginOption {
+            flow: true,
+            id: f.id.clone(),
+            label: t_with("environments.login_flow", &[("name", &f.name)]),
+        })
+        .collect();
+    requests.sort_by_key(|o| o.label.to_lowercase());
+    flows.sort_by_key(|o| o.label.to_lowercase());
+    requests.extend(flows);
+    if let Some(held) = held
+        && !requests.iter().any(|o| o.flow == held.flow && o.id == held.id)
+    {
+        requests.push(LoginOption {
+            flow: held.flow,
+            id: held.id.clone(),
+            label: t_with("environments.login_missing", &[("id", &held.id)]),
+        });
+    }
+    requests
+}
 
 pub struct EnvironmentsScreen {
     model: Entity<AppModel>,
     selected: Option<String>,
     name: Entity<InputState>,
     variables: Entity<KeyValueTable>,
+    /// The request or flow that logs in, chosen among `login_options` (same order).
+    login: Entity<SelectState<Vec<String>>>,
+    login_options: Vec<LoginOption>,
+    /// Log in again and send once more when a send answers 401. Only meaningful with a login.
+    retry: bool,
     /// The selected environment as the controls showed it when it was last loaded or saved.
     baseline: Edit,
     saving: bool,
@@ -61,6 +114,7 @@ impl EnvironmentsScreen {
         let name = cx.new(|cx| InputState::new(window, cx).placeholder(t("environments.name_placeholder")));
         let variables =
             cx.new(|cx| KeyValueTable::new(t("environments.variable"), t("environments.value"), window, cx));
+        let login = cx.new(|cx| SelectState::new(Vec::<String>::new(), None, window, cx));
         let subscriptions = vec![
             cx.observe_in(&model, window, |this, _, window, cx| this.follow_model(false, window, cx)),
             cx.subscribe_in(&model, window, |this, _, event: &ModelEvent, window, cx| match event {
@@ -81,13 +135,17 @@ impl EnvironmentsScreen {
                 }
             }),
             cx.subscribe(&variables, |this, _, _: &KeyValueEvent, cx| this.changed(cx)),
+            cx.subscribe(&login, |this, _, _: &SelectEvent<Vec<String>>, cx| this.changed(cx)),
         ];
         let mut this = Self {
             model,
             selected: None,
             name,
             variables,
-            baseline: (String::new(), Vec::new()),
+            login,
+            login_options: Vec::new(),
+            retry: false,
+            baseline: (String::new(), Vec::new(), None),
             saving: false,
             autosave: Autosave::new(window),
             reload_due: false,
@@ -103,7 +161,31 @@ impl EnvironmentsScreen {
     }
 
     fn current(&self, cx: &gpui_kit::App) -> Edit {
-        (self.name.read(cx).value().trim().to_owned(), self.variables.read(cx).pairs(cx))
+        (self.name.read(cx).value().trim().to_owned(), self.variables.read(cx).pairs(cx), self.current_login(cx))
+    }
+
+    /// The login the picker shows, with whether it retries on 401.
+    fn current_login(&self, cx: &gpui_kit::App) -> Option<EnvLogin> {
+        let row = self.login.read(cx).selected_index(cx)?.row;
+        let option = self.login_options.get(row)?;
+        Some(EnvLogin { flow: option.flow, id: option.id.clone(), retry_on_401: self.retry })
+    }
+
+    /// Fills the picker from the workspace and shows `login` in it. The list is only replaced when it changed,
+    /// so a menu that is open is not closed by an unrelated snapshot.
+    fn show_login(&mut self, login: Option<&EnvLogin>, window: &mut Window, cx: &mut Context<Self>) {
+        let options = login_options(self.model.read(cx).config(), login);
+        if options != self.login_options {
+            let labels: Vec<String> = options.iter().map(|o| o.label.clone()).collect();
+            self.login.update(cx, |select, cx| select.set_items(labels, window, cx));
+            self.login_options = options;
+        }
+        let row = login.and_then(|l| self.login_options.iter().position(|o| o.flow == l.flow && o.id == l.id));
+        self.login.update(cx, |select, cx| match row {
+            Some(row) => select.set_selected_index(Some(IndexPath::default().row(row)), window, cx),
+            None => select.set_selected_index(None, window, cx),
+        });
+        self.retry = login.is_some_and(|l| l.retry_on_401);
     }
 
     /// What the controls hold once `environment` is shown in them, to compare with the baseline without
@@ -115,7 +197,7 @@ impl EnvironmentsScreen {
             .map(|v| (v.key.trim().to_owned(), v.value.clone()))
             .filter(|(key, _)| !key.is_empty())
             .collect();
-        (environment.name.trim().to_owned(), pairs)
+        (environment.name.trim().to_owned(), pairs, environment.login.clone())
     }
 
     pub fn is_dirty(&self, cx: &gpui_kit::App) -> bool {
@@ -155,6 +237,7 @@ impl EnvironmentsScreen {
             state.set_readonly(environment.is_global(), cx);
         });
         self.variables.update(cx, |table, cx| table.set_pairs(&pairs, window, cx));
+        self.show_login(environment.login.as_ref(), window, cx);
         self.baseline = self.current(cx);
         cx.notify();
     }
@@ -177,6 +260,11 @@ impl EnvironmentsScreen {
                     let environment = environment.clone();
                     self.load(&environment, window, cx);
                 } else {
+                    // Requests or flows came or went: the picker lists them, keeping what it shows.
+                    let held = self.current_login(cx);
+                    if login_options(&config, held.as_ref()) != self.login_options {
+                        self.show_login(held.as_ref(), window, cx);
+                    }
                     cx.notify();
                 }
             }
@@ -277,7 +365,7 @@ impl EnvironmentsScreen {
         if self.saving || !self.is_dirty(cx) {
             return;
         }
-        let (name, pairs) = self.current(cx);
+        let (name, pairs, login) = self.current(cx);
         // A variable keeps its id when it stays in place; a new row gets a fresh one.
         let stamp = SystemTime::now().duration_since(UNIX_EPOCH).map(|d| d.as_millis()).unwrap_or(0);
         let variables: Vec<Value> = pairs
@@ -298,6 +386,20 @@ impl EnvironmentsScreen {
             patch.insert("name".into(), json!(name));
         }
         patch.insert("variables".into(), Value::Array(variables));
+        // The key is left out while the login is as it was, so a stored file without one stays as it is, and
+        // one with fields this does not show keeps them. Taking the login away is `null`.
+        if login != self.baseline.2 {
+            patch.insert(
+                "auth".into(),
+                match &login {
+                    Some(login) => json!({
+                        "login": { "kind": if login.flow { "flow" } else { "request" }, "id": login.id },
+                        "retryOn401": login.retry_on_401,
+                    }),
+                    None => Value::Null,
+                },
+            );
+        }
 
         self.saving = true;
         cx.notify();
@@ -434,6 +536,46 @@ impl EnvironmentsScreen {
         }))
     }
 
+    /// The request or flow that logs in, and whether a 401 runs it and sends again.
+    fn render_login(&self, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
+        let theme = cx.theme().clone();
+        let has_login = self.login.read(cx).selected_index(cx).is_some();
+        v_flex()
+            .flex_none()
+            .gap_1()
+            .px_3()
+            .py_2()
+            .border_b_1()
+            .border_color(theme.border)
+            .child(
+                h_flex()
+                    .gap_3()
+                    .child(div().flex_none().text_sm().child(t("environments.login")))
+                    .child(
+                        div().flex_1().min_w_0().child(
+                            Select::new(&self.login)
+                                .small()
+                                .id("environment-login")
+                                .placeholder(t("environments.login_none"))
+                                .cleanable(true),
+                        ),
+                    )
+                    .child(
+                        Checkbox::new("environment-retry-401")
+                            .small()
+                            .label(t("environments.retry_on_401"))
+                            .checked(self.retry)
+                            .disabled(!has_login)
+                            .on_change(cx.listener(|this, checked: &bool, _, cx| {
+                                this.retry = *checked;
+                                this.changed(cx);
+                            })),
+                    ),
+            )
+            .child(div().text_xs().text_color(theme.muted_foreground).child(t("environments.login_help")))
+            .into_any_element()
+    }
+
     fn render_detail(&self, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
         let Some(environment) = self.environment(cx) else {
             return page::empty(t("environments.no_environment"), t("environments.no_environment_body"));
@@ -473,6 +615,7 @@ impl EnvironmentsScreen {
                             ),
                         )
                     })
+                    .children((!environment.is_global()).then(|| self.render_login(cx)))
                     .child(div().flex_1().min_h_0().child(self.variables.clone())),
             )
             .child(entity_bar(bar, cx, |this, action, window, cx| this.entity_action(action, window, cx)))

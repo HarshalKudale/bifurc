@@ -1,6 +1,57 @@
 {
  "protocolVersion": "1.0.0",
  "commands": {
+  "contract.check": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "mock": {
+     "type": "string"
+    },
+    "folder": {
+     "type": "string"
+    },
+    "all": {
+     "type": "boolean"
+    },
+    "ignore": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     }
+    },
+    "fromCapture": {
+     "type": "boolean"
+    },
+    "fromSnapshot": {
+     "type": "boolean"
+    },
+    "openapi": {
+     "type": "string"
+    },
+    "variables": {
+     "type": "object",
+     "propertyNames": {
+      "type": "string"
+     },
+     "additionalProperties": {
+      "type": "string"
+     }
+    },
+    "environmentId": {
+     "type": "string"
+    },
+    "freshJar": {
+     "type": "boolean"
+    }
+   },
+   "required": [
+    "workspaceId"
+   ],
+   "additionalProperties": false
+  },
   "entity.create": {
    "type": "object",
    "properties": {
@@ -536,6 +587,27 @@
    },
    "additionalProperties": false
   },
+  "claims.release": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "ids": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     }
+    },
+    "force": {
+     "type": "boolean"
+    }
+   },
+   "required": [
+    "ids"
+   ],
+   "additionalProperties": false
+  },
   "claims.set": {
    "type": "object",
    "properties": {
@@ -549,6 +621,9 @@
      "type": "string"
     },
     "release": {
+     "type": "boolean"
+    },
+    "force": {
      "type": "boolean"
     }
    },
@@ -658,6 +733,57 @@
    },
    "additionalProperties": false
   },
+  "types.generate": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "request": {
+     "type": "string"
+    },
+    "lang": {
+     "type": "string",
+     "enum": [
+      "ts",
+      "zod",
+      "python",
+      "go"
+     ]
+    },
+    "name": {
+     "type": "string"
+    },
+    "send": {
+     "type": "boolean"
+    },
+    "variables": {
+     "type": "object",
+     "propertyNames": {
+      "type": "string"
+     },
+     "additionalProperties": {
+      "type": "string"
+     }
+    },
+    "environmentId": {
+     "type": "string"
+    },
+    "freshJar": {
+     "type": "boolean"
+    }
+   },
+   "required": [
+    "workspaceId",
+    "request"
+   ],
+   "additionalProperties": false
+  },
+  "webhook.fixtures": {
+   "type": "object",
+   "properties": {},
+   "additionalProperties": false
+  },
   "webhook.list": {
    "type": "object",
    "properties": {},
@@ -689,6 +815,25 @@
    ],
    "additionalProperties": false
   },
+  "webhook.replay": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "id": {
+     "type": "string"
+    },
+    "to": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "workspaceId",
+    "id"
+   ],
+   "additionalProperties": false
+  },
   "webhook.stop": {
    "type": "object",
    "properties": {
@@ -696,6 +841,56 @@
      "type": "string"
     }
    },
+   "additionalProperties": false
+  },
+  "webhook.trigger": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "fixture": {
+     "type": "string"
+    },
+    "to": {
+     "type": "string"
+    },
+    "name": {
+     "type": "string"
+    },
+    "vault": {
+     "type": "string"
+    },
+    "secret": {
+     "type": "string"
+    },
+    "patch": {
+     "type": "array",
+     "items": {
+      "type": "object",
+      "properties": {
+       "path": {
+        "type": "array",
+        "items": {
+         "type": [
+          "string",
+          "integer"
+         ]
+        }
+       },
+       "value": {}
+      },
+      "required": [
+       "path"
+      ],
+      "additionalProperties": false
+     }
+    }
+   },
+   "required": [
+    "workspaceId",
+    "fixture"
+   ],
    "additionalProperties": false
   },
   "workspace.add": {

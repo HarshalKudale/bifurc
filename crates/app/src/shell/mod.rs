@@ -5,10 +5,12 @@
 //! its own state, kept alive while another screen is in front, so coming back to Requests finds its tabs as
 //! they were. The workspace comes from [`AppModel`].
 
+mod agents;
 mod chrome;
 mod nav;
 mod palette;
 mod right_sidebar;
+mod types_tab;
 
 use gpui_kit::component::{
     ActiveTheme as _, WindowExt as _,
@@ -42,6 +44,7 @@ use crate::{
         environments::EnvironmentsScreen,
         flows::FlowsScreen,
         healthbar::HealthBarScreen,
+        mail::MailScreen,
         mappings::MappingsScreen,
         mocks::MocksScreen,
         onboarding::Onboarding,
@@ -50,6 +53,7 @@ use crate::{
         services::ServicesScreen,
         settings::SettingsScreen,
         vaults::VaultsScreen,
+        webhooks::WebhooksScreen,
         workspace::WorkspaceScreen,
         workspace_setup::{Purpose, open_setup_dialog},
     },
@@ -88,6 +92,8 @@ pub struct Shell {
     healthbar: Entity<HealthBarScreen>,
     proxy_rules: Entity<ProxyRulesScreen>,
     capture: Entity<CaptureScreen>,
+    mail: Entity<MailScreen>,
+    webhooks: Entity<WebhooksScreen>,
     mappings: Entity<MappingsScreen>,
     environments: Entity<EnvironmentsScreen>,
     flows: Entity<FlowsScreen>,
@@ -113,6 +119,8 @@ impl Shell {
         let healthbar = cx.new(|cx| HealthBarScreen::new(model.clone(), window, cx));
         let proxy_rules = cx.new(|cx| ProxyRulesScreen::new(model.clone(), window, cx));
         let capture = cx.new(|cx| CaptureScreen::new(model.clone(), window, cx));
+        let mail = cx.new(|cx| MailScreen::new(model.clone(), window, cx));
+        let webhooks = cx.new(|cx| WebhooksScreen::new(model.clone(), window, cx));
         let mappings = cx.new(|cx| MappingsScreen::new(model.clone(), window, cx));
         let environments = cx.new(|cx| EnvironmentsScreen::new(model.clone(), window, cx));
         let flows = cx.new(|cx| FlowsScreen::new(model.clone(), window, cx));
@@ -138,7 +146,10 @@ impl Shell {
             cx.observe(&services, |_, _, cx| cx.notify()),
             cx.observe(&healthbar, |_, _, cx| cx.notify()),
             cx.observe(&capture, |_, _, cx| cx.notify()),
+            cx.observe(&mail, |_, _, cx| cx.notify()),
+            cx.observe(&webhooks, |_, _, cx| cx.notify()),
             cx.subscribe_in(&capture, window, Self::on_capture_event),
+            cx.subscribe_in(&webhooks.read(cx).received().clone(), window, Self::on_capture_event),
         ];
 
         let handle = ShellHandle(cx.weak_entity());
@@ -160,6 +171,8 @@ impl Shell {
             healthbar,
             proxy_rules,
             capture,
+            mail,
+            webhooks,
             mappings,
             environments,
             flows,
@@ -188,6 +201,23 @@ impl Shell {
             ModelEvent::ConfigChanged | ModelEvent::WorkspaceSwitched => {
                 self.sync_right_sidebar(window, cx);
                 cx.notify();
+            }
+            // Clicking it opens the approvals; nothing opens by itself, so typing is not interrupted.
+            ModelEvent::ApprovalRequested(item) => {
+                let shell = cx.weak_entity();
+                let request = format!("{} {}", item.method, item.url);
+                window.push_notification(
+                    Notification::warning(t_with("shell.agents.toast", &[("by", &item.by), ("request", &request)]))
+                        .title(t("shell.agents.toast_title"))
+                        .on_click(move |_, window, cx| {
+                            // Deferred: opened inside the toast's own click, the dialog closed again at once.
+                            let shell = shell.clone();
+                            window.defer(cx, move |window, cx| {
+                                shell.update(cx, |shell, cx| shell.open_approvals(window, cx)).ok();
+                            });
+                        }),
+                    cx,
+                );
             }
             ModelEvent::Notice(text) => window.push_notification(Notification::warning(text.clone()), cx),
             ModelEvent::AskSyncMessage(scope) => {
@@ -229,9 +259,16 @@ impl Shell {
             | ModelEvent::FlowLoadFinished(_)
             | ModelEvent::SyncStatus
             | ModelEvent::HistoryChanged
+            | ModelEvent::PolicyChanged
             | ModelEvent::AccountChanged(_)
             | ModelEvent::CompanionsChanged
             | ModelEvent::CookiesChanged
+            | ModelEvent::DevServiceChanged(_)
+            | ModelEvent::DevServiceOutput(_)
+            | ModelEvent::MailChanged(_)
+            | ModelEvent::WebhookChanged(_)
+            | ModelEvent::ClaimsChanged
+            | ModelEvent::ResponseReceived(_)
             | ModelEvent::EngineRestarted
             | ModelEvent::ConfigPatched
             | ModelEvent::EntityReverted(_) => {}
@@ -291,6 +328,8 @@ impl Shell {
             Screen::HealthBar => Some(self.healthbar.clone().into()),
             Screen::ProxyRules => Some(self.proxy_rules.clone().into()),
             Screen::Capture => Some(self.capture.clone().into()),
+            Screen::Mail => Some(self.mail.clone().into()),
+            Screen::Webhooks => Some(self.webhooks.clone().into()),
         }
     }
 
@@ -298,6 +337,26 @@ impl Shell {
         if self.screen != screen {
             self.screen = screen;
             self.sync_right_sidebar(window, cx);
+            if screen == Screen::Services {
+                self.services.update(cx, |services, cx| services.refresh_dev(cx));
+            }
+            if screen == Screen::Capture {
+                // The capture limit can change in Settings.
+                self.capture.update(cx, |capture, cx| capture.reload(window, cx));
+            }
+            if screen == Screen::Mail {
+                self.mail.update(cx, |mail, cx| mail.refresh(cx));
+            }
+            if screen == Screen::Mocks {
+                self.mocks.update(cx, |mocks, cx| mocks.refresh(cx));
+            }
+            if screen == Screen::Webhooks {
+                self.webhooks.update(cx, |webhooks, cx| webhooks.refresh(window, cx));
+            }
+            if screen == Screen::WorkspaceConfig {
+                // policy.yaml is edited by hand outside the app; the engine sends no event for it.
+                self.workspace.update(cx, |workspace, cx| workspace.refresh_policy(cx));
+            }
         }
         cx.notify();
     }
