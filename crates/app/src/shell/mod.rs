@@ -259,6 +259,7 @@ impl Shell {
             | ModelEvent::FlowLoadFinished(_)
             | ModelEvent::SyncStatus
             | ModelEvent::HistoryChanged
+            | ModelEvent::PolicyChanged
             | ModelEvent::AccountChanged(_)
             | ModelEvent::CompanionsChanged
             | ModelEvent::CookiesChanged

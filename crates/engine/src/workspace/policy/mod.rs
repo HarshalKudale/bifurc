@@ -1,6 +1,7 @@
 //! Agent guardrails: the workspace's `policy.yaml` (or `policy.json`) says which outbound calls the command
 //! line and MCP may make. A human edits the file; no command writes it. It sits at the workspace root, is read
-//! on each check and cached by its modification time (no watcher).
+//! on each check and cached by its modification time. The history watch also looks at its time and size and
+//! says `policy.changed {workspaceId}` when they move, so a client showing the policy reads it again.
 //!
 //! ```yaml
 //! apply_to: [cli, mcp]          # default; add `app` to hold the desktop app to it too
@@ -273,16 +274,24 @@ fn applies(policy_apply_to: &[String], client: &str) -> bool {
 /// The file's name and what it holds: `None` when the workspace has no policy file.
 type Loaded = Option<(&'static str, std::result::Result<Arc<Policy>, String>)>;
 
-type Stamp = (&'static str, Option<SystemTime>, u64);
+pub type Stamp = (&'static str, Option<SystemTime>, u64);
 
 static CACHE: LazyLock<Mutex<HashMap<String, (Stamp, Loaded)>>> = LazyLock::new(Default::default);
+
+/// Which policy file the workspace has, with its time and size: `None` when it has none.
+pub fn stamp(ws_id: &str) -> Option<Stamp> {
+    let dir: PathBuf = ws_dir(ws_id);
+    FILES.iter().find_map(|f| {
+        let meta = std::fs::metadata(dir.join(f)).ok().filter(|m| m.is_file())?;
+        Some((*f, meta.modified().ok(), meta.len()))
+    })
+}
 
 // shortcut: with no policy file this is two stats per guarded send; one watcher/inotify-style cache if sends get hot.
 fn load(ws_id: &str) -> Loaded {
     let dir: PathBuf = ws_dir(ws_id);
-    let (file, meta) =
-        FILES.iter().find_map(|f| std::fs::metadata(dir.join(f)).ok().filter(|m| m.is_file()).map(|m| (*f, m)))?;
-    let stamp: Stamp = (file, meta.modified().ok(), meta.len());
+    let stamp = stamp(ws_id)?;
+    let file = stamp.0;
     if let Some((seen, loaded)) = CACHE.lock().get(ws_id)
         && *seen == stamp
     {
