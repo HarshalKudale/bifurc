@@ -1,0 +1,20 @@
+{
+  "check": "Vertrag prüfen",
+  "check_tooltip": "Die zugehörige Anfrage senden und ihre Antwort mit diesem Mock vergleichen",
+  "check_all_tooltip": "Jeden Mock mit seiner echten API vergleichen",
+  "running": "Wird geprüft…",
+  "running_all": "Mocks werden geprüft…",
+  "matches": "Stimmt mit {request} überein ({source})",
+  "unpaired": "Nicht geprüft: {reason}",
+  "failed": "Vertragsprüfung fehlgeschlagen: {error}",
+  "truncated": "…und {count} weitere",
+  "summary": "{ok} stimmen, {drifted} abweichend, {failed} fehlgeschlagen, {unpaired} ohne Paar",
+  "menu.check_folder": "Vertrag prüfen",
+  "options.title": "Alle Mocks prüfen",
+  "options.folder_title": "Mocks im Ordner prüfen",
+  "options.from_capture": "Mit aufgezeichnetem Verkehr vergleichen",
+  "options.from_snapshot": "Mit gespeicherten Snapshots vergleichen",
+  "options.ignore": "Pfade ignorieren",
+  "options.ignore_placeholder": ".id, .items[].updatedAt",
+  "options.run": "Prüfen"
+}

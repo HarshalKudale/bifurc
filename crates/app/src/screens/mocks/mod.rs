@@ -4,6 +4,7 @@
 //! It has the shape of the Requests screen for the same reason: a mock is a saved entity in folders, opened
 //! to be edited. The tree comes from the model's snapshot; an open mock is a [`MockEditor`].
 
+mod contract;
 mod editor;
 mod live;
 mod tree;
@@ -27,6 +28,7 @@ use gpui_kit::{
 use serde_json::{Map, Value, json};
 
 use self::{
+    contract::ContractState,
     editor::{MockEditor, MockEvent},
     live::{Hits, Server, group_of, servers_of},
     tree::{MockExtra, MockTree, MockTreeEvent, deleted_target, is_deleted, locked_to},
@@ -108,6 +110,8 @@ pub struct MocksScreen {
     hits: Hits,
     /// The mock servers of this workspace.
     servers: Vec<Server>,
+    /// Contract checks: the latest for the open mock and the latest over many.
+    contract: ContractState,
     /// The screen has been in front, so the extras above are worth keeping current.
     shown: bool,
     _subscriptions: Vec<Subscription>,
@@ -163,6 +167,7 @@ impl MocksScreen {
                     this.mock_rows.clear();
                     this.hits = Hits::default();
                     this.servers.clear();
+                    this.contract = ContractState::default();
                     if this.shown {
                         this.refresh(cx);
                     }
@@ -198,6 +203,7 @@ impl MocksScreen {
             mock_rows: Vec::new(),
             hits: Hits::default(),
             servers: Vec::new(),
+            contract: ContractState::default(),
             shown: false,
             _subscriptions: subscriptions,
         }
@@ -977,6 +983,7 @@ impl MocksScreen {
             MockTreeEvent::Open(TreeKey::Folder(_)) => {}
             MockTreeEvent::Extra(MockExtra::NewMock { folder }) => self.new_mock(folder, window, cx),
             MockTreeEvent::Extra(MockExtra::ImportCurl { folder }) => self.import_curl(folder, window, cx),
+            MockTreeEvent::Extra(MockExtra::CheckContract { folder }) => self.prompt_contract(Some(folder), window, cx),
             MockTreeEvent::NewFolder { parent } => self.prompt_new_folder(parent, window, cx),
             MockTreeEvent::Rename(key) => self.prompt_rename(key, window, cx),
             MockTreeEvent::Duplicate(TreeKey::Item(id)) => self.duplicate(id, window, cx),
@@ -1050,6 +1057,14 @@ impl MocksScreen {
         let suffix = h_flex()
             .flex_none()
             .px_1()
+            .child(
+                Button::new("mock-check-all")
+                    .icon(IconName::CircleCheck)
+                    .ghost()
+                    .small()
+                    .tooltip(t("contract.check_all_tooltip"))
+                    .on_click(cx.listener(|this, _, window, cx| this.prompt_contract(None, window, cx))),
+            )
             .child(
                 Button::new("mock-serve")
                     .icon(IconName::Play)
@@ -1142,7 +1157,9 @@ impl Render for MocksScreen {
             .bg(cx.theme().background)
             .child(self.render_tab_strip(tree_open, window, cx))
             .children(self.render_servers(cx))
+            .children(self.render_contract_report(cx))
             .children(self.render_scenarios(cx).filter(|_| curl.is_none()))
+            .children(self.render_contract_bar(cx).filter(|_| curl.is_none()))
             .child(div().flex_1().min_h_0().child(body))
             .children(footer);
         // The split's sizes are physical starting points the user resizes, not part of the rem scale.
