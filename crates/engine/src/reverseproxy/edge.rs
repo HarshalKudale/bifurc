@@ -19,8 +19,8 @@ use crate::{
     certificates::{apply_settings, listener_server_config},
     kernel::traffic::{RequestLogEntry, emit_log, forwarded_headers, traceparent_trace_id},
     mocks::{
-        UpstreamResponse, is_fully_mocked, is_streaming_mock, match_mock, merge_mock_with_upstream,
-        resolve_mock_only_response, serve_mock, serve_resolved_response,
+        UpstreamResponse, add_cors, cors_preflight, is_fully_mocked, is_streaming_mock, match_mock,
+        merge_mock_with_upstream, resolve_mock_only_response, serve_mock, serve_resolved_response,
     },
     proxy::{
         error_entry,
@@ -200,12 +200,29 @@ async fn route<W: AsyncRead + AsyncWrite + Unpin>(
     // Mocks written for a name's `http://` address keep applying once the name is served over HTTPS.
     let mocks = &routing.mocks;
     let http_url = format!("http://{host_header}{req_path}");
-    let matched = match_mock(mocks, method, &url, env)
-        .or_else(|| if shared.is_secure() { match_mock(mocks, method, &http_url, env) } else { None });
+    let mock_for = |method: &str| {
+        match_mock(mocks, method, &url, env)
+            .or_else(|| if shared.is_secure() { match_mock(mocks, method, &http_url, env) } else { None })
+    };
+    if let Some(preflight) = cors_preflight(method, &headers, |m| mock_for(m).is_some()) {
+        emit_log(&crate::proxy::finished_entry(
+            &base,
+            preflight.status,
+            "mock",
+            None,
+            now_ms() - t0,
+            preflight.headers.clone(),
+            log_body(&preflight.body),
+        ));
+        let _ = serve_resolved_response(out, &preflight).await;
+        return;
+    }
+    let matched = mock_for(method);
     if let Some(mock) = matched {
         let mock_target = Some(format!("mock:{}", mock.id));
         if is_fully_mocked(mock) {
-            let resolved = resolve_mock_only_response(mock, env);
+            let mut resolved = resolve_mock_only_response(mock, env);
+            add_cors(&mut resolved.headers, &headers);
             emit_log(&crate::proxy::finished_entry(
                 &base,
                 resolved.status,
@@ -216,7 +233,7 @@ async fn route<W: AsyncRead + AsyncWrite + Unpin>(
                 log_body(&resolved.body),
             ));
             let _ = if is_streaming_mock(mock) {
-                serve_mock(out, mock, env).await
+                serve_mock(out, mock, env, &headers).await
             } else {
                 serve_resolved_response(out, &resolved).await
             };
@@ -241,7 +258,8 @@ async fn route<W: AsyncRead + AsyncWrite + Unpin>(
             crate::proxy::fetch_upstream_response(method, target, req_path, &forwarded, body, None, "").await;
         match upstream {
             Ok(upstream) => {
-                let merged = merge_mock_with_upstream(mock, &upstream, env);
+                let mut merged = merge_mock_with_upstream(mock, &upstream, env);
+                add_cors(&mut merged.headers, &headers);
                 emit_log(&crate::proxy::finished_entry(
                     &base,
                     merged.status,
