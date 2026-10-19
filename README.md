@@ -21,15 +21,15 @@ It brings together `*.localhost` mappings, proxy rules, capture tooling, REST/Gr
 
 ## Engine, CLI, MCP server and desktop UI
 
-The engine (`packages/engine-rust`), the `bifurc` CLI (`packages/cli-rust`), the `bifurc-mcp` MCP server
-(`packages/mcp-rust`), the shared wire types
-(`packages/protocol-rust`) and the desktop UI (`packages/ui-rust`) are all Rust. There is no Node runtime.
+The engine (`crates/engine`), the `bifurc` command (`crates/bifurc`, over the CLI in `crates/cli` and the MCP server
+in `crates/mcp`), the shared wire types and client
+(`crates/protocol`, `crates/client`) and the desktop UI (`crates/app`, `crates/tray`) are all Rust. There is no Node runtime.
 
 ```bash
 cargo dev:engine     # the engine, in this terminal (logs here; Ctrl+C or `cargo dev:cli engine stop` ends it)
 cargo dev:ui         # the UI; attaches to a running engine, or starts one from target/ if none is
 cargo dev:cli <cmd>  # the `bifurc` CLI, e.g. `cargo dev:cli status`
-cargo dev:mcp        # the `bifurc-mcp` MCP server, on this terminal's stdin and stdout
+cargo dev:mcp        # `bifurc --mcp`, the MCP server, on this terminal's stdin and stdout
 cargo xtask package  # installer / Store package / AppImage / macOS .dmg
 ```
 
@@ -38,7 +38,7 @@ On Windows a running engine locks `target/debug/bifurc-engine.exe`, so stop it b
 
 ### MCP server
 
-`bifurc --mcp` gives an AI agent the commands of the `bifurc` CLI as tools, over stdio. `--mcp` must be the only
+`bifurc --mcp` gives an AI agent the commands of the `bifurc` CLI as tools, over stdio. `--mcp` must be the first
 argument. It talks to the same engine and starts one if none is running. Register it with an MCP host as a stdio
 server whose command is `bifurc` with the argument `--mcp`, for example:
 
@@ -48,7 +48,7 @@ server whose command is `bifurc` with the argument `--mcp`, for example:
 
 The everyday tools (send a request, list requests, mocks and mappings, create a mock or a mapping) are listed to
 the agent; it finds the others with `search_tools`, reads one with `describe_tool` and runs it with `call_tool`.
-The `bifurc-mcp` binary itself (`cargo dev:mcp`) also takes `--all-tools`, which lists every tool instead, for a host that searches tools itself. Like the CLI it cannot
+After `--mcp` the server's own options may follow (`cargo dev:mcp --all-tools` lists every tool instead, for a host that searches tools itself; `--help` lists the rest). Like the CLI it cannot
 delete anything, read a secret, sign in or stop the engine.
 
 
@@ -56,12 +56,16 @@ delete anything, read a secret, sign in or stop the engine.
 
 ```text
 Bifurc/
-├── packages/
-│   ├── protocol-rust/  # Wire types and command schemas shared by the engine and its clients
-│   ├── engine-rust/    # The engine: proxies, mocks, requests, workspaces, git
-│   ├── cli-rust/       # The `bifurc` CLI
-│   └── mcp-rust/       # The `bifurc-mcp` MCP server: the CLI's commands as tools
-├── packages/ui-rust/   # Desktop UI (GPUI), tray helper and the installed `bifurc` launcher
+├── crates/
+│   ├── protocol/       # Wire types and command schemas shared by the engine and its clients
+│   ├── client/         # Synchronous engine client shared by the CLI and MCP server
+│   ├── engine/         # The engine: proxies, mocks, requests, workspaces, git
+│   ├── cli/            # The CLI (library)
+│   ├── mcp/            # The MCP server (library): the CLI's commands as tools
+│   ├── engine-client/  # The desktop UI's async connection to the engine
+│   ├── app/            # Desktop UI (GPUI)
+│   ├── tray/           # Tray helper the engine runs
+│   └── bifurc/         # The `bifurc` binary: the CLI, or the MCP server with `--mcp`
 ├── xtask/              # `cargo xtask package`
 ├── packaging/          # Installer, Store package and AppImage templates
 └── build/              # Icons
@@ -96,8 +100,8 @@ Load the `bifurc-extension` repository's folder unpacked in Chrome or Edge to:
 ## Testing
 
 ```bash
-cargo test --workspace                                  # protocol, engine, CLI
-cargo test --workspace --manifest-path packages/ui-rust/Cargo.toml    # UI
+cargo test                # protocol, engine, CLI, MCP server (the default members)
+cargo test --workspace    # and the UI crates, which need GPUI's build dependencies
 ```
 
 ## Licensing
