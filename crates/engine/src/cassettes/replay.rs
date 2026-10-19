@@ -362,7 +362,11 @@ pub fn lookup(
     if workspace_id.is_some_and(|w| w != replay.workspace_id) || host.is_some_and(|h| !host_matches(h, &replay.hosts)) {
         return None;
     }
-    replay.decide(&Incoming::new(method, target, content_type, body), target, url, host.is_some())
+    let reply = replay.decide(&Incoming::new(method, target, content_type, body), target, url, host.is_some());
+    drop(guard);
+    // The footer and Capture toolbar show served/unmatched counts.
+    super::announce();
+    reply
 }
 
 /// Answer `base`'s request from the cassette being replayed, if one applies: logs it and writes the response.

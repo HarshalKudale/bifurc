@@ -210,7 +210,11 @@ impl Shell {
                     Notification::warning(t_with("shell.agents.toast", &[("by", &item.by), ("request", &request)]))
                         .title(t("shell.agents.toast_title"))
                         .on_click(move |_, window, cx| {
-                            shell.update(cx, |shell, cx| shell.open_approvals(window, cx)).ok();
+                            // Deferred: opened inside the toast's own click, the dialog closed again at once.
+                            let shell = shell.clone();
+                            window.defer(cx, move |window, cx| {
+                                shell.update(cx, |shell, cx| shell.open_approvals(window, cx)).ok();
+                            });
                         }),
                     cx,
                 );
