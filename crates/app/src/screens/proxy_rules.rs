@@ -858,6 +858,13 @@ impl ProxyRulesScreen {
     }
 }
 
+impl ProxyRulesScreen {
+    /// Whether the Faults tab is in front (the footer counts faults then).
+    pub fn on_faults(&self) -> bool {
+        self.tab == 1
+    }
+}
+
 impl Render for ProxyRulesScreen {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
         let on_faults = self.tab == 1;
@@ -874,7 +881,8 @@ impl Render for ProxyRulesScreen {
                 .label(t("proxy_rules.button.new_rule"))
                 .on_click(cx.listener(|this, _, window, cx| this.go_to(Selection::Draft, window, cx)))
         };
-        let header = page::header(t("proxy_rules.page.title"), t("proxy_rules.page.description"), action, cx);
+        let description = if on_faults { t("faults.page.description") } else { t("proxy_rules.page.description") };
+        let header = page::header(t("proxy_rules.page.title"), description, action, cx);
         let tabs = div().flex_none().px_3().child(
             TabBar::new("proxy-tabs")
                 .underline()

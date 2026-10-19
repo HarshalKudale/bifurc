@@ -268,7 +268,7 @@ impl WorkspaceScreen {
         });
     }
 
-    fn refresh_policy(&mut self, cx: &mut Context<Self>) {
+    pub fn refresh_policy(&mut self, cx: &mut Context<Self>) {
         let model = self.model.read(cx);
         let workspace_id = model.workspace_id().to_owned();
         if workspace_id.is_empty() {

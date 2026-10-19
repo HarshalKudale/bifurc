@@ -22,5 +22,6 @@
   "error.break": "Break connection must be drop or reset, or empty.",
   "error.nothing": "A fault needs a latency, a status, or drop or reset.",
   "error.alone": "Drop and reset cannot be combined with latency or status.",
-  "error.add": "Could not add the fault: {message}"
+  "error.add": "Could not add the fault: {message}",
+  "page.description": "Faults slow down or fail traffic through the forward proxy, to test how an app copes. They live in the engine until cleared."
 }

@@ -352,6 +352,10 @@ impl Shell {
             if screen == Screen::Webhooks {
                 self.webhooks.update(cx, |webhooks, cx| webhooks.refresh(window, cx));
             }
+            if screen == Screen::WorkspaceConfig {
+                // policy.yaml is edited by hand outside the app; the engine sends no event for it.
+                self.workspace.update(cx, |workspace, cx| workspace.refresh_policy(cx));
+            }
         }
         cx.notify();
     }

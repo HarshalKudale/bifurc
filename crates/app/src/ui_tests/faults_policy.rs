@@ -53,8 +53,9 @@ fn the_policy_page_shows_the_policy_and_checks_a_command(cx: &mut gpui_kit::Test
         ]}),
     );
     ui.fake.reply("policy.check", json!({"decision": "require_human", "policy": "no-prod-writes", "reason": "held"}));
+    ui.fake.forget_calls();
     ui.show(Screen::WorkspaceConfig);
-    assert_eq!(ui.fake.sent("policy.show"), [json!({"workspaceId": "w1"})]);
+    assert_eq!(ui.fake.sent("policy.show"), [json!({"workspaceId": "w1"})], "re-read on show: edited by hand");
     ui.click("0-4");
     assert!(ui.has("policy-reveal"), "reveal");
     ui.fake.forget_calls();
