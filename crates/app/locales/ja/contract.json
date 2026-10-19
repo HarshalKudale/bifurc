@@ -1,0 +1,20 @@
+{
+  "check": "コントラクトを確認",
+  "check_tooltip": "対応するリクエストを送信し、その応答をこのモックと比較します",
+  "check_all_tooltip": "すべてのモックを実際の API と比較します",
+  "running": "確認中…",
+  "running_all": "モックを確認中…",
+  "matches": "{request} と一致 ({source})",
+  "unpaired": "未確認: {reason}",
+  "failed": "コントラクトの確認に失敗しました: {error}",
+  "truncated": "…ほか {count} 件",
+  "summary": "一致 {ok}、差異 {drifted}、失敗 {failed}、ペアなし {unpaired}",
+  "menu.check_folder": "コントラクトを確認",
+  "options.title": "すべてのモックを確認",
+  "options.folder_title": "フォルダー内のモックを確認",
+  "options.from_capture": "キャプチャしたトラフィックと比較",
+  "options.from_snapshot": "保存したスナップショットと比較",
+  "options.ignore": "無視するパス",
+  "options.ignore_placeholder": ".id, .items[].updatedAt",
+  "options.run": "確認"
+}

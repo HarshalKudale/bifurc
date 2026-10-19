@@ -26,6 +26,7 @@ use crate::{
 pub enum MockExtra {
     NewMock { folder: Option<String> },
     ImportCurl { folder: Option<String> },
+    CheckContract { folder: String },
 }
 
 pub type MockTreeEvent = FolderTreeEvent<TreeKey, MockExtra>;
@@ -150,7 +151,9 @@ impl FolderTreeSource for MockSource {
 
     fn folder_menu(menu: PopupMenu, folder: &str, tree: &WeakEntity<MockTree>) -> PopupMenu {
         let event = FolderTreeEvent::Extra(MockExtra::NewMock { folder: Some(folder.to_owned()) });
+        let check = FolderTreeEvent::Extra(MockExtra::CheckContract { folder: folder.to_owned() });
         menu.item(PopupMenuItem::new(t("mocks.menu.new_mock_here")).on_click(emitter(tree, event)))
+            .item(PopupMenuItem::new(t("contract.menu.check_folder")).on_click(emitter(tree, check)))
     }
 
     fn new_menu(menu: PopupMenu, folder: Option<String>, tree: &WeakEntity<MockTree>) -> PopupMenu {

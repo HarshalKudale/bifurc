@@ -784,8 +784,7 @@ impl AppModel {
 
     /// Takes the entity over from whoever holds it (`claims.set` with `force`). The list follows from the event.
     pub fn take_over(&mut self, claim: &Claim, cx: &mut Context<Self>) {
-        let payload =
-            json!({ "workspaceId": self.workspace_id(), "id": claim.id, "kind": claim.kind, "force": true });
+        let payload = json!({ "workspaceId": self.workspace_id(), "id": claim.id, "kind": claim.kind, "force": true });
         self.run_for_agents("claims.set", payload, cx);
     }
 
