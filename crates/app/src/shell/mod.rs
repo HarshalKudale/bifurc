@@ -10,6 +10,7 @@ mod chrome;
 mod nav;
 mod palette;
 mod right_sidebar;
+mod types_tab;
 
 use gpui_kit::component::{
     ActiveTheme as _, WindowExt as _,
@@ -262,6 +263,7 @@ impl Shell {
             | ModelEvent::MailChanged(_)
             | ModelEvent::WebhookChanged(_)
             | ModelEvent::ClaimsChanged
+            | ModelEvent::ResponseReceived(_)
             | ModelEvent::EngineRestarted
             | ModelEvent::ConfigPatched
             | ModelEvent::EntityReverted(_) => {}

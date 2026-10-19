@@ -227,6 +227,8 @@ pub enum ModelEvent {
     FlowLoadProgress(Value),
     /// `event.flow.loadtest.finished`: a flow's load test ended, with its report.
     FlowLoadFinished(Value),
+    /// The saved request with this id got a response from a send in the app, so it has a new sample.
+    ResponseReceived(String),
     /// The entity with this id was put back to its last synced version; an editor showing it must re-read it.
     EntityReverted(String),
     /// `event.sync.status`: the workspace's remote sync started, finished or failed at something.
