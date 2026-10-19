@@ -75,7 +75,7 @@ impl Channel {
     /// The name, in a release's `packages`, of the file this install is replaced with.
     pub fn package_key(self) -> Option<String> {
         let arm = std::env::consts::ARCH == "aarch64";
-        let package = self.updater_package().or((self == Channel::Dmg).then_some("dmg"))?;
+        let package = self.updater_package()?;
         let arch = match package {
             "appimage" | "tarball" => {
                 if arm {
@@ -104,8 +104,8 @@ impl Channel {
 
     /// The kind of package `bifurc-updater` installs over this install, for the installs that sit in a folder
     /// the person owns. A package manager that runs the installer (winget) or unpacks the zip (Scoop) leaves the
-    /// same files in the same places, so the same package replaces them. The Store's files are the Store's,
-    /// the AUR's are root's, and a dmg is dragged to Applications.
+    /// same files in the same places, so the same package replaces them. The Store's files are the Store's and
+    /// the AUR's are root's; a dmg's `Bifurc.app` is in /Applications or ~/Applications, which the person can write.
     pub fn updater_package(self) -> Option<&'static str> {
         match self {
             Channel::Installer | Channel::Winget => Some("nsis"),
@@ -113,6 +113,7 @@ impl Channel {
             Channel::AppImage => Some("appimage"),
             Channel::Deb => Some("deb"),
             Channel::Tarball => Some("tarball"),
+            Channel::Dmg => Some("dmg"),
             _ => None,
         }
     }

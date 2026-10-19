@@ -36,7 +36,7 @@ use sha2::{Digest, Sha256};
 const TRUSTED_PREFIXES: [&str; 2] = ["https://github.com/HarshalKudale/bifurc-releases/", "https://bifurc.app/"];
 const PROGRESS_FILE: &str = "update-progress.json";
 const EXE: &str = env::consts::EXE_SUFFIX;
-const PACKAGES: [&str; 5] = ["nsis", "zip", "tarball", "appimage", "deb"];
+const PACKAGES: [&str; 6] = ["nsis", "zip", "tarball", "appimage", "deb", "dmg"];
 
 struct Job {
     package: String,
@@ -173,6 +173,7 @@ fn apply(job: &Job, stopped: &mut bool) -> Result<(), String> {
         "zip" => extract(&file, &job.app_dir, false),
         "tarball" => extract(&file, &job.app_dir, true),
         "appimage" => replace_appimage(&file, job.target.as_deref()),
+        "dmg" => replace_app_bundle(&file, &job.app_dir, &job.data_dir),
         _ => install_deb(&file),
     }
 }
@@ -312,6 +313,43 @@ fn replace_appimage(file: &Path, target: Option<&Path>) -> Result<(), String> {
 #[cfg(not(unix))]
 fn replace_appimage(_: &Path, _: Option<&Path>) -> Result<(), String> {
     Err("an AppImage is replaced on Linux only".to_string())
+}
+
+/// The `Bifurc.app` that `app_dir` (its `Contents/MacOS`) is in, replaced by the one in the disk image `file`.
+/// The new copy is made beside the old one first, so a failed copy leaves the installed app as it was.
+fn replace_app_bundle(file: &Path, app_dir: &Path, data_dir: &Path) -> Result<(), String> {
+    let bundle = app_dir
+        .parent()
+        .and_then(Path::parent)
+        .filter(|bundle| bundle.extension().is_some_and(|ext| ext == "app"))
+        .ok_or_else(|| format!("{} is not inside a Bifurc.app", app_dir.display()))?;
+    let mount = data_dir.join("update").join("mount");
+    fs::create_dir_all(&mount).map_err(|e| format!("{}: {e}", mount.display()))?;
+    let attached = Command::new("hdiutil")
+        .args(["attach", "-nobrowse", "-readonly", "-quiet", "-mountpoint"])
+        .arg(&mount)
+        .arg(file)
+        .status()
+        .map_err(|e| format!("could not open the disk image: {e}"))?;
+    if !attached.success() {
+        return Err(format!("could not open the disk image: {attached}"));
+    }
+    let mut staged = bundle.as_os_str().to_owned();
+    staged.push(".new");
+    let staged = PathBuf::from(staged);
+    let _ = fs::remove_dir_all(&staged);
+    let copied = Command::new("ditto").arg(mount.join("Bifurc.app")).arg(&staged).status();
+    let _ = Command::new("hdiutil").args(["detach", "-quiet"]).arg(&mount).status();
+    match copied {
+        Ok(status) if status.success() => {}
+        Ok(status) => {
+            let _ = fs::remove_dir_all(&staged);
+            return Err(format!("could not copy the new app: {status}"));
+        }
+        Err(e) => return Err(format!("could not copy the new app: {e}")),
+    }
+    fs::remove_dir_all(bundle).map_err(|e| format!("{} could not be replaced: {e}", bundle.display()))?;
+    fs::rename(&staged, bundle).map_err(|e| format!("{} could not be put in place: {e}", bundle.display()))
 }
 
 /// A package of the system: installing it needs a privileged account, which polkit asks the person for.

@@ -388,6 +388,7 @@ mod tests {
         stored["manifest"]["releases"][0]["packages"] = json!({
             "nsis-x64": file("setup.exe", Some(&"a".repeat(64))),
             "zip-x64": file("app.zip", None),
+            "dmg-x64": file("app.dmg", Some(&"b".repeat(64))),
         });
         let action = |channel, self_update| {
             status_from(&stored, "0.5.0", channel, true, false, None, self_update)["action"].clone()
@@ -397,6 +398,7 @@ mod tests {
             assert_eq!(action(Channel::Installer, true), updater);
             // winget runs the same installer, so the same file replaces its install.
             assert_eq!(action(Channel::Winget, true), updater);
+            assert_eq!(action(Channel::Dmg, true), updater);
             assert_eq!(action(Channel::Installer, false)["kind"], "download");
             // A file with no checksum is not run.
             assert_eq!(action(Channel::Portable, true)["kind"], "download");
