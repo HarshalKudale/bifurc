@@ -1,21 +1,68 @@
-# The Rust engine and CLI. The desktop UI is its own workspace in `packages/ui-rust`.
+# The whole repository: the engine, CLI and MCP server, and the desktop UI (`crates/app`).
 [workspace]
 resolver = "2"
-members = ["packages/protocol-rust", "packages/engine-rust", "packages/cli-rust", "packages/mcp-rust", "xtask"]
-exclude = ["packages/ui-rust"]
+members = [
+    "crates/protocol",
+    "crates/client",
+    "crates/engine",
+    "crates/cli",
+    "crates/mcp",
+    "crates/engine-client",
+    "crates/app",
+    "crates/tray",
+    "crates/bifurc",
+    "xtask",
+]
+# What a plain `cargo build` / `cargo test` at the root covers: everything but the GPUI app, whose build needs a
+# graphics toolchain. Use `--workspace` or `-p bifurc-ui` for it.
+default-members = [
+    "crates/protocol",
+    "crates/client",
+    "crates/engine",
+    "crates/cli",
+    "crates/mcp",
+    "crates/bifurc",
+    "xtask",
+]
 
 [workspace.package]
-version = "0.5.0"
+version = "0.6.0"
 edition = "2024"
 license = "LicenseRef-PolyForm-Noncommercial-1.0.0"
 authors = ["Harshal Kudale"]
 
 [profile.release]
 opt-level = 3
-lto = "fat"
-codegen-units = 1
+# Thin LTO for the whole workspace: a fat link of the GPUI app is too slow. The engine side keeps one codegen unit.
+lto = "thin"
+codegen-units = 16
 strip = true
+
+[profile.release.package.bifurc-protocol]
+codegen-units = 1
+[profile.release.package.bifurc-client]
+codegen-units = 1
+[profile.release.package.bifurc-engine]
+codegen-units = 1
+[profile.release.package.bifurc-cli]
+codegen-units = 1
+[profile.release.package.bifurc-mcp]
+codegen-units = 1
+[profile.release.package.bifurc]
+codegen-units = 1
 
 # Argon2 is the one slow thing a vault does; unoptimised it takes seconds per key in debug builds and tests.
 [profile.dev.package.argon2]
 opt-level = 3
+
+# Shared by every member crate through `[lints] workspace = true`. `clippy::all` is warn; CI runs clippy with `-D warnings`.
+[workspace.lints.rust]
+rust_2018_idioms = { level = "warn", priority = -1 }
+unused_must_use = "warn"
+# ~970 hits, almost all `Formatter`/GPUI context types written without `<'_>`; a deliberate style, not worth the churn.
+elided_lifetimes_in_paths = "allow"
+
+[workspace.lints.clippy]
+all = { level = "warn", priority = -1 }
+dbg_macro = "warn"
+todo = "warn"

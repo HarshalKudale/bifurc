@@ -1,0 +1,42 @@
+[package]
+name = "bifurc-ui"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+authors.workspace = true
+description = "Bifurc desktop UI: a GPUI app that runs the Bifurc engine as a sidecar."
+
+[[bin]]
+name = "bifurc-ui"
+path = "src/main.rs"
+
+[dependencies]
+bifurc-engine-client = { path = "../engine-client" }
+base64 = "0.22"
+futures = "0.3"
+lsp-types = "0.97"
+roxmltree = "0.21"
+gpui-kit = { version = "0.7.3", features = [
+    "tree-sitter",
+    "tree-sitter-html",
+    "tree-sitter-javascript",
+    "tree-sitter-graphql",
+    "tree-sitter-bash",
+    "tree-sitter-python",
+] }
+serde = { version = "1", features = ["derive"] }
+serde_json = { version = "1", features = ["preserve_order"] }
+
+[dev-dependencies]
+# UI tests: GPUI's test platform, and the element observation Kit's own components register with. Test-only:
+# `cargo xtask licenses` leaves what these features pull in out of the shipped notices.
+gpui = { package = "gpui-pre", version = "=0.3.9", features = ["test-support"] }
+gpui-base = { version = "0.7.3", features = ["test-support"] }
+gpui-component = { version = "0.7.3", features = ["test-support"] }
+
+# The executable's icon (what the taskbar and Explorer show) is a resource compiled in by build.rs.
+[target.'cfg(windows)'.build-dependencies]
+winresource = "0.1"
+
+[lints]
+workspace = true
