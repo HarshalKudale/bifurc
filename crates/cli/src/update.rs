@@ -47,6 +47,8 @@ fn describe(status: &Value) -> String {
                     "  The Microsoft Store installs it: open the Store's Downloads page to get it now.".to_string(),
                 ),
                 "command" => lines.push(format!("  Run: {}", text(action, "command"))),
+                "updater" => lines
+                    .push("  Run: bifurc update apply (closes Bifurc, installs it and opens it again).".to_string()),
                 _ => lines.push(format!("  Download: {}", text(action, "url"))),
             }
             if !text(available, "notesUrl").is_empty() {
@@ -67,11 +69,19 @@ fn describe(status: &Value) -> String {
     lines.join("\n")
 }
 
-/// `update [status|check]`.
+/// `update [status|check|apply]`. `apply` hands the update to the updater, which closes Bifurc, installs it and
+/// opens it again.
 pub fn update(ctx: &mut Context, sub: Option<&str>) -> Result<String> {
     let command = match sub.unwrap_or("status") {
         "status" => "update.status",
         "check" => "update.check",
+        "apply" => {
+            ctx.accept(&[], 0)?;
+            let started = ctx.request("update.apply", json!({}))?;
+            return Ok(
+                ctx.print(&started, || "The updater is running. Bifurc closes, updates and opens again.".to_string())
+            );
+        }
         other => return Err(unknown_verb("update", other)),
     };
     ctx.accept(&[], 0)?;
@@ -113,6 +123,15 @@ mod tests {
         let (out, calls) = run(&argv, vec![("update.check", Ok(current))], |c| update(c, sub(&argv)));
         assert_eq!(out.unwrap(), "Bifurc 0.6.0 (scoop) is up to date.");
         assert_eq!(calls[0].0, "update.check");
+    }
+
+    #[test]
+    fn apply_hands_the_update_to_the_updater() {
+        let argv = ["update", "apply"];
+        let (out, calls) =
+            run(&argv, vec![("update.apply", Ok(json!({ "started": true })))], |c| update(c, sub(&argv)));
+        assert!(out.unwrap().starts_with("The updater is running."));
+        assert_eq!(calls[0].0, "update.apply");
     }
 
     #[test]

@@ -1788,6 +1788,12 @@
    "lang": "rust"
   }
  },
+ "update.apply": {
+  "valid": {},
+  "invalid": {
+   "extra": true
+  }
+ },
  "update.check": {
   "valid": {},
   "invalid": {
