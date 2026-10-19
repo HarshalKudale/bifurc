@@ -228,3 +228,60 @@ fn running_servers_of_this_workspace_can_be_stopped(cx: &mut gpui_kit::TestAppCo
     ui.settle();
     assert!(!ui.fake.sent("mocks.serveStatus").is_empty());
 }
+
+#[gpui_kit::test]
+fn the_open_mock_is_checked_against_its_paired_request_and_drift_is_listed(cx: &mut gpui_kit::TestAppContext) {
+    let mut ui = open_populated(cx);
+    ui.fake.reply(
+        "contract.check",
+        json!({"checks": [{"mock": "Users mock", "mockId": "k1", "method": "GET", "path": "/users", "request": "List users",
+            "source": "real", "ok": false, "truncated": 3,
+            "differences": [{"kind": "+", "path": ".extra", "text": "+ .extra (string)"}]}],
+            "unpaired": [], "drifted": 1, "ok": 0, "failed": 0, "unpairedCount": 0}),
+    );
+    ui.show(Screen::Mocks);
+    ui.click("tree-row-k1");
+    ui.fake.forget_calls();
+    ui.click("contract-check");
+    let sent = ui.fake.sent("contract.check");
+    assert_eq!(sent.len(), 1);
+    assert_eq!((&sent[0]["workspaceId"], &sent[0]["mock"]), (&json!("w1"), &json!("k1")));
+    assert!(sent[0].get("all").is_none());
+    assert!(ui.has("contract-drift"));
+    assert!(!ui.has("contract-report"), "one mock's answer stays in its editor");
+}
+
+#[gpui_kit::test]
+fn checking_all_asks_for_options_then_lists_each_mock_and_opens_it_on_click(cx: &mut gpui_kit::TestAppContext) {
+    let mut ui = open_populated(cx);
+    ui.fake.reply(
+        "contract.check",
+        json!({"checks": [{"mock": "Users mock", "mockId": "k1", "method": "GET", "path": "/users", "request": "List users",
+            "source": "capture", "ok": true, "truncated": 0, "differences": []}],
+            "unpaired": [{"mock": "Orders mock", "mockId": "k2", "method": "POST", "reason": "no saved request matches"}],
+            "drifted": 0, "ok": 1, "failed": 0, "unpairedCount": 1}),
+    );
+    ui.show(Screen::Mocks);
+    ui.fake.forget_calls();
+    ui.click("mock-check-all");
+    ui.click("contract-from-capture");
+    ui.click("contract-run");
+    let sent = ui.fake.sent("contract.check");
+    assert_eq!(sent.len(), 1);
+    assert_eq!((&sent[0]["all"], &sent[0]["fromCapture"]), (&json!(true), &json!(true)));
+    assert!(ui.has("contract-summary") && ui.has("contract-row-k1") && ui.has("contract-unpaired-k2"));
+    ui.click("contract-row-k1");
+    assert!(ui.has("tab-mock-k1"));
+    ui.click("contract-close");
+    assert!(!ui.has("contract-report"));
+}
+
+#[gpui_kit::test]
+fn a_failed_check_says_why(cx: &mut gpui_kit::TestAppContext) {
+    let mut ui = open_populated(cx);
+    ui.fake.reply_with("contract.check", |_| Err("NOT_FOUND no such mock".into()));
+    ui.show(Screen::Mocks);
+    ui.click("tree-row-k1");
+    ui.click("contract-check");
+    assert!(ui.has("contract-error"));
+}
