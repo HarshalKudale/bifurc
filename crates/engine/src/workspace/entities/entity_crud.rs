@@ -21,9 +21,10 @@ use crate::{
     },
     utils::{
         id::{generate_id, now_ms},
-        json::{array_mut, array_of, is_truthy, merged, object_mut, opt_str, str_of, truthy},
+        json::{array_mut, array_of, is_truthy, merged, object_mut, opt_str, read_json, str_of, truthy},
     },
     workspace::{
+        changes, claims,
         config::{load_config, save_config},
         deletions::{pending_entity, remove_entity},
         fs::{
@@ -34,7 +35,7 @@ use crate::{
         settings::{load_settings, save_settings},
         stamp,
         status_cache::invalidate_cache,
-        tree,
+        tree, versions,
     },
 };
 
@@ -182,7 +183,28 @@ fn create_entity_core(
     if kind.kind == "mocks" || kind.kind == "requests" {
         bus().emit("entity.changed", json!({ "wsId": ws_id, "kind": kind.kind, "id": id, "action": "created" }));
     }
+    changes::record(&ws_id, kind.kind, &id, str_of(&new_entity, "name"), "created", &[]);
     Ok(new_entity)
+}
+
+/// An environment saved without `auth` (a client that does not know the field) keeps the one it has; an
+/// explicit `auth: null` removes it.
+fn keep_auth(kind: &CrudKind, ws_id: &str, id: &str, entity: &mut Value) {
+    if kind.kind != "environments" {
+        return;
+    }
+    match entity.get("auth") {
+        Some(Value::Null) => {
+            entity.as_object_mut().map(|fields| fields.shift_remove("auth"));
+        }
+        Some(_) => {}
+        None => {
+            let stored = find_entity_file(ws_id, kind.kind, id).and_then(|file| read_json(&file));
+            if let Some(auth) = stored.and_then(|stored| stored.get("auth").cloned()) {
+                entity["auth"] = auth;
+            }
+        }
+    }
 }
 
 fn update_entity_core(kind: &CrudKind, entity: &Value) -> Result<Value> {
@@ -200,13 +222,18 @@ fn update_entity_core(kind: &CrudKind, entity: &Value) -> Result<Value> {
     }
     let mut entity = entity.clone();
     place_in_folder(kind, &ws_id, &mut entity)?;
+    keep_auth(kind, &ws_id, &id, &mut entity);
     let mut cfg = load_config();
     if let Some(validate) = kind.validate {
         validate(&entity, &siblings_of(&cfg, kind, &ws_id, &id))?;
     }
 
     let list = array_mut(&mut cfg, kind.config_key);
+    let mut fields = Vec::new();
     if let Some(slot) = list.iter_mut().find(|e| str_of(e, "id") == id) {
+        // The config holds only a stub of a request-like entity: the file has what it was.
+        let before = find_entity_file(&ws_id, kind.kind, &id).and_then(|file| read_json(&file));
+        fields = changes::changed_fields(before.as_ref().unwrap_or(slot), &entity);
         *slot = entity.clone();
     }
 
@@ -220,6 +247,10 @@ fn update_entity_core(kind: &CrudKind, entity: &Value) -> Result<Value> {
     }
 
     notify_config_changed();
+    // A save that changes nothing (an autosave) is not a change.
+    if !fields.is_empty() {
+        changes::record(&ws_id, kind.kind, &id, str_of(&entity, "name"), "updated", &fields);
+    }
     bus().emit(
         "entity.changed",
         json!({
@@ -300,6 +331,8 @@ async fn delete_entity_core(kind: &CrudKind, id: &str) -> Result<Value> {
 
     notify_config_changed();
     invalidate_cache(&ws_id);
+    changes::record(&ws_id, kind.kind, id, str_of(&entity, "name"), "deleted", &[]);
+    claims::drop_claim(&ws_id, id);
     bus().emit(
         "entity.changed",
         json!({ "wsId": ws_id, "kind": to_protocol_kind(kind.kind), "id": id, "action": "deleted", "pending": pending }),
@@ -347,7 +380,13 @@ pub fn register(registry: &mut CommandRegistry) {
         let Some(kind) = crud_kind(to_engine_kind(wire_kind)) else {
             return Err(not_routed("entity.update", wire_kind));
         };
-        update_entity_core(kind, params.get("entity").unwrap_or(&Value::Null))
+        let entity = params.get("entity").unwrap_or(&Value::Null);
+        let (ws_id, id) = (workspace_of(entity, &load_config()), str_of(entity, "id").to_string());
+        versions::check(&ws_id, kind.kind, &id, truthy(&params, "force"))?;
+        let mut done = update_entity_core(kind, entity)?;
+        versions::wrote(&ws_id, kind.kind, &id);
+        claims::annotate(&ws_id, &id, &mut done);
+        Ok(done)
     });
 
     registry.register("entity.delete", |params, _| async move {
@@ -412,6 +451,7 @@ mod tests {
 
     use super::*;
     use crate::{
+        env::session,
         kernel::{CommandContext, Scope, SessionIdentity},
         protocol::ErrorCode,
         testing::scratch_data_root,
@@ -481,6 +521,75 @@ mod tests {
         let details = error.details.expect("the error says why");
         assert_eq!(details["reason"], stamp::UPDATE_REQUIRED);
         details["requiredVersion"].clone()
+    }
+
+    #[tokio::test]
+    async fn an_environment_saved_without_auth_keeps_it_and_null_removes_it() {
+        let _root = scratch_data_root();
+        let ctx = context();
+        let auth = json!({ "login": { "kind": "request", "id": "r" }, "retryOn401": true });
+        let env = json!({ "name": "e", "variables": [], "auth": auth });
+        let created = create(&ctx, "environments", env).await;
+        let stored = || {
+            let file = find_entity_file(WS, "environments", str_of(&created, "id")).unwrap();
+            read_json(&file).unwrap()
+        };
+        let mut plain = created.clone();
+        plain.as_object_mut().unwrap().shift_remove("auth");
+        plain["name"] = json!("renamed");
+        call(&ctx, "entity.update", json!({ "kind": "environments", "entity": plain.clone() })).await.unwrap();
+        assert_eq!((stored()["name"].clone(), stored()["auth"].clone()), (json!("renamed"), auth));
+        plain["auth"] = Value::Null;
+        call(&ctx, "entity.update", json!({ "kind": "environments", "entity": plain })).await.unwrap();
+        assert!(stored().get("auth").is_none());
+    }
+
+    #[tokio::test]
+    async fn an_agent_cannot_overwrite_what_another_changed_since_it_read() {
+        let _root = scratch_data_root();
+        let ctx = context();
+        let created = call(&ctx, "entity.create", json!({ "kind": "mocks", "entity": mock("/a") })).await.unwrap();
+        let id = created["id"].as_str().unwrap().to_string();
+        let load = json!({ "workspaceId": WS, "kind": "mocks", "id": id });
+        let edit = |status: i64| {
+            let mut m = created["entity"].clone();
+            m["responseStatus"] = json!(status);
+            json!({ "kind": "mocks", "entity": m })
+        };
+        let as_session = |name: &'static str, work| session::enter(WS, name, changes::as_client(Some("cli"), work));
+        let ask = |ctx: &CommandContext, action: &'static str, payload: Value| {
+            let ctx = ctx.clone();
+            async move { call(&ctx, action, payload).await }
+        };
+
+        // a reads (remembered); b changes it; a's update is refused with one line naming b.
+        as_session(
+            "a",
+            ask(&ctx, "entity.load", json!({ "workspaceId": WS, "kind": "mocks", "id": id, "remember": true })),
+        )
+        .await
+        .unwrap();
+        as_session("b", ask(&ctx, "entity.update", edit(201))).await.unwrap();
+        let refused = as_session("a", ask(&ctx, "entity.update", edit(202))).await.unwrap_err();
+        assert_eq!(refused.code, ErrorCode::Conflict);
+        assert!(!refused.message.contains('\n'));
+        assert!(refused.message.contains("responseStatus by session:b"), "{}", refused.message);
+        // A plain read (the CLI's own read-merge-write) does not refresh it.
+        as_session("a", ask(&ctx, "entity.load", load.clone())).await.unwrap();
+        assert!(as_session("a", ask(&ctx, "entity.update", edit(202))).await.is_err());
+        // --force passes; then a's own next write passes.
+        let mut forced = edit(202);
+        forced["force"] = json!(true);
+        as_session("a", ask(&ctx, "entity.update", forced)).await.unwrap();
+        as_session("a", ask(&ctx, "entity.update", edit(203))).await.unwrap();
+        // c never read it: not checked. The app is neither remembered nor checked.
+        as_session("c", ask(&ctx, "entity.update", edit(204))).await.unwrap();
+        let app = |work| changes::as_client(Some("desktop-ui"), work);
+        app(ask(&ctx, "entity.load", json!({ "workspaceId": WS, "kind": "mocks", "id": id, "remember": true })))
+            .await
+            .unwrap();
+        as_session("b", ask(&ctx, "entity.update", edit(205))).await.unwrap();
+        app(ask(&ctx, "entity.update", edit(206))).await.unwrap();
     }
 
     #[tokio::test]

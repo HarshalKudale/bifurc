@@ -10,7 +10,7 @@ use serde_json::{Value, json};
 use crate::{
     commands::{Context, account_id, find_one, list_entities, refused, with_field, workspace_id, workspace_rows},
     error::{CliError, Result},
-    format::{js_template, json, table},
+    format::{js_template, json},
     vault::find_vault,
 };
 
@@ -140,9 +140,6 @@ pub struct Verb {
     pub out: bool,
     /// What it does cannot be undone: it wants `--yes`.
     pub confirm: bool,
-    /// Where the rows of a table are in the answer (a JSON pointer) and the table's columns; no columns, no table.
-    pub rows: &'static str,
-    pub columns: &'static [&'static str],
 }
 
 impl Verb {
@@ -181,12 +178,6 @@ impl Verb {
         self
     }
 
-    fn table(mut self, rows: &'static str, columns: &'static [&'static str]) -> Self {
-        self.rows = rows;
-        self.columns = columns;
-        self
-    }
-
     /// The details, with what the row itself says about the verb.
     pub fn notes(&self) -> String {
         let mut notes = vec![self.details];
@@ -217,8 +208,6 @@ fn verb(words: &'static [&'static str], command: &'static str, effect: Effect, a
         patch: false,
         out: false,
         confirm: false,
-        rows: "",
-        columns: &[],
     }
 }
 
@@ -458,21 +447,7 @@ pub fn verbs() -> Vec<Verb> {
                 option("data", "config", Take::Json, "The whole configuration, or @<file> that holds it.").required(),
             ]),
         // -- Captured traffic ---------------------------------------------------------------------------------
-        verb(
-            &["capture", "list"],
-            "capture.list",
-            Effect::Reads,
-            "List the traffic the proxies captured, newest first.",
-        )
-        .fixed(r#"{"summary": true}"#)
-        .table("/entries", &["id", "method", "status", "durationMs", "url"]),
-        verb(
-            &["capture", "show"],
-            "capture.get",
-            Effect::Reads,
-            "Show one captured exchange in full: both headers and both bodies.",
-        )
-        .args(vec![operand("entry", "id", Take::Text, "The entry's id (see: capture list).")]),
+        // `capture list` and `capture show` are code (capture.rs): filters, columns and the response output.
         verb(&["capture", "remove"], "capture.remove", Effect::Deletes, "Remove captured entries.")
             .args(vec![operand("entry", "ids", Take::List, "The ids of the entries.")]),
         verb(
@@ -496,6 +471,12 @@ pub fn verbs() -> Vec<Verb> {
             option("jar", "cookiesToJar", Take::Bool, "true: move cookies into the cookie jar."),
             option("flow", "flow", Take::Bool, "true: also build a flow that sends them in the captured order."),
             option("folder", "folderName", Take::Text, "The name of the new folder (and flow). Default: Captured."),
+            option(
+                "keep-all",
+                "keepAll",
+                Take::Bool,
+                "true: also save preflights, static assets and analytics calls, which are left out by default.",
+            ),
         ]),
         verb(&["capture", "clear"], "capture.clear", Effect::Deletes, "Remove every captured entry of the workspace."),
         verb(&["capture", "pause"], "capture.setPaused", Effect::Changes, "Stop capturing traffic.")
@@ -515,7 +496,8 @@ pub fn verbs() -> Vec<Verb> {
         ]),
         // -- Cookies ------------------------------------------------------------------------------------------
         verb(&["cookies", "list"], "cookies.list", Effect::Reads, "List the cookies the workspace's requests hold."),
-        verb(&["cookies", "clear"], "cookies.clear", Effect::Deletes, "Forget every cookie of the workspace."),
+        verb(&["cookies", "clear"], "cookies.clear", Effect::Deletes, "Forget the cookies of the workspace.")
+            .args(vec![option("domain", "domain", Take::Text, "Forget only this domain's cookies.")]),
         verb(
             &["cookies", "configure"],
             "cookies.configure",
@@ -704,6 +686,10 @@ pub fn verbs() -> Vec<Verb> {
             option("port", "port", Take::Int, "The reverse proxy's port, where <sub>.localhost is served."),
             option("forwardport", "forwardProxyPort", Take::Int, "The forward proxy's port."),
             option("companionport", "companionPort", Take::Int, "The port the browser extension connects to."),
+            option("capturelimit", "captureLimit", Take::Int, "How many unpinned captured requests are kept (10-10000)."),
+            option("approvaltimeout", "approvalTimeoutSeconds", Take::Int, "Seconds a call held by a require_human policy waits for a person (default 300, 10-3600)."),
+            option("mailport", "mailPort", Take::Int, "The port of the local mail sink (default 1025); mail list shows what it caught."),
+            option("traceheader", "traceHeader", Take::Text, "Header that carries the capture id upstream (default x-bifurc-trace; empty = off)."),
             option(
                 "https",
                 "tlsEnabled",
@@ -823,7 +809,7 @@ fn put(payload: &mut Value, key: &str, value: Value) {
 /// An argument that needs nothing of the engine, as the value the payload takes. `None` for one that does.
 fn simple(arg: &Arg, given: &[String]) -> Result<Option<Value>> {
     let raw = given[0].as_str();
-    let wrong = |expected: &str| CliError::msg(format!("{} must be {expected}, not \"{raw}\"", arg.name));
+    let wrong = |expected: &str| CliError::usage(format!("{} must be {expected}, not \"{raw}\"", arg.name));
     Ok(Some(match arg.take {
         Take::Text => json!(raw),
         Take::Int => json!(raw.parse::<i64>().map_err(|_| wrong("a whole number"))?),
@@ -837,7 +823,8 @@ fn simple(arg: &Arg, given: &[String]) -> Result<Option<Value>> {
                 }
                 None => raw.to_string(),
             };
-            serde_json::from_str(&text).map_err(|e| CliError::msg(format!("--{} is not valid JSON: {e}", arg.name)))?
+            serde_json::from_str(&text)
+                .map_err(|e| CliError::usage(format!("--{} is not valid JSON: {e}", arg.name)))?
         }
         Take::List => json!(given),
         Take::Item(_) | Take::Named(_) | Take::Workspace | Take::Account | Take::Vault | Take::File => return Ok(None),
@@ -897,10 +884,10 @@ fn save(ctx: &mut Context, artifact: &Value, workspace: Option<&str>) -> Result<
 /// Lay the payload's `data` over the item it names and write the item back. Returns the item as it is now.
 fn patch(ctx: &mut Context, payload: &Value) -> Result<Value> {
     let Some(data) = payload.get("data").and_then(Value::as_object) else {
-        return Err(CliError::msg("--data must be a JSON object of the fields to set"));
+        return Err(CliError::usage("--data must be a JSON object of the fields to set"));
     };
     if data.contains_key("id") {
-        return Err(CliError::msg("an item's id cannot be changed"));
+        return Err(CliError::usage("an item's id cannot be changed"));
     }
     let (workspace, kind, id) = (&payload["workspaceId"], &payload["kind"], &payload["id"]);
     let loaded = ctx.request("entity.load", json!({ "workspaceId": workspace, "kind": kind, "id": id }))?;
@@ -958,7 +945,7 @@ pub fn run(ctx: &mut Context, verb: &Verb) -> Result<String> {
         if given.is_empty() {
             if arg.required {
                 let label = if arg.operand { format!("<{}>", arg.name) } else { format!("--{}", arg.name) };
-                return Err(CliError::msg(format!("missing {label}: {} (see: bifurc {group} --help)", arg.about)));
+                return Err(CliError::usage(format!("missing {label}: {} (see: bifurc {group} --help)", arg.about)));
             }
             continue;
         }
@@ -968,7 +955,7 @@ pub fn run(ctx: &mut Context, verb: &Verb) -> Result<String> {
         }
     }
     if verb.confirm && !args.has("yes") {
-        return Err(CliError::msg(format!("\"{command}\" cannot be undone: add --yes to do it")));
+        return Err(CliError::usage(format!("\"{command}\" cannot be undone: add --yes to do it")));
     }
 
     let workspace = match verb.scope {
@@ -1009,6 +996,14 @@ pub fn run(ctx: &mut Context, verb: &Verb) -> Result<String> {
         put(&mut payload, arg.key, value);
     }
 
+    // A captured entry is named by a full id, `#tail` or `tail`.
+    if group == "capture"
+        && let Some(wanted) = payload.get("ids").and_then(Value::as_array)
+    {
+        let wanted: Vec<String> = wanted.iter().map(|id| js_template(Some(id))).collect();
+        payload["ids"] = json!(crate::capture::entry_ids(ctx, workspace.as_deref().unwrap_or_default(), &wanted)?);
+    }
+
     let response = if verb.patch {
         patch(ctx, &payload)?
     } else {
@@ -1019,10 +1014,25 @@ pub fn run(ctx: &mut Context, verb: &Verb) -> Result<String> {
     if verb.out {
         return save(ctx, &response, workspace.as_deref());
     }
-    Ok(ctx.print(&response, || match response.pointer(verb.rows).and_then(Value::as_array) {
-        Some(rows) if !verb.columns.is_empty() => table(rows, verb.columns),
-        _ => json(&response),
-    }))
+    if command == "capture import" && !ctx.json {
+        return Ok(crate::capture::imported(ctx, workspace.as_deref().unwrap_or_default(), &response));
+    }
+    // A bare `{ok: true}` (plus `pending` for a deletion) is one line, not the raw result.
+    let bare = response
+        .as_object()
+        .is_some_and(|o| o.get("ok") == Some(&json!(true)) && o.keys().all(|k| k == "ok" || k == "pending"));
+    if bare && !ctx.json {
+        let pending = if response["pending"] == json!(true) {
+            " (pending: sync confirm commits, sync restore undoes)"
+        } else {
+            ""
+        };
+        return Ok(match (verb.words[1], args.positional(2)) {
+            ("delete", Some(item)) => format!("Deleted {item}{pending}"),
+            _ => format!("ok{pending}"),
+        });
+    }
+    Ok(ctx.print(&response, || json(&response)))
 }
 
 #[cfg(test)]
@@ -1050,7 +1060,7 @@ mod tests {
             let word = |text: &str| !text.is_empty() && text.chars().all(|c| c.is_ascii_lowercase());
             assert!(row.words.iter().all(|w| word(w)), "{name}");
             for arg in &row.args {
-                assert!(word(arg.name) && !arg.about.is_empty(), "{name} {}", arg.name);
+                assert!(arg.name.split('-').all(word) && !arg.about.is_empty(), "{name} {}", arg.name);
                 // An item is looked up in a workspace; a list has to be the last operand.
                 let looked_up = matches!(arg.take, Take::Item(_) | Take::Named(_) | Take::Vault);
                 assert!(!looked_up || row.scope != Scope::Engine, "{name}");
@@ -1074,7 +1084,7 @@ mod tests {
                 }
                 for arg in row.args.iter().filter(|arg| all || arg.required) {
                     let value = match arg.take {
-                        Take::Int => json!(1),
+                        Take::Int => json!(10),
                         Take::Bool => json!(true),
                         Take::Choice(words) => json!(words[0]),
                         Take::Json => json!({"name": "x"}),
@@ -1122,9 +1132,10 @@ mod tests {
             )]
         );
 
-        let argv = ["capture", "remove", "a", "b", "--workspace", "w1"];
-        let (_, calls) = go(&argv, vec![("capture.remove", Ok(json!({"ok": true})))]);
-        assert_eq!(calls[0].1, json!({"ids": ["a", "b"], "workspaceId": "w1"}));
+        let argv = ["capture", "remove", "#a1", "bbbb2", "--workspace", "w1"];
+        let entries = json!({"entries": [{"id": "xxxxa1"}, {"id": "bbbb2"}]});
+        let (_, calls) = go(&argv, vec![("capture.list", Ok(entries)), ("capture.remove", Ok(json!({"ok": true})))]);
+        assert_eq!(calls[1].1, json!({"ids": ["xxxxa1", "bbbb2"], "workspaceId": "w1"}));
 
         let argv = ["settings", "update", "--port", "8081", "--https", "true"];
         let (_, calls) = go(&argv, vec![("settings.update", Ok(json!({"ok": true})))]);
@@ -1144,14 +1155,7 @@ mod tests {
             ),
             (vec!["settings", "update", "--port", "eighty"], "port must be a whole number, not \"eighty\""),
             (vec!["cookies", "configure", "--clear", "yes"], "clear must be true or false, not \"yes\""),
-            (
-                vec!["capture", "show"],
-                "missing <entry>: The entry's id (see: capture list). (see: bifurc capture --help)",
-            ),
-            (
-                vec!["capture", "show", "a", "b"],
-                "unexpected argument \"b\" for \"capture show\" (see: bifurc capture --help)",
-            ),
+            (vec!["capture", "remove"], "missing <entry>: The ids of the entries. (see: bifurc capture --help)"),
             (vec!["sync", "discard", "mocks/a.json"], "\"sync discard\" cannot be undone: add --yes to do it"),
             (
                 vec!["mocks", "delete", "m1", "--workspace", "w2"],
@@ -1178,7 +1182,7 @@ mod tests {
             ]
         };
         let (out, calls) = go(&["requests", "delete", "feed"], answers());
-        assert!(out.unwrap().contains("\"pending\": true"));
+        assert_eq!(out.unwrap(), "Deleted feed (pending: sync confirm commits, sync restore undoes)");
         assert_eq!(
             payloads(&calls, "entity.delete"),
             [json!({"workspaceId": "w1", "kind": "wsConnections", "id": "s1"})]
@@ -1270,17 +1274,27 @@ mod tests {
         let (out, calls) = go(&["flows", "validate", "F"], answers);
         assert_eq!(serde_json::from_str::<Value>(&out.unwrap()).unwrap(), problems);
         assert_eq!(payloads(&calls, "flow.validate"), [json!({"workspaceId": "w1", "id": "f1"})]);
-        let entries =
-            json!({"entries": [{"id": "c1", "method": "GET", "status": 200, "durationMs": 12, "url": "http://a/"}]});
-        let (out, calls) = go(&["capture", "list", "--workspace", "w1"], vec![("capture.list", Ok(entries))]);
-        assert_eq!(out.unwrap(), "ID  METHOD  STATUS  DURATIONMS  URL\nc1  GET     200     12          http://a/");
-        assert_eq!(calls[0].1, json!({"summary": true, "workspaceId": "w1"}));
+    }
+
+    #[test]
+    fn cookies_clear_takes_a_domain() {
+        let (out, calls) = go(
+            &["cookies", "clear", "--domain", "a.com"],
+            vec![("config.get", Ok(config())), ("cookies.clear", Ok(json!({"ok": true})))],
+        );
+        out.unwrap();
+        assert_eq!(payloads(&calls, "cookies.clear"), [json!({"workspaceId": "w1", "domain": "a.com"})]);
     }
 
     #[test]
     fn the_help_of_a_group_is_written_from_its_rows() {
         let help = usage("cookies");
-        assert!(help.starts_with("  list\n      List the cookies the workspace's requests hold.\n  clear\n"), "{help}");
+        assert!(
+            help.starts_with(
+                "  list\n      List the cookies the workspace's requests hold.\n  clear [--domain <text>]\n"
+            ),
+            "{help}"
+        );
         assert!(help.contains("  configure --clear true|false\n"), "{help}");
         assert!(usage("sync").contains("  discard <path> --yes\n      Throw away a file's changes since the last sync. Cannot be undone: it runs only with --yes."));
         assert!(usage("tls").contains("  export [--out <file>]"));

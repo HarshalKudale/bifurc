@@ -88,7 +88,7 @@ pub fn start_engine(
     tray: bool,
     timeout: Duration,
 ) -> Result<RuntimeInfo> {
-    let io = |what: &str, e: std::io::Error| CliError::msg(format!("{what}: {e}"));
+    let io = |what: &str, e: std::io::Error| CliError::engine_unreachable(format!("{what}: {e}"));
     fs::create_dir_all(data_dir).map_err(|e| io(&format!("cannot create {}", data_dir.display()), e))?;
     let log_path = data_dir.join("engine.log");
     let log = fs::OpenOptions::new()
@@ -119,7 +119,7 @@ pub fn start_engine(
         thread::sleep(POLL_INTERVAL);
     }
     let tail = tail_of(&log_path, 12);
-    Err(CliError::msg(match exit_code {
+    Err(CliError::engine_unreachable(match exit_code {
         Some(code) => format!("The engine exited (code {code}) before it was ready.\n{tail}"),
         None => format!(
             "The engine did not become ready within {}s. See {}.\n{tail}",

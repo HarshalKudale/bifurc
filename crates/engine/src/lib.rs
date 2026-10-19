@@ -7,9 +7,11 @@
 
 pub mod analytics;
 pub mod capture;
+pub mod cassettes;
 pub mod certificates;
 pub mod cookies;
 pub mod env;
+pub mod faults;
 pub mod features;
 pub mod fileops;
 pub mod flows;
@@ -17,7 +19,9 @@ pub mod gitops;
 pub mod graphql;
 pub mod grpc;
 pub mod importexport;
+pub mod jwt;
 pub mod kernel;
+pub mod mail;
 pub mod mcp;
 pub mod mocks;
 pub mod protocol;
@@ -36,6 +40,7 @@ pub mod transport;
 pub mod updates;
 pub mod utils;
 pub mod vault;
+pub mod webhook;
 pub mod websocket;
 pub mod workspace;
 

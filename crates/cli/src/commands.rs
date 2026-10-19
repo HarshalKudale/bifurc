@@ -6,7 +6,7 @@ use serde_json::{Map, Value, json};
 use crate::{
     args::ParsedArgs,
     error::{CliError, Result},
-    format::{describe_status, js_string, js_template, json, table, truthy},
+    format::{StatusParts, describe_status, js_string, js_template, json, table, truthy},
     protocol::{command_names, is_known_command},
     session::Engine,
 };
@@ -19,6 +19,8 @@ pub struct Context<'a> {
     pub args: &'a ParsedArgs,
     /// `--json`: print values as JSON instead of their human rendering.
     pub json: bool,
+    /// `--raw`: the bytes the caller writes to stdout as they are, with nothing after them.
+    pub(crate) raw: Option<Vec<u8>>,
     connector: Connector<'a>,
     engine: Option<Box<dyn Engine>>,
 }
@@ -26,7 +28,7 @@ pub struct Context<'a> {
 impl<'a> Context<'a> {
     /// A context whose session is opened by `connector` on first use.
     pub fn new(args: &'a ParsedArgs, connector: Connector<'a>) -> Self {
-        Self { args, json: args.has("json"), connector, engine: None }
+        Self { args, json: args.has("json"), raw: None, connector, engine: None }
     }
 
     /// The engine session, opened if this is the first use.
@@ -42,8 +44,34 @@ impl<'a> Context<'a> {
         if self.json { json(value) } else { human() }
     }
 
-    pub(crate) fn request(&mut self, command: &str, payload: Value) -> Result<Value> {
-        self.engine()?.request(command, payload)
+    pub(crate) fn request(&mut self, command: &str, mut payload: Value) -> Result<Value> {
+        // `show` makes the engine remember what this agent saw; `--force` skips the stale-write check.
+        let verb = self.args.positional(1);
+        if command == "entity.load" && verb == Some("show") {
+            payload["remember"] = json!(true);
+        }
+        if command == "entity.update" && self.args.has("force") {
+            payload["force"] = json!(true);
+        }
+        let answer = self.engine()?.request(command, payload);
+        // A stale write is a wrong move by the caller (exit 2) with a one-line reason.
+        match answer {
+            Err(CliError::Engine { code, message }) if command == "entity.update" && code == "CONFLICT" => {
+                Err(CliError::usage(message))
+            }
+            // Claims are advisory: the update went through, the claim is only said.
+            Ok(done) if command == "entity.update" && done.get("claimedBy").is_some_and(Value::is_object) => {
+                let by = &done["claimedBy"];
+                eprintln!(
+                    "bifurc: warning: \"{}\" is claimed by {} ({})",
+                    js_template(by.get("name")),
+                    js_template(by.get("by")),
+                    crate::changes::ago(crate::capture::now_ms() - by["ts"].as_i64().unwrap_or_default())
+                );
+                Ok(done)
+            }
+            other => other,
+        }
     }
 
     /// Refuse an option the command does not take, and more arguments than its `operands`. The command is the
@@ -63,12 +91,12 @@ impl<'a> Context<'a> {
         let help = positionals.first().map(String::as_str).unwrap_or_default();
         let known = |name: &&str| GLOBAL_FLAGS.contains(name) || flags.contains(name);
         if let Some(unknown) = self.args.names().into_iter().find(|name| !known(name)) {
-            return Err(CliError::msg(format!(
+            return Err(CliError::usage(format!(
                 "unknown option --{unknown} for \"{command}\" (see: bifurc {help} --help)"
             )));
         }
         if let Some(extra) = positionals.get(words + operands) {
-            return Err(CliError::msg(format!(
+            return Err(CliError::usage(format!(
                 "unexpected argument \"{extra}\" for \"{command}\" (see: bifurc {help} --help)"
             )));
         }
@@ -77,13 +105,13 @@ impl<'a> Context<'a> {
 }
 
 /// The options every command takes.
-const GLOBAL_FLAGS: [&str; 5] = ["data-dir", "workspace", "no-start", "json", "help"];
+const GLOBAL_FLAGS: [&str; 6] = ["data-dir", "workspace", "no-start", "json", "help", "session"];
 
 /// An argument that must be present and non-empty.
 pub(crate) fn need(value: Option<&str>, what: &str) -> Result<String> {
     match value {
         Some(v) if !v.is_empty() => Ok(v.to_string()),
-        _ => Err(CliError::msg(format!("missing {what}"))),
+        _ => Err(CliError::usage(format!("missing {what}"))),
     }
 }
 
@@ -93,7 +121,7 @@ pub(crate) fn unknown_verb(group: &str, verb: &str) -> CliError {
         "revert" | "push" | "pull" | "publish" | "commit" | "discard" => "; git is under: bifurc sync",
         _ => "",
     };
-    CliError::msg(format!("unknown: {group} {verb}{hint} (see: bifurc {group} --help)"))
+    CliError::usage(format!("unknown: {group} {verb}{hint} (see: bifurc {group} --help)"))
 }
 
 fn entities(response: &Value) -> Vec<Value> {
@@ -122,8 +150,10 @@ pub(crate) fn list_entities(ctx: &mut Context, workspace: &str, kind: &str) -> R
     Ok(entities(&response))
 }
 
-/// The one row `wanted` names: by its id, else by one of `name_keys` whatever the case. `what` is the row's
-/// singular name and `group` the command group that lists them.
+/// The one row `wanted` names, trying in order: its id, an exact name, a name whatever the case, a unique name
+/// prefix, a unique id prefix (4+ characters). Several at the first step with any is a usage error that lists
+/// them; none is not-found with close names suggested. `what` is the row's singular name and `group` the
+/// command group that lists them.
 pub(crate) fn find_one<'v>(
     rows: &'v [Value],
     wanted: &str,
@@ -131,24 +161,84 @@ pub(crate) fn find_one<'v>(
     what: &str,
     group: &str,
 ) -> Result<&'v Value> {
-    if let Some(hit) = rows.iter().find(|row| row.get("id").and_then(Value::as_str) == Some(wanted)) {
-        return Ok(hit);
-    }
+    let names = |row: &Value| -> Vec<String> {
+        name_keys.iter().filter_map(|key| row.get(*key).and_then(Value::as_str)).map(str::to_string).collect()
+    };
     let lower = wanted.to_lowercase();
-    let named: Vec<&Value> = rows
-        .iter()
-        .filter(|row| {
-            name_keys.iter().any(|key| row.get(*key).and_then(Value::as_str).is_some_and(|n| n.to_lowercase() == lower))
-        })
-        .collect();
-    match named.as_slice() {
-        [one] => Ok(one),
-        [] => Err(CliError::msg(format!("no {what} \"{wanted}\" (see: bifurc {group} list)"))),
-        many => {
-            let ids: Vec<String> = many.iter().map(|row| js_template(row.get("id"))).collect();
-            Err(CliError::msg(format!("{} {what}s are named \"{wanted}\"; use the id: {}", many.len(), ids.join(", "))))
+    let row_id = |row: &Value| row.get("id").and_then(Value::as_str).map(str::to_string);
+    let matches = |step: usize, row: &Value| match step {
+        0 => row_id(row).as_deref() == Some(wanted),
+        1 => names(row).iter().any(|n| n == wanted),
+        2 => names(row).iter().any(|n| n.to_lowercase() == lower),
+        3 => names(row).iter().any(|n| n.to_lowercase().starts_with(&lower)),
+        _ => wanted.chars().count() >= 4 && row_id(row).is_some_and(|id| id.starts_with(wanted)),
+    };
+    for step in 0..5 {
+        let hits: Vec<&Value> = rows.iter().filter(|row| matches(step, row)).collect();
+        match hits.as_slice() {
+            [] => continue,
+            [one] => return Ok(one),
+            many => {
+                let labels: Vec<String> =
+                    many.iter().map(|row| names(row).first().cloned().unwrap_or_default()).collect();
+                let repeated =
+                    labels.iter().any(|l| labels.iter().filter(|o| o.to_lowercase() == l.to_lowercase()).count() > 1);
+                let listed: Vec<String> = many
+                    .iter()
+                    .zip(&labels)
+                    .map(|(row, label)| {
+                        if repeated || step == 4 {
+                            format!("\"{label}\" ({})", js_template(row.get("id")))
+                        } else {
+                            format!("\"{label}\"")
+                        }
+                    })
+                    .collect();
+                let how = if step >= 3 { "start with" } else { "are named" };
+                let advice = if repeated { "use the id" } else { "use more of the name" };
+                return Err(CliError::usage(format!(
+                    "{} {what}s {how} \"{wanted}\": {} — {advice}",
+                    many.len(),
+                    listed.join(", ")
+                )));
+            }
         }
     }
+    let mut close: Vec<(usize, String)> = rows
+        .iter()
+        .flat_map(names)
+        .filter_map(|n| {
+            let l = n.to_lowercase();
+            let d = levenshtein(&l, &lower);
+            (d <= 2.max(lower.chars().count() / 4) || l.contains(&lower)).then_some((d, n))
+        })
+        .collect();
+    close.sort();
+    close.dedup_by(|a, b| a.1 == b.1);
+    close.truncate(3);
+    let hint = if close.is_empty() {
+        format!("(see: bifurc {group} list)")
+    } else {
+        let quoted: Vec<String> = close.iter().map(|(_, n)| format!("\"{n}\"")).collect();
+        format!("— did you mean {}?", quoted.join(", "))
+    };
+    Err(CliError::not_found(format!("no {what} \"{wanted}\" {hint}")))
+}
+
+/// Edit distance between two strings (insert, delete, replace), for did-you-mean.
+fn levenshtein(a: &str, b: &str) -> usize {
+    let b: Vec<char> = b.chars().collect();
+    let mut row: Vec<usize> = (0..=b.len()).collect();
+    for (i, ca) in a.chars().enumerate() {
+        let mut diag = row[0];
+        row[0] = i + 1;
+        for (j, cb) in b.iter().enumerate() {
+            let up = row[j + 1];
+            row[j + 1] = (diag + usize::from(ca != *cb)).min(up + 1).min(row[j] + 1);
+            diag = up;
+        }
+    }
+    row[b.len()]
 }
 
 /// `-H "name: value"` flags in order. An empty value (`-H "name:"`) is kept: on an update it removes the header.
@@ -157,7 +247,7 @@ pub(crate) fn header_flags(args: &ParsedArgs) -> Result<Vec<(String, String)>> {
         .iter()
         .map(|header| match header.find(':') {
             Some(i) if i > 0 => Ok((header[..i].trim().to_string(), header[i + 1..].trim().to_string())),
-            _ => Err(CliError::msg(format!("header \"{header}\" must be \"name: value\""))),
+            _ => Err(CliError::usage(format!("header \"{header}\" must be \"name: value\""))),
         })
         .collect()
 }
@@ -173,9 +263,14 @@ pub(crate) fn merge_headers(headers: &mut Map<String, Value>, flags: &[(String, 
     }
 }
 
-/// `--body-file <f>` or `--body <text>`, when either is given.
+/// `--body-file <f>` or `--data <text>` (`-d`; `--data @<f>` reads a file, as curl does), when either is given.
 pub(crate) fn body_from(args: &ParsedArgs) -> Result<Option<String>> {
-    text_from(args, "body", "body-file")
+    match args.flag("data").and_then(|data| data.strip_prefix('@')) {
+        Some(file) if !args.has("body-file") => {
+            std::fs::read_to_string(file).map(Some).map_err(|e| CliError::msg(format!("cannot read {file}: {e}")))
+        }
+        _ => text_from(args, "data", "body-file"),
+    }
 }
 
 /// The text of `--<flag>`, or of the file `--<file_flag>` names, when either is given. The file wins.
@@ -191,7 +286,7 @@ pub(crate) fn text_from(args: &ParsedArgs, flag: &str, file_flag: &str) -> Resul
 /// `--<on>` or `--<off>` as a choice, when either is given.
 pub(crate) fn switch(args: &ParsedArgs, on: &str, off: &str) -> Result<Option<bool>> {
     match (args.has(on), args.has(off)) {
-        (true, true) => Err(CliError::msg(format!("--{on} and --{off} cannot both be given"))),
+        (true, true) => Err(CliError::usage(format!("--{on} and --{off} cannot both be given"))),
         (true, false) => Ok(Some(true)),
         (false, true) => Ok(Some(false)),
         (false, false) => Ok(None),
@@ -330,7 +425,7 @@ pub(crate) fn account_id(ctx: &mut Context, wanted: &str) -> Result<String> {
                 || a.get("login").and_then(Value::as_str).is_some_and(|login| login.eq_ignore_ascii_case(wanted))
         })
         .map(|a| js_template(a.get("id")))
-        .ok_or_else(|| CliError::msg(format!("no account \"{wanted}\" is signed in (see: bifurc account list)")))
+        .ok_or_else(|| CliError::not_found(format!("no account \"{wanted}\" is signed in (see: bifurc account list)")))
 }
 
 /// `account list|login|repos`: the GitHub accounts workspaces sync as.
@@ -384,7 +479,7 @@ pub fn account(ctx: &mut Context, sub: Option<&str>) -> Result<String> {
 /// overrides it. The selection is the engine's, so it is shared with the desktop UI.
 pub fn env(ctx: &mut Context, sub: Option<&str>) -> Result<String> {
     match sub.unwrap_or("list") {
-        "list" | "show" => ctx.accept(&[], 0)?,
+        "list" => ctx.accept(&[], 0)?,
         "use" => ctx.accept(&[], 1)?,
         other => return Err(unknown_verb("env", other)),
     }
@@ -414,10 +509,6 @@ pub fn env(ctx: &mut Context, sub: Option<&str>) -> Result<String> {
                 .collect();
             Ok(ctx.print(&Value::Array(rows.clone()), || table(&rows, &["active", "id", "name", "vars"])))
         }
-        "show" => {
-            let merged = ctx.request("env.getMerged", json!({ "workspaceId": workspace }))?;
-            Ok(ctx.print(&merged, || json(&merged)))
-        }
         "use" => {
             if !selectable {
                 return Err(CliError::msg(format!(
@@ -431,7 +522,7 @@ pub fn env(ctx: &mut Context, sub: Option<&str>) -> Result<String> {
                 .iter()
                 .find(|e| e.get("id").and_then(Value::as_str) == Some(want.as_str()))
                 .or_else(|| all.iter().find(|e| js_template(e.get("name")).to_lowercase() == want.to_lowercase()))
-                .ok_or_else(|| CliError::msg(format!("no environment \"{want}\" (see: bifurc env list)")))?;
+                .ok_or_else(|| CliError::not_found(format!("no environment \"{want}\" (see: bifurc env list)")))?;
             let id = hit.get("id").cloned().unwrap_or(Value::Null);
             let result = ctx.request("env.setActive", json!({ "id": id }))?;
             if !result.get("ok").is_some_and(truthy) {
@@ -465,11 +556,11 @@ pub fn call(ctx: &mut Context) -> Result<String> {
     ctx.accept_top(&["payload"], 2)?;
     let command = need(ctx.args.positional(1), "command name (see: bifurc commands)")?;
     if !is_known_command(&command) {
-        return Err(CliError::msg(format!("unknown command \"{command}\" (see: bifurc commands)")));
+        return Err(CliError::usage(format!("unknown command \"{command}\" (see: bifurc commands)")));
     }
     let raw = ctx.args.positional(2).or(ctx.args.flag("payload")).unwrap_or("{}");
     let payload: Value =
-        serde_json::from_str(raw).map_err(|_| CliError::msg(format!("payload is not valid JSON: {raw}")))?;
+        serde_json::from_str(raw).map_err(|_| CliError::usage(format!("payload is not valid JSON: {raw}")))?;
     let response = ctx.request(&command, payload)?;
     Ok(ctx.print(&response, || json(&response)))
 }
@@ -480,21 +571,73 @@ pub fn commands(ctx: &Context) -> String {
     ctx.print(&Value::Array(names.iter().map(|n| json!(n)).collect()), || names.join("\n"))
 }
 
-/// `status`: the engine, the proxy and the active workspace.
+/// `status`: the engine, the proxy, the active workspace, and what is on in it. A part whose command fails is left out.
 pub fn status(ctx: &mut Context) -> Result<String> {
     ctx.accept_top(&[], 0)?;
-    let server = ctx.request("server.status", json!({}))?;
-    let config = ctx.request("config.get", json!({}))?;
-    let active_id = config.get("activeWorkspaceId").cloned().unwrap_or(Value::Null);
+    let info = ctx.engine()?.info().clone();
+    let server = ctx.request("server.status", json!({})).ok();
+    let config = ctx.request("config.get", json!({})).ok();
+    let active_id = config.as_ref().and_then(|c| c.get("activeWorkspaceId")).cloned().unwrap_or(Value::Null);
     let active = config
-        .get("workspaces")
-        .and_then(Value::as_array)
+        .as_ref()
+        .and_then(|c| c.get("workspaces").and_then(Value::as_array))
         .and_then(|all| all.iter().find(|w| w.get("id") == Some(&active_id)))
         .cloned()
-        .unwrap_or(active_id);
-    let info = ctx.engine()?.info().clone();
-    let value = json!({ "engine": info.raw, "server": server, "activeWorkspace": active });
-    Ok(ctx.print(&value, || describe_status(&info, &server, &active)))
+        .unwrap_or(active_id.clone());
+    let workspace = json!({ "workspaceId": active_id });
+    let capture = ctx.request("capture.list", json!({ "workspaceId": active_id, "summary": true, "last": 0 })).ok();
+    let cookies = ctx.request("cookies.list", workspace).ok();
+    let mock_servers = ctx.request("mocks.serveStatus", json!({})).ok();
+    let mail = ctx.request("mail.status", json!({})).ok();
+    let webhooks = ctx.request("webhook.list", json!({})).ok();
+    let recording = ctx.request("cassette.recordStatus", json!({})).ok();
+    let replaying = ctx.request("cassette.replayStatus", json!({})).ok();
+    let approvals = ctx.request("approvals.list", json!({})).ok();
+    let faults = ctx.request("fault.list", json!({})).ok();
+    let mut parts = StatusParts {
+        server,
+        config,
+        capture,
+        cookies,
+        mock_servers,
+        mail,
+        webhooks,
+        recording,
+        replaying,
+        approvals,
+        faults,
+    };
+    // In a named session the environment is the session's own, when it chose one.
+    let session = crate::session::session_name(ctx.args)?;
+    if session.is_some()
+        && let Ok(own) = ctx.request("session.get", json!({ "workspaceId": active_id }))
+        && let Some(id) = own["environmentId"].as_str()
+        && let Some(config) = parts.config.as_mut()
+    {
+        config["activeEnvironmentId"] = json!(id);
+    }
+    let mut value = json!({ "engine": info.raw, "server": parts.server, "activeWorkspace": active });
+    value["session"] = session.as_ref().map_or(Value::Null, |name| json!(name));
+    value["environment"] = parts.environment().map_or(Value::Null, |name| json!(name));
+    value["mocks"] = parts.mocks().map_or(Value::Null, |n| json!(n));
+    value["capture"] =
+        parts.capture.as_ref().map_or(Value::Null, |c| json!({ "count": c["matched"], "paused": c["paused"] }));
+    value["cookies"] = parts.cookies_domains().map_or(Value::Null, |n| json!(n));
+    value["mockServers"] = parts.mock_servers.as_ref().map_or(Value::Null, |s| s["servers"].clone());
+    value["mail"] = parts.mail.clone().unwrap_or(Value::Null);
+    value["recording"] = parts.recording.as_ref().map_or(Value::Null, |r| r["recording"].clone());
+    value["replaying"] = parts.replaying.as_ref().map_or(Value::Null, |r| r["replaying"].clone());
+    value["webhooks"] = parts.webhooks.as_ref().map_or(Value::Null, |w| w["listeners"].clone());
+    value["faults"] = parts.faults.as_ref().map_or(Value::Null, |f| f["faults"].clone());
+    value["approvals"] = parts.approvals.as_ref().map_or(Value::Null, |a| a["pending"].clone());
+    Ok(ctx.print(&value, || {
+        let text = describe_status(&info, &active, &parts);
+        match (&session, text.split_once('\n')) {
+            (None, _) => text,
+            (Some(name), Some((first, rest))) => format!("{first} · session {name}\n{rest}"),
+            (Some(name), None) => format!("{text} · session {name}"),
+        }
+    }))
 }
 
 #[cfg(test)]
@@ -541,7 +684,7 @@ mod tests {
         }
         let argv = ["workspaces", "use", "nope"];
         let (out, calls) = run(&argv, vec![("config.get", Ok(config()))], |c| workspaces(c, sub(&argv)));
-        assert_eq!(out.unwrap_err(), CliError::msg("no workspace \"nope\" (see: bifurc workspaces list)"));
+        assert_eq!(out.unwrap_err(), CliError::not_found("no workspace \"nope\" (see: bifurc workspaces list)"));
         assert_eq!(calls.len(), 1);
     }
 
@@ -566,7 +709,7 @@ mod tests {
 
         let argv = ["workspaces", "update", "w2"];
         let (out, calls) = run(&argv, vec![], |c| workspaces(c, sub(&argv)));
-        assert_eq!(out.unwrap_err(), CliError::msg("missing --name <new name>"));
+        assert_eq!(out.unwrap_err(), CliError::usage("missing --name <new name>"));
         assert!(calls.is_empty());
     }
 
@@ -607,10 +750,10 @@ mod tests {
     fn workspaces_use_needs_an_id_and_unknown_subcommands_fail() {
         let argv = ["workspaces", "use"];
         let (out, _) = run(&argv, vec![], |c| workspaces(c, sub(&argv)));
-        assert_eq!(out.unwrap_err(), CliError::msg("missing workspace id or name"));
+        assert_eq!(out.unwrap_err(), CliError::usage("missing workspace id or name"));
         let argv = ["workspaces", "frob"];
         let (out, calls) = run(&argv, vec![], |c| workspaces(c, sub(&argv)));
-        assert_eq!(out.unwrap_err(), CliError::msg("unknown: workspaces frob (see: bifurc workspaces --help)"));
+        assert_eq!(out.unwrap_err(), CliError::usage("unknown: workspaces frob (see: bifurc workspaces --help)"));
         assert!(calls.is_empty());
     }
 
@@ -620,7 +763,7 @@ mod tests {
         let (out, calls) = run(&argv, vec![], |c| workspaces(c, sub(&argv)));
         assert_eq!(
             out.unwrap_err(),
-            CliError::msg("unknown option --nmae for \"workspaces list\" (see: bifurc workspaces --help)")
+            CliError::usage("unknown option --nmae for \"workspaces list\" (see: bifurc workspaces --help)")
         );
         assert!(calls.is_empty());
 
@@ -628,7 +771,7 @@ mod tests {
         let (out, calls) = run(&argv, vec![], |c| workspaces(c, sub(&argv)));
         assert_eq!(
             out.unwrap_err(),
-            CliError::msg("unexpected argument \"w2\" for \"workspaces use\" (see: bifurc workspaces --help)")
+            CliError::usage("unexpected argument \"w2\" for \"workspaces use\" (see: bifurc workspaces --help)")
         );
         assert!(calls.is_empty());
 
@@ -636,24 +779,50 @@ mod tests {
         let (out, _) = run(&argv, vec![], status);
         assert_eq!(
             out.unwrap_err(),
-            CliError::msg("unexpected argument \"now\" for \"status\" (see: bifurc status --help)")
+            CliError::usage("unexpected argument \"now\" for \"status\" (see: bifurc status --help)")
         );
     }
 
     #[test]
-    fn find_one_takes_an_id_then_a_unique_name() {
+    fn find_one_tries_id_then_name_then_prefixes() {
         let rows = vec![
-            json!({"id": "a", "name": "Ping"}),
-            json!({"id": "b", "name": "ping"}),
+            json!({"id": "abcd1", "name": "Ping"}),
+            json!({"id": "abcd2", "name": "ping"}),
             json!({"id": "c", "name": "Pong"}),
             json!({"id": "Pong", "name": "Id wins"}),
+            json!({"id": "d", "name": "Get order"}),
+            json!({"id": "e", "name": "Get orders"}),
+            json!({"id": "f", "name": "Create user"}),
         ];
         let find = |wanted: &str| find_one(&rows, wanted, &["name"], "request", "requests");
-        assert_eq!(find("a").unwrap()["name"], "Ping");
+        assert_eq!(find("abcd1").unwrap()["name"], "Ping");
         assert_eq!(find("Pong").unwrap()["name"], "Id wins");
+        assert_eq!(find("Ping").unwrap()["id"], "abcd1"); // exact name beats the other case
         assert_eq!(find("pong").unwrap()["id"], "c");
-        assert_eq!(find("PING").unwrap_err(), CliError::msg("2 requests are named \"PING\"; use the id: a, b"));
-        assert_eq!(find("zip").unwrap_err(), CliError::msg("no request \"zip\" (see: bifurc requests list)"));
+        assert_eq!(
+            find("PING").unwrap_err(),
+            CliError::usage("2 requests are named \"PING\": \"Ping\" (abcd1), \"ping\" (abcd2) — use the id")
+        );
+        assert_eq!(find("create").unwrap()["id"], "f"); // unique name prefix
+        assert_eq!(find("get order").unwrap()["id"], "d"); // exact (any case) name before prefix
+        assert_eq!(
+            find("get").unwrap_err(),
+            CliError::usage("2 requests start with \"get\": \"Get order\", \"Get orders\" — use more of the name")
+        );
+        assert_eq!(find("abcd").unwrap_err().code(), 2); // id prefix shared by two
+        let rows = vec![json!({"id": "mvbzxzympjvgk", "name": "Login"})];
+        assert_eq!(find_one(&rows, "mvbz", &["name"], "request", "requests").unwrap()["name"], "Login");
+        assert!(find_one(&rows, "mvb", &["name"], "request", "requests").is_err()); // under 4 characters
+    }
+
+    #[test]
+    fn find_one_not_found_suggests_close_names() {
+        let rows = vec![json!({"id": "a", "name": "Create user"}), json!({"id": "b", "name": "Login"})];
+        let err = find_one(&rows, "Create usr", &["name"], "request", "requests").unwrap_err();
+        assert_eq!(err, CliError::not_found("no request \"Create usr\" — did you mean \"Create user\"?"));
+        let err = find_one(&rows, "zip", &["name"], "request", "requests").unwrap_err();
+        assert_eq!(err, CliError::not_found("no request \"zip\" (see: bifurc requests list)"));
+        assert_eq!(levenshtein("kitten", "sitting"), 3);
     }
 
     #[test]
@@ -667,7 +836,7 @@ mod tests {
             let args = parse_args(&["-H", bad].map(String::from)).unwrap();
             assert_eq!(
                 header_flags(&args).unwrap_err(),
-                CliError::msg(format!("header \"{bad}\" must be \"name: value\""))
+                CliError::usage(format!("header \"{bad}\" must be \"name: value\""))
             );
         }
     }
@@ -694,15 +863,6 @@ mod tests {
     }
 
     #[test]
-    fn env_show_prints_the_merged_variables() {
-        let argv = ["env", "show"];
-        let answers = vec![("config.get", Ok(config())), ("env.getMerged", Ok(json!({"a": "1"})))];
-        let (out, calls) = run(&argv, answers, |c| env(c, sub(&argv)));
-        assert_eq!(out.unwrap(), "{\n  \"a\": \"1\"\n}");
-        assert_eq!(calls[1].1, json!({"workspaceId": "w1"}));
-    }
-
-    #[test]
     fn env_use_finds_by_id_or_case_insensitive_name() {
         for want in ["e1", "dev", "DEV"] {
             let argv = ["env", "use", want];
@@ -723,7 +883,7 @@ mod tests {
 
         let argv = ["env", "use", "nope"];
         let (out, _) = run(&argv, list(), |c| env(c, sub(&argv)));
-        assert_eq!(out.unwrap_err(), CliError::msg("no environment \"nope\" (see: bifurc env list)"));
+        assert_eq!(out.unwrap_err(), CliError::not_found("no environment \"nope\" (see: bifurc env list)"));
 
         let argv = ["env", "use", "Global"];
         let mut answers = list();
@@ -746,7 +906,7 @@ mod tests {
 
         let argv = ["env", "use"];
         let (out, _) = run(&argv, list(), |c| env(c, sub(&argv)));
-        assert_eq!(out.unwrap_err(), CliError::msg("missing environment id or name"));
+        assert_eq!(out.unwrap_err(), CliError::usage("missing environment id or name"));
     }
 
     #[test]
@@ -757,7 +917,7 @@ mod tests {
         assert_eq!(out.unwrap(), "PORT  PID  PROCESSNAME  ADDRESS\n3000  12   node         127.0.0.1");
         let argv = ["services", "kill"];
         let (out, calls) = run(&argv, vec![], |c| services(c, sub(&argv)));
-        assert_eq!(out.unwrap_err(), CliError::msg("unknown: services kill (see: bifurc services --help)"));
+        assert_eq!(out.unwrap_err(), CliError::usage("unknown: services kill (see: bifurc services --help)"));
         assert!(calls.is_empty());
     }
 
@@ -783,13 +943,13 @@ mod tests {
     fn call_validates_before_connecting() {
         let argv = ["call"];
         let (out, calls) = run(&argv, vec![], call);
-        assert_eq!(out.unwrap_err(), CliError::msg("missing command name (see: bifurc commands)"));
+        assert_eq!(out.unwrap_err(), CliError::usage("missing command name (see: bifurc commands)"));
         let argv = ["call", "nope.nope"];
         let (out, _) = run(&argv, vec![], call);
-        assert_eq!(out.unwrap_err(), CliError::msg("unknown command \"nope.nope\" (see: bifurc commands)"));
+        assert_eq!(out.unwrap_err(), CliError::usage("unknown command \"nope.nope\" (see: bifurc commands)"));
         let argv = ["call", "server.status", "{bad"];
         let (out, calls2) = run(&argv, vec![], call);
-        assert_eq!(out.unwrap_err(), CliError::msg("payload is not valid JSON: {bad"));
+        assert_eq!(out.unwrap_err(), CliError::usage("payload is not valid JSON: {bad"));
         assert!(calls.is_empty() && calls2.is_empty());
     }
 
@@ -816,28 +976,46 @@ mod tests {
     }
 
     #[test]
-    fn status_combines_engine_proxy_and_workspace() {
+    fn status_is_two_lines_and_json_keeps_the_old_fields() {
         let argv = ["status"];
-        let answers = vec![("server.status", Ok(json!({"running": true, "port": 8080}))), ("config.get", Ok(config()))];
-        let (out, _) = run(&argv, answers, status);
+        let mut cfg = config();
+        cfg["forwardProxyPort"] = json!(8080);
+        cfg["environments"] = json!([{"id": "e2", "name": "Prod"}]);
+        cfg["mocks"] = json!([{"enabled": true}]);
+        let answers = vec![
+            ("server.status", Ok(json!({"running": true, "port": 1}))),
+            ("config.get", Ok(cfg.clone())),
+            ("capture.list", Ok(json!({"matched": 143, "paused": true}))),
+            ("cookies.list", Ok(json!({"domains": [{"domain": "a"}]}))),
+            ("mocks.serveStatus", Ok(json!({"servers": [{"port": 4010}]}))),
+        ];
+        let (out, calls) = run(&argv, answers.clone(), status);
         assert_eq!(
             out.unwrap(),
-            "engine     pid 5, socket addr, v0.4.0\ndata dir   /d\nproxy      listening on 8080\nworkspace  Default (w1)"
+            "engine 0.4.0 · proxy :8080 on · workspace Default · env Prod
+mocks 1 on · mock server :4010 · capture 143/200 paused · cookies 1 domain"
+        );
+        assert_eq!(
+            crate::testing::payloads(&calls, "capture.list")[0],
+            json!({"workspaceId": "w1", "summary": true, "last": 0})
         );
 
-        let argv = ["status", "--json"];
-        let answers = vec![("server.status", Ok(json!({"running": false}))), ("config.get", Ok(config()))];
-        let (out, _) = run(&argv, answers, status);
+        let (out, _) = run(&["status", "--json"], answers, status);
         let parsed: Value = serde_json::from_str(&out.unwrap()).unwrap();
         assert_eq!(parsed["engine"]["pid"], 5);
-        assert_eq!(parsed["server"], json!({"running": false}));
+        assert_eq!(parsed["server"], json!({"running": true, "port": 1}));
         assert_eq!(parsed["activeWorkspace"], json!({"id": "w1", "name": "Default"}));
+        assert_eq!(
+            (&parsed["environment"], &parsed["mocks"], &parsed["cookies"]),
+            (&json!("Prod"), &json!(1), &json!(1))
+        );
+        assert_eq!(parsed["capture"], json!({"count": 143, "paused": true}));
+        assert_eq!(parsed["mockServers"], json!([{"port": 4010}]));
     }
 
     #[test]
-    fn engine_errors_stop_a_command() {
-        let argv = ["status"];
-        let (out, _) = run(&argv, vec![], status);
-        assert_eq!(out.unwrap_err().line(), "bifurc: UNKNOWN_COMMAND: server.status");
+    fn a_failing_part_of_status_is_skipped() {
+        let (out, _) = run(&["status"], vec![("server.status", Ok(json!({"running": false, "port": 8080})))], status);
+        assert_eq!(out.unwrap(), "engine 0.4.0 · proxy :8080 off");
     }
 }

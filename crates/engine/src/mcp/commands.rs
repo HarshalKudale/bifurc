@@ -57,6 +57,10 @@ pub fn register(registry: &mut CommandRegistry) {
             url: str_of(&source, "url"),
             headers: source.get("headers"),
         };
+        // A stdio server has no URL; only a remote one is a call the policy can name.
+        if target.url.contains("://") {
+            crate::workspace::policy::guard_now("POST", target.url)?;
+        }
         ok_result(connect_connection(str_of(&params, "workspaceId"), str_of(&params, "connectionId"), &target))
     });
 

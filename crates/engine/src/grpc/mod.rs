@@ -15,7 +15,7 @@ use prost_reflect::{DescriptorPool, MethodDescriptor};
 use serde_json::{Map, Value, json};
 
 use crate::{
-    env::{load_merged_environment, resolve_vars},
+    env::{load_merged_environment, resolve_vars, send_scoped, with_overrides},
     kernel::CommandRegistry,
     protocol::{EngineError, ErrorCode},
     utils::json::{opt_str, str_of, string_map},
@@ -81,8 +81,20 @@ async fn find_method(
     })
 }
 
+/// A gRPC call as the policy sees it: a POST to `grpc://host:port/Service/method`.
+fn grpc_url(address: &str, service: &str, method: &str) -> String {
+    let address = address.split_once("://").map_or(address, |(_, rest)| rest);
+    format!("grpc://{address}/{service}/{method}")
+}
+
+pub(crate) async fn guard_call(request: &Value) -> Result<(), EngineError> {
+    let url = grpc_url(str_of(request, "serverAddress"), str_of(request, "serviceName"), str_of(request, "methodName"));
+    crate::workspace::policy::guard("POST", &url).await
+}
+
 pub fn register(registry: &mut CommandRegistry) {
     registry.register("grpc.execute", |params: Value, _| async move {
+        guard_call(&params).await?;
         let started = std::time::Instant::now();
         let elapsed = |value: Value| {
             let mut value = value;
@@ -124,6 +136,7 @@ pub fn register(registry: &mut CommandRegistry) {
     });
 
     registry.register("grpc.reflect", |params: Value, _| async move {
+        crate::workspace::policy::guard("POST", &grpc_url(str_of(&params, "serverAddress"), "", "")).await?;
         // The address may be written with environment variables, as it is in a saved request.
         let address = match opt_str(&params, "workspaceId") {
             Some(ws_id) => resolve_vars(str_of(&params, "serverAddress"), load_merged_environment(ws_id).as_ref()),
@@ -147,38 +160,48 @@ pub fn register(registry: &mut CommandRegistry) {
     });
 
     registry.register("grpc.send", |params: Value, ctx| async move {
-        let ws_id = str_of(&params, "workspaceId");
-        let stored = match opt_str(&params, "id") {
-            Some(id) => load_entity(ws_id, "grpcRequests", id).ok_or_else(|| {
-                EngineError::not_found(format!("No saved grpcRequests entity \"{id}\" in workspace \"{ws_id}\"."))
-                    .keyed("request.saved_not_found", json!({ "kind": "grpcRequests", "id": id, "workspace": ws_id }))
-            })?,
-            None => params.get("request").cloned().unwrap_or(Value::Null),
-        };
-        let payload = resolve_saved(ws_id, &stored);
-        let outcome = ctx.registry.invoke("grpc.execute", payload.clone(), ctx.clone()).await;
-        if let Some(id) = response_history::entity_id(&params) {
-            let method = format!("{}/{}", str_of(&payload, "serviceName"), str_of(&payload, "methodName"));
-            let address = str_of(&payload, "serverAddress").to_string();
-            let capture = match &outcome {
-                Ok(v) => response_history::Capture {
-                    status: v["status"].as_i64().unwrap_or(0),
-                    status_text: opt_str(v, "statusMessage").map(str::to_string),
-                    headers: v["metadata"].clone(),
-                    body: serde_json::to_vec_pretty(&v["responses"]).unwrap_or_default(),
-                    duration_ms: v["durationMs"].as_u64().unwrap_or(0),
-                    error: opt_str(v, "error").map(str::to_string),
-                    error_key: v["errorKey"].as_str().zip(v.get("errorParams")).map(|(k, p)| (k.to_owned(), p.clone())),
-                    method,
-                    url: address,
-                },
-                Err(e) => response_history::failed(e, method, address),
+        send_scoped(&params.clone(), async move {
+            let ws_id = str_of(&params, "workspaceId");
+            let stored = match opt_str(&params, "id") {
+                Some(id) => load_entity(ws_id, "grpcRequests", id).ok_or_else(|| {
+                    EngineError::not_found(format!("No saved grpcRequests entity \"{id}\" in workspace \"{ws_id}\"."))
+                        .keyed(
+                            "request.saved_not_found",
+                            json!({ "kind": "grpcRequests", "id": id, "workspace": ws_id }),
+                        )
+                })?,
+                None => params.get("request").cloned().unwrap_or(Value::Null),
             };
-            response_history::record(ws_id, id, capture);
-        }
-        let mut result = outcome?;
-        crate::vault::redact_value(ws_id, &mut result);
-        Ok(result)
+            let stored = with_overrides(stored, &params);
+            let payload = resolve_saved(ws_id, &stored);
+            let outcome = ctx.registry.invoke("grpc.execute", payload.clone(), ctx.clone()).await;
+            if let Some(id) = response_history::entity_id(&params) {
+                let method = format!("{}/{}", str_of(&payload, "serviceName"), str_of(&payload, "methodName"));
+                let address = str_of(&payload, "serverAddress").to_string();
+                let capture = match &outcome {
+                    Ok(v) => response_history::Capture {
+                        status: v["status"].as_i64().unwrap_or(0),
+                        status_text: opt_str(v, "statusMessage").map(str::to_string),
+                        headers: v["metadata"].clone(),
+                        body: serde_json::to_vec_pretty(&v["responses"]).unwrap_or_default(),
+                        duration_ms: v["durationMs"].as_u64().unwrap_or(0),
+                        error: opt_str(v, "error").map(str::to_string),
+                        error_key: v["errorKey"]
+                            .as_str()
+                            .zip(v.get("errorParams"))
+                            .map(|(k, p)| (k.to_owned(), p.clone())),
+                        method,
+                        url: address,
+                    },
+                    Err(e) => response_history::failed(e, method, address),
+                };
+                response_history::record(ws_id, id, capture);
+            }
+            let mut result = outcome?;
+            crate::vault::redact_value(ws_id, &mut result);
+            Ok(result)
+        })
+        .await
     });
 
     stream::register(registry);

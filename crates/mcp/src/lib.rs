@@ -21,6 +21,7 @@ The everyday tools are listed to the agent; it finds the others with search_tool
 call_tool. There is no tool that deletes, reads a secret, signs in or stops the engine.
 
 Options
+  --session <name>     Work in a named session: its own cookies, variables and environment (or BIFURC_SESSION)
   --data-dir <path>    Default: the desktop app's data directory (or BIFURC_DATA_DIR)
   --no-start           Fail instead of starting an engine when none is running
   --all-tools          List every tool instead of the everyday ones and search_tools, for a host that

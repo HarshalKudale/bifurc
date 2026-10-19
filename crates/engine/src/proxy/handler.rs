@@ -117,13 +117,17 @@ pub(super) async fn run_request_script(
         .iter()
         .map(|(name, value)| {
             let from_client = headers.get(name) == Some(value);
-            let wire = if from_client { value.clone() } else { crate::vault::resolve_allowed(ws_id, value, &allowed) };
+            let wire = if from_client {
+                value.clone()
+            } else {
+                crate::vault::resolve_allowed(ws_id, value, &allowed, &mut Vec::new())
+            };
             (name.clone(), wire)
         })
         .collect();
     let wire_body = match std::str::from_utf8(&shown_body) {
         Ok(text) if shown_body != body && text.contains("{{") => {
-            crate::vault::resolve_allowed(ws_id, text, &allowed).into_bytes()
+            crate::vault::resolve_allowed(ws_id, text, &allowed, &mut Vec::new()).into_bytes()
         }
         _ => shown_body,
     };

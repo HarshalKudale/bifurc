@@ -240,6 +240,7 @@ pub fn register(registry: &mut CommandRegistry) {
                 .keyed("request.saved_not_found", json!({ "kind": "grpcRequests", "id": id, "workspace": ws_id }))
         })?;
         let request = super::resolve_saved(ws_id, &stored);
+        super::guard_call(&request).await?;
         Ok(match open(ws_id, stream_id, &request).await {
             Ok(kind) => json!({ "ok": true, "kind": kind }),
             Err(error) => crate::runtime::failed(&error),

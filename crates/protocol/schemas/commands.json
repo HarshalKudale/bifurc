@@ -71,6 +71,9 @@
       "type": "string"
      },
      "additionalProperties": {}
+    },
+    "force": {
+     "type": "boolean"
     }
    },
    "required": [
@@ -206,6 +209,9 @@
     },
     "id": {
      "type": "string"
+    },
+    "remember": {
+     "type": "boolean"
     }
    },
    "required": [
@@ -521,6 +527,37 @@
     "folderName"
    ]
   },
+  "claims.list": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    }
+   },
+   "additionalProperties": false
+  },
+  "claims.set": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "kind": {
+     "type": "string"
+    },
+    "id": {
+     "type": "string"
+    },
+    "release": {
+     "type": "boolean"
+    }
+   },
+   "required": [
+    "kind",
+    "id"
+   ],
+   "additionalProperties": false
+  },
   "config.get": {
    "type": "object",
    "properties": {},
@@ -555,6 +592,25 @@
      "maximum": 65535
     },
     "companionPort": {
+     "type": "integer",
+     "minimum": 1,
+     "maximum": 65535
+    },
+    "captureLimit": {
+     "type": "integer",
+     "minimum": 10,
+     "maximum": 10000
+    },
+    "traceHeader": {
+     "type": "string",
+     "maxLength": 64
+    },
+    "approvalTimeoutSeconds": {
+     "type": "integer",
+     "minimum": 10,
+     "maximum": 3600
+    },
+    "mailPort": {
      "type": "integer",
      "minimum": 1,
      "maximum": 65535
@@ -598,6 +654,46 @@
       }
      },
      "additionalProperties": false
+    }
+   },
+   "additionalProperties": false
+  },
+  "webhook.list": {
+   "type": "object",
+   "properties": {},
+   "additionalProperties": false
+  },
+  "webhook.listen": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "port": {
+     "type": "integer",
+     "minimum": 0,
+     "maximum": 65535
+    },
+    "name": {
+     "type": "string"
+    },
+    "forward": {
+     "type": "string"
+    },
+    "detach": {
+     "type": "boolean"
+    }
+   },
+   "required": [
+    "workspaceId"
+   ],
+   "additionalProperties": false
+  },
+  "webhook.stop": {
+   "type": "object",
+   "properties": {
+    "id": {
+     "type": "string"
     }
    },
    "additionalProperties": false
@@ -757,6 +853,83 @@
      ]
     }
    },
+   "additionalProperties": false
+  },
+  "mocks.serve": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "port": {
+     "type": "integer",
+     "minimum": 0,
+     "maximum": 65535
+    },
+    "host": {
+     "type": "string"
+    },
+    "fallthrough": {
+     "type": "string"
+    },
+    "detach": {
+     "type": "boolean"
+    }
+   },
+   "required": [
+    "workspaceId"
+   ],
+   "additionalProperties": false
+  },
+  "mocks.serveStop": {
+   "type": "object",
+   "properties": {
+    "port": {
+     "type": "integer",
+     "minimum": 0,
+     "maximum": 65535
+    }
+   },
+   "additionalProperties": false
+  },
+  "mocks.serveStatus": {
+   "type": "object",
+   "properties": {},
+   "additionalProperties": false
+  },
+  "policy.check": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "method": {
+     "type": "string"
+    },
+    "url": {
+     "type": "string"
+    },
+    "env": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "workspaceId",
+    "method",
+    "url"
+   ],
+   "additionalProperties": false
+  },
+  "policy.show": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "workspaceId"
+   ],
    "additionalProperties": false
   },
   "proxy.status": {
@@ -1261,6 +1434,24 @@
     },
     "folderId": {
      "type": "string"
+    },
+    "variables": {
+     "type": "object",
+     "propertyNames": {
+      "type": "string"
+     },
+     "additionalProperties": {
+      "type": "string"
+     }
+    },
+    "environmentId": {
+     "type": "string"
+    },
+    "freshJar": {
+     "type": "boolean"
+    },
+    "bail": {
+     "type": "boolean"
     }
    },
    "required": [
@@ -1354,6 +1545,28 @@
    ],
    "additionalProperties": false
   },
+  "flow.fromSteps": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "text": {
+     "type": "string"
+    },
+    "name": {
+     "type": "string"
+    },
+    "folderId": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "workspaceId",
+    "text"
+   ],
+   "additionalProperties": false
+  },
   "flow.run": {
    "type": "object",
    "properties": {
@@ -1379,6 +1592,21 @@
     "maxEvents": {
      "type": "integer",
      "minimum": 1
+    },
+    "variables": {
+     "type": "object",
+     "propertyNames": {
+      "type": "string"
+     },
+     "additionalProperties": {
+      "type": "string"
+     }
+    },
+    "environmentId": {
+     "type": "string"
+    },
+    "freshJar": {
+     "type": "boolean"
     }
    },
    "required": [
@@ -2144,6 +2372,45 @@
    ],
    "additionalProperties": false
   },
+  "approvals.list": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "all": {
+     "type": "boolean"
+    }
+   },
+   "additionalProperties": false
+  },
+  "approvals.decide": {
+   "type": "object",
+   "properties": {
+    "id": {
+     "type": "string"
+    },
+    "decision": {
+     "type": "string",
+     "enum": [
+      "approve",
+      "deny"
+     ]
+    },
+    "reason": {
+     "type": "string"
+    },
+    "interactive": {
+     "type": "boolean"
+    }
+   },
+   "required": [
+    "id",
+    "decision",
+    "interactive"
+   ],
+   "additionalProperties": false
+  },
   "audit.list": {
    "type": "object",
    "properties": {
@@ -2882,6 +3149,39 @@
     },
     "summary": {
      "type": "boolean"
+    },
+    "last": {
+     "type": "integer"
+    },
+    "status": {
+     "type": "string"
+    },
+    "method": {
+     "type": "string"
+    },
+    "host": {
+     "type": "string"
+    },
+    "path": {
+     "type": "string"
+    },
+    "since": {
+     "type": "integer"
+    },
+    "via": {
+     "type": "string"
+    },
+    "origin": {
+     "type": "string"
+    },
+    "mockId": {
+     "type": "string"
+    },
+    "pinned": {
+     "type": "boolean"
+    },
+    "grep": {
+     "type": "string"
     }
    },
    "required": [
@@ -2965,6 +3265,169 @@
    ],
    "additionalProperties": false
   },
+  "capture.pin": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "ids": {
+     "minItems": 1,
+     "type": "array",
+     "items": {
+      "type": "string"
+     }
+    },
+    "pinned": {
+     "type": "boolean"
+    }
+   },
+   "required": [
+    "workspaceId",
+    "ids"
+   ],
+   "additionalProperties": false
+  },
+  "cassette.list": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "workspaceId"
+   ],
+   "additionalProperties": false
+  },
+  "cassette.recordStart": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "name": {
+     "type": "string"
+    },
+    "hosts": {
+     "minItems": 1,
+     "type": "array",
+     "items": {
+      "type": "string"
+     }
+    }
+   },
+   "required": [
+    "workspaceId",
+    "name",
+    "hosts"
+   ],
+   "additionalProperties": false
+  },
+  "cassette.recordStop": {
+   "type": "object",
+   "properties": {},
+   "additionalProperties": false
+  },
+  "cassette.recordStatus": {
+   "type": "object",
+   "properties": {},
+   "additionalProperties": false
+  },
+  "cassette.replayStart": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "name": {
+     "type": "string"
+    },
+    "passthrough": {
+     "type": "boolean"
+    }
+   },
+   "required": [
+    "workspaceId",
+    "name"
+   ],
+   "additionalProperties": false
+  },
+  "cassette.replayStop": {
+   "type": "object",
+   "properties": {},
+   "additionalProperties": false
+  },
+  "cassette.replayStatus": {
+   "type": "object",
+   "properties": {},
+   "additionalProperties": false
+  },
+  "changes.list": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "after": {
+     "type": "integer",
+     "minimum": 0
+    },
+    "sinceTs": {
+     "type": "integer"
+    },
+    "advance": {
+     "type": "boolean"
+    },
+    "mine": {
+     "type": "boolean"
+    }
+   },
+   "additionalProperties": false
+  },
+  "contract.saveSnapshots": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "snapshots": {
+     "type": "array",
+     "items": {
+      "type": "object"
+     }
+    }
+   },
+   "required": [
+    "workspaceId",
+    "snapshots"
+   ],
+   "additionalProperties": false
+  },
+  "contract.fromOpenApi": {
+   "type": "object",
+   "properties": {
+    "text": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "text"
+   ],
+   "additionalProperties": false
+  },
+  "contract.listSnapshots": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "workspaceId"
+   ],
+   "additionalProperties": false
+  },
   "capture.inspectImport": {
    "type": "object",
    "properties": {
@@ -3017,6 +3480,9 @@
     },
     "folderName": {
      "type": "string"
+    },
+    "keepAll": {
+     "type": "boolean"
     }
    },
    "required": [
@@ -3049,6 +3515,27 @@
          "test"
         ]
        }
+      },
+      "variables": {
+       "type": "object",
+       "propertyNames": {
+        "type": "string"
+       },
+       "additionalProperties": {
+        "type": "string"
+       }
+      },
+      "environmentId": {
+       "type": "string"
+      },
+      "jar": {
+       "type": "boolean"
+      },
+      "overrides": {
+       "type": "object"
+      },
+      "freshJar": {
+       "type": "boolean"
       }
      },
      "required": [
@@ -3169,6 +3656,27 @@
       },
       "entityId": {
        "type": "string"
+      },
+      "variables": {
+       "type": "object",
+       "propertyNames": {
+        "type": "string"
+       },
+       "additionalProperties": {
+        "type": "string"
+       }
+      },
+      "environmentId": {
+       "type": "string"
+      },
+      "jar": {
+       "type": "boolean"
+      },
+      "overrides": {
+       "type": "object"
+      },
+      "freshJar": {
+       "type": "boolean"
       }
      },
      "required": [
@@ -3190,6 +3698,21 @@
       },
       "id": {
        "type": "string"
+      },
+      "variables": {
+       "type": "object",
+       "propertyNames": {
+        "type": "string"
+       },
+       "additionalProperties": {
+        "type": "string"
+       }
+      },
+      "environmentId": {
+       "type": "string"
+      },
+      "overrides": {
+       "type": "object"
       }
      },
      "required": [
@@ -3256,6 +3779,21 @@
       },
       "entityId": {
        "type": "string"
+      },
+      "variables": {
+       "type": "object",
+       "propertyNames": {
+        "type": "string"
+       },
+       "additionalProperties": {
+        "type": "string"
+       }
+      },
+      "environmentId": {
+       "type": "string"
+      },
+      "overrides": {
+       "type": "object"
       }
      },
      "required": [
@@ -3276,6 +3814,21 @@
       },
       "id": {
        "type": "string"
+      },
+      "variables": {
+       "type": "object",
+       "propertyNames": {
+        "type": "string"
+       },
+       "additionalProperties": {
+        "type": "string"
+       }
+      },
+      "environmentId": {
+       "type": "string"
+      },
+      "overrides": {
+       "type": "object"
       }
      },
      "required": [
@@ -3338,6 +3891,21 @@
       },
       "entityId": {
        "type": "string"
+      },
+      "variables": {
+       "type": "object",
+       "propertyNames": {
+        "type": "string"
+       },
+       "additionalProperties": {
+        "type": "string"
+       }
+      },
+      "environmentId": {
+       "type": "string"
+      },
+      "overrides": {
+       "type": "object"
       }
      },
      "required": [
@@ -3358,6 +3926,21 @@
       },
       "id": {
        "type": "string"
+      },
+      "variables": {
+       "type": "object",
+       "propertyNames": {
+        "type": "string"
+       },
+       "additionalProperties": {
+        "type": "string"
+       }
+      },
+      "environmentId": {
+       "type": "string"
+      },
+      "overrides": {
+       "type": "object"
       }
      },
      "required": [
@@ -3419,6 +4002,21 @@
       },
       "entityId": {
        "type": "string"
+      },
+      "variables": {
+       "type": "object",
+       "propertyNames": {
+        "type": "string"
+       },
+       "additionalProperties": {
+        "type": "string"
+       }
+      },
+      "environmentId": {
+       "type": "string"
+      },
+      "overrides": {
+       "type": "object"
       }
      },
      "required": [
@@ -3826,6 +4424,411 @@
     "workspaceId",
     "id"
    ],
+   "additionalProperties": false
+  },
+  "cookies.set": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "url": {
+     "type": "string"
+    },
+    "domain": {
+     "type": "string"
+    },
+    "name": {
+     "type": "string"
+    },
+    "value": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "workspaceId",
+    "name",
+    "value"
+   ],
+   "additionalProperties": false
+  },
+  "session.get": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    }
+   },
+   "additionalProperties": false
+  },
+  "session.setVariables": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "variables": {
+     "type": "object",
+     "propertyNames": {
+      "type": "string"
+     },
+     "additionalProperties": {
+      "type": "string"
+     }
+    }
+   },
+   "required": [
+    "variables"
+   ],
+   "additionalProperties": false
+  },
+  "session.clearVariables": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "keys": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     }
+    }
+   },
+   "additionalProperties": false
+  },
+  "session.reset": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    }
+   },
+   "additionalProperties": false
+  },
+  "devservice.define": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "name": {
+     "type": "string"
+    },
+    "cmd": {
+     "type": "string"
+    },
+    "port": {
+     "type": "integer",
+     "minimum": 1,
+     "maximum": 65535
+    },
+    "cwd": {
+     "type": "string"
+    },
+    "vault": {
+     "type": "string"
+    },
+    "env": {
+     "type": "object",
+     "additionalProperties": {
+      "type": "string"
+     }
+    },
+    "logFile": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "workspaceId",
+    "name",
+    "cmd"
+   ],
+   "additionalProperties": false
+  },
+  "devservice.list": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "workspaceId"
+   ],
+   "additionalProperties": false
+  },
+  "devservice.remove": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "name": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "workspaceId",
+    "name"
+   ],
+   "additionalProperties": false
+  },
+  "devservice.up": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "name": {
+     "type": "string"
+    },
+    "secrets": {
+     "type": "object",
+     "additionalProperties": {
+      "type": "string"
+     }
+    }
+   },
+   "required": [
+    "workspaceId",
+    "name"
+   ],
+   "additionalProperties": false
+  },
+  "devservice.down": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "name": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "workspaceId",
+    "name"
+   ],
+   "additionalProperties": false
+  },
+  "devservice.logs": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "name": {
+     "type": "string"
+    },
+    "last": {
+     "type": "integer",
+     "minimum": 0
+    },
+    "sinceTs": {
+     "type": "integer"
+    }
+   },
+   "required": [
+    "workspaceId",
+    "name"
+   ],
+   "additionalProperties": false
+  },
+  "devservice.grep": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "needles": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     }
+    },
+    "probes": {
+     "type": "array",
+     "items": {
+      "type": "string"
+     }
+    },
+    "context": {
+     "type": "integer",
+     "minimum": 0
+    },
+    "name": {
+     "type": "string"
+    },
+    "sinceTs": {
+     "type": "integer"
+    },
+    "untilTs": {
+     "type": "integer"
+    }
+   },
+   "required": [
+    "workspaceId",
+    "needles"
+   ],
+   "additionalProperties": false
+  },
+  "devservice.freePort": {
+   "type": "object",
+   "properties": {
+    "port": {
+     "type": "integer",
+     "minimum": 1,
+     "maximum": 65535
+    },
+    "kill": {
+     "type": "boolean"
+    }
+   },
+   "required": [
+    "port"
+   ],
+   "additionalProperties": false
+  },
+  "mail.status": {
+   "type": "object",
+   "properties": {},
+   "additionalProperties": false
+  },
+  "mail.list": {
+   "type": "object",
+   "properties": {
+    "to": {
+     "type": "string"
+    },
+    "last": {
+     "type": "integer",
+     "minimum": 0
+    }
+   },
+   "additionalProperties": false
+  },
+  "mail.get": {
+   "type": "object",
+   "properties": {
+    "id": {
+     "type": "string"
+    },
+    "linkMatch": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "id"
+   ],
+   "additionalProperties": false
+  },
+  "mail.wait": {
+   "type": "object",
+   "properties": {
+    "to": {
+     "type": "string"
+    },
+    "sinceTs": {
+     "type": "integer"
+    },
+    "timeoutMs": {
+     "type": "integer",
+     "minimum": 0,
+     "maximum": 600000
+    },
+    "linkMatch": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "timeoutMs"
+   ],
+   "additionalProperties": false
+  },
+  "jwt.mint": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "vault": {
+     "type": "string"
+    },
+    "secret": {
+     "type": "string"
+    },
+    "claims": {
+     "type": "object"
+    },
+    "exp": {
+     "type": "string"
+    },
+    "alg": {
+     "type": "string"
+    },
+    "header": {
+     "type": "object"
+    }
+   },
+   "required": [
+    "workspaceId",
+    "vault"
+   ]
+  },
+  "fault.add": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "target": {
+     "type": "string"
+    },
+    "latencyMs": {
+     "type": "integer",
+     "minimum": 1,
+     "maximum": 120000
+    },
+    "status": {
+     "type": "integer",
+     "minimum": 100,
+     "maximum": 599
+    },
+    "rate": {
+     "type": "number",
+     "exclusiveMinimum": 0,
+     "maximum": 100
+    },
+    "drop": {
+     "type": "boolean"
+    },
+    "reset": {
+     "type": "boolean"
+    }
+   },
+   "required": [
+    "target"
+   ],
+   "additionalProperties": false
+  },
+  "fault.list": {
+   "type": "object",
+   "properties": {},
+   "additionalProperties": false
+  },
+  "fault.clear": {
+   "type": "object",
+   "properties": {
+    "id": {
+     "type": "string"
+    }
+   },
+   "additionalProperties": false
+  },
+  "mail.clear": {
+   "type": "object",
+   "properties": {},
    "additionalProperties": false
   }
  }

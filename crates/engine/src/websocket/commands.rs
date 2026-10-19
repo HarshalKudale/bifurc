@@ -46,6 +46,7 @@ fn resolve_target(params: &Value) -> Result<(String, Option<Value>)> {
 pub fn register(registry: &mut CommandRegistry) {
     registry.register_sync("ws.connect", |params, _| {
         let (url, headers) = resolve_target(&params)?;
+        crate::workspace::policy::guard_now("GET", &url)?;
         ok_result(connect_socket(str_of(&params, "workspaceId"), str_of(&params, "socketId"), &url, headers.as_ref()))
     });
 

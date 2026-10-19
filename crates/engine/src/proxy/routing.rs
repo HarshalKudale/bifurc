@@ -70,6 +70,14 @@ pub fn log_outcome(base: &RequestLogEntry, via: &str, target: Option<String>, ou
         finished_entry(base, outcome.status, via, target, outcome.duration_ms, outcome.res_headers, outcome.res_body);
     if let Some(shown) = outcome.req_headers {
         entry.req_headers = shown;
+        // The capture shows the request as the client sent it, without the trace header a script saw.
+        if let Some(name) = crate::capture::trace_header() {
+            entry.req_headers.shift_remove(&name);
+        }
+    }
+    if base.fault.is_some() {
+        // An injected delay came before the upstream call, which the outcome's own timing does not cover.
+        entry.duration_ms = Some(now_ms() - base.ts);
     }
     mask_secrets(&mut entry);
     emit_log(&entry);
@@ -93,6 +101,10 @@ const RULE_WITHOUT_TARGET: &str = "<h1>502 Bad Gateway</h1><p>Proxy rule matched
 /// Route one request. `true` when a mock or a rule took it (and the response was written to `out`); `false`
 /// when nothing matched and the caller should pass it through.
 pub async fn handle_proxy_routing<W: AsyncWrite + Unpin>(out: &mut W, ex: &Exchange<'_>) -> bool {
+    // A cassette being replayed answers first, for its hosts.
+    if crate::cassettes::replay::serve(out, ex.base, true, ex.req_path, ex.body, ex.t0).await {
+        return true;
+    }
     let routing = ex.routing;
     let env = routing.env.as_ref();
     let rule = match_proxy_rule(&routing.rules, ex.rule_match_target, &routing.mappings);

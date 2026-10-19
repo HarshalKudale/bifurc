@@ -6,7 +6,7 @@ use std::time::Instant;
 use serde_json::{Value, json};
 
 use crate::{
-    env::{load_merged_environment, resolve_headers, resolve_vars},
+    env::{load_merged_environment, resolve_headers, resolve_vars, send_scoped, with_overrides},
     kernel::CommandRegistry,
     protocol::{EngineError, ErrorCode},
     rest::direct_http::{exchange_with, header_pairs},
@@ -24,6 +24,7 @@ fn failure(message: String) -> EngineError {
 
 pub fn register(registry: &mut CommandRegistry) {
     registry.register("soap.fetchWsdl", |params: Value, _| async move {
+        crate::workspace::policy::guard("GET", str_of(&params, "url")).await?;
         let settings = RequestSettings::resolve(params.get("settings"));
         Ok(match exchange_with("GET", str_of(&params, "url"), &[], None, &settings).await {
             Ok(response) => json!({ "ok": true, "content": response.body }),
@@ -35,6 +36,7 @@ pub fn register(registry: &mut CommandRegistry) {
     });
 
     registry.register("soap.execute", |params: Value, _| async move {
+        crate::workspace::policy::guard("POST", str_of(&params, "endpointUrl")).await?;
         let mut headers = vec![("Content-Type".to_string(), "text/xml; charset=utf-8".to_string())];
         headers.extend(header_pairs(params.get("headers").unwrap_or(&Value::Null)));
         let action = str_of(&params, "soapAction");
@@ -56,31 +58,39 @@ pub fn register(registry: &mut CommandRegistry) {
     });
 
     registry.register("soap.send", |params: Value, ctx| async move {
-        let ws_id = str_of(&params, "workspaceId");
-        let stored = match opt_str(&params, "id") {
-            Some(id) => load_entity(ws_id, "soapRequests", id).ok_or_else(|| {
-                EngineError::not_found(format!("No saved soapRequests entity \"{id}\" in workspace \"{ws_id}\"."))
-                    .keyed("request.saved_not_found", json!({ "kind": "soapRequests", "id": id, "workspace": ws_id }))
-            })?,
-            None => params.get("request").cloned().unwrap_or(Value::Null),
-        };
-        let env = load_merged_environment(ws_id);
-        let env = env.as_ref();
-        let mut payload = json!({
-            "endpointUrl": resolve_vars(str_of(&stored, "endpointUrl"), env),
-            "soapAction": resolve_vars(str_of(&stored, "soapAction"), env),
-            "headers": resolve_headers(stored.get("headers").unwrap_or(&Value::Null), env),
-            "body": resolve_vars(str_of(&stored, "body"), env),
-        });
-        if let Some(settings) = stored.get("settings").filter(|v| v.is_object()) {
-            payload["settings"] = settings.clone();
-        }
-        let url = str_of(&payload, "endpointUrl").to_string();
-        let outcome = crate::cookies::scoped(ws_id, ctx.registry.invoke("soap.execute", payload, ctx.clone())).await;
-        response_history::record_text(ws_id, &params, "POST", &url, &outcome);
-        let mut result = outcome?;
-        crate::vault::redact_value(ws_id, &mut result);
-        Ok(result)
+        send_scoped(&params.clone(), async move {
+            let ws_id = str_of(&params, "workspaceId");
+            let stored = match opt_str(&params, "id") {
+                Some(id) => load_entity(ws_id, "soapRequests", id).ok_or_else(|| {
+                    EngineError::not_found(format!("No saved soapRequests entity \"{id}\" in workspace \"{ws_id}\"."))
+                        .keyed(
+                            "request.saved_not_found",
+                            json!({ "kind": "soapRequests", "id": id, "workspace": ws_id }),
+                        )
+                })?,
+                None => params.get("request").cloned().unwrap_or(Value::Null),
+            };
+            let stored = with_overrides(stored, &params);
+            let env = load_merged_environment(ws_id);
+            let env = env.as_ref();
+            let mut payload = json!({
+                "endpointUrl": resolve_vars(str_of(&stored, "endpointUrl"), env),
+                "soapAction": resolve_vars(str_of(&stored, "soapAction"), env),
+                "headers": resolve_headers(stored.get("headers").unwrap_or(&Value::Null), env),
+                "body": resolve_vars(str_of(&stored, "body"), env),
+            });
+            if let Some(settings) = stored.get("settings").filter(|v| v.is_object()) {
+                payload["settings"] = settings.clone();
+            }
+            let url = str_of(&payload, "endpointUrl").to_string();
+            let outcome =
+                crate::cookies::scoped(ws_id, ctx.registry.invoke("soap.execute", payload, ctx.clone())).await;
+            response_history::record_text(ws_id, &params, "POST", &url, &outcome);
+            let mut result = outcome?;
+            crate::vault::redact_value(ws_id, &mut result);
+            Ok(result)
+        })
+        .await
     });
 }
 
@@ -147,6 +157,9 @@ mod tests {
         let echoed: Value = serde_json::from_str(result["body"].as_str().unwrap()).unwrap();
         assert_eq!(echoed["body"], "<y/>");
         assert!(echoed["headers"].get("soapaction").is_none());
+        let over = json!({ "workspaceId": root.ws_id, "id": "s1", "overrides": { "body": "<{{k}}/>" }, "variables": { "k": "z" } });
+        let result = call("soap.send", over).await.unwrap();
+        assert_eq!(serde_json::from_str::<Value>(result["body"].as_str().unwrap()).unwrap()["body"], "<z/>");
         let missing = call("soap.send", json!({ "workspaceId": root.ws_id, "id": "nope" })).await.unwrap_err();
         assert_eq!(missing.code, crate::protocol::ErrorCode::NotFound);
     }

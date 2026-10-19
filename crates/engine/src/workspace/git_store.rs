@@ -270,6 +270,18 @@ pub async fn init_workspace_repo(ws_id: &str) -> Result<(), GitError> {
     Ok(())
 }
 
+/// The `session:` trailer line of a commit of the entities `ids`: the named sessions the change feed saw change
+/// them, and the session making the commit; nothing when there are none. Readers that do not know it ignore it.
+pub fn session_trailer(ws_id: &str, ids: &[String]) -> String {
+    let mut names = crate::workspace::changes::sessions_of(ws_id, ids);
+    if let Some(own) = crate::env::session::named()
+        && !names.contains(&own)
+    {
+        names.push(own);
+    }
+    if names.is_empty() { String::new() } else { format!("\nsession: {}", names.join(", ")) }
+}
+
 pub struct CommitMutation<'a> {
     /// `create` | `update` | `delete`
     pub action: &'a str,
@@ -290,8 +302,15 @@ pub async fn commit_mutation(opts: CommitMutation<'_>) -> Result<String, GitErro
     let fields =
         if opts.changed_fields.is_empty() { String::new() } else { format!(" [{}]", opts.changed_fields.join(",")) };
     let message = format!(
-        "{} {}{} {}\n\nentity-id: {}\nworkspace-id: {}\nactor: {}",
-        opts.action, opts.entity, fields, opts.entity_name, opts.entity_id, opts.workspace_id, actor
+        "{} {}{} {}\n\nentity-id: {}\nworkspace-id: {}\nactor: {}{}",
+        opts.action,
+        opts.entity,
+        fields,
+        opts.entity_name,
+        opts.entity_id,
+        opts.workspace_id,
+        actor,
+        session_trailer(opts.workspace_id, &[opts.entity_id.to_string()])
     );
     let ws = opts.workspace_id;
     if opts.action == "delete" {
@@ -372,6 +391,9 @@ fn parse_audit_entry(block: &str) -> Option<Value> {
         "workspaceId": body_field(&body, "workspace-id").unwrap_or_default(),
         "actor": body_field(&body, "actor").unwrap_or_else(|| "local".to_string()),
     });
+    if let Some(session) = body_field(&body, "session") {
+        entry["session"] = json!(session);
+    }
     if let Some(fields) = changed_fields {
         entry["changedFields"] = json!(fields);
     }

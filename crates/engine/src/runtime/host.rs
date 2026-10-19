@@ -104,8 +104,17 @@ pub struct WorkspaceHost {
 const CLI_CLIENT: &str = "cli";
 
 /// What the command line may ask before the first-run setup is finished: whether it is, and for the engine
-/// to stop (an installer or an uninstaller stops the engine whatever state the setup is in).
-const BEFORE_SETUP: [&str; 2] = ["setup.getState", "engine.shutdown"];
+/// to stop (an installer or an uninstaller stops the engine whatever state the setup is in), and the steps
+/// `bifurc setup` walks as the app does: the two acceptances, the servers step, the first workspace, the end.
+const BEFORE_SETUP: [&str; 7] = [
+    "setup.getState",
+    "engine.shutdown",
+    "setup.acceptTerms",
+    "setup.acceptPrivacy",
+    "setup.startServers",
+    "workspace.add",
+    "setup.complete",
+];
 
 /// `details.reason` of the refusal, which is how a client tells it from any other `FORBIDDEN`.
 pub const SETUP_REQUIRED: &str = "setupRequired";
@@ -118,7 +127,7 @@ fn setup_refusal(client: Option<&str>, action: &str, onboarded: impl FnOnce() ->
     }
     Some(EngineError::with_details(
         crate::protocol::ErrorCode::Forbidden,
-        "Bifurc has not been set up yet. Finish the first-run setup in the Bifurc app, then run this command again.",
+        "Bifurc has not been set up yet. Finish the first-run setup in the Bifurc app, or run: bifurc setup --accept-terms --accept-privacy",
         json!({ "reason": SETUP_REQUIRED }),
     )
     .keyed("engine.setup_required", json!({})))
@@ -236,6 +245,9 @@ impl WorkspaceHost {
             forward_proxy.start(forward_port);
         }
         bind_forward_proxy(Some(forward_proxy.clone()));
+        if start_listeners {
+            crate::mail::ensure(&settings);
+        }
 
         let served: Arc<RwLock<Vec<ServedWorkspace>>> = Arc::new(RwLock::new(Vec::new()));
         let edge_port = opts.edge_port.unwrap_or_else(|| settings.port());
@@ -585,6 +597,10 @@ mod tests {
             Some(json!({ "reason": SETUP_REQUIRED, "key": "engine.setup_required", "params": {} }))
         );
         assert!(setup_refusal(Some("cli"), "request.send", || false).is_some());
+        // Only the steps of the setup are open: not the settings, nor anything that changes a saved item.
+        for action in ["settings.update", "config.save", "setup.allowLowPorts", "workspace.delete", "entity.create"] {
+            assert!(setup_refusal(Some("cli"), action, || false).is_some(), "{action}");
+        }
         assert!(setup_refusal(Some("cli"), "config.get", || true).is_none());
     }
 

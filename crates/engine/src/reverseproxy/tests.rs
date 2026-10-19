@@ -127,6 +127,7 @@ async fn a_mapped_domain_is_proxied_to_its_target() {
         { "id": "b", "domain": "off.example", "target": "127.0.0.1:1", "enabled": false },
     ] });
     let _root = crate::testing::scratch_data_root();
+    crate::capture::refresh_capture_limit();
     let (edge, port) = edge_with(Some(cfg));
 
     let answer = ask(port, "shop.example", "/cart?x=1").await;
@@ -139,6 +140,9 @@ async fn a_mapped_domain_is_proxied_to_its_target() {
     assert_eq!(entry["origin"], "reverse");
     assert_eq!(entry["workspaceId"], "ws1");
     assert_eq!(entry["target"], format!("127.0.0.1:{target}"));
+    // The upstream sees the capture id; the capture shows the request as the client sent it.
+    assert!(sent.contains(&format!("x-bifurc-trace: {}", entry["id"].as_str().unwrap())), "{sent}");
+    assert!(!entry["reqHeaders"].as_object().unwrap().contains_key("x-bifurc-trace"));
 
     // A disabled mapping is not a mapping, and neither is an unknown host: they get the home page.
     assert!(ask(port, "off.example", "/").await.contains("Local proxy is active"));
@@ -293,5 +297,23 @@ async fn with_https_on_the_one_port_serves_tls_and_redirects_plain_http() {
 
     let home = tls_ask(client, port, "localhost", "/").await;
     assert!(home.contains(&format!("https://app.localhost:{https_port}/")), "{home}");
+    edge.stop();
+}
+
+#[tokio::test]
+async fn a_fault_on_a_mapped_host_answers_before_the_upstream() {
+    let (target, seen) = canned_upstream(ok("from target")).await;
+    let cfg = json!({ "activeWorkspaceId": "ws1", "mocks": [], "proxyRules": [], "mappings": [
+        { "id": "a", "domain": "faulty.example", "target": format!("127.0.0.1:{target}"), "enabled": true },
+    ] });
+    let _root = crate::testing::scratch_data_root();
+    let (edge, port) = edge_with(Some(cfg));
+    let id = crate::faults::add_for_tests(&json!({ "target": "faulty.example/api", "status": 503 }));
+
+    let answer = ask(port, "faulty.example", "/api/x").await;
+    assert!(answer.starts_with("HTTP/1.1 503 ") && answer.contains(&format!("x-bifurc-fault: {id}")), "{answer}");
+    assert!(seen.lock().is_empty());
+    assert!(ask(port, "faulty.example", "/other").await.ends_with("from target"));
+    crate::faults::clear_for_tests(&id);
     edge.stop();
 }

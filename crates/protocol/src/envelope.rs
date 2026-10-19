@@ -119,6 +119,10 @@ pub struct HelloRequest {
     /// `browserVersion`, `os`, `arch`, `extensionId`, `userAgent` and `language` (all strings).
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub client_info: Option<Value>,
+    /// The named session of the command line (cookie jar, runtime variables, environment of its own); absent
+    /// for the default session, which is the app's.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session: Option<String>,
 }
 
 #[derive(Debug, Clone, PartialEq, Serialize, Deserialize)]
