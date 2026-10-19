@@ -45,6 +45,8 @@
   "chrome.count_mapping_other": "{count} mappings",
   "chrome.count_rule_one": "{count} rule",
   "chrome.count_rule_other": "{count} rules",
+  "chrome.count_fault_one": "{count} fault",
+  "chrome.count_fault_other": "{count} faults",
   "chrome.count_flow_one": "{count} flow",
   "chrome.count_flow_other": "{count} flows",
   "chrome.count_environment_one": "{count} environment",

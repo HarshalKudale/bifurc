@@ -22,5 +22,6 @@
   "error.break": "接続の切断は drop か reset、または空にしてください。",
   "error.nothing": "障害には遅延、ステータス、drop または reset が必要です。",
   "error.alone": "drop と reset は遅延やステータスと組み合わせられません。",
-  "error.add": "障害を追加できませんでした: {message}"
+  "error.add": "障害を追加できませんでした: {message}",
+  "page.description": "障害はフォワードプロキシを通る通信を遅らせたり失敗させたりして、アプリの対応を確かめます。解除するまでエンジンに残ります。"
 }

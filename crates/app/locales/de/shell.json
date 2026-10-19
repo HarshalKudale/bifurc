@@ -45,6 +45,8 @@
   "chrome.count_mapping_other": "{count} Zuordnungen",
   "chrome.count_rule_one": "{count} Regel",
   "chrome.count_rule_other": "{count} Regeln",
+  "chrome.count_fault_one": "{count} Fehler",
+  "chrome.count_fault_other": "{count} Fehler",
   "chrome.count_flow_one": "{count} Flow",
   "chrome.count_flow_other": "{count} Flows",
   "chrome.count_environment_one": "{count} Umgebung",
