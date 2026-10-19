@@ -55,20 +55,12 @@ impl<'a> Context<'a> {
         }
         let answer = self.engine()?.request(command, payload);
         // A stale write is a wrong move by the caller (exit 2) with a one-line reason.
+        // Also a write refused by another session's claim (a lock), on any command.
         match answer {
-            Err(CliError::Engine { code, message }) if command == "entity.update" && code == "CONFLICT" => {
+            Err(CliError::Engine { code, message })
+                if code == "CONFLICT" && (command == "entity.update" || message.contains("locked against edits")) =>
+            {
                 Err(CliError::usage(message))
-            }
-            // Claims are advisory: the update went through, the claim is only said.
-            Ok(done) if command == "entity.update" && done.get("claimedBy").is_some_and(Value::is_object) => {
-                let by = &done["claimedBy"];
-                eprintln!(
-                    "bifurc: warning: \"{}\" is claimed by {} ({})",
-                    js_template(by.get("name")),
-                    js_template(by.get("by")),
-                    crate::changes::ago(crate::capture::now_ms() - by["ts"].as_i64().unwrap_or_default())
-                );
-                Ok(done)
             }
             other => other,
         }

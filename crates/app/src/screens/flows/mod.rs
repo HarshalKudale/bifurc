@@ -170,6 +170,8 @@ impl FlowsScreen {
     }
 
     fn close(&mut self, cx: &mut Context<Self>) {
+        let ids: Vec<String> = self.selected.clone().into_iter().collect();
+        self.model.update(cx, |model, cx| model.release_claims(&ids, cx));
         self.autosave.cancel();
         (self.selected, self.doc, self.run, self.selected_node) = (None, None, None, None);
         (self.load, self.show_load) = (None, false);

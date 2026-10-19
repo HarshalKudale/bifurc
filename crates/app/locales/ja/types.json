@@ -1,0 +1,11 @@
+{
+  "panel": "型",
+  "name_placeholder": "型名 (既定: <リクエスト>Response)",
+  "loading": "型を推論中…",
+  "open_request": "保存したリクエストを開くと、その応答から型を推論します。",
+  "unavailable": "型なし",
+  "unavailable_hint": "型は保存した HTTP または GraphQL リクエストの JSON 応答から推論されます。",
+  "no_samples": "まだ応答がありません",
+  "no_samples_hint": "リクエストを送信すると、その JSON 応答の型がここに表示されます。",
+  "failed": "型を推論できませんでした"
+}

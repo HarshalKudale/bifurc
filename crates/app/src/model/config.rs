@@ -104,6 +104,15 @@ pub struct EngineSettings {
     pub telemetry_enabled: bool,
     /// The engine looks for a newer version once a day.
     pub update_check_enabled: bool,
+    /// Unpinned captured exchanges kept; `None` = not set (the engine's default).
+    pub capture_limit: Option<u64>,
+    /// The header stamped on forwarded requests with the capture id: `None` = not set (the default),
+    /// empty = off.
+    pub trace_header: Option<String>,
+    /// The SMTP port of the local mail sink; `None` = not set.
+    pub mail_port: Option<u16>,
+    /// Seconds a call held for approval waits for a person; `None` = not set.
+    pub approval_timeout_seconds: Option<u64>,
 }
 
 #[derive(Debug, Clone, PartialEq)]
@@ -118,11 +127,21 @@ pub struct EnvironmentInfo {
     pub id: String,
     pub name: String,
     pub variables: Vec<EnvVariable>,
+    /// The request or flow the engine runs to log in when a send answers 401 (`auth` in the file).
+    pub login: Option<EnvLogin>,
     /// Deleted here; the deletion is waiting to be confirmed or reverted.
     pub deleted: bool,
     /// The version of Bifurc it needs, when a newer one than this last saved it. It is listed and nothing
     /// else: the engine does not read or change it until this install is updated.
     pub locked: Option<String>,
+}
+
+/// `auth` of an environment: `{ login: { kind: "request" | "flow", id }, retryOn401 }`.
+#[derive(Debug, Clone, PartialEq)]
+pub struct EnvLogin {
+    pub flow: bool,
+    pub id: String,
+    pub retry_on_401: bool,
 }
 
 impl EnvironmentInfo {
@@ -294,6 +313,14 @@ impl EnvironmentInfo {
             id: text(e, "id")?,
             name: text(e, "name")?,
             variables,
+            login: e.get("auth").and_then(|auth| {
+                let login = auth.get("login")?;
+                Some(EnvLogin {
+                    flow: text(login, "kind").as_deref() == Some("flow"),
+                    id: text(login, "id")?,
+                    retry_on_401: auth.get("retryOn401").and_then(Value::as_bool).unwrap_or(false),
+                })
+            }),
             deleted: is_deleted(e),
             locked: locked_to(e),
         })
@@ -456,6 +483,10 @@ impl ConfigSnapshot {
                 tls_enabled: flag("tlsEnabled"),
                 telemetry_enabled: config.get("telemetryEnabled").and_then(Value::as_bool).unwrap_or(true),
                 update_check_enabled: config.get("updateCheckEnabled").and_then(Value::as_bool).unwrap_or(true),
+                capture_limit: config.get("captureLimit").and_then(Value::as_u64),
+                trace_header: config.get("traceHeader").and_then(Value::as_str).map(str::to_owned),
+                mail_port: config.get("mailPort").and_then(Value::as_u64).and_then(|p| u16::try_from(p).ok()),
+                approval_timeout_seconds: config.get("approvalTimeoutSeconds").and_then(Value::as_u64),
             },
         })
     }
@@ -505,6 +536,11 @@ impl ConfigSnapshot {
             }
             "environments" => {
                 let Some(old) = self.environments.iter_mut().find(|e| e.id == id) else { return false };
+                // The engine's listing leaves `auth` out, so it cannot say whether the login changed (or was
+                // removed): the snapshot is fetched. A listing that carries it is patched in.
+                if listing.get("auth").is_none() {
+                    return false;
+                }
                 let Some(new) = EnvironmentInfo::from_value(listing) else { return false };
                 *old = EnvironmentInfo { deleted: old.deleted, locked: old.locked.take(), ..new };
             }
@@ -737,10 +773,18 @@ mod tests {
             ("b.localhost", Some("B"), true)
         );
 
-        let listing = json!({"id": "e1", "name": "Prod", "variables": [{"id": "v", "key": "HOST", "value": "prod"}]});
+        let mut listing =
+            json!({"id": "e1", "name": "Prod", "variables": [{"id": "v", "key": "HOST", "value": "prod"}]});
+        // The engine's listing has no `auth`, so it cannot say whether the login changed: the snapshot is fetched.
+        assert!(!c.apply_change(&change("updated", "environments", "e1", json!({ "listing": listing }))));
+        listing["auth"] = json!({"login": {"kind": "flow", "id": "fl1"}, "retryOn401": true});
         assert!(c.apply_change(&change("updated", "environments", "e1", json!({ "listing": listing }))));
         assert_eq!(c.active_environment().unwrap().name, "Prod");
         assert_eq!(c.resolved_variables()[0].0.value, "prod");
+        assert_eq!(
+            c.active_environment().unwrap().login,
+            Some(EnvLogin { flow: true, id: "fl1".into(), retry_on_401: true })
+        );
     }
 
     #[test]

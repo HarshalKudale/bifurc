@@ -2,7 +2,8 @@
 //!
 //! 1. **History** — the commits that touched the open entity's file; each opens to the diff it made there.
 //! 2. **Snippet** — the open request written out as cURL, `fetch`, axios or Python, to copy elsewhere.
-//! 3. **Variables** — what `{{name}}` resolves against: the active environment over the global one.
+//! 3. **Types** — a type inferred from the open request's JSON responses ([`super::types_tab`]).
+//! 4. **Variables** — what `{{name}}` resolves against: the active environment over the global one.
 //!
 //! Nothing here is editable. The shell tells it what is open ([`ActiveTarget`]); it reads the rest from the
 //! model and asks the engine for the history, again whenever the engine says the history moved.
@@ -21,11 +22,11 @@ use gpui_kit::component::{
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AppContext as _, ClipboardItem, Context, Div, Entity, InteractiveElement as _, IntoElement, ParentElement as _,
-    Render, StatefulInteractiveElement as _, Styled as _, Subscription, Window, div, px,
+    Render, StatefulInteractiveElement as _, Styled as _, Subscription, TestSupportExt as _, Window, div, px,
 };
 use serde_json::json;
 
-use super::ActiveTarget;
+use super::{ActiveTarget, types_tab::TypesPanel};
 use crate::{
     app_model::{AppModel, ModelEvent},
     components::{Syntax, commit_diffs::CommitDiffs, page},
@@ -42,17 +43,19 @@ use crate::{
 enum Panel {
     History,
     Snippet,
+    Types,
     Variables,
     Vault,
 }
 
-const PANELS: [Panel; 4] = [Panel::History, Panel::Snippet, Panel::Variables, Panel::Vault];
+const PANELS: [Panel; 5] = [Panel::History, Panel::Snippet, Panel::Types, Panel::Variables, Panel::Vault];
 
 impl Panel {
     fn label(self) -> &'static str {
         match self {
             Panel::History => t("shell.right_sidebar.panel_history"),
             Panel::Snippet => t("shell.right_sidebar.panel_snippet"),
+            Panel::Types => t("types.panel"),
             Panel::Variables => t("shell.right_sidebar.panel_variables"),
             Panel::Vault => t("shell.right_sidebar.panel_vault"),
         }
@@ -68,9 +71,12 @@ enum History {
 }
 
 pub struct RightSidebar {
-    model: Entity<AppModel>,
+    pub(super) model: Entity<AppModel>,
     panel: Panel,
-    target: Option<ActiveTarget>,
+    pub(super) target: Option<ActiveTarget>,
+    /// Whether the sidebar is shown; work is only done while it is.
+    open: bool,
+    pub(super) types: TypesPanel,
     snippet_kind: SnippetKind,
     snippet: Entity<EditorState>,
     history: History,
@@ -94,16 +100,22 @@ impl RightSidebar {
         let subscriptions = [
             cx.observe(&model, |_, _, cx| cx.notify()),
             cx.observe(&diffs, |_, _, cx| cx.notify()),
-            cx.subscribe(&model, |this, _, event: &ModelEvent, cx| {
-                if matches!(event, ModelEvent::HistoryChanged) {
-                    this.refresh_history(true, cx);
+            cx.subscribe_in(&model, window, |this, _, event: &ModelEvent, window, cx| match event {
+                ModelEvent::HistoryChanged => this.refresh_history(true, cx),
+                ModelEvent::ResponseReceived(id)
+                    if this.open && this.panel == Panel::Types && this.types_request().as_ref() == Some(id) =>
+                {
+                    this.generate_types(true, window, cx)
                 }
+                _ => {}
             }),
         ];
         Self {
             model,
             panel: Panel::History,
             target: None,
+            open: false,
+            types: TypesPanel::new(window, cx),
             snippet_kind: SnippetKind::Curl,
             snippet,
             history: History::Idle,
@@ -123,9 +135,13 @@ impl RightSidebar {
         cx: &mut Context<Self>,
     ) {
         self.target = target;
+        self.open = open;
         if open {
             self.refresh_snippet(window, cx);
             self.refresh_history(false, cx);
+            if self.panel == Panel::Types {
+                self.generate_types(false, window, cx);
+            }
         }
         cx.notify();
     }
@@ -443,6 +459,7 @@ impl Render for RightSidebar {
         let body = match self.panel {
             Panel::History => self.render_history(cx),
             Panel::Snippet => self.render_snippet(cx),
+            Panel::Types => self.render_types(cx),
             Panel::Variables => self.render_variables(cx),
             Panel::Vault => self.render_vault(cx),
         };
@@ -457,6 +474,7 @@ impl Render for RightSidebar {
                     let active = ix == selected;
                     h_flex()
                         .id(("inspector-panel", ix))
+                        .test_support()
                         .h_full()
                         .px_3()
                         .text_sm()
@@ -472,10 +490,12 @@ impl Render for RightSidebar {
                             }
                         })
                         .child(panel.label())
-                        .on_click(cx.listener(move |this, _, _, cx| {
+                        .on_click(cx.listener(move |this, _, window, cx| {
                             this.panel = PANELS[ix];
-                            if this.panel == Panel::History {
-                                this.refresh_history(true, cx);
+                            match this.panel {
+                                Panel::History => this.refresh_history(true, cx),
+                                Panel::Types => this.generate_types(false, window, cx),
+                                _ => {}
                             }
                             cx.notify();
                         }))

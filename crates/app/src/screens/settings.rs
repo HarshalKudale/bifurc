@@ -17,14 +17,15 @@ use gpui_kit::component::{
     button::{Button, ButtonVariants as _},
     group_box::GroupBoxVariant,
     h_flex,
+    input::{Input, InputEvent, InputState},
     link::Link,
     setting::{NumberFieldOptions, SettingField, SettingGroup, SettingItem, SettingPage, Settings},
     tag::Tag,
     v_flex,
 };
 use gpui_kit::{
-    App, AppContext as _, Axis, ClipboardItem, Context, Entity, IntoElement, ParentElement as _, Render, SharedString,
-    Styled as _, Subscription, Window, div,
+    App, AppContext as _, Axis, ClipboardItem, Context, Entity, InteractiveElement as _, IntoElement,
+    ParentElement as _, Render, SharedString, Styled as _, Subscription, TestSupportExt as _, Window, div,
 };
 use serde_json::{Value, json};
 
@@ -34,7 +35,7 @@ use crate::{
     engine::{call, call_in, failure},
     i18n::{self, t, t_with},
     model::{
-        config::{AccountInfo, RequestDefaults},
+        config::{AccountInfo, EngineSettings, RequestDefaults},
         update::UpdateAction,
     },
     preferences::Preferences,
@@ -46,6 +47,40 @@ use crate::{
 const STORE_REVIEW_URL: &str = "https://apps.microsoft.com/detail/9ncb4fdzzqpv#ratings-and-reviews";
 const REPOSITORY_URL: &str = "https://github.com/HarshalKudale/bifurc";
 const RELEASES_URL: &str = "https://github.com/HarshalKudale/bifurc-releases/releases";
+
+// The engine's defaults for the settings below that are blank when unset (engine workspace/settings.rs).
+const DEFAULT_CAPTURE_LIMIT: u64 = 200;
+const DEFAULT_TRACE_HEADER: &str = "x-bifurc-trace";
+const DEFAULT_MAIL_PORT: u64 = 1025;
+const DEFAULT_APPROVAL_TIMEOUT_SECONDS: u64 = 300;
+
+/// What a setting that is blank when unset accepts: the engine's own bounds.
+#[derive(Clone, Copy)]
+pub(crate) enum Accepts {
+    Number { min: u64, max: u64 },
+    HeaderName,
+}
+
+/// The value to send for what was typed: `null` for blank (the engine takes that as unset, so its default
+/// applies), `None` when the text is not acceptable.
+pub(crate) fn setting_value(accepts: Accepts, text: &str) -> Option<Value> {
+    let text = text.trim();
+    if text.is_empty() {
+        return Some(Value::Null);
+    }
+    match accepts {
+        Accepts::Number { min, max } => text.parse::<u64>().ok().filter(|n| (min..=max).contains(n)).map(Value::from),
+        Accepts::HeaderName => {
+            text.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_').then(|| json!(text))
+        }
+    }
+}
+
+/// The text field of a [`SettingItem`] whose blank means "the default", which it shows as the placeholder.
+struct BlankInput {
+    input: Entity<InputState>,
+    _subscription: Subscription,
+}
 
 /// A workspace that syncs as an account, and what it holds that its repository does not.
 #[derive(Debug, Clone, PartialEq)]
@@ -428,6 +463,143 @@ impl SettingsScreen {
             ),
         )
         .description(description)
+    }
+
+    /// A row whose text is committed on Enter or when the field loses focus: blank sends `null` (the default
+    /// applies), a value outside the engine's bounds is refused and the field goes back to what is stored.
+    /// `state_key` names the field's own state, so a field whose meaning changes can start again.
+    #[allow(clippy::too_many_arguments)]
+    fn blank_default_item(
+        &self,
+        id: &'static str,
+        state_key: String,
+        key: &'static str,
+        title: &'static str,
+        description: &'static str,
+        placeholder: String,
+        accepts: Accepts,
+        disabled: bool,
+        read: fn(&EngineSettings) -> String,
+    ) -> SettingItem {
+        let model = self.model.clone();
+        SettingItem::new(
+            t(title),
+            SettingField::render(move |_, window, cx| {
+                let state = window.use_keyed_state(SharedString::from(state_key.clone()), cx, {
+                    let (model, placeholder) = (model.clone(), placeholder.clone());
+                    move |window, cx| {
+                        let shown = read(&model.read(cx).config().settings);
+                        let input =
+                            cx.new(|cx| InputState::new(window, cx).placeholder(placeholder).default_value(shown));
+                        let _subscription = cx.subscribe_in(&input, window, {
+                            let model = model.clone();
+                            move |_, input, event: &InputEvent, window, cx| {
+                                if !matches!(event, InputEvent::PressEnter { .. } | InputEvent::Blur) {
+                                    return;
+                                }
+                                let text = input.read(cx).value().trim().to_owned();
+                                let stored = read(&model.read(cx).config().settings);
+                                if text == stored {
+                                    return;
+                                }
+                                match setting_value(accepts, &text) {
+                                    Some(value) => {
+                                        model.update(cx, |model, cx| model.update_settings(json!({ key: value }), cx))
+                                    }
+                                    None => {
+                                        input.update(cx, |input, cx| input.set_value(stored, window, cx));
+                                        model.update(cx, |model, cx| {
+                                            let message = t_with("settings.invalid_value", &[("setting", &t(title))]);
+                                            model.notice(message, cx)
+                                        });
+                                    }
+                                }
+                            }
+                        });
+                        BlankInput { input, _subscription }
+                    }
+                });
+                div().id(id).test_support().w_40().child(Input::new(&state.read(cx).input).small().disabled(disabled))
+            }),
+        )
+        .description(t(description))
+    }
+
+    /// Capture, mail and approvals: the engine settings that are blank when unset.
+    fn behavior_groups(&self, cx: &App) -> Vec<SettingGroup> {
+        let number = |min, max| Accepts::Number { min, max };
+        let trace_on = self.model.read(cx).config().settings.trace_header.as_deref() != Some("");
+        let trace_switch = {
+            let (read, write) = (self.model.clone(), self.model.clone());
+            SettingItem::new(
+                t("settings.trace.switch.title"),
+                SettingField::switch(
+                    move |cx: &App| read.read(cx).config().settings.trace_header.as_deref() != Some(""),
+                    // On is "not set" (the default name), off is the empty name the engine reads as off.
+                    move |on: bool, cx: &mut App| {
+                        let value = if on { Value::Null } else { json!("") };
+                        write.update(cx, |model, cx| model.update_settings(json!({ "traceHeader": value }), cx))
+                    },
+                ),
+            )
+            .description(t("settings.trace.switch.description"))
+        };
+        vec![
+            SettingGroup::new()
+                .title(t("settings.capture.group"))
+                .item(self.blank_default_item(
+                    "setting-capture-limit",
+                    "setting-capture-limit".into(),
+                    "captureLimit",
+                    "settings.capture.limit.title",
+                    "settings.capture.limit.description",
+                    DEFAULT_CAPTURE_LIMIT.to_string(),
+                    number(10, 10_000),
+                    false,
+                    |s| s.capture_limit.map(|n| n.to_string()).unwrap_or_default(),
+                ))
+                .item(trace_switch)
+                .item(self.blank_default_item(
+                    "setting-trace-header",
+                    format!("setting-trace-header-{trace_on}"),
+                    "traceHeader",
+                    "settings.trace.name.title",
+                    "settings.trace.name.description",
+                    DEFAULT_TRACE_HEADER.to_owned(),
+                    Accepts::HeaderName,
+                    !trace_on,
+                    |s| s.trace_header.clone().unwrap_or_default(),
+                ))
+                .footer(|_, _| t("settings.capture.footer")),
+            SettingGroup::new()
+                .title(t("settings.mail.group"))
+                .item(self.blank_default_item(
+                    "setting-mail-port",
+                    "setting-mail-port".into(),
+                    "mailPort",
+                    "settings.mail.port.title",
+                    "settings.mail.port.description",
+                    DEFAULT_MAIL_PORT.to_string(),
+                    number(1, 65_535),
+                    false,
+                    |s| s.mail_port.map(|n| n.to_string()).unwrap_or_default(),
+                ))
+                .footer(|_, _| t("settings.mail.footer")),
+            SettingGroup::new()
+                .title(t("settings.approvals.group"))
+                .item(self.blank_default_item(
+                    "setting-approval-timeout",
+                    "setting-approval-timeout".into(),
+                    "approvalTimeoutSeconds",
+                    "settings.approvals.timeout.title",
+                    "settings.approvals.timeout.description",
+                    DEFAULT_APPROVAL_TIMEOUT_SECONDS.to_string(),
+                    number(10, 3600),
+                    false,
+                    |s| s.approval_timeout_seconds.map(|n| n.to_string()).unwrap_or_default(),
+                ))
+                .footer(|_, _| t("settings.approvals.footer")),
+        ]
     }
 
     /// A listener's name, whether it is up, and the button that starts or stops it.
@@ -1140,7 +1312,7 @@ impl Render for SettingsScreen {
         let pages = vec![
             self.appearance_page(cx),
             self.accounts_page(cx),
-            self.servers_page(cx),
+            self.servers_page(cx).groups(self.behavior_groups(cx)),
             self.requests_page(),
             self.https_page(),
             self.about_page(cx),

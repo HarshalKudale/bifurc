@@ -34,5 +34,6 @@
   "confirm.revert.consequence": "Die seitdem gespeicherten Änderungen werden verworfen.",
   "confirm.delete.title": "Regel „{name}“ löschen?",
   "empty.title": "Keine Proxy-Regeln",
-  "empty.description": "Eine Regel sendet Datenverkehr, der einem Muster entspricht, an eine Zuordnung oder einen anderen Server."
+  "empty.description": "Eine Regel sendet Datenverkehr, der einem Muster entspricht, an eine Zuordnung oder einen anderen Server.",
+  "tab.rules": "Regeln"
 }

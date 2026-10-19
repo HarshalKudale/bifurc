@@ -105,5 +105,18 @@
   "snippet.curl": "cURL",
   "snippet.fetch": "fetch",
   "snippet.axios": "axios",
-  "snippet.python": "Python"
+  "snippet.python": "Python",
+  "agent.fault": "{target} · {effects} at {rate}%",
+  "agent.fault_latency": "+{ms} ms",
+  "agent.fault_drop": "dropped",
+  "agent.fault_reset": "reset",
+  "agent.fault_separator": ", ",
+  "agent.approval_timing": "Waiting {waited}, lapses in {left}",
+  "agent.seconds": "{count} s",
+  "agent.minutes": "{count} min",
+  "traffic.webhook": "Webhook",
+  "traffic.fault": "Fehlerinjektion",
+  "traffic.cassette": "Kassette",
+  "traffic.on_server": "{label} (Server)",
+  "traffic.handler_webhook_tooltip": "Von einem Webhook-Listener empfangen"
 }

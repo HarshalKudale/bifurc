@@ -316,11 +316,23 @@
    "workspaceId": 1
   }
  },
+ "claims.release": {
+  "valid": {
+   "ids": [
+    "m1"
+   ],
+   "force": true
+  },
+  "invalid": {
+   "ids": "m1"
+  }
+ },
  "claims.set": {
   "valid": {
    "kind": "mocks",
    "id": "m1",
-   "release": true
+   "release": true,
+   "force": true
   },
   "invalid": {
    "kind": "mocks"
@@ -337,6 +349,17 @@
    "config": {
     "port": 80
    }
+  },
+  "invalid": {}
+ },
+ "contract.check": {
+  "valid": {
+   "workspaceId": "ws1",
+   "mock": "m1",
+   "ignore": [
+    ".meta.*"
+   ],
+   "fromCapture": true
   },
   "invalid": {}
  },
@@ -1752,6 +1775,19 @@
    "extra": true
   }
  },
+ "types.generate": {
+  "valid": {
+   "workspaceId": "ws1",
+   "request": "Get orders",
+   "lang": "zod",
+   "send": true
+  },
+  "invalid": {
+   "workspaceId": "ws1",
+   "request": "r",
+   "lang": "rust"
+  }
+ },
  "update.check": {
   "valid": {},
   "invalid": {
@@ -1847,6 +1883,12 @@
   },
   "invalid": {}
  },
+ "webhook.fixtures": {
+  "valid": {},
+  "invalid": {
+   "extra": true
+  }
+ },
  "webhook.list": {
   "valid": {},
   "invalid": {
@@ -1863,12 +1905,44 @@
   },
   "invalid": {}
  },
+ "webhook.replay": {
+  "valid": {
+   "workspaceId": "ws1",
+   "id": "k3f9",
+   "to": "http://127.0.0.1:4021"
+  },
+  "invalid": {
+   "workspaceId": "ws1"
+  }
+ },
  "webhook.stop": {
   "valid": {
    "id": "k3f9"
   },
   "invalid": {
    "id": 1
+  }
+ },
+ "webhook.trigger": {
+  "valid": {
+   "workspaceId": "ws1",
+   "fixture": "stripe.checkout.session.completed",
+   "to": "http://127.0.0.1:4021",
+   "vault": "hooks",
+   "secret": "STRIPE_WEBHOOK_SECRET",
+   "patch": [
+    {
+     "path": [
+      "data",
+      "object",
+      "amount_total"
+     ],
+     "value": 999
+    }
+   ]
+  },
+  "invalid": {
+   "workspaceId": "ws1"
   }
  },
  "workspace.add": {

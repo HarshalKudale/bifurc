@@ -266,6 +266,11 @@ impl Shell {
                 "shell.chrome.count_mapping_one",
                 "shell.chrome.count_mapping_other",
             ),
+            Screen::ProxyRules if self.proxy_rules.read(cx).on_faults() => plural(
+                self.model.read(cx).faults().len(),
+                "shell.chrome.count_fault_one",
+                "shell.chrome.count_fault_other",
+            ),
             Screen::ProxyRules => {
                 plural(config.proxy_rule_count, "shell.chrome.count_rule_one", "shell.chrome.count_rule_other")
             }
@@ -287,6 +292,8 @@ impl Shell {
             Screen::Services => self.services.read(cx).status_line(),
             Screen::HealthBar => self.healthbar.read(cx).status_line(),
             Screen::Capture => self.capture.read(cx).status_line(cx),
+            Screen::Mail => self.mail.read(cx).status_line(),
+            Screen::Webhooks => self.webhooks.read(cx).status_line(),
             Screen::Settings | Screen::WorkspaceConfig | Screen::AuditLog => String::new(),
         }
     }
@@ -383,6 +390,7 @@ impl Shell {
             (None, false) => t("shell.chrome.proxy_start_tooltip").into(),
         };
         let app_model = self.model.clone();
+        let agent_badges = self.render_agent_badges(cx);
 
         StatusBar::new().left(self.render_git_status(cx)).right(
             h_flex()
@@ -401,6 +409,7 @@ impl Shell {
                             ),
                     )
                 })
+                .children(agent_badges)
                 .child(
                     Button::new("proxy-toggle")
                         .ghost()

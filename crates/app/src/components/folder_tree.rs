@@ -21,14 +21,15 @@ use gpui_kit::component::{
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    AnyElement, App, AppContext as _, Context, Entity, EventEmitter, IntoElement, ParentElement as _, Render,
-    SharedString, Styled as _, Subscription, WeakEntity, Window, div, rems,
+    AnyElement, App, AppContext as _, Context, Entity, EventEmitter, InteractiveElement as _, IntoElement,
+    ParentElement as _, Render, SharedString, StatefulInteractiveElement as _, Styled as _, Subscription,
+    TestSupportExt as _, WeakEntity, Window, div, rems,
 };
 
 use crate::{
     app_model::AppModel,
     components::{page, tree_drag},
-    i18n::t,
+    i18n::{t, t_with},
     model::{
         NodeRef,
         git::FileState,
@@ -426,8 +427,9 @@ fn render_row<S: FolderTreeSource>(
     let theme = cx.theme().clone();
     let key = S::Key::parse(entry.item().id.as_str());
     let label = entry.item().label.clone();
-    let (deleted, locked, pending, lead) = {
+    let (deleted, locked, pending, lead, claim) = {
         let app = model.read(cx);
+        let claim = key.as_ref().and_then(FolderTreeKey::item_id).and_then(|id| app.claims().of(id).cloned());
         let deleted = key.as_ref().is_some_and(|key| S::is_deleted(app, key));
         let locked = key.as_ref().is_some_and(|key| S::locked_to(app, key).is_some());
         // An entity with changes that are not published yet says so with a mark, not only a color.
@@ -436,7 +438,7 @@ fn render_row<S: FolderTreeSource>(
             .and_then(FolderTreeKey::item_id)
             .is_some_and(|id| app.git().entity_state(id).is_some_and(|state| state != FileState::Clean));
         let lead = key.as_ref().filter(|key| key.item_id().is_some()).and_then(|key| S::lead(app, key));
-        (deleted, locked, pending, lead)
+        (deleted, locked, pending, lead, claim)
     };
     let muted = |icon: IconName| Icon::new(icon).small().text_color(theme.muted_foreground);
     let lead: AnyElement = match (&key, lead) {
@@ -485,6 +487,18 @@ fn render_row<S: FolderTreeSource>(
                         .when(locked, |this| this.text_color(theme.muted_foreground))
                         .child(label.clone()),
                 )
+                // Claimed: somebody is editing it. The lock says who, and until when.
+                .children(claim.map(|claim| {
+                    let tip = t_with("claims.row.tooltip", &[("by", &claim.by), ("until", &claim.until())]);
+                    div()
+                        .id(gpui_kit::ElementId::Name(format!("tree-lock-{}", claim.id).into()))
+                        .test_support()
+                        .flex_none()
+                        .tooltip(move |window, cx| {
+                            gpui_kit::component::tooltip::Tooltip::new(tip.clone()).build(window, cx)
+                        })
+                        .child(Icon::new(gpui_kit::assets::IconName::Lock).small().text_color(theme.muted_foreground))
+                }))
                 .children(pending.then(|| {
                     div()
                         .flex_none()

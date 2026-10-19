@@ -3,7 +3,10 @@
 //! Everything in this module is testable without a window. The engine is the source of truth; these types
 //! are snapshots the views render from.
 
+pub mod agent;
+pub mod claims;
 pub mod config;
+pub mod cookies;
 pub mod explorer;
 pub mod flow;
 pub mod git;
@@ -11,6 +14,7 @@ pub mod graphql;
 pub mod history;
 pub mod http;
 pub mod kind;
+pub mod logs;
 pub mod mcp;
 pub mod media;
 pub mod snippet;

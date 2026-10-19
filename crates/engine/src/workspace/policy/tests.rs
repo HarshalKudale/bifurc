@@ -123,6 +123,19 @@ fn write_policy(root: &crate::testing::ScratchRoot, file: &str, text: &str) {
 }
 
 #[test]
+fn the_stamp_moves_when_the_policy_file_is_added_edited_or_removed() {
+    let root = scratch_data_root();
+    assert_eq!(stamp("ws1"), None);
+    write_policy(&root, "policy.yaml", "deny: { env: prod }");
+    let added = stamp("ws1");
+    assert_eq!(added.map(|s| s.0), Some("policy.yaml"));
+    write_policy(&root, "policy.yaml", "deny: { env: staging }");
+    assert_ne!(stamp("ws1"), added, "same name, other size");
+    std::fs::remove_file(ws_dir(root.ws_id).join("policy.yaml")).unwrap();
+    assert_eq!(stamp("ws1"), None);
+}
+
+#[test]
 fn a_policy_applies_to_the_command_line_by_default_and_to_the_app_only_when_listed() {
     let root = scratch_data_root();
     let go = |client: &str| verdict("ws1", client, Some("prod"), "DELETE", "http://h/x").0;
