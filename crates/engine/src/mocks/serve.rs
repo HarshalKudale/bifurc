@@ -21,8 +21,8 @@ use tokio::{
 };
 
 use super::{
-    is_fully_mocked, is_streaming_mock, merge_mock_with_upstream, resolve_mock_only_response, serve_mock,
-    serve_resolved_response, write_response,
+    add_cors, cors_preflight, is_fully_mocked, is_streaming_mock, merge_mock_with_upstream, resolve_mock_only_response,
+    serve_mock, serve_resolved_response, write_response,
 };
 use crate::{
     env::resolve_vars_in,
@@ -184,7 +184,23 @@ async fn handle(served: Arc<Served>, bound: SocketAddr, mut socket: TcpStream) {
     }
     let (routing, names) = snapshot(&served.workspace_id);
     let env = routing.env.as_ref();
+    if let Some(preflight) =
+        cors_preflight(&head.method, &headers, |m| match_local(&routing.mocks, m, &host, &target, env).is_some())
+    {
+        emit_log(&finished_entry(
+            &base,
+            preflight.status,
+            "mock",
+            None,
+            now_ms() - t0,
+            preflight.headers.clone(),
+            log_body(&preflight.body),
+        ));
+        let _ = serve_resolved_response(&mut socket, &preflight).await;
+        return;
+    }
     let mock = match_local(&routing.mocks, &head.method, &host, &target, env);
+    let request = headers.clone();
     if let (Some(mock), Some(origin)) = (mock, &served.fallthrough)
         && !is_fully_mocked(mock)
     {
@@ -195,7 +211,8 @@ async fn handle(served: Arc<Served>, bound: SocketAddr, mut socket: TcpStream) {
         let upstream = fetch_upstream_response(&head.method, &url, "", &forwarded, &body, None, "").await;
         let (resolved, duration) = match upstream {
             Ok(upstream) => {
-                let merged = merge_mock_with_upstream(mock, &upstream, env);
+                let mut merged = merge_mock_with_upstream(mock, &upstream, env);
+                add_cors(&mut merged.headers, &request);
                 let duration = upstream.duration_ms + merged.delay_ms as i64;
                 (merged, duration)
             }
@@ -229,7 +246,8 @@ async fn handle(served: Arc<Served>, bound: SocketAddr, mut socket: TcpStream) {
         ));
         let _ = serve_resolved_response(&mut socket, &resolved).await;
     } else if let Some(mock) = mock {
-        let resolved = resolve_mock_only_response(mock, env);
+        let mut resolved = resolve_mock_only_response(mock, env);
+        add_cors(&mut resolved.headers, &request);
         emit_log(&finished_entry(
             &base,
             resolved.status,
@@ -240,7 +258,7 @@ async fn handle(served: Arc<Served>, bound: SocketAddr, mut socket: TcpStream) {
             log_body(&resolved.body),
         ));
         let _ = if is_streaming_mock(mock) {
-            serve_mock(&mut socket, mock, env).await
+            serve_mock(&mut socket, mock, env, &request).await
         } else {
             serve_resolved_response(&mut socket, &resolved).await
         };
