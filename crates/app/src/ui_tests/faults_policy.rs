@@ -61,4 +61,10 @@ fn the_policy_page_shows_the_policy_and_checks_a_command(cx: &mut gpui_kit::Test
     ui.fake.forget_calls();
     ui.click("policy-check");
     assert!(ui.fake.sent("policy.check").is_empty(), "no URL, nothing to check");
+    ui.fake.emit("event.policy.changed", json!({"workspaceId": "other"}));
+    ui.settle();
+    assert!(ui.fake.sent("policy.show").is_empty(), "another workspace's policy");
+    ui.fake.emit("event.policy.changed", json!({"workspaceId": "w1"}));
+    ui.settle();
+    assert_eq!(ui.fake.sent("policy.show"), [json!({"workspaceId": "w1"})], "edited while open");
 }
