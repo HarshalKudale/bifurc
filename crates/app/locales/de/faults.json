@@ -22,5 +22,6 @@
   "error.break": "Verbindung abbrechen muss drop oder reset sein, oder leer.",
   "error.nothing": "Ein Fehler braucht Latenz, Status oder drop bzw. reset.",
   "error.alone": "Drop und reset lassen sich nicht mit Latenz oder Status kombinieren.",
-  "error.add": "Der Fehler konnte nicht hinzugefügt werden: {message}"
+  "error.add": "Der Fehler konnte nicht hinzugefügt werden: {message}",
+  "page.description": "Fehler verlangsamen Verkehr durch den Forward-Proxy oder lassen ihn scheitern, um zu testen, wie eine App damit umgeht. Sie bleiben in der Engine, bis sie entfernt werden."
 }

@@ -266,6 +266,11 @@ impl Shell {
                 "shell.chrome.count_mapping_one",
                 "shell.chrome.count_mapping_other",
             ),
+            Screen::ProxyRules if self.proxy_rules.read(cx).on_faults() => plural(
+                self.model.read(cx).faults().len(),
+                "shell.chrome.count_fault_one",
+                "shell.chrome.count_fault_other",
+            ),
             Screen::ProxyRules => {
                 plural(config.proxy_rule_count, "shell.chrome.count_rule_one", "shell.chrome.count_rule_other")
             }
