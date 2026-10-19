@@ -229,6 +229,8 @@ fn on_entry(entry: &Value) {
     }
     // shortcut: the whole file is rewritten per interaction (O(n^2)); upgrade to append/segment past a few hundred.
     let _ = write_atomic(&rec.path, &rec.cassette);
+    drop(guard);
+    announce();
 }
 
 fn write_atomic(path: &Path, value: &Value) -> std::io::Result<()> {
@@ -316,16 +318,22 @@ fn start(params: &Value) -> Result<Value> {
     )
 }
 
+fn status() -> Value {
+    json!({ "recording": RECORDING.lock().as_ref().map(|r| json!({
+        "name": r.name, "workspaceId": r.workspace_id, "hosts": r.hosts, "startedAt": r.started_at,
+        "interactions": r.interactions(),
+    })) })
+}
+
+/// Tell clients recording or replay started or stopped. Called with no state lock held: the status reads relock.
+pub(crate) fn announce() {
+    bus().emit("cassette.changed", json!({ "record": status(), "replay": replay::status() }));
+}
+
 pub fn register(registry: &mut CommandRegistry) {
     replay::register(registry);
-    registry.register_sync("cassette.recordStart", |params, _| start(&params));
-
-    registry.register_sync("cassette.recordStatus", |_, _| {
-        Ok(json!({ "recording": RECORDING.lock().as_ref().map(|r| json!({
-            "name": r.name, "workspaceId": r.workspace_id, "hosts": r.hosts, "startedAt": r.started_at,
-            "interactions": r.interactions(),
-        })) }))
-    });
+    registry.register_sync("cassette.recordStart", |params, _| start(&params).inspect(|_| announce()));
+    registry.register_sync("cassette.recordStatus", |_, _| Ok(status()));
 
     registry.register("cassette.recordStop", |_, _| async move {
         let rec = RECORDING.lock().take().ok_or_else(|| EngineError::not_found("Nothing is recording."))?;
@@ -343,6 +351,7 @@ pub fn register(registry: &mut CommandRegistry) {
             changed_fields: &[],
         })
         .await;
+        announce();
         Ok(json!({ "name": rec.name, "path": path, "interactions": rec.interactions(), "masked": rec.masked }))
     });
 }
@@ -455,7 +464,14 @@ mod tests {
         assert!(call("cassette.recordStop", json!({})).await.is_err());
         assert_eq!(call("cassette.recordStatus", json!({})).await.unwrap()["recording"], Value::Null);
         let start = json!({ "workspaceId": "ws1", "name": "checkout", "hosts": ["api.stripe.com"] });
+        let seen = Arc::new(Mutex::new(Vec::<Value>::new()));
+        let sink = seen.clone();
+        let listener = bus().on("cassette.changed", move |state| sink.lock().push(state.clone()));
         let started = call("cassette.recordStart", start.clone()).await.unwrap();
+        // Recording state is global, so look for this test's cassette among other tests' events.
+        let recording = |state: &Value| state["record"]["recording"]["name"] == "checkout";
+        assert!(seen.lock().iter().any(recording));
+        assert!(seen.lock().iter().all(|state| state["replay"].get("replaying").is_some()));
         assert_eq!(started["path"], "cassettes/checkout.json");
         assert_eq!(started["replaced"], false);
         let busy = call("cassette.recordStart", json!({ "workspaceId": "ws1", "name": "x", "hosts": ["a.com"] })).await;
@@ -465,7 +481,9 @@ mod tests {
         bus().emit("log.entry", entry("api.stripe.com", "forward", "proxy"));
         let status = call("cassette.recordStatus", json!({})).await.unwrap();
         assert_eq!(status["recording"]["interactions"], 2);
+        assert!(seen.lock().iter().any(|state| recording(state) && state["record"]["recording"]["interactions"] == 2));
         let stopped = call("cassette.recordStop", json!({})).await.unwrap();
+        assert!(seen.lock().iter().any(|state| state["record"]["recording"].is_null()));
         assert_eq!((stopped["interactions"].clone(), stopped["masked"].clone()), (json!(2), json!(12)));
         let file: Value =
             serde_json::from_str(&std::fs::read_to_string(ws_dir("ws1").join(DIR).join("checkout.json")).unwrap())
@@ -476,5 +494,6 @@ mod tests {
         // A second recording of the same name replaces it.
         assert_eq!(call("cassette.recordStart", start).await.unwrap()["replaced"], true);
         call("cassette.recordStop", json!({})).await.unwrap();
+        bus().off(listener);
     }
 }

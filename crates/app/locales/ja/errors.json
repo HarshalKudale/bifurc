@@ -10,6 +10,7 @@
   "request.send.cancelled": "キャンセルしました",
   "validation.regex_invalid": "「{pattern}」は有効な正規表現ではありません。",
   "validation.required": "{field} は必須です。",
+  "claims.locked": "「{name}」は {claimedBy} が編集中のためロックされています。ロックを引き継ぐか、期限切れになるまでお待ちください。",
   "entity.update_required": "最後に Bifurc {version} で保存されました。これは現在のバージョン ({current}) より新しいものです。使用するには Bifurc を更新してください。",
   "folder.update_required": "このフォルダー内の項目が最後に Bifurc {version} で保存されました。これは現在のバージョン ({current}) より新しいものです。フォルダーを削除するには Bifurc を更新してください。",
   "mapping.domain_required": "ドメインは必須です。",
@@ -347,5 +348,7 @@
   "updates.no_address": "更新を確認するアドレスがありません。",
   "policy.blocked": "Blocked by policy \"{policy}\": {method} {url}",
   "policy.approval": "Needs approval: policy \"{policy}\" ({method} {url})",
-  "policy.invalid": "The policy file is invalid: {reason}"
+  "policy.invalid": "The policy file is invalid: {reason}",
+  "types.no_samples": "\"{name}\" の JSON レスポンスはまだありません。先にリクエストを送信してください。",
+  "claims.locked": "「{name}」は {claimedBy} が編集中のため、ここでは読み取り専用です。"
 }

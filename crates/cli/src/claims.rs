@@ -1,6 +1,6 @@
-//! `bifurc claim <kind> <name>` and `bifurc claims`: mark an item as the one this session is editing. Advisory
-//! only (the engine keeps claims in memory for 30 minutes): someone else's update still goes through, with a
-//! warning printed by `Context::request`.
+//! `bifurc claim <kind> <name>` and `bifurc claims`: mark an item as the one this session is editing. A claim is a
+//! lock (the engine keeps it in memory for 30 minutes): another session's update, delete or enable is refused
+//! (exit 2) until the claim is released or lapses; `claim --force` takes it over.
 
 use serde_json::json;
 
@@ -33,7 +33,7 @@ fn word_of(engine_kind: &str) -> &str {
 
 /// `claim [--release] <kind> <name>`.
 pub fn claim(ctx: &mut Context) -> Result<String> {
-    ctx.accept_top(&["release"], 2)?;
+    ctx.accept_top(&["release", "force"], 2)?;
     let args = ctx.args;
     let (kind, what, group) = kind_of(&need(args.positional(1), "a kind: request, mock, flow or env")?)?;
     let wanted = need(args.positional(2), "a name")?;
@@ -42,8 +42,10 @@ pub fn claim(ctx: &mut Context) -> Result<String> {
     let row = find_one(&rows, &wanted, &["name"], what, group)?;
     let (id, name) = (id_of(row), js_template(row.get("name")));
     let release = args.has("release");
-    let got =
-        ctx.request("claims.set", json!({ "workspaceId": workspace, "kind": kind, "id": id, "release": release }))?;
+    let got = ctx.request(
+        "claims.set",
+        json!({ "workspaceId": workspace, "kind": kind, "id": id, "release": release, "force": args.has("force") }),
+    )?;
     let out = json!({ "schemaVersion": 1, "claim": got["claim"], "previous": got["previous"] });
     Ok(ctx.print(&out, || {
         let word = word_of(kind);
@@ -110,7 +112,7 @@ mod tests {
         assert_eq!(out.unwrap(), "claimed mock \"Get orders\"");
         assert_eq!(
             payloads(&calls, "claims.set")[0],
-            json!({"workspaceId": "w1", "kind": "mocks", "id": "m1", "release": false})
+            json!({"workspaceId": "w1", "kind": "mocks", "id": "m1", "release": false, "force": false})
         );
         let held = json!({"claim": {}, "previous": {"by": "session:frontend", "ts": now_ms() - 180_000}});
         let (out, _) = go(&["claim", "mock", "Get orders"], held);
@@ -119,6 +121,24 @@ mod tests {
         assert_eq!(out.unwrap(), "released mock \"Get orders\"");
         assert_eq!(payloads(&calls, "claims.set")[0]["release"], true);
         assert_eq!(go(&["claim", "widget", "x"], json!({})).0.unwrap_err().code(), 2);
+    }
+
+    #[test]
+    fn a_claim_over_a_live_one_is_refused_with_exit_2_unless_forced() {
+        let refused = CliError::Engine {
+            code: "CONFLICT".into(),
+            message: "\"Get orders\" is claimed by session:a and locked against edits. Take it over with --force"
+                .into(),
+        };
+        let answers = vec![("config.get", Ok(config())), ("entity.list", Ok(mocks())), ("claims.set", Err(refused))];
+        let err = run(&["claim", "mock", "Get orders"], answers, claim).0.unwrap_err();
+        assert_eq!(err.code(), 2);
+        let (out, calls) = go(
+            &["claim", "--force", "mock", "Get orders"],
+            json!({"claim": {}, "previous": {"by": "session:a", "ts": now_ms()}}),
+        );
+        assert!(out.unwrap().starts_with("claimed mock"));
+        assert_eq!(payloads(&calls, "claims.set")[0]["force"], true);
     }
 
     #[test]

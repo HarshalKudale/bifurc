@@ -1,5 +1,5 @@
 //! The workspace's own configuration, in pages: General (0-0), Sync (0-1), Cookies (0-2), Import and export
-//! (0-3) and the danger zone (0-4).
+//! (0-3), the agent policy (0-4) and the danger zone (0-5).
 
 use serde_json::json;
 
@@ -82,7 +82,7 @@ fn clearing_cookies_is_an_engine_command_for_the_workspace(cx: &mut gpui_kit::Te
 fn the_last_workspace_cannot_be_deleted(cx: &mut gpui_kit::TestAppContext) {
     let mut ui = open_populated(cx);
     ui.show(Screen::WorkspaceConfig);
-    ui.click("0-4");
+    ui.click("0-5");
     ui.fake.forget_calls();
     ui.click("delete-workspace");
     ui.press("enter");
@@ -95,7 +95,7 @@ fn another_workspace_is_deleted_after_asking(cx: &mut gpui_kit::TestAppContext) 
         fake.config(json!({"workspaces": [{"id": "w1", "name": "Work"}, {"id": "w2", "name": "Home"}]}));
     });
     ui.show(Screen::WorkspaceConfig);
-    ui.click("0-4");
+    ui.click("0-5");
     ui.click("delete-workspace");
     assert!(ui.fake.sent("workspace.delete").is_empty(), "asked first");
     ui.press("enter");

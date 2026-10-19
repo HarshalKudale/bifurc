@@ -362,7 +362,11 @@ pub fn lookup(
     if workspace_id.is_some_and(|w| w != replay.workspace_id) || host.is_some_and(|h| !host_matches(h, &replay.hosts)) {
         return None;
     }
-    replay.decide(&Incoming::new(method, target, content_type, body), target, url, host.is_some())
+    let reply = replay.decide(&Incoming::new(method, target, content_type, body), target, url, host.is_some());
+    drop(guard);
+    // The footer and Capture toolbar show served/unmatched counts.
+    super::announce();
+    reply
 }
 
 /// Answer `base`'s request from the cassette being replayed, if one applies: logs it and writes the response.
@@ -460,17 +464,20 @@ fn list(params: &Value) -> Result<Value> {
     Ok(json!({ "cassettes": cassettes }))
 }
 
+pub(super) fn status() -> Value {
+    json!({ "replaying": REPLAY.lock().as_ref().map(|r| json!({
+        "name": r.name, "workspaceId": r.workspace_id, "hosts": r.hosts, "served": r.served,
+        "unmatchedCount": r.unmatched_count, "passthrough": r.passthrough,
+    })) })
+}
+
 pub fn register(registry: &mut crate::kernel::CommandRegistry) {
-    registry.register_sync("cassette.replayStart", |params, _| start(&params));
+    registry.register_sync("cassette.replayStart", |params, _| start(&params).inspect(|_| super::announce()));
     registry.register_sync("cassette.list", |params, _| list(&params));
-    registry.register_sync("cassette.replayStatus", |_, _| {
-        Ok(json!({ "replaying": REPLAY.lock().as_ref().map(|r| json!({
-            "name": r.name, "workspaceId": r.workspace_id, "hosts": r.hosts, "served": r.served,
-            "unmatchedCount": r.unmatched_count, "passthrough": r.passthrough,
-        })) }))
-    });
+    registry.register_sync("cassette.replayStatus", |_, _| Ok(status()));
     registry.register_sync("cassette.replayStop", |_, _| {
         let r = REPLAY.lock().take().ok_or_else(|| EngineError::not_found("Nothing is replaying."))?;
+        super::announce();
         Ok(json!({
             "name": r.name, "served": r.served, "passedThrough": r.passed, "unmatched": r.unmatched,
             "unmatchedCount": r.unmatched_count,

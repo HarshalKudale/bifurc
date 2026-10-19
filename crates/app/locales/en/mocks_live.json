@@ -1,0 +1,18 @@
+{
+  "scenario.label": "Scenario",
+  "hits": "{count} hits",
+  "serve.tooltip": "Serve the enabled mocks on a port",
+  "serve.title": "Serve mocks on a port",
+  "serve.confirm": "Serve",
+  "serve.port": "Port",
+  "serve.port_placeholder": "4010",
+  "serve.fallthrough": "Fall through to",
+  "serve.fallthrough_placeholder": "http://localhost:3000; empty for a 404 when no mock matches",
+  "serve.bad_port": "The port is a number from 0 to 65535.",
+  "serve.failed": "Could not serve the mocks",
+  "serve.stop_failed": "Could not stop the mock server",
+  "server.fallthrough": "falls through to {url}",
+  "server.copy": "Copy URL",
+  "server.copied": "URL copied",
+  "server.stop": "Stop"
+}

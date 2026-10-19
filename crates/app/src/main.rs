@@ -28,9 +28,31 @@ use preferences::{Preferences, WindowState};
 
 const MIN_SIZE: (f32, f32) = (1080., 640.);
 
+// Icons the app uses that are not in gpui-kit's default bundle (they render blank without this).
+gpui_kit::assets::icon_assets!(ExtraIcons, [Lock, Mail, Webhook]);
+
+struct AppAssets;
+
+impl gpui_kit::AssetSource for AppAssets {
+    fn load(&self, path: &str) -> gpui_kit::Result<Option<std::borrow::Cow<'static, [u8]>>> {
+        match ExtraIcons.load(path)? {
+            Some(bytes) => Ok(Some(bytes)),
+            None => gpui_kit::assets::Assets.load(path),
+        }
+    }
+
+    fn list(&self, path: &str) -> gpui_kit::Result<Vec<gpui_kit::SharedString>> {
+        let mut paths = gpui_kit::assets::Assets.list(path)?;
+        paths.extend(ExtraIcons.list(path)?);
+        paths.sort();
+        paths.dedup();
+        Ok(paths)
+    }
+}
+
 fn main() {
     bifurc_engine_client::crash::install("desktop", env!("CARGO_PKG_VERSION"), SidecarConfig::default().data_dir);
-    gpui_kit::application().with_assets(gpui_kit::assets::Assets).run(|cx| {
+    gpui_kit::application().with_assets(AppAssets).run(|cx| {
         gpui_kit::init(cx);
 
         // Closing the window closes this app, and only this app. The engine is a process of its own with its

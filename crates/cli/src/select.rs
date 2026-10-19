@@ -448,6 +448,25 @@ pub fn parse_pair(text: &str, what: &str) -> Result<(String, String), String> {
 
 /// Applies `<path>=<value>` to `value`, creating missing object keys on the way.
 pub fn patch(value: &mut Value, assignment: &str) -> Result<(), String> {
+    let (steps, new) = parse_patch(assignment)?;
+    assign(value, &steps, new)
+}
+
+/// `<path>=<value>` as the engine takes it: the path's keys (text) and positions (numbers), and the value.
+pub fn patch_edit(assignment: &str) -> Result<(Vec<Value>, Value), String> {
+    let (steps, new) = parse_patch(assignment)?;
+    let path = steps
+        .into_iter()
+        .filter_map(|step| match step {
+            Step::Key(key) => Some(Value::from(key)),
+            Step::Index(i) => Some(Value::from(i)),
+            Step::Iterate => None,
+        })
+        .collect();
+    Ok((path, new))
+}
+
+fn parse_patch(assignment: &str) -> Result<(Vec<Step>, Value), String> {
     let mut parser = Parser::new(assignment);
     let steps = parser.path()?;
     parser.skip_ws();
@@ -462,7 +481,7 @@ pub fn patch(value: &mut Value, assignment: &str) -> Result<(), String> {
     }
     parser.pos += 1;
     let rest: String = parser.chars[parser.pos..].iter().collect();
-    assign(value, &steps, literal(rest.trim()))
+    Ok((steps, literal(rest.trim())))
 }
 
 fn assign(current: &mut Value, steps: &[Step], new: Value) -> Result<(), String> {

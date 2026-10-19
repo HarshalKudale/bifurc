@@ -49,6 +49,52 @@ pub fn match_mock<'a>(mocks: &'a [Mock], method: &str, url: &str, env: Option<&E
     None
 }
 
+/// Lets a page on another origin read a mock's answer: the request's `Origin` is allowed, with credentials,
+/// unless the mock sets `Access-Control-Allow-Origin` itself. No `Origin` (curl, a server): nothing changes.
+pub fn add_cors(headers: &mut Headers, request: &Headers) {
+    let Some(origin) = header_value_opt(request, "origin") else { return };
+    if headers.keys().any(|key| key.eq_ignore_ascii_case("access-control-allow-origin")) {
+        return;
+    }
+    headers.insert("access-control-allow-origin".to_string(), origin);
+    headers.insert("access-control-allow-credentials".to_string(), "true".to_string());
+    match headers.iter_mut().find(|(key, _)| key.eq_ignore_ascii_case("vary")) {
+        Some((_, vary)) if !vary.to_ascii_lowercase().contains("origin") => vary.push_str(", Origin"),
+        Some(_) => {}
+        None => {
+            headers.insert("vary".to_string(), "Origin".to_string());
+        }
+    }
+}
+
+/// The answer to a browser's CORS preflight (`OPTIONS` with `Origin` and `Access-Control-Request-Method`) for a
+/// call a mock answers, so a mocked POST or a request with custom headers reaches the mock. `mocked(method)`
+/// says whether a mock answers this URL for that method; a mock of `OPTIONS` itself wins, so `None` then.
+pub fn cors_preflight(method: &str, request: &Headers, mocked: impl Fn(&str) -> bool) -> Option<ResolvedMockResponse> {
+    if !method.eq_ignore_ascii_case("OPTIONS") || mocked("OPTIONS") {
+        return None;
+    }
+    let wanted = header_value_opt(request, "access-control-request-method")?;
+    header_value_opt(request, "origin")?;
+    if !mocked(&wanted) {
+        return None;
+    }
+    let mut headers = Headers::new();
+    add_cors(&mut headers, request);
+    headers.insert("access-control-allow-methods".to_string(), wanted);
+    if let Some(asked) = header_value_opt(request, "access-control-request-headers") {
+        headers.insert("access-control-allow-headers".to_string(), asked);
+    }
+    headers.insert("access-control-max-age".to_string(), "600".to_string());
+    headers.insert("content-length".to_string(), "0".to_string());
+    headers.insert("connection".to_string(), "close".to_string());
+    Some(ResolvedMockResponse { status: 204, headers, body: Vec::new(), delay_ms: 0 })
+}
+
+fn header_value_opt(headers: &Headers, name: &str) -> Option<String> {
+    headers.iter().find(|(key, _)| key.eq_ignore_ascii_case(name)).map(|(_, v)| v.clone()).filter(|v| !v.is_empty())
+}
+
 fn skipped_response_header(name: &str) -> bool {
     let lower = name.to_ascii_lowercase();
     HOP_BY_HOP.contains(&lower.as_str()) || lower == "content-length" || lower == "content-encoding"
@@ -225,15 +271,17 @@ pub async fn serve_mock<W: AsyncWrite + Unpin>(
     out: &mut W,
     mock: &Mock,
     env: Option<&Environment>,
+    request: &Headers,
 ) -> std::io::Result<()> {
     let delay = mock.response_delay_ms;
     if delay > 0 {
         tokio::time::sleep(Duration::from_millis(delay)).await;
     }
     if is_streaming_mock(mock) {
-        return serve_streaming_mock(out, mock, env).await;
+        return serve_streaming_mock(out, mock, env, request).await;
     }
-    let resolved = resolve_mock_only_response(mock, env);
+    let mut resolved = resolve_mock_only_response(mock, env);
+    add_cors(&mut resolved.headers, request);
     write_response(out, resolved.status, &resolved.headers, &resolved.body).await
 }
 
@@ -266,6 +314,7 @@ pub async fn serve_streaming_mock<W: AsyncWrite + Unpin>(
     out: &mut W,
     mock: &Mock,
     env: Option<&Environment>,
+    request: &Headers,
 ) -> std::io::Result<()> {
     let chunk_delay = Duration::from_millis(mock.streaming_chunk_delay_ms);
     let body = &mock.response_body;
@@ -290,6 +339,7 @@ pub async fn serve_streaming_mock<W: AsyncWrite + Unpin>(
         headers.insert("connection".to_string(), "keep-alive".to_string());
         set_default(&mut headers, "content-type", "application/json");
     }
+    add_cors(&mut headers, request);
 
     let status = mock.response_status;
     let mut head = format!("HTTP/1.1 {status} {}\r\n", status_text(status));
@@ -460,7 +510,7 @@ mod tests {
             "responseHeaders": {},
         }));
         let (mut a, mut b) = tokio::io::duplex(4096);
-        serve_mock(&mut a, &m, None).await.unwrap();
+        serve_mock(&mut a, &m, None, &Headers::new()).await.unwrap();
         let mut text = String::new();
         b.read_to_string(&mut text).await.unwrap();
         assert!(text.starts_with("HTTP/1.1 201 Created\r\ncontent-type: text/event-stream\r\n"));
@@ -475,10 +525,56 @@ mod tests {
             "responseBody": "a|b|c", "responseHeaders": {},
         }));
         let (mut a, mut b) = tokio::io::duplex(4096);
-        serve_mock(&mut a, &m, None).await.unwrap();
+        serve_mock(&mut a, &m, None, &Headers::new()).await.unwrap();
         let mut text = String::new();
         b.read_to_string(&mut text).await.unwrap();
         assert!(text.contains("content-type: application/json\r\n"));
         assert!(text.ends_with("\r\n\r\n2\r\na|\r\n2\r\nb|\r\n1\r\nc\r\n0\r\n\r\n"));
+    }
+
+    fn request(pairs: &[(&str, &str)]) -> Headers {
+        pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+    }
+
+    #[test]
+    fn add_cors_allows_the_callers_origin_and_keeps_what_the_mock_set() {
+        let page = request(&[("Origin", "http://localhost:5173")]);
+        let mut headers = request(&[("Vary", "Accept")]);
+        add_cors(&mut headers, &page);
+        assert_eq!(headers["access-control-allow-origin"], "http://localhost:5173");
+        assert_eq!(headers["access-control-allow-credentials"], "true");
+        assert_eq!(headers["Vary"], "Accept, Origin");
+
+        let mut own = request(&[("Access-Control-Allow-Origin", "*")]);
+        add_cors(&mut own, &page);
+        assert_eq!(own, request(&[("Access-Control-Allow-Origin", "*")]));
+
+        // curl or a server: no Origin, nothing added.
+        let mut plain = Headers::new();
+        add_cors(&mut plain, &Headers::new());
+        assert!(plain.is_empty());
+    }
+
+    #[test]
+    fn a_preflight_is_answered_only_for_a_mocked_call() {
+        let asked = request(&[
+            ("origin", "http://localhost:5173"),
+            ("access-control-request-method", "POST"),
+            ("access-control-request-headers", "content-type,x-csrf-token"),
+        ]);
+        let only_post = |m: &str| m == "POST";
+        let answer = cors_preflight("OPTIONS", &asked, only_post).unwrap();
+        assert_eq!(answer.status, 204);
+        assert_eq!(answer.headers["access-control-allow-origin"], "http://localhost:5173");
+        assert_eq!(answer.headers["access-control-allow-methods"], "POST");
+        assert_eq!(answer.headers["access-control-allow-headers"], "content-type,x-csrf-token");
+
+        assert!(cors_preflight("GET", &asked, only_post).is_none());
+        assert!(cors_preflight("OPTIONS", &asked, |m| m == "GET").is_none());
+        // A mock of OPTIONS itself answers instead.
+        assert!(cors_preflight("OPTIONS", &asked, |_| true).is_none());
+        // Not a preflight: no Origin or no requested method.
+        assert!(cors_preflight("OPTIONS", &request(&[("access-control-request-method", "POST")]), only_post).is_none());
+        assert!(cors_preflight("OPTIONS", &request(&[("origin", "http://a")]), only_post).is_none());
     }
 }

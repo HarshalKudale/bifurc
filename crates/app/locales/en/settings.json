@@ -185,5 +185,22 @@
   "update.copy": "Copy",
   "update.skipped": "Skipped",
   "update.skip": "Skip this version",
-  "update.what_changed": "What changed"
+  "update.what_changed": "What changed",
+  "invalid_value": "{setting} was not changed: that value is not allowed.",
+  "capture.group": "Capture",
+  "capture.limit.title": "Exchanges kept",
+  "capture.limit.description": "How many unpinned captured exchanges a workspace keeps, 10 to 10000. Pinned ones are kept on top of this. Blank uses 200.",
+  "trace.switch.title": "Trace header",
+  "trace.switch.description": "Stamp forwarded requests with the capture id, so an upstream's logs can be matched to Capture.",
+  "trace.name.title": "Trace header name",
+  "trace.name.description": "Letters, digits, - and _. Blank uses x-bifurc-trace.",
+  "capture.footer": "Changes apply at once.",
+  "mail.group": "Mail sink",
+  "mail.port.title": "SMTP port",
+  "mail.port.description": "Where the local mail sink listens: point an app's SMTP at it and read what arrives in Mail. Blank uses 1025.",
+  "mail.footer": "A new port takes effect at once. If it cannot be bound, Mail shows why.",
+  "approvals.group": "Approvals",
+  "approvals.timeout.title": "Approval timeout (seconds)",
+  "approvals.timeout.description": "How long a call held by a require_human policy waits for a person, 10 to 3600. Blank uses 300.",
+  "approvals.footer": "Applies to calls held from now on."
 }

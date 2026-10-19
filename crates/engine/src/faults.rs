@@ -28,7 +28,7 @@ use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 
 use crate::{
     kernel::{
-        CommandRegistry,
+        CommandRegistry, bus,
         traffic::{Headers, RequestLogEntry, emit_log},
     },
     mocks::write_response,
@@ -189,11 +189,18 @@ fn clear(params: &Value) -> Result<Value> {
 }
 
 pub fn register(registry: &mut CommandRegistry) {
-    registry.register_sync("fault.add", |params, _| add(&params));
-    registry.register_sync("fault.list", |_, _| {
-        Ok(json!({ "faults": RULES.lock().iter().map(Rule::json).collect::<Vec<_>>() }))
-    });
-    registry.register_sync("fault.clear", |params, _| clear(&params));
+    registry.register_sync("fault.add", |params, _| add(&params).inspect(|_| announce()));
+    registry.register_sync("fault.list", |_, _| Ok(list()));
+    registry.register_sync("fault.clear", |params, _| clear(&params).inspect(|_| announce()));
+}
+
+fn list() -> Value {
+    json!({ "faults": RULES.lock().iter().map(Rule::json).collect::<Vec<_>>() })
+}
+
+/// Tell clients the rule set changed; the payload is `fault.list`'s, sent after the rules lock is released.
+fn announce() {
+    bus().emit("faults.changed", list());
 }
 
 // ---- applying ---------------------------------------------------------------------------------------------
@@ -343,6 +350,7 @@ pub(crate) fn clear_for_tests(id: &str) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::kernel::CommandContext;
 
     fn rule(target: &str) -> Rule {
         let (host, port, path) = parse_target(target).unwrap();
@@ -377,6 +385,29 @@ mod tests {
         let r = rule("*.x.com");
         assert!(r.matches("a.x.com", Some(443), Some("/")) && r.matches("a.b.x.com", None, None));
         assert!(!r.matches("x.com", None, None) && !r.matches("ax.com", None, None));
+    }
+
+    #[tokio::test]
+    async fn add_and_clear_announce_the_rule_list() {
+        let seen = std::sync::Arc::new(Mutex::new(Vec::<Value>::new()));
+        let sink = seen.clone();
+        let listener = bus().on("faults.changed", move |list| sink.lock().push(list.clone()));
+        let mut registry = CommandRegistry::new();
+        register(&mut registry);
+        let registry = std::sync::Arc::new(registry);
+        let call = |name: &'static str, payload: Value| {
+            let registry = registry.clone();
+            async move { registry.invoke(name, payload, CommandContext::internal(registry.clone())).await.unwrap() }
+        };
+        let added = call("fault.add", json!({ "target": "announce.localhost", "status": 503 })).await;
+        let id = added["id"].as_str().unwrap().to_string();
+        // Rules are global, so look for this test's rule among whatever other tests have added.
+        let has = |list: &Value| list["faults"].as_array().unwrap().iter().any(|r| r["id"] == id.as_str());
+        assert!(seen.lock().iter().any(&has));
+        let before = seen.lock().len();
+        call("fault.clear", json!({ "id": id })).await;
+        assert!(seen.lock().len() > before && seen.lock().iter().skip(before).any(|l| !has(l)));
+        bus().off(listener);
     }
 
     #[test]

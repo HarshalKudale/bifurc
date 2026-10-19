@@ -20,7 +20,7 @@ use serde_json::{Value, json};
 use tokio::{io::AsyncReadExt, io::AsyncWriteExt, net::TcpStream, time::timeout};
 
 use crate::{
-    kernel::CommandRegistry,
+    kernel::{CommandRegistry, bus},
     protocol::EngineError,
     proxy::listener::{ConnectionHandler, ListenerCore},
     utils::{
@@ -110,7 +110,9 @@ fn receive(envelope_from: &str, envelope_to: &[String], raw: &[u8]) -> String {
         text: parsed.text,
         html: parsed.html,
     };
+    let summary = mail.summary();
     keep(&mut INBOX.lock(), mail, MAX_MAILS);
+    bus().emit("mail.changed", json!({ "received": summary }));
     id
 }
 
@@ -252,9 +254,8 @@ pub fn register(registry: &mut CommandRegistry) {
     });
 
     registry.register_sync("mail.clear", |_, _| {
-        let mut inbox = INBOX.lock();
-        let cleared = inbox.len();
-        inbox.clear();
+        let cleared = std::mem::take(&mut *INBOX.lock()).len();
+        bus().emit("mail.changed", json!({ "cleared": cleared }));
         Ok(json!({ "cleared": cleared }))
     });
 }
@@ -403,6 +404,18 @@ mod tests {
         tokio::time::sleep(Duration::from_millis(300)).await;
         receive("a@b", &["late@smtp-three.test".into()], b"Subject: Late 7777\r\n\r\nx");
         assert_eq!(later.await.unwrap().1["otp"], "7777");
+    }
+
+    #[test]
+    fn a_received_mail_is_announced() {
+        let seen = Arc::new(Mutex::new(Vec::<Value>::new()));
+        let sink = seen.clone();
+        let listener = bus().on("mail.changed", move |change| sink.lock().push(change.clone()));
+        let id = receive("a@b", &["announce@smtp-three.test".into()], b"Subject: Hello\r\n\r\nx");
+        let received = seen.lock().iter().find(|c| c["received"]["id"] == id.as_str()).cloned().unwrap();
+        assert_eq!(received["received"]["subject"], "Hello");
+        assert_eq!(received["received"]["to"], json!(["announce@smtp-three.test"]));
+        bus().off(listener);
     }
 
     #[test]

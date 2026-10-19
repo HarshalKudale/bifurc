@@ -169,3 +169,121 @@ fn the_inspector_toggles_with_ctrl_shift_b(cx: &mut gpui_kit::TestAppContext) {
     ui.press("ctrl-shift-b");
     assert_eq!(ui.count("empty-state"), before);
 }
+
+#[gpui_kit::test]
+fn faults_agents_added_show_in_the_footer_and_clear_all_removes_them(cx: &mut gpui_kit::TestAppContext) {
+    let mut ui = open_populated(cx);
+    assert!(!ui.has("faults-menu"), "nothing is shown while no rule is set");
+    ui.fake.emit(
+        "event.faults.changed",
+        json!({"faults": [{"id": "f1", "target": "api.example.com/pay", "status": 503, "rate": 30}]}),
+    );
+    ui.settle();
+    assert!(ui.has("faults-menu"));
+    ui.fake.forget_calls();
+    ui.click("faults-menu");
+    // The rule's own "Clear" comes first, then the separator and "Clear all".
+    ui.press("down");
+    ui.press("down");
+    ui.press("enter");
+    assert_eq!(ui.fake.sent("fault.clear"), [json!({})]);
+}
+
+#[gpui_kit::test]
+fn a_single_fault_is_cleared_by_its_id(cx: &mut gpui_kit::TestAppContext) {
+    let mut ui = open_populated(cx);
+    ui.fake.emit(
+        "event.faults.changed",
+        json!({"faults": [{"id": "f1", "target": "a.test", "latencyMs": 500, "rate": 100}]}),
+    );
+    ui.settle();
+    ui.fake.forget_calls();
+    ui.click("faults-menu");
+    ui.press("down");
+    ui.press("enter");
+    assert_eq!(ui.fake.sent("fault.clear"), [json!({"id": "f1"})]);
+}
+
+#[gpui_kit::test]
+fn recording_and_replay_badges_stop_their_cassette(cx: &mut gpui_kit::TestAppContext) {
+    let mut ui = open_populated(cx);
+    ui.fake.emit(
+        "event.cassette.changed",
+        json!({
+            "record": {"recording": {"name": "checkout", "workspaceId": "w1", "hosts": ["a.test"], "interactions": 3}},
+            "replay": {"replaying": {"name": "smoke", "workspaceId": "w1", "hosts": [], "served": 1, "unmatchedCount": 2}},
+        }),
+    );
+    ui.settle();
+    assert!(ui.has("recording-menu") && ui.has("replay-menu"));
+    ui.fake.forget_calls();
+    ui.click("recording-menu");
+    ui.press("down");
+    ui.press("enter");
+    assert_eq!(ui.fake.sent("cassette.recordStop"), [json!({})]);
+    ui.click("replay-menu");
+    ui.press("down");
+    ui.press("enter");
+    assert_eq!(ui.fake.sent("cassette.replayStop"), [json!({})]);
+
+    ui.fake.emit("event.cassette.changed", json!({"record": {"recording": null}, "replay": {"replaying": null}}));
+    ui.settle();
+    assert!(!ui.has("recording-menu") && !ui.has("replay-menu"), "both go when the engine says they ended");
+}
+
+#[gpui_kit::test]
+fn an_approval_request_shows_a_badge_and_the_dialog_decides_it(cx: &mut gpui_kit::TestAppContext) {
+    let mut ui = open_populated(cx);
+    let item = json!({
+        "id": "a1", "by": "session:agent-a", "method": "POST", "url": "https://api.test/pay", "policy": "no-pay",
+        "workspaceId": "w1", "createdAt": 1, "expiresAt": 300_000,
+    });
+    ui.fake.reply("approvals.list", json!({"pending": [item]}));
+    ui.fake.emit("event.approval.requested", item);
+    ui.settle();
+    assert!(ui.has("approvals-open"), "the footer says something waits");
+    assert!(!ui.has("approve-a1"), "nothing opens by itself");
+
+    ui.click("approvals-open");
+    assert!(ui.has("approve-a1") && ui.has("deny-a1"));
+    ui.fake.forget_calls();
+    ui.click("approve-a1");
+    assert_eq!(ui.fake.sent("approvals.decide"), [json!({"id": "a1", "decision": "approve", "interactive": true})]);
+
+    // Decided elsewhere (or expired): the list is read again and the row goes.
+    ui.fake.reply("approvals.list", json!({"pending": []}));
+    ui.fake.emit("event.approval.decided", json!({"id": "a1", "decision": "approved"}));
+    ui.settle();
+    assert!(!ui.has("approve-a1") && !ui.has("approvals-open"));
+}
+
+#[gpui_kit::test]
+fn the_types_panel_infers_the_open_request_and_again_after_each_response(cx: &mut gpui_kit::TestAppContext) {
+    let mut ui = open_populated(cx);
+    ui.fake.reply(
+        "types.generate",
+        json!({"name": "PingResponse", "lang": "ts", "samples": 1, "code": "export interface PingResponse {}"}),
+    );
+    ui.click("tree-row-r2");
+    ui.press("ctrl-shift-b");
+    ui.fake.forget_calls();
+    ui.click(("inspector-panel", 2usize));
+    assert_eq!(ui.fake.sent("types.generate"), [json!({"workspaceId": "w1", "request": "r2", "lang": "ts"})]);
+    assert!(ui.has("types-code"));
+    ui.fake.forget_calls();
+    ui.click_within("types-langs", 2usize);
+    assert_eq!(ui.fake.sent("types.generate")[0]["lang"], "python");
+    ui.fake.forget_calls();
+    ui.press("ctrl-enter");
+    assert_eq!(ui.fake.sent("types.generate").len(), 1, "a new response is a new sample");
+}
+
+#[gpui_kit::test]
+fn a_request_without_responses_says_to_send_it(cx: &mut gpui_kit::TestAppContext) {
+    let mut ui = open_populated(cx);
+    ui.fake.reply_with("types.generate", |_| Err("NOT_FOUND no JSON response".into()));
+    ui.click("tree-row-r2");
+    ui.press("ctrl-shift-b");
+    ui.click(("inspector-panel", 2usize));
+    assert!(ui.has("empty-state") && !ui.has("types-code"));
+}

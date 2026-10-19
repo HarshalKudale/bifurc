@@ -1,0 +1,23 @@
+{
+  "tab": "Cookies",
+  "tab_count": "Cookies ({count})",
+  "empty_title": "No cookies",
+  "empty_description": "This response set no cookies.",
+  "copy": "Copy value",
+  "copy_payload": "Copy payload",
+  "jwt": "JWT",
+  "expired": "Expired",
+  "decode": "Decode",
+  "hide": "Hide",
+  "header": "Header",
+  "payload": "Payload",
+  "not_verified": "Decoded for reading only. The signature is not verified.",
+  "domain": "Domain",
+  "path": "Path",
+  "expires": "Expires",
+  "max_age": "Max-Age",
+  "same_site": "SameSite",
+  "secure": "Secure",
+  "http_only": "HttpOnly",
+  "session": "Session"
+}
