@@ -229,6 +229,8 @@ fn on_entry(entry: &Value) {
     }
     // shortcut: the whole file is rewritten per interaction (O(n^2)); upgrade to append/segment past a few hundred.
     let _ = write_atomic(&rec.path, &rec.cassette);
+    drop(guard);
+    announce();
 }
 
 fn write_atomic(path: &Path, value: &Value) -> std::io::Result<()> {
@@ -479,6 +481,7 @@ mod tests {
         bus().emit("log.entry", entry("api.stripe.com", "forward", "proxy"));
         let status = call("cassette.recordStatus", json!({})).await.unwrap();
         assert_eq!(status["recording"]["interactions"], 2);
+        assert!(seen.lock().iter().any(|state| recording(state) && state["record"]["recording"]["interactions"] == 2));
         let stopped = call("cassette.recordStop", json!({})).await.unwrap();
         assert!(seen.lock().iter().any(|state| state["record"]["recording"].is_null()));
         assert_eq!((stopped["interactions"].clone(), stopped["masked"].clone()), (json!(2), json!(12)));
