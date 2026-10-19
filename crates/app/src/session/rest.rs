@@ -862,6 +862,9 @@ impl RestSession {
                 }
                 Ok(result) => {
                     this.exchange.update(cx, |exchange, cx| exchange.finish(&result, BodyEncoding::Base64, window, cx));
+                    if let Some(id) = this.saved_id.clone() {
+                        this.model.update(cx, |_, cx| cx.emit(ModelEvent::ResponseReceived(id)));
+                    }
                 }
                 Err(error) => {
                     let message = describe(&error);

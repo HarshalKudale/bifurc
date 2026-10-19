@@ -1,0 +1,11 @@
+{
+  "panel": "Types",
+  "name_placeholder": "Type name (default: <Request>Response)",
+  "loading": "Inferring types…",
+  "open_request": "Open a saved request to infer a type from its responses.",
+  "unavailable": "No types",
+  "unavailable_hint": "Types are inferred from the JSON responses of a saved HTTP or GraphQL request.",
+  "no_samples": "No responses yet",
+  "no_samples_hint": "Send the request; its JSON response is typed here.",
+  "failed": "Could not infer types"
+}

@@ -256,3 +256,34 @@ fn an_approval_request_shows_a_badge_and_the_dialog_decides_it(cx: &mut gpui_kit
     ui.settle();
     assert!(!ui.has("approve-a1") && !ui.has("approvals-open"));
 }
+
+#[gpui_kit::test]
+fn the_types_panel_infers_the_open_request_and_again_after_each_response(cx: &mut gpui_kit::TestAppContext) {
+    let mut ui = open_populated(cx);
+    ui.fake.reply(
+        "types.generate",
+        json!({"name": "PingResponse", "lang": "ts", "samples": 1, "code": "export interface PingResponse {}"}),
+    );
+    ui.click("tree-row-r2");
+    ui.press("ctrl-shift-b");
+    ui.fake.forget_calls();
+    ui.click(("inspector-panel", 2usize));
+    assert_eq!(ui.fake.sent("types.generate"), [json!({"workspaceId": "w1", "request": "r2", "lang": "ts"})]);
+    assert!(ui.has("types-code"));
+    ui.fake.forget_calls();
+    ui.click_within("types-langs", 2usize);
+    assert_eq!(ui.fake.sent("types.generate")[0]["lang"], "python");
+    ui.fake.forget_calls();
+    ui.press("ctrl-enter");
+    assert_eq!(ui.fake.sent("types.generate").len(), 1, "a new response is a new sample");
+}
+
+#[gpui_kit::test]
+fn a_request_without_responses_says_to_send_it(cx: &mut gpui_kit::TestAppContext) {
+    let mut ui = open_populated(cx);
+    ui.fake.reply_with("types.generate", |_| Err("NOT_FOUND no JSON response".into()));
+    ui.click("tree-row-r2");
+    ui.press("ctrl-shift-b");
+    ui.click(("inspector-panel", 2usize));
+    assert!(ui.has("empty-state") && !ui.has("types-code"));
+}
