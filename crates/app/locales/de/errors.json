@@ -10,6 +10,7 @@
   "request.send.cancelled": "Abgebrochen",
   "validation.regex_invalid": "„{pattern}“ ist kein gültiger regulärer Ausdruck.",
   "validation.required": "{field} ist erforderlich.",
+  "claims.locked": "\"{name}\" wird gerade von {claimedBy} bearbeitet und ist gesperrt. Übernimm die Sperre oder warte, bis sie abläuft.",
   "entity.update_required": "Es wurde zuletzt mit Bifurc {version} gespeichert, das neuer ist als diese Version ({current}). Aktualisiere Bifurc, um es zu verwenden.",
   "folder.update_required": "Etwas in diesem Ordner wurde zuletzt mit Bifurc {version} gespeichert, das neuer ist als diese Version ({current}). Aktualisiere Bifurc, um den Ordner zu löschen.",
   "mapping.domain_required": "Eine Domain ist erforderlich.",
@@ -347,5 +348,7 @@
   "updates.no_address": "Es gibt keine Adresse, unter der nach Updates gesucht werden kann.",
   "policy.blocked": "Blocked by policy \"{policy}\": {method} {url}",
   "policy.approval": "Needs approval: policy \"{policy}\" ({method} {url})",
-  "policy.invalid": "The policy file is invalid: {reason}"
+  "policy.invalid": "The policy file is invalid: {reason}",
+  "types.no_samples": "Noch keine JSON-Antwort für \"{name}\"; sende die Anfrage zuerst.",
+  "claims.locked": "\"{name}\" wird gerade von {claimedBy} bearbeitet und ist hier schreibgeschützt."
 }

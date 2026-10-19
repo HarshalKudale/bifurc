@@ -27,5 +27,11 @@
   "use": "Use",
   "use_tooltip": "Resolve variables against this environment",
   "title": "Environments",
-  "description": "Sets of variables that {{name}} references in requests resolve against. Global applies under all of them."
+  "description": "Sets of variables that {{name}} references in requests resolve against. Global applies under all of them.",
+  "login": "Login",
+  "login_none": "No login",
+  "login_flow": "{name} (flow)",
+  "login_missing": "Missing: {id}",
+  "retry_on_401": "On 401, log in and send again",
+  "login_help": "When a send answers 401, the engine runs this request or flow once and sends the request again."
 }

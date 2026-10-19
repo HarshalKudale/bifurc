@@ -27,7 +27,7 @@ pub mod flows;
 pub mod flowsteps;
 pub mod format;
 pub mod health;
-pub mod infer;
+pub use bifurc_protocol::analysis::{infer, shape};
 pub mod jwt;
 pub mod locate;
 pub mod logtrace;
@@ -45,7 +45,7 @@ pub mod response;
 pub mod select;
 pub mod session;
 pub mod setup;
-pub mod shape;
+
 pub mod socketio;
 pub mod steps;
 pub mod stream;

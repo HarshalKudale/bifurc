@@ -428,6 +428,11 @@ fn settings_snapshot(settings: &super::settings::AppSettings, active_ws_id: &str
         "tlsEnabled": settings.tls_enabled(),
         "telemetryEnabled": settings.telemetry_enabled(),
         "updateCheckEnabled": settings.update_check_enabled(),
+        // As stored (null = not set = the default), so a client can show what is set and what the default is.
+        "captureLimit": raw.get("captureLimit").cloned().unwrap_or(Value::Null),
+        "traceHeader": raw.get("traceHeader").cloned().unwrap_or(Value::Null),
+        "mailPort": raw.get("mailPort").cloned().unwrap_or(Value::Null),
+        "approvalTimeoutSeconds": raw.get("approvalTimeoutSeconds").cloned().unwrap_or(Value::Null),
         "tlsCaCertPath": settings.tls_ca_cert_path(),
         "tlsCaKeyPath": settings.tls_ca_key_path(),
         "requestDefaults": raw.get("requestDefaults").filter(|v| v.is_object()).cloned().unwrap_or_else(|| json!({})),

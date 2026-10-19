@@ -1,0 +1,18 @@
+{
+  "scenario.label": "シナリオ",
+  "hits": "{count} 件のヒット",
+  "serve.tooltip": "有効なモックをポートで提供する",
+  "serve.title": "モックをポートで提供",
+  "serve.confirm": "提供する",
+  "serve.port": "ポート",
+  "serve.port_placeholder": "4010",
+  "serve.fallthrough": "転送先",
+  "serve.fallthrough_placeholder": "http://localhost:3000。空の場合、一致するモックがなければ 404",
+  "serve.bad_port": "ポートは 0 から 65535 の数値です。",
+  "serve.failed": "モックを提供できませんでした",
+  "serve.stop_failed": "モックサーバーを停止できませんでした",
+  "server.fallthrough": "{url} に転送",
+  "server.copy": "URL をコピー",
+  "server.copied": "URL をコピーしました",
+  "server.stop": "停止"
+}

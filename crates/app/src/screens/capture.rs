@@ -7,8 +7,10 @@
 //! (`capture.setPaused`); nothing passes into the history until it is resumed. An exchange can be turned into a saved request or a mock: the engine builds the entity
 //! from the stored entry (`capture.buildRequest`, `capture.buildMock`) and this screen saves what it built.
 
+mod cassettes;
+
 use gpui_kit::component::{
-    ActiveTheme as _, Disableable as _, Icon, IconName, Selectable as _, Sizable as _, WindowExt as _,
+    ActiveTheme as _, Disableable as _, Icon, IconName, Selectable as _, Sizable as _, StyledExt as _, WindowExt as _,
     alert::Alert,
     button::{Button, ButtonGroup, ButtonVariants as _},
     checkbox::Checkbox,
@@ -26,7 +28,7 @@ use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AppContext as _, ClipboardItem, Context, Entity, EventEmitter, InteractiveElement as _, IntoElement, MouseButton,
     ParentElement as _, Render, SharedString, StatefulInteractiveElement as _, Styled as _, Subscription,
-    UniformListScrollHandle, Window, div, px, uniform_list,
+    TestSupportExt as _, UniformListScrollHandle, Window, div, px, uniform_list,
 };
 use serde_json::{Value, json};
 use std::{collections::HashSet, ops::Range};
@@ -36,6 +38,7 @@ use crate::{
     components::{
         Syntax,
         binary::{BinaryBody, save_to_file, suggested_file_name},
+        dialogs::{PromptField, prompt},
         master_detail::list_over_detail,
         page,
     },
@@ -44,12 +47,16 @@ use crate::{
     model::{
         git::date_time_utc,
         http::{pretty_json, status_text},
+        logs::{self, Found},
         media::{self, BodyClass},
         snippet::{RequestParts, SnippetKind, snippet},
         traffic::{self, Exchange, Handler, RESPONSE_BODY_LIMIT, ResourceType, TrafficEntry, body_class, clock_utc},
         vault::VaultState,
     },
 };
+
+/// The origin the Webhooks screen's listeners record their requests under.
+const WEBHOOK: &str = "webhook";
 
 /// Several exchanges being saved one after the other as requests or mocks.
 struct SaveRun {
@@ -123,9 +130,24 @@ enum Section {
     Headers,
     Payload,
     Response,
+    Logs,
 }
 
-const SECTIONS: [Section; 3] = [Section::Headers, Section::Payload, Section::Response];
+const SECTIONS: [Section; 4] = [Section::Headers, Section::Payload, Section::Response, Section::Logs];
+
+/// The dev servers' lines for the selected exchange, looked up when the Logs tab is opened.
+enum TraceLogs {
+    Idle,
+    Loading,
+    Failed(String),
+    /// `approximate`: no line carried the id, these were matched by time and path.
+    Found {
+        lines: Vec<Found>,
+        approximate: bool,
+    },
+    /// Nothing matched; the key of the text that says why.
+    Empty(&'static str),
+}
 
 #[derive(Clone, Copy, PartialEq, Eq)]
 enum BodyView {
@@ -204,12 +226,20 @@ pub struct CaptureScreen {
     selected: Option<String>,
     /// Exchanges ticked in the list, for saving several at once.
     checked: HashSet<String>,
+    /// Narrows the screen to the requests of one origin, without its toolbar: the Webhooks screen embeds a
+    /// Capture of what its listeners received. `None` is the Capture screen itself.
+    origin: Option<&'static str>,
     /// Show only this kind of response; `None` shows all.
     type_filter: Option<ResourceType>,
     /// Which handlers' exchanges are listed, in [`Handler::ALL`] order. Mappings are off by default.
-    handlers: [bool; 3],
+    handlers: [bool; Handler::ALL.len()],
+    /// Show only the pinned exchanges.
+    pinned_only: bool,
+    /// The unpinned exchanges the engine keeps (`captureLimit`), as `capture.list` reported it.
+    limit: usize,
     detail: Detail,
     section: Section,
+    trace_logs: TraceLogs,
     response_view: BodyView,
     request_body: Entity<EditorState>,
     response_body: Entity<EditorState>,
@@ -241,6 +271,20 @@ fn read_only_editor(window: &mut Window, cx: &mut Context<CaptureScreen>) -> Ent
 
 impl CaptureScreen {
     pub fn new(model: Entity<AppModel>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        Self::build(model, None, window, cx)
+    }
+
+    /// A Capture of what the webhook listeners received (origin `webhook`), for the Webhooks screen.
+    pub fn received(model: Entity<AppModel>, window: &mut Window, cx: &mut Context<Self>) -> Self {
+        Self::build(model, Some(WEBHOOK), window, cx)
+    }
+
+    fn build(
+        model: Entity<AppModel>,
+        origin: Option<&'static str>,
+        window: &mut Window,
+        cx: &mut Context<Self>,
+    ) -> Self {
         let filter = cx.new(|cx| InputState::new(window, cx).placeholder(t("capture.filter.placeholder")));
         let request_body = read_only_editor(window, cx);
         let response_body = read_only_editor(window, cx);
@@ -248,12 +292,13 @@ impl CaptureScreen {
             cx.subscribe_in(&model, window, |this, _, event: &ModelEvent, window, cx| match event {
                 ModelEvent::Traffic(payload) if !this.paused => {
                     let active = this.model.read(cx).workspace_id().to_owned();
-                    let incoming = traffic::only_workspace(traffic::parse_event(payload), &active);
+                    let mut incoming = traffic::only_workspace(traffic::parse_event(payload), &active);
+                    incoming.retain(|entry| this.origin.is_none_or(|origin| entry.origin.as_deref() == Some(origin)));
                     // The selected exchange changed (its status landed, say): its detail is out of date.
                     let refresh =
                         this.selected.as_ref().filter(|id| incoming.iter().any(|entry| &entry.id == *id)).cloned();
                     // A batch is oldest first; the list is newest first.
-                    traffic::merge_live(&mut this.entries, incoming);
+                    traffic::merge_live(&mut this.entries, incoming, this.limit);
                     if let Some(id) = refresh {
                         this.fetch(id, window, cx);
                     }
@@ -285,9 +330,13 @@ impl CaptureScreen {
             selected: None,
             checked: HashSet::new(),
             type_filter: None,
-            handlers: [false, true, true],
+            origin,
+            handlers: [false, true, true, true],
+            pinned_only: false,
+            limit: traffic::MAX_ENTRIES,
             detail: Detail::Idle,
             section: Section::Headers,
+            trace_logs: TraceLogs::Idle,
             response_view: BodyView::Pretty,
             request_body,
             response_body,
@@ -316,7 +365,10 @@ impl CaptureScreen {
 
     /// Whether the list shows `entry`: it passes the text filter, the type filter and the handler filter.
     fn shows(&self, entry: &TrafficEntry, needle: &str) -> bool {
-        Handler::ALL.iter().zip(self.handlers).any(|(handler, on)| on && *handler == entry.handler())
+        (match self.origin {
+            Some(origin) => entry.origin.as_deref() == Some(origin),
+            None => Handler::ALL.iter().zip(self.handlers).any(|(handler, on)| on && *handler == entry.handler()),
+        }) && (!self.pinned_only || entry.pinned)
             && self.type_filter.is_none_or(|kind| entry.resource_type() == kind)
             && entry.matches(needle)
     }
@@ -326,17 +378,26 @@ impl CaptureScreen {
         self.entries.iter().filter(|entry| self.shows(entry, &needle)).collect()
     }
 
-    fn reload(&mut self, _: &mut Window, cx: &mut Context<Self>) {
+    /// Reads the history again (also the Webhooks screen's, when it is brought to the front).
+    pub fn reload(&mut self, _: &mut Window, cx: &mut Context<Self>) {
         let model = self.model.read(cx);
         if model.workspace_id().is_empty() {
             return;
         }
         let client = model.client().clone();
-        let payload = json!({ "workspaceId": model.workspace_id(), "summary": true });
+        let mut payload = json!({ "workspaceId": model.workspace_id(), "summary": true });
+        if let Some(origin) = self.origin {
+            payload["origin"] = json!(origin);
+        }
         call(&client, cx, "capture.list", payload, |this, outcome, cx| {
             match outcome {
                 Ok(result) => {
                     this.entries = traffic::parse_list(&result);
+                    this.limit = result
+                        .get("limit")
+                        .and_then(Value::as_u64)
+                        .and_then(|limit| usize::try_from(limit).ok())
+                        .unwrap_or(traffic::MAX_ENTRIES);
                     this.paused = result.get("paused").and_then(Value::as_bool).unwrap_or(false);
                     this.disable_cache = result.get("disableCache").and_then(Value::as_bool).unwrap_or(true);
                     this.loaded = true;
@@ -416,6 +477,7 @@ impl CaptureScreen {
 
     fn select(&mut self, id: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
         self.selected = id.clone();
+        self.trace_logs = TraceLogs::Idle;
         self.response_view = BodyView::Pretty;
         match id {
             Some(id) => {
@@ -468,6 +530,76 @@ impl CaptureScreen {
             });
         }
         self.detail = Detail::Ready(Box::new(Shown { exchange, request, response }));
+        if self.section == Section::Logs && matches!(self.trace_logs, TraceLogs::Idle) {
+            self.load_logs(cx);
+        }
+    }
+
+    /// Looks the selected exchange up in the dev servers' output, as `capture show --logs` does: the lines
+    /// that carry its id or trace id, else those that mention its path around the time it was served.
+    fn load_logs(&mut self, cx: &mut Context<Self>) {
+        let (Some(id), Detail::Ready(shown)) = (self.selected.clone(), &self.detail) else { return };
+        let exchange = &shown.exchange;
+        let traced = exchange.trace_id.is_some();
+        let workspace = self.model.read(cx).workspace_id().to_owned();
+        let exact = logs::exact_query(&workspace, &id, exchange.trace_id.as_deref());
+        let near = logs::near_query(
+            &workspace,
+            &exchange.url,
+            self.selected_entry().map_or(0, |entry| entry.ts),
+            exchange.duration_ms.unwrap_or_default(),
+        );
+        self.trace_logs = TraceLogs::Loading;
+        cx.notify();
+        let client = self.model.read(cx).client().clone();
+        call(&client, cx, "devservice.grep", exact, move |this, outcome, cx| {
+            if this.selected.as_deref() != Some(id.as_str()) {
+                return;
+            }
+            if let Some(message) = failure(&outcome) {
+                this.trace_logs = TraceLogs::Failed(message);
+                return cx.notify();
+            }
+            if let Some(lines) = outcome.ok().as_ref().and_then(logs::found) {
+                this.trace_logs = TraceLogs::Found { lines, approximate: false };
+                return cx.notify();
+            }
+            let Some(near) = near else { return this.nothing_in_logs(id, traced, cx) };
+            let client = this.model.read(cx).client().clone();
+            call(&client, cx, "devservice.grep", near, move |this, outcome, cx| {
+                if this.selected.as_deref() != Some(id.as_str()) {
+                    return;
+                }
+                match outcome.ok().as_ref().and_then(logs::found) {
+                    Some(lines) => {
+                        this.trace_logs = TraceLogs::Found { lines, approximate: true };
+                        cx.notify();
+                    }
+                    None => this.nothing_in_logs(id, traced, cx),
+                }
+            });
+        });
+    }
+
+    /// No line matched: says why, which depends on whether any dev server is running at all.
+    fn nothing_in_logs(&mut self, id: String, traced: bool, cx: &mut Context<Self>) {
+        let model = self.model.read(cx);
+        let payload = json!({ "workspaceId": model.workspace_id() });
+        let client = model.client().clone();
+        call(&client, cx, "devservice.list", payload, move |this, outcome, cx| {
+            if this.selected.as_deref() != Some(id.as_str()) {
+                return;
+            }
+            let running = outcome.ok().is_some_and(|result| {
+                result["services"].as_array().is_some_and(|list| list.iter().any(|s| s["state"] == "running"))
+            });
+            this.trace_logs = TraceLogs::Empty(match (running, traced) {
+                (false, _) => "capture.logs.empty.no_servers",
+                (true, false) => "capture.logs.empty.not_traced",
+                (true, true) => "capture.logs.empty.none",
+            });
+            cx.notify();
+        });
     }
 
     fn set_response_view(&mut self, view: BodyView, window: &mut Window, cx: &mut Context<Self>) {
@@ -481,6 +613,31 @@ impl CaptureScreen {
             self.response_body.update(cx, |state, cx| state.set_value(text, window, cx));
         }
         cx.notify();
+    }
+
+    /// Pins or unpins exchanges: the rows change at once, and are read again when the engine refuses.
+    fn pin(&mut self, ids: Vec<String>, pinned: bool, window: &mut Window, cx: &mut Context<Self>) {
+        if ids.is_empty() {
+            return;
+        }
+        for entry in self.entries.iter_mut().filter(|entry| ids.contains(&entry.id)) {
+            entry.pinned = pinned;
+        }
+        let model = self.model.read(cx);
+        let client = model.client().clone();
+        let payload = json!({ "workspaceId": model.workspace_id(), "ids": ids, "pinned": pinned });
+        call_in(&client, window, cx, "capture.pin", payload, move |this, outcome, window, cx| {
+            if let Some(message) = failure(&outcome) {
+                this.report(t(if pinned { "capture.error.pin" } else { "capture.error.unpin" }), message, cx);
+                this.reload(window, cx);
+            }
+        });
+        cx.notify();
+    }
+
+    fn pin_checked(&mut self, pinned: bool, window: &mut Window, cx: &mut Context<Self>) {
+        let ids = self.checked_exchanges().into_iter().map(|(id, _)| id).collect();
+        self.pin(ids, pinned, window, cx);
     }
 
     fn remove_selected(&mut self, cx: &mut Context<Self>) {
@@ -1061,6 +1218,39 @@ impl CaptureScreen {
         cx.notify();
     }
 
+    /// Sends the selected webhook again (`webhook.replay`): to the listener's forward URL, else to where it
+    /// came from, or to `to` when given. The answer's status is shown as a notification.
+    fn replay(&mut self, to: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(id) = self.selected.clone() else { return };
+        let model = self.model.read(cx);
+        let client = model.client().clone();
+        let mut payload = json!({ "workspaceId": model.workspace_id(), "id": id });
+        if let Some(to) = to {
+            payload["to"] = json!(to);
+        }
+        call_in(&client, window, cx, "webhook.replay", payload, |this, outcome, window, cx| match failure(&outcome) {
+            Some(message) => this.report(t("webhooks.error.replay"), message, cx),
+            None => {
+                let status = outcome.ok().and_then(|sent| sent.get("status")?.as_u64()).unwrap_or_default();
+                let text = t_with("webhooks.replayed", &[("status", &status)]);
+                let note = if status < 400 { Notification::success(text) } else { Notification::warning(text) };
+                window.push_notification(note, cx);
+            }
+        });
+    }
+
+    fn ask_replay_to(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        prompt(
+            cx.weak_entity(),
+            window,
+            cx,
+            t("webhooks.replay_to.title"),
+            t("webhooks.replay"),
+            vec![PromptField::new(t("webhooks.field.url"), t("webhooks.field.url_placeholder"))],
+            |this, values, window, cx| this.replay(values.into_iter().next(), window, cx),
+        );
+    }
+
     /// Puts the selected exchange's request on the clipboard as a cURL command, like the REST editor's snippet.
     fn copy_curl(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Detail::Ready(shown) = &self.detail else { return };
@@ -1121,6 +1311,7 @@ impl CaptureScreen {
         );
         h_flex()
             .flex_none()
+            .flex_wrap()
             .gap_3()
             .px_4()
             .py_2()
@@ -1136,6 +1327,16 @@ impl CaptureScreen {
                     .on_change(cx.listener(|this, checked: &bool, _, cx| this.set_disable_cache(*checked, cx))),
             )
             .child(
+                Checkbox::new("capture-pinned-only")
+                    .small()
+                    .label(t("capture.pinned_only"))
+                    .checked(self.pinned_only)
+                    .on_change(cx.listener(|this, checked: &bool, _, cx| {
+                        this.pinned_only = *checked;
+                        cx.notify();
+                    })),
+            )
+            .child(
                 ButtonGroup::new("capture-handlers")
                     .multiple(true)
                     .outline()
@@ -1149,6 +1350,7 @@ impl CaptureScreen {
                     })),
             )
             .child(div().flex_1())
+            .child(self.render_cassette_buttons(cx))
             .child(
                 Button::new("capture-create-flow")
                     .small()
@@ -1193,6 +1395,20 @@ impl CaptureScreen {
                             .disabled(self.saving)
                             .on_click(cx.listener(|this, _, window, cx| this.save_checked(true, window, cx))),
                     )
+                    .child(
+                        Button::new("capture-pin-checked")
+                            .small()
+                            .label(t("capture.pin_checked"))
+                            .tooltip(t("capture.pin_tooltip"))
+                            .on_click(cx.listener(|this, _, window, cx| this.pin_checked(true, window, cx))),
+                    )
+                    .child(
+                        Button::new("capture-unpin-checked")
+                            .small()
+                            .label(t("capture.unpin_checked"))
+                            .tooltip(t("capture.unpin_tooltip"))
+                            .on_click(cx.listener(|this, _, window, cx| this.pin_checked(false, window, cx))),
+                    )
                     .child(Button::new("capture-uncheck").ghost().small().label(t("capture.clear_selection")).on_click(
                         cx.listener(|this, _, _, cx| {
                             this.checked.clear();
@@ -1211,6 +1427,9 @@ impl CaptureScreen {
             self.entries.iter().enumerate().filter(|(_, entry)| self.shows(entry, &needle)).map(|(ix, _)| ix).collect();
         let visible_ids: Vec<String> = visible.iter().map(|ix| self.entries[*ix].id.clone()).collect();
         let all_checked = !visible_ids.is_empty() && visible_ids.iter().all(|id| self.checked.contains(id));
+        if self.entries.is_empty() && self.origin.is_some() {
+            return page::empty(t("webhooks.received.empty.title"), t("webhooks.received.empty.body"));
+        }
         if self.entries.is_empty() {
             return page::empty(
                 t("capture.empty.no_traffic.title"),
@@ -1272,6 +1491,21 @@ impl CaptureScreen {
                                             .min_w_0()
                                             .gap_2()
                                             .overflow_hidden()
+                                            .children(entry.pinned.then(|| {
+                                                div()
+                                                    .id(gpui_kit::ElementId::Name(
+                                                        format!("capture-pinned-{}", entry.id).into(),
+                                                    ))
+                                                    .test_support()
+                                                    .flex_none()
+                                                    .tooltip(|window, cx| {
+                                                        gpui_kit::component::tooltip::Tooltip::new(t(
+                                                            "capture.pinned_marker",
+                                                        ))
+                                                        .build(window, cx)
+                                                    })
+                                                    .child(Icon::new(IconName::Star).small())
+                                            }))
                                             .child(
                                                 div().min_w_0().overflow_hidden().text_ellipsis().child(entry.name()),
                                             )
@@ -1408,10 +1642,10 @@ impl CaptureScreen {
             Some(code) => format!("{code} {}", status_text(code)),
             None => t("capture.pending").to_owned(),
         };
-        let via = self.selected_entry().map_or("", TrafficEntry::via_label);
+        let via = self.selected_entry().map(TrafficEntry::via_label).unwrap_or_default();
         let handled_by = match (via.is_empty(), &exchange.target) {
             (false, Some(target)) => format!("{via} · {target}"),
-            (false, None) => via.to_owned(),
+            (false, None) => via,
             (true, Some(target)) => target.clone(),
             (true, None) => String::new(),
         };
@@ -1541,28 +1775,98 @@ impl CaptureScreen {
         }
     }
 
+    /// The lines the dev servers printed for this exchange, grouped by service, the context around a match muted.
+    fn render_logs(&self, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
+        let theme = cx.theme().clone();
+        match &self.trace_logs {
+            TraceLogs::Idle | TraceLogs::Loading => page::loading(t("capture.logs.loading")),
+            TraceLogs::Failed(message) => div()
+                .p_4()
+                .child(
+                    Alert::error("capture-logs-failed", SharedString::from(message.clone()))
+                        .title(t("capture.logs.error")),
+                )
+                .into_any_element(),
+            TraceLogs::Empty(key) => page::empty(t("capture.logs.empty.title"), t(key)),
+            TraceLogs::Found { lines, approximate } => {
+                let mut service = None;
+                let rows = lines.iter().enumerate().map(|(ix, line)| {
+                    let heading = service != Some(line.service.as_str());
+                    service = Some(line.service.as_str());
+                    v_flex()
+                        .when(heading, |this| {
+                            this.child(
+                                div()
+                                    .id(("capture-log-service", ix))
+                                    .test_support()
+                                    .pt_3()
+                                    .pb_1()
+                                    .text_xs()
+                                    .font_medium()
+                                    .child(line.service.clone()),
+                            )
+                        })
+                        .when(line.gap && !heading, |this| this.child(div().h_px().my_1().bg(theme.border)))
+                        .child(
+                            div()
+                                .id(("capture-log", ix))
+                                .test_support()
+                                .text_xs()
+                                .font_family(theme.mono_font_family.clone())
+                                .when(!line.matched, |this| this.text_color(theme.muted_foreground))
+                                .child(line.text.clone()),
+                        )
+                });
+                v_flex()
+                    .id("capture-logs")
+                    .size_full()
+                    .overflow_y_scroll()
+                    .px_4()
+                    .pb_3()
+                    .when(*approximate, |this| {
+                        this.child(
+                            div()
+                                .id("capture-logs-approximate")
+                                .test_support()
+                                .pt_3()
+                                .text_sm()
+                                .text_color(theme.muted_foreground)
+                                .child(t("capture.logs.approximate")),
+                        )
+                    })
+                    .children(rows)
+                    .into_any_element()
+            }
+        }
+    }
+
     fn render_sections(&self, shown: &Shown, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
         let selected = SECTIONS.iter().position(|s| *s == self.section).unwrap_or(0);
         let content = match self.section {
             Section::Headers => self.render_headers(shown, cx),
             Section::Payload => self.render_payload(shown, cx),
             Section::Response => self.render_response(shown, cx),
+            Section::Logs => self.render_logs(cx),
         };
         v_flex()
             .size_full()
             .child(
-                div().flex_none().px_4().child(
+                div().id("capture-section-tabs").test_support().flex_none().px_4().child(
                     TabBar::new("capture-sections")
                         .underline()
                         .small()
                         .selected_index(selected)
                         .on_click(cx.listener(|this, ix: &usize, _, cx| {
                             this.section = SECTIONS[*ix];
+                            if this.section == Section::Logs && matches!(this.trace_logs, TraceLogs::Idle) {
+                                this.load_logs(cx);
+                            }
                             cx.notify();
                         }))
                         .child(Tab::new().label(t("capture.tab.headers")))
                         .child(Tab::new().label(t("capture.tab.payload")))
-                        .child(Tab::new().label(t("capture.tab.response"))),
+                        .child(Tab::new().label(t("capture.tab.response")))
+                        .child(Tab::new().label(t("capture.tab.logs"))),
                 ),
             )
             .child(div().flex_1().min_h_0().child(content))
@@ -1606,6 +1910,32 @@ impl CaptureScreen {
                             .child(entry.url.clone()),
                     )
                     .child(Self::status_tag(entry.status))
+                    .when(self.origin == Some(WEBHOOK), |this| {
+                        this.child(
+                            Button::new("webhook-replay")
+                                .small()
+                                .label(t("webhooks.replay"))
+                                .on_click(cx.listener(|this, _, window, cx| this.replay(None, window, cx))),
+                        )
+                        .child(
+                            Button::new("webhook-replay-to")
+                                .small()
+                                .label(t("webhooks.replay_to"))
+                                .on_click(cx.listener(|this, _, window, cx| this.ask_replay_to(window, cx))),
+                        )
+                    })
+                    .child({
+                        let pinned = entry.pinned;
+                        Button::new("capture-pin")
+                            .small()
+                            .label(t(if pinned { "capture.unpin" } else { "capture.pin" }))
+                            .tooltip(t(if pinned { "capture.unpin_tooltip" } else { "capture.pin_tooltip" }))
+                            .on_click(cx.listener(move |this, _, window, cx| {
+                                if let Some(id) = this.selected.clone() {
+                                    this.pin(vec![id], !pinned, window, cx);
+                                }
+                            }))
+                    })
                     .child(
                         Button::new("capture-save-request")
                             .small()
@@ -1679,7 +2009,10 @@ impl Render for CaptureScreen {
         );
         let detail = self.selected_entry().cloned().map(|entry| self.render_detail(&entry, cx));
         let split = list_over_detail("capture-split", self.render_list(cx), detail);
+        if self.origin.is_some() {
+            return split.into_any_element();
+        }
         let body = v_flex().size_full().child(self.render_toolbar(cx)).child(div().flex_1().min_h_0().child(split));
-        page::screen(header, body, cx)
+        page::screen(header, body, cx).into_any_element()
     }
 }

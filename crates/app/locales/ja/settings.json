@@ -185,5 +185,22 @@
   "update.copy": "コピー",
   "update.skipped": "スキップ済み",
   "update.skip": "このバージョンをスキップ",
-  "update.what_changed": "変更内容"
+  "update.what_changed": "変更内容",
+  "invalid_value": "{setting} は変更されませんでした。その値は使用できません。",
+  "capture.group": "キャプチャ",
+  "capture.limit.title": "保持する通信数",
+  "capture.limit.description": "ワークスペースがピン留めされていないキャプチャを保持する件数(10〜10000)。ピン留めはこれとは別に保持されます。空欄は 200 です。",
+  "trace.switch.title": "トレースヘッダー",
+  "trace.switch.description": "転送するリクエストにキャプチャ ID を付けて、上流のログとキャプチャを照合できるようにします。",
+  "trace.name.title": "トレースヘッダー名",
+  "trace.name.description": "英数字、- と _ が使えます。空欄は x-bifurc-trace です。",
+  "capture.footer": "変更はすぐに反映されます。",
+  "mail.group": "メールシンク",
+  "mail.port.title": "SMTP ポート",
+  "mail.port.description": "ローカルのメールシンクが待ち受けるポートです。アプリの SMTP 送信先に指定し、届いたメールは「メール」で確認できます。空欄は 1025 です。",
+  "mail.footer": "新しいポートはすぐに有効になります。バインドできない場合は「メール」に理由が表示されます。",
+  "approvals.group": "承認",
+  "approvals.timeout.title": "承認のタイムアウト(秒)",
+  "approvals.timeout.description": "require_human ポリシーで保留された呼び出しが人の判断を待つ時間(10〜3600)。空欄は 300 です。",
+  "approvals.footer": "今後保留される呼び出しに適用されます。"
 }

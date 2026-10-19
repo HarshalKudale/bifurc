@@ -1,0 +1,11 @@
+{
+  "panel": "Typen",
+  "name_placeholder": "Typname (Standard: <Anfrage>Response)",
+  "loading": "Typen werden abgeleitet…",
+  "open_request": "Öffne eine gespeicherte Anfrage, um einen Typ aus ihren Antworten abzuleiten.",
+  "unavailable": "Keine Typen",
+  "unavailable_hint": "Typen werden aus den JSON-Antworten einer gespeicherten HTTP- oder GraphQL-Anfrage abgeleitet.",
+  "no_samples": "Noch keine Antworten",
+  "no_samples_hint": "Sende die Anfrage; ihre JSON-Antwort wird hier typisiert.",
+  "failed": "Typen konnten nicht abgeleitet werden"
+}
