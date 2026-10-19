@@ -142,6 +142,36 @@ pub(crate) async fn read_unsealed(ws_id: &str, id: &str) -> Result<(String, Vec<
     .await
 }
 
+/// The secrets of the unsealed vault named `name`, for the engine's own use (`jwt.mint` signs with one).
+/// A missing vault is NOT_FOUND, a sealed one the usual "sealed" error. Never handed to a client.
+pub(crate) async fn secrets_by_name(ws_id: &str, name: &str) -> Result<Vec<(String, String)>> {
+    let (ws_id, name) = (ws_id.to_string(), name.to_string());
+    blocking(move || {
+        let vault = store::find_by_name(&ws_id, &name)
+            .ok_or_else(|| EngineError::not_found(format!("No vault named \"{name}\".")))?;
+        let key = ready_key(&ws_id, &vault)?;
+        Ok(vault.read_all(&key).into_iter().map(|(name, value)| (name, value.to_string())).collect())
+    })
+    .await
+}
+
+/// [`secrets_by_name`] for variable resolution, which is synchronous; the error is the reason text for a warning.
+pub(crate) fn secrets_for_variable(ws_id: &str, name: &str) -> std::result::Result<Vec<(String, String)>, String> {
+    let vault = store::find_by_name(ws_id, name).ok_or_else(|| format!("no vault named \"{name}\""))?;
+    let key = state::key_of(ws_id, &vault.id)
+        .ok_or_else(|| format!("vault \"{}\" is sealed (bifurc vault unseal {})", vault.name, vault.name))?;
+    Ok(vault.read_all(&key).into_iter().map(|(name, value)| (name, value.to_string())).collect())
+}
+
+/// The names of the workspace's vaults that hold a secret called `secret`: `(unsealed, sealed)`.
+pub(crate) fn vaults_holding(ws_id: &str, secret: &str) -> (Vec<String>, Vec<String>) {
+    let (mut open, mut sealed) = (Vec::new(), Vec::new());
+    for vault in store::list(ws_id).into_iter().filter(|v| v.secret_names().contains(&secret)) {
+        if state::key_of(ws_id, &vault.id).is_some() { open.push(vault.name) } else { sealed.push(vault.name) }
+    }
+    (open, sealed)
+}
+
 /// Seal `secrets` into an unsealed vault, as `vault.setSecret` does for one.
 pub(crate) async fn add_secrets(ws_id: &str, id: &str, secrets: Vec<(String, String)>) -> Result<()> {
     if secrets.is_empty() {

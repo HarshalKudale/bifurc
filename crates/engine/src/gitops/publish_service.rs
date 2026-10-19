@@ -21,7 +21,7 @@ use crate::{
     workspace::{
         accounts::commit_identity,
         fs::ws_dir,
-        git_store::{GitError, git},
+        git_store::{GitError, git, session_trailer},
     },
 };
 
@@ -151,7 +151,12 @@ fn build_message(
 ) -> (String, Option<String>) {
     let ws_id = &opts.ws_id;
     if opts.paths.len() != 1 {
-        return (format!("update {} files", opts.paths.len()), Some(format!("workspace-id: {ws_id}\nactor: {actor}")));
+        let ids: Vec<String> = opts.paths.iter().filter_map(|p| entity_id_from_path(p)).collect();
+        let sessions = session_trailer(ws_id, &ids);
+        return (
+            format!("update {} files", opts.paths.len()),
+            Some(format!("workspace-id: {ws_id}\nactor: {actor}{sessions}")),
+        );
     }
     let path = &opts.paths[0];
     let single_entity = |path: &str, name_of_deleted: bool| {
@@ -164,7 +169,10 @@ fn build_message(
         } else {
             read_entity_name(ws_id, path).unwrap_or(id_or_unknown)
         };
-        let body = entity_id.map(|id| format!("entity-id: {id}\nworkspace-id: {ws_id}\nactor: {actor}"));
+        let body = entity_id.map(|id| {
+            let sessions = session_trailer(ws_id, std::slice::from_ref(&id));
+            format!("entity-id: {id}\nworkspace-id: {ws_id}\nactor: {actor}{sessions}")
+        });
         (format!("{action} {kind} {name}"), body)
     };
 
@@ -200,8 +208,9 @@ fn build_message(
     };
     let ids: Vec<String> =
         staged_entities.iter().filter_map(|f| entity_id_from_path(f)).filter(|id| !id.is_empty()).collect();
-    let body =
-        (!ids.is_empty()).then(|| format!("workspace-id: {ws_id}\nactor: {actor}\nentity-ids: {}", ids.join(",")));
+    let sessions = session_trailer(ws_id, &ids);
+    let body = (!ids.is_empty())
+        .then(|| format!("workspace-id: {ws_id}\nactor: {actor}{sessions}\nentity-ids: {}", ids.join(",")));
     (subject, body)
 }
 
@@ -280,7 +289,8 @@ pub(super) async fn commit_paths(opts: &PublishOptions) -> Result<Value, GitErro
     let (generated, body) = build_message(opts, &status, &pre_status, &actor);
     let (message, body) = match opts.message.as_deref().map(str::trim).filter(|m| !m.is_empty()) {
         Some(message) => {
-            let trailers = body.unwrap_or_else(|| format!("workspace-id: {ws_id}\nactor: {actor}"));
+            let trailers =
+                body.unwrap_or_else(|| format!("workspace-id: {ws_id}\nactor: {actor}{}", session_trailer(ws_id, &[])));
             (message.to_string(), Some(format!("change: {generated}\n{trailers}")))
         }
         None => (generated, body),

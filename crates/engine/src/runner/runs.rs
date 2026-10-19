@@ -13,11 +13,13 @@ use parking_lot::Mutex;
 use serde_json::{Value, json};
 
 use crate::{
+    cookies,
+    env::send_scoped,
     kernel::{CommandContext, bus},
     protocol::{EngineError, Result},
     runtime::failed,
     utils::{
-        id::now_ms,
+        id::{generate_id, now_ms},
         json::{array_of, str_of},
         replay::decode_base64_lenient,
     },
@@ -147,7 +149,7 @@ async fn run_one(ctx: &CommandContext, ws_id: &str, request: &Value) -> Value {
                 "responseHeaders": sent["headers"],
                 "responseBody": truncated(&json!(String::from_utf8_lossy(&decode_base64_lenient(str_of(&sent, "body"))))),
             });
-            for key in ["preScriptError", "postScriptError"] {
+            for key in ["preScriptError", "postScriptError", "reauthenticated"] {
                 if let Some(error) = sent.get(key) {
                     result[key] = error.clone();
                 }
@@ -177,6 +179,15 @@ async fn run_one(ctx: &CommandContext, ws_id: &str, request: &Value) -> Value {
     }
 }
 
+/// Whether a request of the run failed: it could not be sent, a script threw, or a test did not pass.
+fn is_failed(result: &Value) -> bool {
+    let present = |key: &str| result.get(key).is_some_and(|value| !value.is_null());
+    present("error")
+        || present("preScriptError")
+        || present("postScriptError")
+        || array_of(result, "tests").iter().any(|test| test["passed"] != true)
+}
+
 /// The run's report from its results. The folder's name titles an exported report.
 fn build_report(ws_id: &str, folder_id: &str, started_at: i64, results: Vec<Value>) -> Value {
     let tests: Vec<&Value> = results.iter().flat_map(|result| array_of(result, "tests")).collect();
@@ -201,9 +212,11 @@ async fn run_collection(
     folder_id: String,
     requests: Vec<Value>,
     delay_ms: Option<u64>,
+    bail: bool,
 ) -> Value {
     let started_at = now_ms();
     let mut results: Vec<Value> = Vec::new();
+    let mut stopped_by: Option<Value> = None;
     for (index, request) in requests.iter().enumerate() {
         if run.lock()["cancelled"] == json!(true) {
             break;
@@ -213,6 +226,7 @@ async fn run_collection(
         }
         let result = run_one(&ctx, &ws_id, request).await;
         results.push(result.clone());
+        let policy_stop = result["errorKey"].as_str().is_some_and(|key| key.starts_with("policy."));
         let total = {
             let mut snapshot = run.lock();
             snapshot["results"].as_array_mut().expect("results is an array").push(result.clone());
@@ -223,13 +237,32 @@ async fn run_collection(
             "runner.progress",
             json!({ "workspaceId": ws_id, "folderId": folder_id, "index": index, "total": total, "result": result }),
         );
+        if policy_stop {
+            stopped_by = Some(result);
+            break;
+        }
+        if bail && is_failed(&result) {
+            break;
+        }
     }
-    build_report(&ws_id, &folder_id, started_at, results)
+    let mut report = build_report(&ws_id, &folder_id, started_at, results);
+    // A guardrail stops the run at its first blocked request: the report names it.
+    if let Some(blocked) = stopped_by {
+        report["stoppedByPolicy"] = json!({
+            "requestId": blocked["requestId"], "requestName": blocked["requestName"], "error": blocked["error"],
+            "errorKey": blocked["errorKey"], "errorParams": blocked["errorParams"],
+        });
+    }
+    report
 }
 
 /// Start a run in the background. `{ ok: true, total }`, or `{ ok: false, error }` if the folder is already
 /// running. Progress and the finished report go out as `runner.progress` / `runner.finished` events.
-pub async fn start_run(ctx: &CommandContext, ws_id: &str, folder_id: &str) -> Result<Value> {
+/// `params` may also hold `variables` / `environmentId` (laid over each request's environment), `freshJar`
+/// (the run's cookies live in a jar of their own that is dropped at its end) and `bail` (stop after the first
+/// request that failed).
+pub async fn start_run(ctx: &CommandContext, params: &Value) -> Result<Value> {
+    let (ws_id, folder_id) = (str_of(params, "workspaceId"), str_of(params, "folderId"));
     if let Some(existing) = get_run(ws_id, folder_id)
         && existing["running"] == json!(true)
     {
@@ -262,14 +295,20 @@ pub async fn start_run(ctx: &CommandContext, ws_id: &str, folder_id: &str) -> Re
     })));
     RUNS.lock().insert(key_of(ws_id, folder_id), run.clone());
 
-    let task = tokio::spawn(run_collection(
-        ctx.clone(),
-        run.clone(),
-        ws_id.to_string(),
-        folder_id.to_string(),
-        requests,
-        delay_ms,
-    ));
+    // The scope and the jar are task-locals: they are entered inside the spawned task, where the requests are sent.
+    let work = {
+        let (ctx, run, ws_id, folder_id) = (ctx.clone(), run.clone(), ws_id.to_string(), folder_id.to_string());
+        let (params, bail) = (params.clone(), params["bail"] == json!(true));
+        async move {
+            let sending = send_scoped(&params, run_collection(ctx, run, ws_id, folder_id, requests, delay_ms, bail));
+            if params["freshJar"] == json!(true) {
+                cookies::private(&generate_id(), sending).await
+            } else {
+                sending.await
+            }
+        }
+    };
+    let task = tokio::spawn(crate::env::session::carry(work));
     let (ws_id, folder_id) = (ws_id.to_string(), folder_id.to_string());
     tokio::spawn(async move {
         match task.await {

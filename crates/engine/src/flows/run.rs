@@ -144,6 +144,9 @@ pub struct Run {
     pub instance: Option<usize>,
     /// How many stream messages the whole run takes before its streams are closed.
     pub max_events: Option<u64>,
+    /// The variables and the environment the caller laid over the run.
+    overrides: Vec<(String, String)>,
+    environment_id: Option<String>,
     pub events: AtomicU64,
     /// The MCP connections the run has open, one per saved request.
     pub mcp: tokio::sync::Mutex<HashSet<String>>,
@@ -242,9 +245,11 @@ impl Run {
             .flatten()
             .map(|(name, value)| (name.clone(), value.as_str().unwrap_or_default().to_string()))
             .collect();
+        variables.extend(self.overrides.iter().cloned());
         variables.extend(self.variables.lock().iter().cloned());
         variables.extend(bindings);
-        let scope = VariableScope { variables, changes: collected.clone() };
+        let scope =
+            VariableScope { variables, environment_id: self.environment_id.clone(), changes: collected.clone() };
         let result = with_variable_scope(scope, work).await;
         if let Some(collected) = collected {
             let changes = std::mem::take(&mut *collected.lock());
@@ -772,8 +777,32 @@ pub fn start(ctx: &CommandContext, params: &Value) -> Result<Value> {
         run
     };
     let run_id = run.run_id.clone();
-    tokio::spawn(drive(run, plan.timeout));
+    // A fresh jar is the run's own, as a load test's instance has: what the run sets is gone with it.
+    if plan.fresh_jar {
+        let (owner, timeout) = (run_id.clone(), plan.timeout);
+        tokio::spawn(crate::env::session::carry(
+            async move { crate::cookies::private(&owner, drive(run, timeout)).await },
+        ));
+    } else {
+        tokio::spawn(crate::env::session::carry(drive(run, plan.timeout)));
+    }
     Ok(json!({ "ok": true, "runId": run_id }))
+}
+
+/// Run a saved flow to its end in the calling task (so in its session and jar): `Ok` when it succeeded,
+/// else why not. Used by an environment's login; the run is not kept for `flow.status`.
+pub async fn run_to_end(ctx: &CommandContext, params: &Value) -> std::result::Result<(), String> {
+    let plan = match plan(params).map_err(|e| e.message)? {
+        Ok(plan) => plan,
+        Err(refusal) => return Err(str_of(&refusal, "error").to_string()),
+    };
+    let run = plan.run(ctx, None);
+    drive(run.clone(), plan.timeout).await;
+    let report = run.snapshot();
+    match str_of(&report, "status") {
+        "succeeded" => Ok(()),
+        _ => Err(report["error"].as_str().unwrap_or("the login flow did not succeed").to_string()),
+    }
 }
 
 /// What a run is made from: the saved flow, checked, and what the caller asked of the run.
@@ -783,6 +812,9 @@ pub(super) struct Plan {
     pub timeout: Option<Duration>,
     inputs: Value,
     max_events: Option<u64>,
+    overrides: Vec<(String, String)>,
+    environment_id: Option<String>,
+    fresh_jar: bool,
 }
 
 /// Read what a run was asked for. The inner `Err` is the answer to a flow that cannot run as asked.
@@ -817,6 +849,15 @@ pub(super) fn plan(params: &Value) -> Result<std::result::Result<Plan, Value>> {
         timeout: (timeout_ms > 0).then(|| Duration::from_millis(timeout_ms)),
         inputs,
         max_events: params.get("maxEvents").and_then(Value::as_u64),
+        overrides: params
+            .get("variables")
+            .and_then(Value::as_object)
+            .into_iter()
+            .flatten()
+            .filter_map(|(key, value)| Some((key.clone(), value.as_str()?.to_string())))
+            .collect(),
+        environment_id: opt_str(params, "environmentId").map(str::to_string),
+        fresh_jar: is_truthy(&params["freshJar"]),
     }))
 }
 
@@ -831,6 +872,8 @@ impl Plan {
             inputs: self.inputs.clone(),
             instance,
             max_events: self.max_events,
+            overrides: self.overrides.clone(),
+            environment_id: self.environment_id.clone(),
             events: AtomicU64::new(0),
             mcp: tokio::sync::Mutex::new(HashSet::new()),
             listening: Mutex::new(HashSet::new()),

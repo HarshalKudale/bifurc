@@ -13,6 +13,14 @@ use crate::utils::json::{read_json, write_json_pretty};
 pub const DEFAULT_REVERSE_PROXY_PORT: u16 = 80;
 pub const DEFAULT_FORWARD_PROXY_PORT: u16 = 8080;
 pub const DEFAULT_COMPANION_PORT: u16 = 4747;
+/// How many unpinned captured exchanges a workspace keeps, unless `captureLimit` says otherwise.
+pub const DEFAULT_CAPTURE_LIMIT: usize = 200;
+/// The SMTP port of the local mail sink, unless `mailPort` says otherwise.
+pub const DEFAULT_MAIL_PORT: u16 = 1025;
+/// How long a call held for approval waits for a person, unless `approvalTimeoutSeconds` says otherwise.
+pub const DEFAULT_APPROVAL_TIMEOUT_SECONDS: u64 = 300;
+/// The header that carries the capture id to the upstream, unless `traceHeader` says otherwise.
+pub const DEFAULT_TRACE_HEADER: &str = "x-bifurc-trace";
 /// Where the terms of service a first run asks the user to accept are published.
 pub const TERMS_OF_SERVICE_URL: &str = "https://bifurc.app/tos";
 /// Where the privacy policy a first run asks the user to accept is published.
@@ -53,6 +61,33 @@ impl AppSettings {
 
     pub fn companion_port(&self) -> u16 {
         self.port_field("companionPort", DEFAULT_COMPANION_PORT)
+    }
+
+    /// The port of the local mail sink (`mailPort`, not written into the defaults).
+    pub fn mail_port(&self) -> u16 {
+        self.port_field("mailPort", DEFAULT_MAIL_PORT)
+    }
+
+    /// How many unpinned captured exchanges a workspace keeps (10 to 10000; anything else is the default).
+    pub fn capture_limit(&self) -> usize {
+        let limit = self.0.get("captureLimit").and_then(Value::as_u64).and_then(|n| usize::try_from(n).ok());
+        limit.filter(|n| (10..=10_000).contains(n)).unwrap_or(DEFAULT_CAPTURE_LIMIT)
+    }
+
+    /// How long a call held by a `require_human` policy waits for a person (`approvalTimeoutSeconds`, 10 to 3600;
+    /// anything else is the default; not written into the defaults).
+    pub fn approval_timeout_seconds(&self) -> u64 {
+        let seconds = self.0.get("approvalTimeoutSeconds").and_then(Value::as_u64);
+        seconds.filter(|n| (10..=3600).contains(n)).unwrap_or(DEFAULT_APPROVAL_TIMEOUT_SECONDS)
+    }
+
+    /// The header the proxies stamp on forwarded requests with the capture id (`traceHeader`; empty or not a
+    /// header name = off, unset = [`DEFAULT_TRACE_HEADER`]).
+    pub fn trace_header(&self) -> Option<String> {
+        let raw = self.0.get("traceHeader").and_then(Value::as_str).unwrap_or(DEFAULT_TRACE_HEADER);
+        let name = raw.trim().to_lowercase();
+        let valid = name.bytes().all(|b| b.is_ascii_alphanumeric() || b == b'-' || b == b'_');
+        (!name.is_empty() && valid).then_some(name)
     }
 
     pub fn tls_enabled(&self) -> bool {

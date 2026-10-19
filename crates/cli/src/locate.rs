@@ -22,7 +22,10 @@ pub fn locate_engine_from(explicit: Option<OsString>, current_exe: Option<&Path>
         return if path.is_file() {
             Ok(path)
         } else {
-            Err(CliError::msg(format!("{ENGINE_ENV} is set to {}, which is not a file.", path.display())))
+            Err(CliError::engine_unreachable(format!(
+                "{ENGINE_ENV} is set to {}, which is not a file.",
+                path.display()
+            )))
         };
     }
     if let Some(dir) = current_exe.and_then(Path::parent) {
@@ -44,7 +47,7 @@ pub fn locate_engine_from(explicit: Option<OsString>, current_exe: Option<&Path>
             }
         }
     }
-    Err(CliError::msg(format!(
+    Err(CliError::engine_unreachable(format!(
         "Could not find the engine ({name}). Looked next to this executable, above its bin/ and in target/release and target/debug \
          above it. Build it with `cargo build -p bifurc-engine`, or set {ENGINE_ENV} to its path."
     )))

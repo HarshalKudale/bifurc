@@ -152,13 +152,13 @@ fn headers(about: &'static str) -> Param {
 }
 
 /// The argument every tool takes: the raw answer instead of the readable one.
-fn json_switch() -> Param {
-    switch("json", "json", None, "Return the engine's raw JSON instead of the readable text.")
+fn json_switch(option: &'static str) -> Param {
+    switch("json", option, None, "Also return structured JSON.")
 }
 
 /// The argument of every tool that acts on one workspace.
 fn workspace() -> Param {
-    text("workspace", "workspace", "Workspace id. Default: the active workspace.")
+    text("workspace", "workspace", "Workspace id (default: active).")
 }
 
 struct Row {
@@ -179,7 +179,8 @@ impl Row {
         if self.scoped {
             params.push(workspace());
         }
-        params.push(json_switch());
+        // `--json` is curl's own option (data to send) in `bifurc curl`.
+        params.push(json_switch(if self.words == ["curl"] { "bifurc-json" } else { "json" }));
         Tool {
             name: self.name,
             words: self.words,
@@ -194,89 +195,110 @@ impl Row {
 
 const REQUEST_TYPES: &[&str] = &["rest", "graphql", "grpc", "soap", "websocket", "sse", "socketio", "mcp"];
 
-const TYPE_ABOUT: &str = "The type of request. Default: rest. For a saved request it is only needed to tell apart two \
-    requests of different types with the same name.";
+const TYPE_ABOUT: &str = "Request type (default rest); for a saved request, only to tell same-named ones apart.";
 
 /// The options that describe a request of some type: what `requests create`, `update` and an unsaved `send` take.
 fn request_options() -> Vec<Param> {
     vec![
-        text(
-            "url",
-            "url",
-            "Where the request goes: a URL; a gRPC server address; for mcp the command line that starts \
-            the server (stdio) or the address of its endpoint (http). May hold {{variables}}.",
-        ),
-        headers(
-            "Headers by name (gRPC: metadata; an mcp program: environment variables). On an update an empty \
-            value removes the header.",
-        ),
-        text(
-            "method",
-            "method",
-            "rest and sse: the HTTP method (default GET). grpc: the method to call, as \
-            pkg.Service/Method.",
-        ),
-        text(
-            "body",
-            "body",
-            "rest, soap and sse: the request body. grpc: the message as JSON (a client-streaming \
-            method takes a JSON array of messages).",
-        ),
-        text("query", "query", "graphql: the query or mutation."),
-        typed("variables", "variables", Type::Json, "graphql: the variables, a JSON object."),
-        text("operation", "operation", "graphql: the name of the operation to run."),
-        text("proto", "proto", "grpc: the id of the saved .proto file that declares the method."),
-        switch(
-            "reflection",
-            "reflection",
-            None,
-            "grpc: find the method through the server's reflection (what happens \
-            when no proto is given).",
-        ),
+        text("url", "url", "Where it goes: a URL, a gRPC address, or for mcp the server's command line or endpoint."),
+        headers("Headers by name; an empty value removes one on update."),
+        text("method", "method", "HTTP method (default GET); grpc: pkg.Service/Method."),
+        text("body", "data", "The request body; grpc: the message as JSON."),
+        text("query", "query", "graphql: the query."),
+        typed("variables", "variables", Type::Json, "graphql: the variables."),
+        text("operation", "operation", "graphql: the operation name."),
+        text("proto", "proto", "grpc: the saved .proto file id."),
+        switch("reflection", "reflection", None, "grpc: use server reflection."),
         text("action", "action", "soap: the SOAPAction."),
-        text("namespace", "namespace", "socketio: the namespace, e.g. /chat."),
-        text("path", "path", "socketio: the path of the Socket.IO endpoint. Default: /socket.io."),
-        typed("auth", "auth", Type::Json, "socketio: the auth payload, a JSON object."),
+        text("namespace", "namespace", "socketio: the namespace."),
+        text("path", "path", "socketio: the endpoint path."),
+        typed("auth", "auth", Type::Json, "socketio: the auth payload."),
         Param {
             name: "listen",
-            about: "socketio: the events to log when the server sends them. Default: every event.",
+            about: "socketio: the events to log (default all).",
             ty: Type::TextList,
             place: Place::Each("listen"),
             required: false,
         },
-        typed(
-            "transport",
-            "transport",
-            Type::Choice(&["stdio", "http"]),
-            "mcp: how the server is reached. Default: \
-            what the url looks like.",
-        ),
+        typed("transport", "transport", Type::Choice(&["stdio", "http"]), "mcp: how the server is reached."),
+    ]
+}
+
+/// What a send of a request that answers once can lay over the request and the environment.
+fn override_options() -> Vec<Param> {
+    vec![
+        Param {
+            name: "vars",
+            about: "Variables for {{name}}, over the environment's.",
+            ty: Type::TextMap,
+            place: Place::Pairs("var", "="),
+            required: false,
+        },
+        text("env", "env", "Environment to use instead of the selected one."),
+        Param {
+            name: "patch",
+            about: "Set JSON body fields, each '<path>=<value>'.",
+            ty: Type::TextList,
+            place: Place::Each("patch"),
+            required: false,
+        },
+    ]
+}
+
+/// What a run of many requests (a folder, a flow) can lay over them and how much it prints.
+fn run_options() -> Vec<Param> {
+    vec![
+        Param {
+            name: "vars",
+            about: "Variables for {{name}}, over the environment's.",
+            ty: Type::TextMap,
+            place: Place::Pairs("var", "="),
+            required: false,
+        },
+        text("env", "env", "Environment to use instead of the selected one."),
+        switch("fresh_session", "fresh-session", None, "Run with a throwaway cookie jar."),
+        switch("verbose", "verbose", None, "Include every request's body."),
+        typed("max_body", "max-body", Type::Integer, "Body byte limit (default 2048; 0 = all)."),
+    ]
+}
+
+/// What a send of a request that answers once returns; the response is a summary line unless asked for more.
+fn output_options() -> Vec<Param> {
+    vec![
+        text("select", "select", "jq-style path into the JSON body: return only those values."),
+        switch("show_body", "body", None, "Include the response body."),
+        switch("show_headers", "headers", None, "Include the response headers."),
+        typed("max_body", "max-body", Type::Integer, "Body byte limit (default 2048; 0 = all)."),
+        typed("expect_status", "expect-status", Type::Integer, "Fail unless the status matches."),
+        Param {
+            name: "expect",
+            about: "Fail unless each '<path> <op> <value>' holds.",
+            ty: Type::TextList,
+            place: Place::Each("expect"),
+            required: false,
+        },
+        Param {
+            name: "extract",
+            about: "Keep values of the response as session variables, each 'name=<path>' (path as select, or status).",
+            ty: Type::TextList,
+            place: Place::Each("extract"),
+            required: false,
+        },
     ]
 }
 
 /// The options only a send takes.
 fn exchange_options() -> Vec<Param> {
     vec![
-        typed(
-            "wait",
-            "wait",
-            Type::Number,
-            "websocket, sse, socketio: how many seconds to listen (default 2; sse 5). \
-            mcp: how many seconds to wait for the answer (default 60).",
-        ),
-        text(
-            "event",
-            "event",
-            "socketio: the event to emit; its arguments go in body (a JSON array is one argument \
-            per element).",
-        ),
-        switch("ack", "ack", None, "socketio: ask the server to acknowledge the event."),
+        typed("wait", "wait", Type::Number, "websocket, sse, socketio, mcp: seconds to listen or wait."),
+        text("event", "event", "socketio: the event to emit, its arguments in body."),
+        switch("ack", "ack", None, "socketio: ask for an acknowledgement."),
         text("tool", "tool", "mcp: the tool to call."),
         text("prompt", "prompt", "mcp: the prompt to get."),
-        text("resource", "resource", "mcp: the URI of the resource to read."),
+        text("resource", "resource", "mcp: the resource URI to read."),
         Param {
             name: "arguments",
-            about: "mcp: the arguments of the tool or the prompt, by name.",
+            about: "mcp: the tool or prompt arguments.",
             ty: Type::AnyMap,
             place: Place::Pairs("arg", "="),
             required: false,
@@ -337,21 +359,27 @@ fn group_rows(group: &'static str) -> [Row; 4] {
         scoped: true,
         params: vec![operand(group_item(group), item).required()],
     };
-    [
+    let mut rows = [
         Row {
             name: names[0],
             words: words[0],
             summary: list,
             details: "",
             effect: Effect::Reads,
-            upfront: group != "rules",
+            upfront: group == "mocks",
             scoped: true,
             params: vec![],
         },
         one(names[1], words[1], show, Effect::Reads),
         one(names[2], words[2], enable, Effect::Changes),
         one(names[3], words[3], disable, Effect::Changes),
-    ]
+    ];
+    // Agents switch mocks on and off often.
+    if group == "mocks" {
+        rows[2].upfront = true;
+        rows[3].upfront = true;
+    }
+    rows
 }
 
 /// The name of the argument that names one item of a group.
@@ -366,10 +394,10 @@ fn group_item(group: &str) -> &'static str {
 /// The options of a mock's response, shared by `mocks create` and `mocks update`.
 fn mock_options(regex_off: bool) -> Vec<Param> {
     vec![
-        text("method", "method", "The HTTP method it answers; * for any. Default: GET."),
+        text("method", "method", "HTTP method it answers; * for any (default GET)."),
         text("name", "name", "A name for the mock."),
-        typed("status", "status", Type::Integer, "The response status. Default: 200."),
-        headers("Response headers by name. On an update an empty value removes the header."),
+        typed("status", "status", Type::Integer, "Response status (default 200)."),
+        headers("Response headers by name."),
         text("body", "body", "The response body."),
         typed("delay", "delay", Type::Integer, "Milliseconds to wait before answering."),
         switch("regex", "regex", regex_off.then_some("no-regex"), "Whether the URL pattern is a regular expression."),
@@ -382,7 +410,7 @@ pub fn catalog() -> Vec<Tool> {
         Row {
             name: "status",
             words: &["status"],
-            summary: "Show the Bifurc engine, its proxy and the active workspace.",
+            summary: "Show the engine, proxy, workspace and mock state in two lines.",
             details: "",
             effect: Effect::Reads,
             upfront: true,
@@ -393,7 +421,7 @@ pub fn catalog() -> Vec<Tool> {
         Row {
             name: "requests_list",
             words: &["requests", "list"],
-            summary: "List the saved requests of every type (REST, GraphQL, gRPC, SOAP, WebSocket, SSE, Socket.IO, MCP).",
+            summary: "List the saved requests of every type.",
             details: "",
             effect: Effect::Reads,
             upfront: true,
@@ -416,25 +444,40 @@ pub fn catalog() -> Vec<Tool> {
         Row {
             name: "requests_send",
             words: &["requests", "send"],
-            summary: "Send a saved request, or one described here without saving it, and return the response.",
-            details: "Give `request` to send a saved one as it is saved: the engine resolves its {{variables}} and \
-                runs its scripts and tests. Otherwise give `url` and the options of the type. A websocket, sse or \
-                socketio request connects, listens for `wait` seconds and returns what went by. An mcp request \
-                returns the tools, prompts and resources the server declares, or the answer to one `tool`, `prompt` \
-                or `resource`. The result is an error when a test fails or the call does.",
+            summary: "Send a saved request, or an unsaved one described here.",
+            details: "Give `request` for a saved one, else `url` and the type's options.",
             effect: Effect::Runs,
             upfront: true,
             scoped: true,
             params: concat(vec![
                 vec![
-                    operand(
-                        "request",
-                        "The id or name of a saved request. Leave out to send the one described by url.",
-                    ),
+                    operand("request", "Saved request id or name."),
                     typed("type", "type", Type::Choice(REQUEST_TYPES), TYPE_ABOUT),
                 ],
                 request_options(),
                 exchange_options(),
+                override_options(),
+                output_options(),
+            ]),
+        },
+        Row {
+            name: "curl",
+            words: &["curl"],
+            summary: "Run a curl command through Bifurc, optionally saving it as a request.",
+            details: "",
+            effect: Effect::Runs,
+            upfront: true,
+            scoped: true,
+            params: concat(vec![
+                vec![
+                    operand("command", "The whole curl command.").required(),
+                    text("save", "save", "Save the request under this name."),
+                    text("folder", "folder", "Folder of the saved request."),
+                    switch("update", "update", None, "Replace the saved request."),
+                    switch("save_only", "save-only", None, "Save without sending."),
+                ],
+                override_options().into_iter().take(2).collect(),
+                output_options(),
             ]),
         },
         Row {
@@ -490,14 +533,13 @@ pub fn catalog() -> Vec<Tool> {
         name: "mocks_create",
         words: &["mocks", "create"],
         summary: "Create a mock: a canned response the proxy gives to calls that match a URL pattern.",
-        details: "The mock is the whole response; nothing is asked of the real server. Give `url`, or `curl` to mock \
-            the call a cURL command makes (answering an empty 200 until told otherwise).",
+        details: "The mock is the whole response; the real server is not asked.",
         effect: Effect::Adds,
-        upfront: true,
+        upfront: false,
         scoped: true,
         params: concat(vec![
             vec![
-                text("url", "url", "The URL pattern it answers, e.g. https://api.example.com/users."),
+                text("url", "url", "The URL pattern it answers."),
                 text("curl", "curl", "A whole cURL command; the mock answers the call it makes. Leave out url."),
             ],
             mock_options(false),
@@ -517,6 +559,68 @@ pub fn catalog() -> Vec<Tool> {
             mock_options(true),
         ]),
     });
+    rows.push(Row {
+        name: "mocks_scenario",
+        words: &["mocks", "scenario"],
+        summary: "Switch a mock's call to another answer, or list its answers.",
+        details: "Presets, made on demand: error500, error401, notfound, empty, slow, timeout. No scenario lists them.",
+        effect: Effect::Changes,
+        upfront: true,
+        scoped: true,
+        params: vec![
+            operand("mock", "Any mock of the call: id or name.").required(),
+            operand("scenario", "default, a scenario's name or a preset."),
+            typed("delay", "delay", Type::Integer, "Milliseconds for a new slow or timeout scenario."),
+        ],
+    });
+    rows.push(Row {
+        name: "mocks_status",
+        words: &["mocks", "status"],
+        summary: "One line per mocked call: active scenario, on or off, how often the app hit it.",
+        details: "",
+        effect: Effect::Reads,
+        upfront: false,
+        scoped: true,
+        params: vec![],
+    });
+    rows.push(Row {
+        name: "mocks_hits",
+        words: &["mocks", "hits"],
+        summary: "The captured requests a mocked call answered: to tell whether the app hit the mock.",
+        details: "",
+        effect: Effect::Reads,
+        upfront: false,
+        scoped: true,
+        params: vec![
+            operand("mock", "Any mock of the call: id or name.").required(),
+            typed("last", "last", Type::Integer, "How many (default 5)."),
+        ],
+    });
+
+    rows.push(Row {
+        name: "mocks_serve",
+        words: &["mocks", "serve"],
+        summary: "Serve the enabled mocks over plain HTTP on a local port, for clients that ignore proxy settings.",
+        details: "Runs until mocks_serve_stop or the engine exits. The host part of a mock's pattern is ignored. Unmatched requests get a 404 listing the closest mocks, or go to fallthrough.",
+        effect: Effect::Changes,
+        upfront: false,
+        scoped: true,
+        params: vec![
+            typed("port", "port", Type::Integer, "Port (default 4010; 0 picks a free one)."),
+            text("host", "host", "Address to listen on (default 127.0.0.1)."),
+            text("fallthrough", "fallthrough", "Base URL that unmatched requests go to, e.g. http://localhost:3000."),
+        ],
+    });
+    rows.push(Row {
+        name: "mocks_serve_stop",
+        words: &["mocks", "serve", "stop"],
+        summary: "Stop the local mock server (every one without a port).",
+        details: "",
+        effect: Effect::Changes,
+        upfront: false,
+        scoped: false,
+        params: vec![typed("port", "port", Type::Integer, "The server's port.")],
+    });
 
     // -- Mappings ---------------------------------------------------------------------------------------------
     rows.extend(group_rows("mappings"));
@@ -526,7 +630,7 @@ pub fn catalog() -> Vec<Tool> {
         summary: "Map a <sub>.localhost domain to a local target, so the proxy serves it from there.",
         details: "",
         effect: Effect::Adds,
-        upfront: true,
+        upfront: false,
         scoped: true,
         params: vec![
             operand("domain", "The subdomain or the whole domain, e.g. api or api.localhost.").required(),
@@ -621,6 +725,69 @@ pub fn catalog() -> Vec<Tool> {
             scoped: true,
             params: vec![operand("environment", "The environment's id or name.").required()],
         },
+        // -- Session ------------------------------------------------------------------------------------------
+        Row {
+            name: "session_show",
+            words: &["session", "show"],
+            summary: "Show this server's session: its variables, environment and cookie domains.",
+            details: "Start the server with --session <name> (or BIFURC_SESSION) for cookies, variables and an environment of its own.",
+            effect: Effect::Reads,
+            upfront: false,
+            scoped: true,
+            params: vec![],
+        },
+        Row {
+            name: "session_reset",
+            words: &["session", "reset"],
+            summary: "Empty the session's cookie jar and variables and forget its environment.",
+            details: "",
+            effect: Effect::Changes,
+            upfront: false,
+            scoped: true,
+            params: vec![],
+        },
+        Row {
+            name: "vars_list",
+            words: &["vars", "list"],
+            summary: "List the session's runtime variables (what extract and vars_set keep); secrets are masked.",
+            details: "",
+            effect: Effect::Reads,
+            upfront: false,
+            scoped: true,
+            params: vec![],
+        },
+        Row {
+            name: "vars_set",
+            words: &["vars", "set"],
+            summary: "Set runtime variables of the session; {{name}} resolves in its requests.",
+            details: "",
+            effect: Effect::Changes,
+            upfront: false,
+            scoped: true,
+            params: vec![Param {
+                name: "variables",
+                about: "The variables, each as KEY=VALUE.",
+                ty: Type::TextList,
+                place: Place::Operands,
+                required: true,
+            }],
+        },
+        Row {
+            name: "vars_clear",
+            words: &["vars", "clear"],
+            summary: "Remove runtime variables of the session, or all of them.",
+            details: "",
+            effect: Effect::Deletes,
+            upfront: false,
+            scoped: true,
+            params: vec![Param {
+                name: "variables",
+                about: "The names to remove; none removes all.",
+                ty: Type::TextList,
+                place: Place::Operands,
+                required: false,
+            }],
+        },
         // -- Health checks ------------------------------------------------------------------------------------
         Row {
             name: "health_list",
@@ -705,9 +872,8 @@ pub fn catalog() -> Vec<Tool> {
         Row {
             name: "flows_run",
             words: &["flows", "run"],
-            summary: "Run a flow and return how each node did, the tests that failed and the run's status.",
-            details: "The result is an error when the run fails or a test does. A run is stopped after `timeout` \
-                seconds (default 120).",
+            summary: "Run a flow: one line per request, then the total.",
+            details: "An error when a step or test fails.",
             effect: Effect::Runs,
             upfront: true,
             scoped: true,
@@ -715,7 +881,7 @@ pub fn catalog() -> Vec<Tool> {
                 operand("flow", "The flow's id or name.").required(),
                 Param {
                     name: "inputs",
-                    about: "Values for the inputs the flow declares, by name.",
+                    about: "Values for the flow's inputs.",
                     ty: Type::TextMap,
                     place: Place::Pairs("input", "="),
                     required: false,
@@ -728,7 +894,10 @@ pub fn catalog() -> Vec<Tool> {
                     required: false,
                 },
                 typed("max_events", "max-events", Type::Integer, "Stop after this many messages of a stream node."),
-            ],
+            ]
+            .into_iter()
+            .chain(run_options())
+            .collect(),
         },
         Row {
             name: "flows_loadtest",
@@ -867,9 +1036,31 @@ pub fn catalog() -> Vec<Tool> {
             summary: "List the local processes listening on a port: what a mapping can be pointed at.",
             details: "",
             effect: Effect::Reads,
-            upfront: true,
+            upfront: false,
             scoped: false,
             params: vec![],
+        },
+        Row {
+            name: "wait",
+            words: &["wait"],
+            summary: "Wait until a URL answers, a TCP port accepts, or a new matching request is captured; replaces sleep loops.",
+            details: "Give one of target, port or capture. Ready: one line. Not ready after timeout: an error with the last reason.",
+            effect: Effect::Runs,
+            upfront: false,
+            scoped: true,
+            params: vec![
+                operand("target", "A URL, or the name of a health check (its URL is used)."),
+                typed("port", "port", Type::Integer, "Wait for this TCP port on host."),
+                switch("capture", "capture", None, "Wait for a new captured request matching method, host, path, status, origin, grep."),
+                text("status", "status", "For a URL: the status it must answer (default: any). For capture: 422, 4xx, !2xx."),
+                text("host", "host", "For port: the host (default 127.0.0.1). For capture: the host filter."),
+                text("method", "method", "Capture filter: the HTTP method."),
+                text("path", "path", "Capture filter: the path; * matches any run of characters."),
+                typed("origin", "origin", Type::Choice(&["real", "mock", "mapped", "rule", "error"]), "Capture filter: who answered."),
+                text("grep", "grep", "Capture filter: text in the URL or a body."),
+                text("timeout", "timeout", "500ms, 30s, 2m or seconds (default 30s)."),
+                text("interval", "interval", "Time between attempts (default 500ms)."),
+            ],
         },
         // -- The verbs beside the command line's table that take more than one engine command -----------------
         Row {
@@ -932,6 +1123,47 @@ pub fn catalog() -> Vec<Tool> {
             ],
         },
         Row {
+            name: "capture_list",
+            words: &["capture", "list"],
+            summary: "List the traffic the proxies captured, newest first, one line per exchange.",
+            details: "Each line starts with #tail, the id for capture_show.",
+            effect: Effect::Reads,
+            upfront: true,
+            scoped: true,
+            params: vec![
+                typed("last", "last", Type::Integer, "How many entries (default 20)."),
+                text("status", "status", "E.g. 422, 4xx, !2xx."),
+                text("method", "method", "The HTTP method."),
+                text("host", "host", "The host; * is a wildcard."),
+                text("path", "path", "The path; * is a wildcard."),
+                text("since", "since", "30s, 2m, 1h ago, or #tail: after that entry."),
+                typed("origin", "origin", Type::Choice(&["real", "mock", "mapped", "rule", "error", "server"]), "Who answered."),
+                text("grep", "grep", "Text in the URL or a body."),
+                switch("pinned", "pinned", None, "Only the pinned entries (capture_pin)."),
+            ],
+        },
+        Row {
+            name: "capture_show",
+            words: &["capture", "show"],
+            summary: "Show one captured exchange: the request line, then the response summary.",
+            details: "",
+            effect: Effect::Reads,
+            upfront: true,
+            scoped: true,
+            params: vec![
+                operand("entry", "The entry's id, or its #tail as capture_list prints it.").required(),
+                text("select", "select", "jq-style path into the JSON body: return only those values."),
+                switch("show_body", "body", None, "Include the response body."),
+                switch("show_headers", "headers", None, "Include the response headers; secrets are masked."),
+                switch("req_body", "req-body", None, "Include the request body (text only), cut at max_body."),
+                switch("req_headers", "req-headers", None, "Include the request headers; secrets are masked."),
+                typed("max_body", "max-body", Type::Integer, "Bytes of body returned (default 2048; 0 = all)."),
+                switch("logs", "logs", None, "Only the dev-service log lines that carry this exchange's trace id (else near it by time and path, marked ≈)."),
+                typed("context", "context", Type::Integer, "logs: lines of context around each match."),
+                text("service", "service", "logs: only this dev service."),
+            ],
+        },
+        Row {
             name: "capture_mock",
             words: &["capture", "mock"],
             summary: "Save a mock that answers as a captured exchange did.",
@@ -952,14 +1184,497 @@ pub fn catalog() -> Vec<Tool> {
             params: vec![operand("entry", "The captured entry's id (see capture_list).").required()],
         },
         Row {
-            name: "runner_run",
-            words: &["runner", "run"],
-            summary: "Send every request of a folder in order, with scripts and tests, and return how each did.",
-            details: "The result is an error when a request fails or a test does.",
+            name: "capture_diff",
+            words: &["capture", "diff"],
+            summary: "Compare two responses: captured entries, a mock, or a saved request sent now. Shows only the differences.",
+            details: "Give two sides: `entry` and `other`, or `entry` with `mock` or `request`. Compares status, content type, \
+                header names and the body's shape and values. Sends the saved request when `request` is given.",
             effect: Effect::Runs,
             upfront: false,
             scoped: true,
-            params: vec![operand("folder", "The id of a folder of the request tree (see folders_list).").required()],
+            params: vec![
+                operand("entry", "The first captured entry's id or #tail (see capture_list).").required(),
+                operand("other", "The second captured entry; leave out when mock or request is the other side."),
+                text("mock", "mock", "Compare with this mock's answer instead of a second entry."),
+                text("request", "request", "Compare with the answer of this saved request, sent now."),
+                switch("shape", "shape", None, "Keys and types only, no values."),
+                Param {
+                    name: "vars",
+                    about: "Variables for {{name}} when a request is sent.",
+                    ty: Type::TextMap,
+                    place: Place::Pairs("var", "="),
+                    required: false,
+                },
+                text("env", "env", "Environment to send the request with."),
+                switch("fresh_session", "fresh-session", None, "Send with a throwaway cookie jar."),
+            ],
+        },
+        Row {
+            name: "capture_pin",
+            words: &["capture", "pin"],
+            summary: "Pin captured entries so they are kept beyond the capture buffer limit.",
+            details: "Pinned entries do not count toward the limit (settings_update capturelimit). capture_unpin lets them age out.",
+            effect: Effect::Changes,
+            upfront: false,
+            scoped: true,
+            params: vec![Param {
+                name: "entries",
+                about: "The entries' ids or #tails (see capture_list).",
+                ty: Type::TextList,
+                place: Place::Operands,
+                required: true,
+            }],
+        },
+        Row {
+            name: "capture_unpin",
+            words: &["capture", "unpin"],
+            summary: "Unpin captured entries so they age out of the capture buffer again.",
+            details: "",
+            effect: Effect::Changes,
+            upfront: false,
+            scoped: true,
+            params: vec![Param {
+                name: "entries",
+                about: "The entries' ids or #tails (see capture_list).",
+                ty: Type::TextList,
+                place: Place::Operands,
+                required: true,
+            }],
+        },
+        Row {
+            name: "contract_check",
+            words: &["contract", "check"],
+            summary: "Check for drift: whether the mocks still match the real API (or an OpenAPI file).",
+            details: "Pairs each enabled mock with a saved request of the same method and path, sends it (POST and DELETE too) \
+                and compares status, content type and body shape, never values. Drifted rows show `+ .x (number)` \
+                (real has it, mock lacks it). The result is an error on drift.",
+            effect: Effect::Runs,
+            upfront: false,
+            scoped: true,
+            params: vec![
+                text("mock", "mock", "Only this mock (also when disabled)."),
+                text("folder", "folder", "Only the mocks in this mock folder and below."),
+                switch("all", "all", None, "Disabled mocks too."),
+                Param {
+                    name: "ignore",
+                    about: "Leave out differences whose path matches, e.g. .meta.* or .items[].debug.",
+                    ty: Type::TextList,
+                    place: Place::Each("ignore"),
+                    required: false,
+                },
+                switch("from_capture", "from-capture", None, "Compare with the newest captured real answer; sends nothing."),
+                switch("from_snapshot", "from-snapshot", None, "Compare with the stored snapshots only; sends nothing."),
+                text("openapi", "openapi", "Compare with this OpenAPI 3 or Swagger 2 file (JSON or YAML); sends nothing."),
+                Param {
+                    name: "vars",
+                    about: "Variables for {{name}} in the sent requests.",
+                    ty: Type::TextMap,
+                    place: Place::Pairs("var", "="),
+                    required: false,
+                },
+                text("env", "env", "Environment to send the requests with."),
+                switch("fresh_session", "fresh-session", None, "Send with a throwaway cookie jar."),
+            ],
+        },
+        Row {
+            name: "contract_update_mock",
+            words: &["contract", "update-mock"],
+            summary: "Fix a drifted mock: rewrite its body to the real API's shape, keeping its values where a key stays.",
+            details: "Sends the paired saved request (or reads the newest capture) and updates the mock's body and status; headers stay.",
+            effect: Effect::Runs,
+            upfront: false,
+            scoped: true,
+            params: vec![
+                operand("mock", "The mock's id or name.").required(),
+                switch("from_capture", "from-capture", None, "Use the newest captured real answer; sends nothing."),
+                Param {
+                    name: "vars",
+                    about: "Variables for {{name}} in the sent request.",
+                    ty: Type::TextMap,
+                    place: Place::Pairs("var", "="),
+                    required: false,
+                },
+                text("env", "env", "Environment to send the request with."),
+                switch("fresh_session", "fresh-session", None, "Send with a throwaway cookie jar."),
+                switch("force", "force", None, "Overwrite even if the mock changed since it was read."),
+            ],
+        },
+        Row {
+            name: "contract_snapshot",
+            words: &["contract", "snapshot"],
+            summary: "Store the body shape of each mock's real answer in the workspace, for contract_check to compare later.",
+            details: "Sends each paired request once and writes types only, never a value, to the workspace's contracts folder.",
+            effect: Effect::Runs,
+            upfront: false,
+            scoped: true,
+            params: vec![
+                text("mock", "mock", "Only this mock (also when disabled)."),
+                text("folder", "folder", "Only the mocks in this mock folder and below."),
+                switch("all", "all", None, "Disabled mocks too."),
+                Param {
+                    name: "vars",
+                    about: "Variables for {{name}} in the sent requests.",
+                    ty: Type::TextMap,
+                    place: Place::Pairs("var", "="),
+                    required: false,
+                },
+                text("env", "env", "Environment to send the requests with."),
+                switch("fresh_session", "fresh-session", None, "Send with a throwaway cookie jar."),
+            ],
+        },
+        Row {
+            name: "changes",
+            words: &["changes"],
+            summary: "What other agents or the app changed in the workspace since you last asked: a feed, oldest first.",
+            details: "Without `since` it shows what is new and moves this session's cursor past it. Your own changes are left out.",
+            effect: Effect::Reads,
+            upfront: false,
+            scoped: true,
+            params: vec![
+                text("since", "since", "A sequence number, a time ago (2m, 1h, 2d) or a UTC time; the cursor stays."),
+                switch("mine", "mine", None, "Include the changes this session made itself."),
+            ],
+        },
+        Row {
+            name: "claim",
+            words: &["claim"],
+            summary: "Claim an item you are editing (a lock for other agents) or release the claim.",
+            details: "Advisory only: nothing is blocked, but another session's update of it prints a warning. Lapses after 30 minutes.",
+            effect: Effect::Changes,
+            upfront: false,
+            scoped: true,
+            params: vec![
+                Param {
+                    name: "kind",
+                    about: "What kind of item.",
+                    ty: Type::Choice(&["request", "mock", "flow", "env"]),
+                    place: Place::Operand,
+                    required: true,
+                },
+                operand("name", "The item's name.").required(),
+                switch("release", "release", None, "Release the claim instead of taking it."),
+            ],
+        },
+        Row {
+            name: "services",
+            words: &["services"],
+            summary: "Dev servers the engine runs in the background: define, up, down, restart, remove, ps, show..",
+            details: "`verb` first, then the service `name` (up and down also take `all`). define saves {cmd, port, cwd, vault, env};                 up starts it (`wait` blocks until its port listens, timeout is an error); ps lists state, port, pid, uptime                 and health, with the last error lines of a crashed one. Read output with the logs tool. snippet <stack> prints a middleware that logs the trace id.",
+            effect: Effect::Runs,
+            upfront: false,
+            scoped: true,
+            params: vec![
+                Param {
+                    name: "verb",
+                    about: "What to do.",
+                    ty: Type::Choice(&["define", "up", "down", "restart", "remove", "ps", "show", "list", "snippet"]),
+                    place: Place::Operand,
+                    required: true,
+                },
+                operand("name", "The service's name (snippet: express, fastify, next, fastapi, django or go)."),
+                text("cmd", "cmd", "define: the shell command, e.g. npm run dev."),
+                typed("port", "port", Type::Integer, "define: the port it listens on."),
+                text("cwd", "cwd", "define: the directory to run in."),
+                text("vault", "vault", "define: a vault whose secrets become environment variables."),
+                text("log_file", "log-file", "define: a file the service writes; tailed into its output."),
+                Param {
+                    name: "env",
+                    about: "define: environment variables (not for secrets: use vault).",
+                    ty: Type::TextMap,
+                    place: Place::Pairs("env", "="),
+                    required: false,
+                },
+                switch("all", "all", None, "up, down: every service."),
+                switch("wait", "wait", None, "up: wait until the port listens."),
+                text("timeout", "timeout", "up --wait: how long, e.g. 30s."),
+            ],
+        },
+        Row {
+            name: "logs",
+            words: &["logs"],
+            summary: "The recent output of a dev server, plain lines (default the last 50).",
+            details: "`errors` keeps warn/error lines and stack traces and collapses repeats as `line ×42`.",
+            effect: Effect::Reads,
+            upfront: false,
+            scoped: true,
+            params: vec![
+                operand("name", "The service's name.").required(),
+                switch("errors", "errors", None, "Only warn/error lines and stack traces."),
+                text("since", "since", "Only lines from that long ago, e.g. 2m."),
+                text("grep", "grep", "Only lines containing this text."),
+                typed("last", "last", Type::Integer, "At most this many lines (default 50)."),
+            ],
+        },
+        Row {
+            name: "port_free",
+            words: &["port", "free"],
+            summary: "Show what holds a TCP port (pid and process name), or stop it with `kill`.",
+            details: "Says `free` when nothing holds the port.",
+            effect: Effect::Runs,
+            upfront: false,
+            scoped: true,
+            params: vec![
+                Param { name: "port", about: "The port.", ty: Type::Integer, place: Place::Operand, required: true },
+                switch("kill", "kill", None, "Stop the process and everything it started."),
+            ],
+        },
+        Row {
+            name: "mail",
+            words: &["mail"],
+            summary: "Mail the local SMTP sink (127.0.0.1:1025) caught: list, show, last (a code or link), clear.",
+            details: "`verb` first. last prints the newest mail; with `otp` only its first 4-8 digit code, with `link` only its first link (or the first containing `link_match`); `wait` (e.g. 30s) holds on for a mail. Exit 3 when there is none, 1 when it has no code or link. show takes the #id from list.",
+            effect: Effect::Runs,
+            upfront: false,
+            scoped: false,
+            params: vec![
+                Param {
+                    name: "verb",
+                    about: "What to do.",
+                    ty: Type::Choice(&["list", "show", "last", "clear"]),
+                    place: Place::Operand,
+                    required: true,
+                },
+                operand("id", "show: the mail's #id from list."),
+                text("to", "to", "list, last: only mail to this address."),
+                typed("last", "last", Type::Integer, "list: at most this many mails (default 20)."),
+                switch("html", "html", None, "show: the html body."),
+                switch("text", "text", None, "show: only the text body."),
+                switch("otp", "otp", None, "last: only the first 4-8 digit code."),
+                switch("link", "link", None, "last: only the first link."),
+                text("link_match", "link-match", "last --link: the first link containing this text."),
+                text("wait", "wait", "last: wait for a mail up to this long, e.g. 30s."),
+            ],
+        },
+        Row {
+            name: "webhooks",
+            words: &["webhooks"],
+            summary: "Receive webhooks locally, replay them, or send sample ones: listen, stop, list, show, replay, save, fixtures, trigger.",
+            details: "`verb` first. listen takes `port`, `name`, `forward` (the request goes on to that URL) and `detach` (keep it running; without it the call blocks). Each webhook is captured with its exact headers and raw body. replay re-sends one unchanged to where it was forwarded, or to `to` (host only keeps the path and query); a refused connection is exit 4. save needs `as_request`. show and replay take the #id from list. fixtures lists the sample events; trigger sends one (`id` is its name, e.g. github.push) to `to`, else the running listener (`name` picks it), signed with a secret from `vault` (`secret` names the key) and changed by `patch`.",
+            effect: Effect::Runs,
+            upfront: false,
+            scoped: false,
+            params: concat(vec![
+                vec![
+                    Param {
+                        name: "verb",
+                        about: "What to do.",
+                        ty: Type::Choice(&["listen", "stop", "list", "show", "replay", "save", "fixtures", "trigger"]),
+                        place: Place::Operand,
+                        required: true,
+                    },
+                    operand("id", "show, replay, save: the webhook's #id from list. stop: the listener's name or port. trigger: the fixture name."),
+                    typed("port", "port", Type::Integer, "listen: the port (default: a free one)."),
+                    text("name", "name", "listen: name the listener. list: only its webhooks. save: the request's name. trigger: the listener to send to."),
+                    text("forward", "forward", "listen: pass each request on to this URL."),
+                    switch("detach", "detach", None, "listen: keep running under the engine and return."),
+                    typed("last", "last", Type::Integer, "list: at most this many (default 20)."),
+                    text("to", "to", "replay, trigger: send to this URL instead."),
+                    text("vault", "vault", "trigger: sign with a secret from this vault."),
+                    text("secret", "secret", "trigger: the secret's key (default STRIPE_WEBHOOK_SECRET or GITHUB_WEBHOOK_SECRET)."),
+                    Param {
+                        name: "patch",
+                        about: "trigger: set payload fields before signing, each '<path>=<value>'.",
+                        ty: Type::TextList,
+                        place: Place::Each("patch"),
+                        required: false,
+                    },
+                    switch("as_request", "as-request", None, "save: save it as a request."),
+                    text("folder", "folder", "save: the folder of the request."),
+                ],
+                output_options().into_iter().take(5).collect(),
+            ]),
+        },
+        Row {
+            name: "jwt",
+            words: &["jwt"],
+            summary: "Read a JWT or sign one for tests: decode (claims and expiry in human time) or mint (signed with a vault key).",
+            details: "`verb` first. decode takes the `token`, or `from_jar` (a host: decodes the JWT-shaped cookies of that host in the session's jar; the cookie values stay masked elsewhere); it never verifies the signature. `check` makes an expired token (or one not valid yet) exit 1. mint needs `key_from_vault` (a vault that is unsealed, else exit 6) and prints only the token: `claims` is a JSON object text, `exp` is 30s, 5m, 1h, 2d or none (default 15m), `secret` picks the key when the vault has several (default: the only one, else JWT_KEY), `alg` is HS256, HS384, HS512, RS256 or ES256 (default: from the key), `header` adds JSON object text to the header. In any request field, `{{$jwt role=admin exp=5m}}` is a fresh token signed with the unsealed vault that holds JWT_KEY (keys: exp, alg, kid, vault, secret; the rest are claims); if it cannot be made it stays as written and the result carries a warning.",
+            effect: Effect::Runs,
+            upfront: false,
+            scoped: false,
+            params: vec![
+                Param {
+                    name: "verb",
+                    about: "What to do.",
+                    ty: Type::Choice(&["decode", "mint"]),
+                    place: Place::Operand,
+                    required: true,
+                },
+                operand("token", "decode: the token."),
+                text("from_jar", "from-jar", "decode: a host whose JWT cookies to decode."),
+                switch("check", "check", None, "decode: exit 1 when the token is expired or not valid yet."),
+                text("key_from_vault", "key-from-vault", "mint: the vault whose secret signs."),
+                text("secret", "secret", "mint: the secret's name in the vault."),
+                text("claims", "claims", "mint: the claims, a JSON object."),
+                text("exp", "exp", "mint: lifetime such as 5m, or none (default 15m)."),
+                text("alg", "alg", "mint: HS256, HS384, HS512, RS256 or ES256."),
+                text("header", "header", "mint: extra header members, a JSON object."),
+            ],
+        },
+        Row {
+            name: "policy_show",
+            words: &["policy", "show"],
+            summary: "The workspace's guardrails for agents (policy.yaml): each policy with what it matches.",
+            details: "A person edits the file; nothing here changes it. `no policy file` when there is none; a file that cannot be read is an error and blocks every guarded call. A blocked call fails with `blocked by policy \"name\": METHOD url`: stop and tell the person, do not retry another way.",
+            effect: Effect::Reads,
+            upfront: false,
+            scoped: true,
+            params: vec![],
+        },
+        Row {
+            name: "policy_check",
+            words: &["policy", "check"],
+            summary: "What the workspace policy says about a call, without sending it: allow, or the policy that denies or holds it.",
+            details: "Exit 0 allow, 7 denied by a policy, 6 held for a person (`needs approval`). `env` judges by that environment name instead of the selected one.",
+            effect: Effect::Reads,
+            upfront: false,
+            scoped: true,
+            params: vec![
+                operand("method", "The HTTP method.").required(),
+                operand("url", "The URL.").required(),
+                text("env", "env", "Environment name to judge by."),
+            ],
+        },
+        Row {
+            name: "approvals_list",
+            words: &["approvals", "list"],
+            summary: "The calls a require_human policy holds for a person, oldest first (all=true adds the last decided).",
+            details: "Read-only: only a person decides, in a terminal (`bifurc approvals approve <id>`); there is no approve or deny here. A held call of yours waits for that person up to 5 minutes, then fails with exit 6 `still pending as #<id>`: tell the person the id and retry the same call after they approve. `denied by ...` (exit 7) is final: do not retry another way.",
+            effect: Effect::Reads,
+            upfront: false,
+            scoped: true,
+            params: vec![switch("all", "all", None, "Also the last decided ones.")],
+        },
+        Row {
+            name: "types",
+            words: &["types"],
+            summary: "Types for a saved request's response, inferred from its recorded and captured JSON answers: ts, zod, python or go.",
+            details: "Merges the request's response history and the captured calls with the same method and path (2xx JSON only): fields missing from some samples are optional, null adds `| null`, different kinds make a union. Returns the code (first line says where it came from); `out` writes it to a file instead. `send` sends the request first and uses that answer too. Exit 3 when there is no JSON response yet.",
+            effect: Effect::Runs,
+            upfront: false,
+            scoped: true,
+            params: vec![
+                operand("request", "The saved request's name or id.").required(),
+                typed("lang", "lang", Type::Choice(&["ts", "zod", "python", "go"]), "The language (default ts)."),
+                text("out", "out", "Write the code to this file."),
+                text("name", "name", "The type's name (default: the request's name in PascalCase + Response)."),
+                switch("send", "send", None, "Send the request first and use that answer too."),
+                text("env", "env", "send: environment to send with."),
+            ],
+        },
+        Row {
+            name: "openapi_infer",
+            words: &["openapi", "infer"],
+            summary: "Build an API description document (3.0.3, JSON) from the saved requests, their recorded answers, captures and mocks.",
+            details: "One operation per method and path ({{id}} and :id become {id}); responses by status with a schema merged from every JSON answer seen (a field missing from some is not required, null makes it nullable); a JSON request body and the URL's query become requestBody and parameters. Without `out` returns the document; with it writes the file and returns a one-line summary. Exit 3 when there is nothing to describe.",
+            effect: Effect::Runs,
+            upfront: false,
+            scoped: true,
+            params: vec![
+                text("folder", "folder", "Only the requests in this folder and below."),
+                text("out", "out", "Write the document to this file."),
+                text("title", "title", "info.title (default Bifurc API)."),
+            ],
+        },
+        Row {
+            name: "faults",
+            words: &["faults"],
+            summary: "Inject faults into proxy traffic (latency, status, drop, reset) to test retries and error screens: add, list, clear.",
+            details: "`verb` first. add needs `target` (host[:port][/path-prefix], `*.x.com` allowed) and one of `latency` (ms, or 2s), `status` (a code; may follow a latency), `drop` or `reset` (a percent, e.g. 10%, or 100%; each stands alone). `rate` (30 or 30%) applies to latency and status; give the rate once. Hits forward-proxy traffic (http and intercepted https) and the reverse proxy; not the mock server, `requests_send` or `curl`. A plain https tunnel only meets host-wide latency, drop and reset (a `!` line says so). A status answer carries the header x-bifurc-fault. Faults live in the engine and are lost when it restarts; `status` lists them. clear takes the #id from list, or none for all (exit 3 for an unknown id).",
+            effect: Effect::Runs,
+            upfront: false,
+            scoped: false,
+            params: vec![
+                Param {
+                    name: "verb",
+                    about: "What to do.",
+                    ty: Type::Choice(&["add", "list", "clear"]),
+                    place: Place::Operand,
+                    required: true,
+                },
+                operand("target", "add: the host[:port][/path-prefix]. clear: the fault's #id (none = all)."),
+                text("latency", "latency", "add: delay in ms (2000) or a duration (2s)."),
+                text("status", "status", "add: answer with this status code."),
+                text("rate", "rate", "add: percent of matching requests hit, with latency or status (default 100)."),
+                text("drop", "drop", "add: never answer, at this percent (100% for all)."),
+                text("reset", "reset", "add: close the connection with no answer, at this percent (100% for all)."),
+            ],
+        },
+        Row {
+            name: "record",
+            words: &["record"],
+            summary: "Record the real answers of chosen hosts, as they pass through the proxy, into a cassette: start, stop, status, list.",
+            details: "`verb` first. start needs `hosts` (comma separated; `*.example.com` matches subdomains) and `cassette` (the name; a cassette of that name is replaced). Only proxied traffic is recorded (not mocks, the mock server or webhooks); https:// hosts need HTTPS interception on. Secrets in headers, query and JSON or form bodies are masked as `••••`. One recording at a time (exit 2). stop saves it (exit 3 when nothing records). list shows the workspace's cassettes. Play one back with `replay`.",
+            effect: Effect::Runs,
+            upfront: false,
+            scoped: true,
+            params: vec![
+                Param {
+                    name: "verb",
+                    about: "What to do.",
+                    ty: Type::Choice(&["start", "stop", "status", "list"]),
+                    place: Place::Operand,
+                    required: true,
+                },
+                text("hosts", "hosts", "start: the hosts to record, e.g. api.stripe.com,api.openai.com."),
+                text("cassette", "cassette", "start: the cassette's name."),
+            ],
+        },
+        Row {
+            name: "replay",
+            words: &["replay"],
+            summary: "Serve a recorded cassette instead of the real hosts, through the proxy and the mock server: `<cassette>`, stop, status.",
+            details: "`target` is a cassette name (start replaying it), `stop` or `status`. A request matches a recorded one by method, path, query and body (headers never; masked values, timestamps and idempotency keys are ignored); repeats get the recorded answers in order, then the last one. An unmatched request is a 404 naming the closest recorded ones, or goes to the real host with `passthrough`. stop lists the unmatched requests and exits 1 when there were any; exit 3 when nothing replays or the cassette does not exist; exit 2 when one already replays or a recording runs.",
+            effect: Effect::Runs,
+            upfront: false,
+            scoped: true,
+            params: vec![
+                operand("target", "A cassette name, or stop, or status.").required(),
+                switch("passthrough", "passthrough", None, "Send requests the cassette does not hold to the real host instead of a 404."),
+            ],
+        },
+        Row {
+            name: "claims",
+            words: &["claims"],
+            summary: "List the live claims: which items other agents are editing, by whom, and how long ago.",
+            details: "",
+            effect: Effect::Reads,
+            upfront: false,
+            scoped: true,
+            params: vec![],
+        },
+        Row {
+            name: "env_auth",
+            words: &["env", "auth"],
+            summary: "Set the login an environment re-authenticates with when a send answers 401, or turn it off.",
+            details: "Give `login` (a request, or a flow of that name) or `flow`, or `off`. With retry on, a 401 re-runs the login once and retries.",
+            effect: Effect::Changes,
+            upfront: false,
+            scoped: true,
+            params: vec![
+                operand("environment", "The environment's id or name.").required(),
+                text("login", "login", "The request (or flow) that logs in."),
+                text("flow", "flow", "The flow that logs in, when a request has the same name."),
+                typed("retry", "retry", Type::Choice(&["true", "false"]), "Retry the send after logging in (default true)."),
+                switch("off", "off", None, "Remove the login."),
+            ],
+        },
+        Row {
+            name: "runner_run",
+            words: &["runner", "run"],
+            summary: "Send every request of a folder in order, with scripts and tests: one line per request, then the total.",
+            details: "The folder is an id, a path like auth/admin or a unique name. Only a failed request shows its \
+                body (512 bytes). The result is an error when a request fails or a test does.",
+            effect: Effect::Runs,
+            upfront: false,
+            scoped: true,
+            params: [
+                operand("folder", "The id, path (auth/admin) or name of a folder of the request tree.").required(),
+                switch("bail", "bail", None, "Stop after the first request that fails."),
+            ]
+            .into_iter()
+            .chain(run_options())
+            .collect(),
         },
         Row {
             name: "settings_show",
@@ -984,6 +1699,44 @@ pub fn catalog() -> Vec<Tool> {
     ]);
     let mut tools: Vec<Tool> = rows.into_iter().map(Row::tool).collect();
     tools.extend(direct::verbs().iter().map(of_verb));
+    // A flow can also be written as steps (the text of the step file) instead of the JSON of its nodes.
+    for tool in tools.iter_mut().filter(|tool| matches!(tool.name, "flows_create" | "flows_update")) {
+        tool.params.iter_mut().filter(|param| param.name == "data").for_each(|param| param.required = false);
+        tool.params.push(text(
+            "steps",
+            "steps",
+            "The flow as steps, the text of a YAML or JSON file (name, steps: request/inline, extract, vars, expect), instead of data.",
+        ));
+    }
+    // The update verbs refuse a write over another session's change; force overwrites it.
+    for tool in tools.iter_mut().filter(|tool| {
+        matches!(
+            tool.name,
+            "requests_update"
+                | "mocks_update"
+                | "mappings_update"
+                | "rules_update"
+                | "env_set"
+                | "env_unset"
+                | "env_auth"
+        )
+    }) {
+        tool.params.push(switch(
+            "force",
+            "force",
+            None,
+            "Overwrite even if another session changed it since it was read.",
+        ));
+    }
+    // flows_show prints the flow as a step file.
+    if let Some(tool) = tools.iter_mut().find(|tool| tool.name == "flows_show") {
+        tool.params.push(switch(
+            "steps",
+            "steps",
+            None,
+            "Print the flow as a step file (an error when it is not a line of steps).",
+        ));
+    }
     tools
 }
 
@@ -995,7 +1748,12 @@ fn of_verb(verb: &Verb) -> Tool {
         .args
         .iter()
         .map(|arg| Param {
-            name: arg.name,
+            // A tool's arguments are snake_case; the option keeps its dash.
+            name: if arg.name.contains('-') {
+                Box::leak(arg.name.replace('-', "_").into_boxed_str())
+            } else {
+                arg.name
+            },
             about: arg.about,
             ty: match arg.take {
                 Take::Int => Type::Integer,
@@ -1022,7 +1780,7 @@ fn of_verb(verb: &Verb) -> Tool {
     if verb.scope == Scope::Workspace {
         params.push(workspace());
     }
-    params.push(json_switch());
+    params.push(json_switch("json"));
     Tool {
         // The catalog is built once per server, so the name lives as long as the process.
         name: Box::leak(verb.words.join("_").into_boxed_str()),
@@ -1053,7 +1811,7 @@ mod tests {
         assert_eq!(names.len(), tools.len());
         for tool in &tools {
             assert!(tool.name.chars().all(|c| c.is_ascii_lowercase() || c == '_'), "{}", tool.name);
-            assert_eq!(tool.name, tool.words.join("_"), "a tool is named after its command");
+            assert_eq!(tool.name, tool.words.join("_").replace('-', "_"), "a tool is named after its command");
         }
     }
 
@@ -1122,6 +1880,9 @@ mod tests {
         assert_eq!(schema["properties"]["type"]["enum"], json!(REQUEST_TYPES));
         assert_eq!(schema["properties"]["headers"]["additionalProperties"]["type"], "string");
         assert_eq!(schema["properties"]["listen"]["items"]["type"], "string");
+        assert_eq!(schema["properties"]["vars"]["additionalProperties"]["type"], "string");
+        assert_eq!(schema["properties"]["patch"]["items"]["type"], "string");
+        assert_eq!(schema["properties"]["env"]["type"], "string");
         assert_eq!(schema["properties"]["workspace"]["type"], "string");
     }
 
@@ -1135,14 +1896,16 @@ mod tests {
                 "requests_list",
                 "requests_show",
                 "requests_send",
+                "curl",
                 "mocks_list",
-                "mocks_create",
-                "mappings_list",
-                "mappings_create",
+                "mocks_enable",
+                "mocks_disable",
+                "mocks_scenario",
                 "flows_list",
                 "flows_run",
-                "services_list",
                 "help",
+                "capture_list",
+                "capture_show",
             ]
         );
     }

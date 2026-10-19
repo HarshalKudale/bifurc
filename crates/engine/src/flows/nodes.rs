@@ -138,9 +138,12 @@ fn http_output(node: &Node, answer: &Value) -> Outcome {
     } else {
         None
     };
-    let output = json!({
+    let mut output = json!({
         "status": status, "headers": answer["headers"], "body": body, "durationMs": answer["durationMs"], "tests": tests,
     });
+    if answer["reauthenticated"] == true {
+        output["reauthenticated"] = json!(true);
+    }
     outcome(output, error)
 }
 
@@ -183,6 +186,11 @@ async fn send_once(run: &Run, node: &Node, token: &Token, wired: &Wired) -> Outc
         }
     };
     match run.invoke(command, payload, variables).await {
+        // A guardrail ends the whole run at its first blocked step, even where the error port is connected.
+        Err(error) if crate::workspace::policy::is_policy(&error) => {
+            run.fail(error.clone());
+            failed(error)
+        }
         Err(error) => failed(error),
         Ok(answer) if command == "grpc.send" => grpc_output(node, &answer),
         Ok(answer) => http_output(node, &answer),

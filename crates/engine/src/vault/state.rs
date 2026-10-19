@@ -80,14 +80,21 @@ pub fn references_in(text: &str) -> Vec<String> {
         }
         rest = &after[end + 2..];
     }
+    // `{{$jwt …}}` too, as its text reads once a JSON string is decoded (`\"` is `"`).
+    for (range, _) in crate::jwt::placeholders(text) {
+        let reference = text[range].replace("\\\"", "\"").replace("\\\\", "\\");
+        if !found.contains(&reference) {
+            found.push(reference);
+        }
+    }
     found
 }
 
 /// Replaces the vault references of `text` that are in `allowed` with their values. A reference the author of
 /// a template did not write (one that arrived in a client's request, say) is left as it is, so nothing that
 /// passes through the engine can ask it for a secret.
-pub fn resolve_allowed(ws_id: &str, text: &str, allowed: &[String]) -> String {
-    let mut out = text.to_string();
+pub fn resolve_allowed(ws_id: &str, text: &str, allowed: &[String], warnings: &mut Vec<String>) -> String {
+    let mut out = crate::jwt::expand(ws_id, text, Some(allowed), warnings);
     for reference in references_in(text).into_iter().filter(|r| allowed.contains(r)) {
         let inner = &reference[2..reference.len() - 2];
         let Some((vault, secret)) = inner.split_once('.') else { continue };
@@ -99,12 +106,17 @@ pub fn resolve_allowed(ws_id: &str, text: &str, allowed: &[String]) -> String {
 }
 
 /// [`resolve_allowed`] over every string of a JSON value.
-pub fn resolve_value_allowed(ws_id: &str, value: &mut serde_json::Value, allowed: &[String]) {
+pub fn resolve_value_allowed(
+    ws_id: &str,
+    value: &mut serde_json::Value,
+    allowed: &[String],
+    warnings: &mut Vec<String>,
+) {
     use serde_json::Value;
     match value {
-        Value::String(text) if text.contains("{{") => *text = resolve_allowed(ws_id, text, allowed),
-        Value::Array(items) => items.iter_mut().for_each(|item| resolve_value_allowed(ws_id, item, allowed)),
-        Value::Object(map) => map.values_mut().for_each(|item| resolve_value_allowed(ws_id, item, allowed)),
+        Value::String(text) if text.contains("{{") => *text = resolve_allowed(ws_id, text, allowed, warnings),
+        Value::Array(items) => items.iter_mut().for_each(|item| resolve_value_allowed(ws_id, item, allowed, warnings)),
+        Value::Object(map) => map.values_mut().for_each(|item| resolve_value_allowed(ws_id, item, allowed, warnings)),
         _ => {}
     }
 }

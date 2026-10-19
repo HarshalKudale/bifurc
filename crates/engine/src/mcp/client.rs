@@ -122,7 +122,7 @@ pub const TRANSPORT_HEADERS: [&str; 4] = ["accept", "mcp-session-id", "mcp-proto
 
 /// The command line interpreted by the OS shell, so `npx`, quoting and `PATH` work as they do in a terminal.
 /// The program ends with everything it started, and never shows a console window.
-fn shell_command(command: &str) -> CommandWrap {
+pub(crate) fn shell_command(command: &str) -> CommandWrap {
     #[cfg(windows)]
     {
         use process_wrap::tokio::{CreationFlags, JobObject};

@@ -56,9 +56,47 @@ fn annotations(effect: Effect) -> ToolAnnotations {
     }
 }
 
+/// The arguments a listed tool does not show, to keep `tools/list` small; the tool still takes them and
+/// `describe_tool` shows them. Every tool hides `workspace`.
+fn hidden(tool: &str) -> &'static [&'static str] {
+    match tool {
+        "requests_send" => &[
+            "proto",
+            "reflection",
+            "action",
+            "namespace",
+            "path",
+            "auth",
+            "listen",
+            "transport",
+            "wait",
+            "event",
+            "ack",
+            "tool",
+            "prompt",
+            "resource",
+            "arguments",
+            "operation",
+            "max_body",
+            "show_headers",
+            "extract",
+        ],
+        "requests_show" => &["type"],
+        "curl" => &["folder", "update", "save_only", "vars", "env", "show_headers", "max_body", "extract"],
+        "mocks_create" => &["curl", "name", "delay", "regex", "disabled"],
+        "flows_run" => &["timeout", "max_events", "fresh_session", "verbose", "max_body"],
+        "capture_list" => &["since", "origin", "pinned"],
+        "capture_show" => &["req_body", "req_headers", "max_body", "show_headers", "logs", "context", "service"],
+        _ => &[],
+    }
+}
+
 fn listed(tool: &Tool) -> McpTool {
-    McpTool::new(tool.name, tool.description(), Arc::new(tool.input_schema()))
-        .with_annotations(annotations(tool.effect))
+    let mut schema = tool.input_schema();
+    if let Some(Value::Object(properties)) = schema.get_mut("properties") {
+        properties.retain(|name, _| name != "workspace" && !hidden(tool.name).contains(&name.as_str()));
+    }
+    McpTool::new(tool.name, tool.description(), Arc::new(schema)).with_annotations(annotations(tool.effect))
 }
 
 fn schema(value: Value) -> Arc<Map<String, Value>> {
@@ -70,18 +108,17 @@ fn meta_tools() -> Vec<McpTool> {
     vec![
         McpTool::new(
             SEARCH_TOOLS,
-            "Find Bifurc tools by what they are for. Returns the name and a one-line summary of each match; run a \
-             match with call_tool. An empty query lists every tool.",
+            "Find Bifurc tools by what they are for; run a match with call_tool. An empty query lists all.",
             schema(json!({
                 "type": "object",
                 "properties": {
-                    "query": { "type": "string", "description": "What you want to do, in a few words, e.g. \"create health check\"." },
+                    "query": { "type": "string", "description": "What you want to do." },
                     "detail": {
                         "type": "string",
                         "enum": ["names", "summary", "full"],
-                        "description": "names: only the names. summary (default): name and one line. full: with every argument, so describe_tool is not needed.",
+                        "description": "Default: summary.",
                     },
-                    "limit": { "type": "integer", "minimum": 1, "description": "The most tools to return. Default: 10." },
+                    "limit": { "type": "integer", "minimum": 1, "description": "Default: 10." },
                 },
                 "additionalProperties": false,
             })),
@@ -89,7 +126,7 @@ fn meta_tools() -> Vec<McpTool> {
         .with_annotations(ToolAnnotations::new().read_only(true).open_world(false)),
         McpTool::new(
             DESCRIBE_TOOL,
-            "Show the full description and the arguments (JSON Schema) of one Bifurc tool found with search_tools.",
+            "Show the arguments (JSON Schema) of one tool found with search_tools.",
             schema(json!({
                 "type": "object",
                 "properties": { "name": { "type": "string", "description": "The tool's name." } },
@@ -100,14 +137,12 @@ fn meta_tools() -> Vec<McpTool> {
         .with_annotations(ToolAnnotations::new().read_only(true).open_world(false)),
         McpTool::new(
             CALL_TOOL,
-            "Run a Bifurc tool found with search_tools. What it does is what that tool does: one whose name ends in \
-             _list or _show only reads; _create adds; _update, _patch, _enable, _disable and _use change something; \
-             _delete, _remove, _clear and _discard remove something.",
+            "Run a tool found with search_tools. Names ending _list or _show only read; _delete, _remove, _clear and _discard remove.",
             schema(json!({
                 "type": "object",
                 "properties": {
                     "name": { "type": "string", "description": "The tool's name." },
-                    "arguments": { "type": "object", "description": "The tool's arguments, as describe_tool shows them." },
+                    "arguments": { "type": "object", "description": "The tool's arguments." },
                 },
                 "required": ["name"],
                 "additionalProperties": false,
@@ -226,6 +261,21 @@ impl Server {
     }
 }
 
+/// Whether the call sets `json: true`, directly or inside `call_tool`'s `arguments`.
+fn wants_json(name: &str, arguments: &Map<String, Value>) -> bool {
+    let arguments =
+        if name == CALL_TOOL { arguments.get("arguments").and_then(Value::as_object) } else { Some(arguments) };
+    arguments.and_then(|arguments| arguments.get("json")).and_then(Value::as_bool) == Some(true)
+}
+
+/// The tool's text as MCP structured content, which must be an object; `None` if it is not JSON.
+fn structured(text: &str) -> Option<Value> {
+    match serde_json::from_str(text).ok()? {
+        Value::Object(object) => Some(Value::Object(object)),
+        other => Some(json!({ "result": other })),
+    }
+}
+
 /// The server as the SDK drives it; a call takes its own handle to run off the reading thread.
 struct Handler(Arc<Server>);
 
@@ -253,14 +303,18 @@ impl ServerHandler for Handler {
         let server = Arc::clone(&self.0);
         let name = request.name.to_string();
         let arguments = request.arguments.unwrap_or_default();
+        let json = wants_json(&name, &arguments);
         let _turn = self.0.turn.lock().await;
         // A command blocks on the engine's socket, so it runs off the thread that reads stdin.
         let outcome = tokio::task::spawn_blocking(move || server.call(&name, &arguments).ok_or(name))
             .await
             .map_err(|error| ErrorData::internal_error(format!("the tool did not finish: {error}"), None))?
             .map_err(|name| ErrorData::new(ErrorCode::INVALID_PARAMS, format!("Unknown tool: {name}"), None))?;
+        let structured = if outcome.failed || !json { None } else { structured(&outcome.text) };
         let content = vec![ContentBlock::text(outcome.text)];
-        Ok(if outcome.failed { CallToolResult::error(content) } else { CallToolResult::success(content) }.into())
+        let mut result = if outcome.failed { CallToolResult::error(content) } else { CallToolResult::success(content) };
+        result.structured_content = structured;
+        Ok(result.into())
     }
 }
 
@@ -278,8 +332,12 @@ mod tests {
 
     fn server(all_tools: bool) -> (tempfile::TempDir, Server) {
         let dir = tempfile::tempdir().unwrap();
-        let settings =
-            Settings { data_dir: Some(dir.path().to_string_lossy().into_owned()), no_start: true, env_data_dir: None };
+        let settings = Settings {
+            data_dir: Some(dir.path().to_string_lossy().into_owned()),
+            no_start: true,
+            session: None,
+            env_data_dir: None,
+        };
         (dir, Server::new(settings, all_tools))
     }
 
@@ -301,19 +359,42 @@ mod tests {
                 "requests_list",
                 "requests_show",
                 "requests_send",
+                "curl",
                 "mocks_list",
-                "mocks_create",
-                "mappings_list",
-                "mappings_create",
+                "mocks_enable",
+                "mocks_disable",
+                "mocks_scenario",
                 "flows_list",
                 "flows_run",
-                "services_list",
                 "help",
+                "capture_list",
+                "capture_show",
                 "search_tools",
                 "describe_tool",
                 "call_tool",
             ]
         );
+    }
+
+    #[test]
+    fn the_listing_fits_the_schema_budget() {
+        let (_dir, server) = server(false);
+        let chars = serde_json::to_string(&server.listing()).unwrap().chars().count();
+        // ceil(chars / 3.5): a tokenizer-free estimate that errs high for JSON.
+        let tokens = (chars * 2).div_ceil(7);
+        assert!(tokens <= 3000, "tools/list is about {tokens} tokens ({chars} chars), the budget is 3000");
+    }
+
+    #[test]
+    fn a_tool_with_json_set_returns_its_object_as_structured_content() {
+        let direct = json!({"json": true});
+        let wrapped = json!({"name": "mocks_list", "arguments": {"json": true}});
+        assert!(wants_json("status", direct.as_object().unwrap()));
+        assert!(wants_json(CALL_TOOL, wrapped.as_object().unwrap()));
+        assert!(!wants_json("status", &Map::new()));
+        assert_eq!(structured("{\"a\":1}"), Some(json!({"a": 1})));
+        assert_eq!(structured("[1]"), Some(json!({"result": [1]})));
+        assert_eq!(structured("ok"), None);
     }
 
     #[test]
@@ -382,7 +463,7 @@ mod tests {
         let ran = call(&server, CALL_TOOL, json!({"name": "vault_unseal"}));
         assert_eq!(
             ran.text,
-            "no tool \"vault_unseal\"; did you mean: vault_list, vault_rename, vault_unset, vault_delete, capture_import"
+            "no tool \"vault_unseal\"; did you mean: vault_list, vault_rename, vault_unset, vault_delete, jwt"
         );
         assert_eq!(call(&server, CALL_TOOL, json!({})).text, "call_tool: missing \"name\"");
     }

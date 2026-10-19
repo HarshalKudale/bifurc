@@ -1,5 +1,5 @@
 //! `requests send` for a Socket.IO request: connect (unless the engine already holds the connection), emit
-//! `--event` with the arguments in `--body`, listen, print what was emitted and received and disconnect what
+//! `--event` with the arguments in `--data`, listen, print what was emitted and received and disconnect what
 //! was connected here.
 //!
 //! Listening ends after `--wait` seconds, or sooner when the server ends the connection.
@@ -12,7 +12,7 @@ use std::{
 use serde_json::{Value, json};
 
 use crate::{
-    commands::{Context, refused},
+    commands::{Context, body_from, refused},
     error::{CliError, Result},
     format::describe_socketio,
     requests::{CONNECT_TIMEOUT, listen_seconds},
@@ -39,9 +39,9 @@ pub fn socketio_exchange(
     let wait = listen_seconds(ctx.args, DEFAULT_WAIT)?;
     let event = ctx.args.flag("event").map(str::to_string);
     if event.is_none()
-        && let Some(option) = ["body", "ack"].into_iter().find(|option| ctx.args.has(option))
+        && let Some(option) = ["data", "ack"].into_iter().find(|option| ctx.args.has(option))
     {
-        return Err(CliError::msg(format!("--{option} goes with --event <name>, the event to emit")));
+        return Err(CliError::usage(format!("--{option} goes with --event <name>, the event to emit")));
     }
 
     let key = json!({ "workspaceId": workspace, "connectionId": connection_id });
@@ -84,7 +84,7 @@ pub fn socketio_exchange(
     if let (Some(event), "connected") = (&event, status_of(&snapshot)) {
         let mut emit = key.clone();
         emit["event"] = json!(event);
-        emit["args"] = json!(ctx.args.flag("body").unwrap_or_default());
+        emit["args"] = json!(body_from(ctx.args)?.unwrap_or_default());
         emit["ack"] = json!(ctx.args.has("ack"));
         failure = refused(ctx.request("socketio.emit", emit)?).err();
     }
@@ -325,7 +325,7 @@ mod tests {
         let (out, _) = run(&argv, answers, |c| requests(c, sub(&argv)));
         assert_eq!(
             out.unwrap_err(),
-            CliError::msg(
+            CliError::usage(
                 "a saved request is sent as it is saved, without --listen; change it with: bifurc requests update"
             )
         );
@@ -350,7 +350,7 @@ mod tests {
                 vec!["requests", "send", "i1", "--namespace", "/x"],
                 "a saved request is sent as it is saved, without --namespace; change it with: bifurc requests update",
             ),
-            (vec!["requests", "send", "i1", "-d", "[1]"], "--body goes with --event <name>, the event to emit"),
+            (vec!["requests", "send", "i1", "-d", "[1]"], "--data goes with --event <name>, the event to emit"),
             (vec!["requests", "send", "i1", "--ack"], "--ack goes with --event <name>, the event to emit"),
             (vec!["requests", "send", "i1", "--wait", "soon"], "--wait must be a number of seconds, not \"soon\""),
             (
@@ -367,7 +367,7 @@ mod tests {
             ),
         ] {
             let (out, calls) = run(&argv, engine(), |c| requests(c, sub(&argv)));
-            assert_eq!(out.unwrap_err(), CliError::msg(message), "{argv:?}");
+            assert_eq!(out.unwrap_err(), CliError::usage(message), "{argv:?}");
             assert!(payloads(&calls, "socketio.connect").is_empty(), "{argv:?}");
         }
     }
@@ -404,6 +404,6 @@ mod tests {
     fn list_shows_the_namespace_and_the_url() {
         let argv = ["requests", "list", "--type", "sio"];
         let (out, _) = run(&argv, engine(), |c| requests(c, sub(&argv)));
-        assert_eq!(out.unwrap(), "ID  TYPE      NAME  METHOD  URL\ni1  socketio  Chat  /chat   http://x");
+        assert_eq!(out.unwrap(), "SIO  http://x  Chat");
     }
 }

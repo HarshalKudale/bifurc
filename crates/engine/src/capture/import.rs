@@ -515,6 +515,68 @@ fn cookies_report(cookies: &[(String, Vec<(String, String)>)]) -> Value {
     json!(domains)
 }
 
+/// Hosts (with an optional path prefix) whose traffic is analytics, not the app's own.
+const ANALYTICS: [&str; 14] = [
+    "google-analytics.com",
+    "googletagmanager.com",
+    "analytics.google.com",
+    "segment.io",
+    "api.segment.io",
+    "cdn.segment.com",
+    "mixpanel.com",
+    "api-js.mixpanel.com",
+    "plausible.io",
+    "sentry.io",
+    "ingest.sentry.io",
+    "hotjar.com",
+    "doubleclick.net",
+    "facebook.com/tr",
+];
+
+const ASSET_EXTENSIONS: [&str; 13] =
+    ["png", "jpg", "jpeg", "gif", "svg", "ico", "webp", "woff", "woff2", "ttf", "css", "js", "map"];
+
+/// Why an import leaves the exchange out by default: `preflights`, `analytics` or `assets`.
+fn noise(entry: &Value) -> Option<&'static str> {
+    if str_of(entry, "method").eq_ignore_ascii_case("OPTIONS") {
+        return Some("preflights");
+    }
+    let url = url::Url::parse(str_of(entry, "url")).ok();
+    let host = url.as_ref().and_then(|url| url.host_str()).unwrap_or_default().to_ascii_lowercase();
+    let path = url.as_ref().map_or("", |url| url.path());
+    let analytics = ANALYTICS.iter().any(|item| {
+        let (name, prefix) = item.split_once('/').map_or((*item, ""), |(name, rest)| (name, rest));
+        (host == name || host.ends_with(&format!(".{name}"))) && path.trim_start_matches('/').starts_with(prefix)
+    });
+    if analytics {
+        return Some("analytics");
+    }
+    let content_type = header_of(entry.get("resHeaders"), "content-type").to_ascii_lowercase();
+    let content_type = content_type.split(';').next().unwrap_or_default().trim();
+    let by_type = content_type.starts_with("image/")
+        || content_type.starts_with("font/")
+        || matches!(content_type, "text/css" | "application/javascript" | "text/javascript");
+    let extension = path.rsplit_once('.').map(|(_, extension)| extension.to_ascii_lowercase());
+    let by_path = extension.is_some_and(|extension| ASSET_EXTENSIONS.contains(&extension.as_str()));
+    (by_type || by_path).then_some("assets")
+}
+
+/// The entries an import keeps, and how many it left out for each reason.
+fn without_noise(entries: Vec<Value>) -> (Vec<Value>, BTreeMap<&'static str, usize>) {
+    let mut dropped = BTreeMap::new();
+    let kept = entries
+        .into_iter()
+        .filter(|entry| match noise(entry) {
+            Some(why) => {
+                *dropped.entry(why).or_default() += 1;
+                false
+            }
+            None => true,
+        })
+        .collect();
+    (kept, dropped)
+}
+
 /// The captured entries `ids` names, oldest first.
 fn entries_of(params: &Value) -> Result<Vec<Value>> {
     let ws_id = str_of(params, "workspaceId");
@@ -550,7 +612,15 @@ pub fn register(registry: &mut CommandRegistry) {
     // vault secrets and cookies are in place before the requests are saved, so the first send already has them.
     registry.register("capture.import", |params, ctx| async move {
         let ws_id = str_of(&params, "workspaceId").to_string();
-        let entries = entries_of(&params)?;
+        let (entries, dropped) = match bool_of(&params, "keepAll", false) {
+            true => (entries_of(&params)?, BTreeMap::new()),
+            false => without_noise(entries_of(&params)?),
+        };
+        if entries.is_empty() {
+            return Err(EngineError::bad_request(
+                "Every entry is a preflight, a static asset or an analytics call. keepAll saves them anyway.",
+            ));
+        }
         let flow = bool_of(&params, "flow", false) && entries.len() > 1;
         let destination = opt_str(&params, "secrets").unwrap_or("keep");
         let mut variables = Variables::of_environment(&ws_id);
@@ -623,6 +693,7 @@ pub fn register(registry: &mut CommandRegistry) {
             "vaultSecrets": sealed,
             "keptInRequests": kept,
             "cookies": prepared.cookies.iter().map(|(_, pairs)| pairs.len()).sum::<usize>(),
+            "dropped": dropped,
         }))
     });
 }
@@ -659,6 +730,28 @@ mod tests {
                 "resHeaders": {}, "resBody": "",
             }),
         ]
+    }
+
+    #[test]
+    fn preflights_assets_and_analytics_are_noise() {
+        let entry = |method: &str, url: &str, content_type: &str| json!({ "method": method, "url": url, "resHeaders": { "Content-Type": content_type } });
+        let why = |method, url, content_type| noise(&entry(method, url, content_type));
+        assert_eq!(why("OPTIONS", "https://shop.test/api/login", ""), Some("preflights"));
+        assert_eq!(why("GET", "https://shop.test/logo", "image/png"), Some("assets"));
+        assert_eq!(why("GET", "https://shop.test/app?v=2", "text/javascript; charset=utf-8"), Some("assets"));
+        assert_eq!(why("GET", "https://shop.test/static/app.JS.map", ""), Some("assets"));
+        assert_eq!(why("POST", "https://api.segment.io/v1/t", "application/json"), Some("analytics"));
+        assert_eq!(why("GET", "https://o1.ingest.sentry.io/api/1/store", "application/json"), Some("analytics"));
+        assert_eq!(why("POST", "https://www.facebook.com/tr?id=1", "image/gif"), Some("analytics"));
+        assert_eq!(why("GET", "https://www.facebook.com/profile", "text/html"), None);
+        assert_eq!(why("POST", "https://shop.test/api/login", "application/json"), None);
+        assert_eq!(why("GET", "https://shop.test/api/data.json", "application/json"), None);
+        let (kept, dropped) = without_noise(vec![
+            entry("GET", "https://shop.test/a.css", "text/css"),
+            entry("GET", "https://shop.test/api", "application/json"),
+            entry("OPTIONS", "https://shop.test/api", ""),
+        ]);
+        assert_eq!((kept.len(), dropped), (1, BTreeMap::from([("assets", 1), ("preflights", 1)])));
     }
 
     #[test]

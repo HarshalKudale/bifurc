@@ -15,39 +15,38 @@ use crate::{
         Context, body_from, created, find_one, header_flags, id_of, list_entities, merge_headers, need, refused,
         text_from, unknown_verb, with_field, workspace_id,
     },
+    curl::quote,
     error::{CliError, Result},
-    format::{
-        describe_grpc, describe_reflection, describe_send, describe_socket, describe_text_response, js_template, json,
-        table, truthy,
-    },
+    format::{aligned, describe_reflection, describe_socket, js_template, json},
+    response::{Response, mask_header, present, revealed, short_type, size},
 };
 
 /// One type of request.
-struct RequestType {
+pub(crate) struct RequestType {
     /// What `--type` calls it.
-    name: &'static str,
+    pub(crate) name: &'static str,
     /// The entity kind its requests are stored as.
-    kind: &'static str,
+    pub(crate) kind: &'static str,
     /// The command that sends one, saved (`{ workspaceId, id }`) or not (`{ workspaceId, request }`). A
     /// WebSocket has none: it is a connection, not one exchange.
-    send: Option<&'static str>,
+    pub(crate) send: Option<&'static str>,
     /// The field `--url` sets, and the one `-H` adds to.
-    url_key: &'static str,
-    headers_key: &'static str,
+    pub(crate) url_key: &'static str,
+    pub(crate) headers_key: &'static str,
     /// The options only this type takes, beyond `--url`, `--name` and `-H`.
     options: &'static [&'static str],
     /// The fields of a request that is sent without being saved.
-    inline: &'static [&'static str],
+    pub(crate) inline: &'static [&'static str],
 }
 
-const TYPES: [RequestType; 8] = [
+pub(crate) const TYPES: [RequestType; 8] = [
     RequestType {
         name: "rest",
         kind: "requests",
         send: Some("request.send"),
         url_key: "url",
         headers_key: "headers",
-        options: &["method", "body", "body-file"],
+        options: &["method", "data", "body-file"],
         inline: &["method", "url", "headers", "body"],
     },
     RequestType {
@@ -65,7 +64,7 @@ const TYPES: [RequestType; 8] = [
         send: Some("grpc.send"),
         url_key: "serverAddress",
         headers_key: "metadata",
-        options: &["method", "body", "body-file", "proto", "reflection"],
+        options: &["method", "data", "body-file", "proto", "reflection"],
         inline: &[
             "serverAddress",
             "serviceName",
@@ -82,7 +81,7 @@ const TYPES: [RequestType; 8] = [
         send: Some("soap.send"),
         url_key: "endpointUrl",
         headers_key: "headers",
-        options: &["action", "body", "body-file"],
+        options: &["action", "data", "body-file"],
         inline: &["endpointUrl", "soapAction", "headers", "body"],
     },
     RequestType {
@@ -100,7 +99,7 @@ const TYPES: [RequestType; 8] = [
         send: None,
         url_key: "url",
         headers_key: "headers",
-        options: &["method", "body", "body-file"],
+        options: &["method", "data", "body-file"],
         inline: &["url", "method", "headers", "body"],
     },
     RequestType {
@@ -140,7 +139,7 @@ fn describing_options() -> Vec<&'static str> {
 
 const TYPE_NAMES: &str = "rest, graphql, grpc, soap, websocket, sse, socketio, mcp";
 
-fn type_named(name: &str) -> Result<&'static RequestType> {
+pub(crate) fn type_named(name: &str) -> Result<&'static RequestType> {
     let wanted = match name.to_lowercase().as_str() {
         "ws" => "websocket".to_string(),
         "http" => "rest".to_string(),
@@ -150,7 +149,7 @@ fn type_named(name: &str) -> Result<&'static RequestType> {
     TYPES
         .iter()
         .find(|ty| ty.name == wanted)
-        .ok_or_else(|| CliError::msg(format!("unknown request type \"{name}\": one of {TYPE_NAMES}")))
+        .ok_or_else(|| CliError::usage(format!("unknown request type \"{name}\": one of {TYPE_NAMES}")))
 }
 
 /// The types a command looks at: the one `--type` names, else all of them.
@@ -171,7 +170,7 @@ fn check_options(ty: &RequestType, args: &ParsedArgs, extra: &[&str]) -> Result<
             && !extra.contains(name)
     });
     match foreign {
-        Some(option) => Err(CliError::msg(format!(
+        Some(option) => Err(CliError::usage(format!(
             "--{option} is not an option of a {} request (see: bifurc requests --help)",
             ty.name
         ))),
@@ -184,30 +183,12 @@ fn tagged(ty: &RequestType, entity: &Value) -> Value {
     with_field(entity, "type", json!(ty.name))
 }
 
-fn text(entity: &Value, key: &str) -> String {
+pub(crate) fn text(entity: &Value, key: &str) -> String {
     entity.get(key).and_then(Value::as_str).unwrap_or_default().to_string()
 }
 
-/// What the table shows of a request: the same columns whatever its type.
-fn row(ty: &RequestType, entity: &Value) -> Value {
-    let method = match ty.name {
-        "rest" => text(entity, "method"),
-        "graphql" => text(entity, "operationName"),
-        "grpc" => format!("{}/{}", text(entity, "serviceName"), text(entity, "methodName")),
-        "soap" => text(entity, "soapAction"),
-        "sse" => text(entity, "method"),
-        "socketio" => text(entity, "namespace"),
-        "mcp" => text(entity, "transport"),
-        _ => String::new(),
-    };
-    json!({
-        "id": entity.get("id"), "type": ty.name, "name": entity.get("name"), "method": method,
-        "url": text(entity, ty.url_key),
-    })
-}
-
 /// Every saved request of `types`, each with its type.
-fn saved(
+pub(crate) fn saved(
     ctx: &mut Context,
     workspace: &str,
     types: &[&'static RequestType],
@@ -264,7 +245,7 @@ fn grpc_method(path: &str) -> Result<(String, String)> {
         Some((service, method)) if !service.is_empty() && !method.is_empty() => {
             Ok((service.to_string(), method.to_string()))
         }
-        _ => Err(CliError::msg("the gRPC method is \"package.Service/Method\"")),
+        _ => Err(CliError::usage("the gRPC method is \"package.Service/Method\"")),
     }
 }
 
@@ -288,7 +269,7 @@ fn apply_options(ty: &RequestType, entity: &mut Value, args: &ParsedArgs) -> Res
         merge_headers(&mut map, &headers);
         set(entity, ty.headers_key, Value::Object(map));
     }
-    let body = if ty.options.contains(&"body") { body_from(args)? } else { None };
+    let body = if ty.options.contains(&"data") { body_from(args)? } else { None };
     match ty.name {
         "rest" | "sse" => {
             if let Some(method) = args.flag("method") {
@@ -304,7 +285,7 @@ fn apply_options(ty: &RequestType, entity: &mut Value, args: &ParsedArgs) -> Res
             }
             if let Some(variables) = args.flag("variables") {
                 if !variables.trim().is_empty() && serde_json::from_str::<Value>(variables).is_err() {
-                    return Err(CliError::msg(format!("--variables is not valid JSON: {variables}")));
+                    return Err(CliError::usage(format!("--variables is not valid JSON: {variables}")));
                 }
                 set(entity, "variables", json!(variables));
             }
@@ -322,7 +303,7 @@ fn apply_options(ty: &RequestType, entity: &mut Value, args: &ParsedArgs) -> Res
                 set(entity, "requestBody", json!(body));
             }
             match (args.flag("proto").filter(|proto| !proto.is_empty()), args.has("reflection")) {
-                (Some(_), true) => return Err(CliError::msg("--proto and --reflection cannot both be given")),
+                (Some(_), true) => return Err(CliError::usage("--proto and --reflection cannot both be given")),
                 (Some(proto), false) => {
                     set(entity, "protoFileId", json!(proto));
                     set(entity, "useReflection", json!(false));
@@ -356,7 +337,7 @@ fn apply_options(ty: &RequestType, entity: &mut Value, args: &ParsedArgs) -> Res
         }
         "mcp" => match args.flag("transport") {
             Some(transport) if matches!(transport, "stdio" | "http") => set(entity, "transport", json!(transport)),
-            Some(other) => return Err(CliError::msg(format!("--transport is stdio or http, not \"{other}\""))),
+            Some(other) => return Err(CliError::usage(format!("--transport is stdio or http, not \"{other}\""))),
             // The address says which it is, when it is given or nothing has said yet.
             None if args.flag("url").is_some() || text(entity, "transport").is_empty() => {
                 entity["transport"] = json!(mcp_transport(&text(entity, "url")));
@@ -372,13 +353,13 @@ fn apply_options(ty: &RequestType, entity: &mut Value, args: &ParsedArgs) -> Res
 /// query.
 fn complete(ty: &RequestType, entity: &Value) -> Result<()> {
     if text(entity, ty.url_key).trim().is_empty() {
-        return Err(CliError::msg("missing --url"));
+        return Err(CliError::usage("missing --url"));
     }
     match ty.name {
         "grpc" if text(entity, "methodName").is_empty() => {
-            Err(CliError::msg("missing --method <package.Service/Method>"))
+            Err(CliError::usage("missing --method <package.Service/Method>"))
         }
-        "graphql" if text(entity, "query").trim().is_empty() => Err(CliError::msg("missing --query or --query-file")),
+        "graphql" if text(entity, "query").trim().is_empty() => Err(CliError::usage("missing --query or --query-file")),
         _ => Ok(()),
     }
 }
@@ -410,26 +391,29 @@ fn described(ty: &RequestType, args: &ParsedArgs, extra: &[&str]) -> Result<Valu
     Ok(entity)
 }
 
-/// What the engine answered a send, printed; a failure of what was sent fails the command.
-fn sent(ctx: &Context, ty: &RequestType, response: Value) -> Result<String> {
-    let said = |key: &str| response.get(key).and_then(Value::as_str).is_some_and(|message| !message.is_empty());
-    let (human, failed) = match ty.name {
-        "rest" => {
-            let tests = response.get("tests").and_then(Value::as_array);
-            let a_test_failed = tests.into_iter().flatten().any(|test| !test.get("passed").is_some_and(truthy));
-            (describe_send(&response), a_test_failed || said("preScriptError") || said("postScriptError"))
-        }
-        "grpc" => {
-            if response.get("ok").and_then(Value::as_bool) == Some(false) && !ctx.json {
-                let error = response.get("error").and_then(Value::as_str).unwrap_or("the gRPC call failed");
-                return Err(CliError::msg(error));
-            }
-            (describe_grpc(&response), response.get("ok").and_then(Value::as_bool) == Some(false))
-        }
-        _ => (describe_text_response(&response), false),
+fn response_of(ty: &RequestType, response: &Value) -> Response {
+    match ty.name {
+        "rest" => Response::from_rest(response),
+        "grpc" => Response::from_grpc(response),
+        _ => Response::from_text(response),
+    }
+}
+
+/// What the engine answered a send, printed as the output options say; a failure of what was sent fails the command.
+fn sent(ctx: &mut Context, ty: &RequestType, response: Value) -> Result<String> {
+    present(ctx, &response_of(ty, &response))
+}
+
+/// Send the saved request `wanted` as `requests send` does (`--var`, `--env`, `--fresh-session` apply) and
+/// return its response; only types that answer once can be.
+pub(crate) fn send_saved(ctx: &mut Context, workspace: &str, wanted: &str) -> Result<Response> {
+    let (ty, entity) = find(ctx, workspace, wanted)?;
+    let Some(command) = ty.send else {
+        return Err(CliError::usage(format!("a {} request does not answer once, so it cannot be compared", ty.name)));
     };
-    let out = ctx.print(&response, || human);
-    if failed { Err(CliError::Failed(out)) } else { Ok(out) }
+    let mut payload = json!({ "workspaceId": workspace, "id": id_of(&entity) });
+    add_overrides(ctx, ty, workspace, Some(&entity), &mut payload)?;
+    Ok(response_of(ty, &ctx.request(command, payload)?))
 }
 
 /// How long a WebSocket, an SSE stream or a Socket.IO connection is given to open.
@@ -442,13 +426,107 @@ pub(crate) fn listen_seconds(args: &ParsedArgs, default: f64) -> Result<f64> {
             .parse::<f64>()
             .ok()
             .filter(|seconds| seconds.is_finite() && (0.0..=3600.0).contains(seconds))
-            .ok_or_else(|| CliError::msg(format!("--wait must be a number of seconds, not \"{raw}\""))),
+            .ok_or_else(|| CliError::usage(format!("--wait must be a number of seconds, not \"{raw}\""))),
         None => Ok(default),
     }
 }
 
+/// What a send of a request that answers once prints (see [`present`]).
+const OUTPUT_OPTIONS: [&str; 11] =
+    ["body", "headers", "select", "out", "max-body", "raw", "quiet", "reveal", "expect-status", "expect", "extract"];
+
 /// The options only a send takes, each for the types [`exchange_options`] says.
 const SEND_OPTIONS: [&str; 7] = ["wait", "event", "ack", "tool", "prompt", "resource", "arg"];
+
+/// The options that lay values over a request that answers once: `--var` and `--env` for any such send, `--patch`
+/// for a saved one, and `--fresh-session` (a throwaway jar) for a rest one.
+const OVERRIDE_OPTIONS: [&str; 4] = ["var", "env", "patch", "fresh-session"];
+
+/// The field of a saved request `--data` and `--patch` act on: its body, a GraphQL request's variables.
+fn body_field(ty: &RequestType) -> &'static str {
+    match ty.name {
+        "graphql" => "variables",
+        "grpc" => "requestBody",
+        _ => "body",
+    }
+}
+
+/// Refuse the output options and the override options on a send of a request that does not answer once.
+fn refuse_overrides(ty: &RequestType, args: &ParsedArgs) -> Result<()> {
+    if ty.send.is_none()
+        && let Some(option) = OUTPUT_OPTIONS.iter().find(|option| args.has(option))
+    {
+        return Err(CliError::usage(format!("--{option} does not apply to a {} request", ty.name)));
+    }
+    match OVERRIDE_OPTIONS.iter().find(|option| args.has(option)) {
+        Some(option) if ty.send.is_none() => Err(CliError::usage(format!(
+            "--{option} applies to rest, graphql, soap and grpc sends, not to a {} request",
+            ty.name
+        ))),
+        _ => Ok(()),
+    }
+}
+
+/// Add `variables` and `environmentId` to the payload of a send, a run of a folder or a run of a flow, from
+/// `--var` and `--env`.
+pub(crate) fn add_scope(ctx: &mut Context, workspace: &str, payload: &mut Value) -> Result<()> {
+    let args = ctx.args;
+    let mut variables = Map::new();
+    for pair in args.flags("var") {
+        match pair.split_once('=') {
+            Some((key, value)) if !key.is_empty() => variables.insert(key.to_string(), json!(value)),
+            _ => return Err(CliError::usage(format!("--var must be KEY=VALUE, not \"{pair}\""))),
+        };
+    }
+    if !variables.is_empty() {
+        payload["variables"] = Value::Object(variables);
+    }
+    if let Some(wanted) = args.flag("env") {
+        let environments = list_entities(ctx, workspace, "environments")?;
+        payload["environmentId"] = json!(id_of(find_one(&environments, wanted, &["name"], "environment", "env")?));
+    }
+    Ok(())
+}
+
+/// Add `variables`, `environmentId` and, for a saved request (`saved`), `overrides` to the payload of a one-shot
+/// send, from `--var`, `--env`, `--data` and `--patch`.
+pub(crate) fn add_overrides(
+    ctx: &mut Context,
+    ty: &RequestType,
+    workspace: &str,
+    saved: Option<&Value>,
+    payload: &mut Value,
+) -> Result<()> {
+    add_scope(ctx, workspace, payload)?;
+    let args = ctx.args;
+    if args.has("fresh-session") {
+        if ty.name != "rest" {
+            return Err(CliError::usage(format!("--fresh-session applies to rest requests, not {}", ty.name)));
+        }
+        payload["freshJar"] = json!(true);
+    }
+    let Some(saved) = saved else { return Ok(()) };
+    let field = body_field(ty);
+    let mut body = body_from(args)?;
+    let patches = args.flags("patch");
+    if !patches.is_empty() {
+        let source = body.unwrap_or_else(|| text(saved, field));
+        let mut parsed: Value = serde_json::from_str(&source).map_err(|_| {
+            CliError::usage(format!(
+                "--patch needs a JSON body, and the body of \"{}\" is not JSON",
+                text(saved, "name")
+            ))
+        })?;
+        for patch in patches {
+            crate::select::patch(&mut parsed, patch).map_err(CliError::usage)?;
+        }
+        body = Some(parsed.to_string());
+    }
+    if let Some(body) = body {
+        payload["overrides"] = json!({ field: body });
+    }
+    Ok(())
+}
 
 /// The options a send of this type takes beyond the ones that describe a request: a WebSocket's message and how
 /// long to listen, an SSE stream's listening time (its body is part of the request), a Socket.IO event with its
@@ -456,8 +534,8 @@ const SEND_OPTIONS: [&str; 7] = ["wait", "event", "ack", "tool", "prompt", "reso
 fn exchange_options(ty: &RequestType) -> &'static [&'static str] {
     match ty.name {
         "sse" => &["wait"],
-        "socketio" => &["event", "body", "ack", "wait"],
-        "websocket" => &["body", "wait"],
+        "socketio" => &["event", "data", "ack", "wait"],
+        "websocket" => &["data", "wait"],
         "mcp" => &["tool", "prompt", "resource", "arg", "wait"],
         _ => &[],
     }
@@ -495,7 +573,7 @@ fn socket_exchange(ctx: &mut Context, workspace: &str, socket_id: &str, target: 
         }
     }
     let mut failure = None;
-    if let Some(message) = ctx.args.flag("body") {
+    if let Some(message) = body_from(ctx.args)? {
         let answer =
             ctx.request("ws.send", json!({ "workspaceId": workspace, "socketId": socket_id, "data": message }))?;
         failure = refused(answer).err();
@@ -520,27 +598,187 @@ fn socket_exchange(ctx: &mut Context, workspace: &str, socket_id: &str, target: 
 }
 
 /// `requests list|show|create|update|send|reflect`.
+/// What the list's second column says of a request: its method, else its type in capitals.
+fn kind_label(ty: &RequestType, entity: &Value) -> String {
+    match ty.name {
+        "rest" | "sse" => text(entity, "method").to_uppercase(),
+        "soap" => "SOAP".into(),
+        "websocket" => "WS".into(),
+        "socketio" => "SIO".into(),
+        other => other.to_uppercase(),
+    }
+}
+
+/// What the list's third column says of a request: its URL without a leading `{{variable}}`, a gRPC
+/// request's `service/method`.
+fn list_url(ty: &RequestType, entity: &Value) -> String {
+    if ty.name == "grpc" {
+        return format!("{}/{}", text(entity, "serviceName"), text(entity, "methodName"));
+    }
+    let url = text(entity, ty.url_key);
+    match url.strip_prefix("{{").and_then(|rest| rest.split_once("}}")) {
+        Some((_, rest)) if !rest.is_empty() => rest.to_string(),
+        _ => url,
+    }
+}
+
+/// The path (`a/b/`) of every folder of a tree (`requestFolders`, `mockFolders`) by id, from the engine's folder tree.
+pub(crate) fn folder_paths(ctx: &mut Context, tree: &str) -> Result<std::collections::HashMap<String, String>> {
+    let config = ctx.request("config.get", json!({}))?;
+    let folders = config.get(tree).and_then(Value::as_array).cloned().unwrap_or_default();
+    let by_id: std::collections::HashMap<String, &Value> = folders.iter().map(|f| (text(f, "id"), f)).collect();
+    Ok(by_id
+        .keys()
+        .map(|id| {
+            let (mut names, mut at) = (Vec::new(), Some(id.as_str()));
+            // The depth cap stops a parent loop in a damaged tree.
+            while let Some(folder) = at.and_then(|id| by_id.get(id)).filter(|_| names.len() < 32) {
+                names.push(text(folder, "name"));
+                at = folder.get("parentId").and_then(Value::as_str);
+            }
+            names.reverse();
+            (id.clone(), format!("{}/", names.join("/")))
+        })
+        .collect())
+}
+
+/// `requests show` for people: the line a request sends, where it is saved, then what it holds.
+fn describe(ty: &RequestType, entity: &Value, folder: &str) -> String {
+    let mut first = vec![kind_label(ty, entity), text(entity, ty.url_key)];
+    match ty.name {
+        "grpc" => first.push(format!("{}/{}", text(entity, "serviceName"), text(entity, "methodName"))),
+        "graphql" if !text(entity, "operationName").is_empty() => first.push(text(entity, "operationName")),
+        _ => {}
+    }
+    let place = if folder.is_empty() { String::new() } else { format!(" · {folder}") };
+    let mut lines = vec![first.join(" "), format!("{}{place} · id {}", ty.name, id_of(entity))];
+    let headers = entity.get(ty.headers_key).and_then(Value::as_object);
+    let names: Vec<&str> = headers.map(|h| h.keys().map(String::as_str).collect()).unwrap_or_default();
+    if !names.is_empty() {
+        lines.push(format!("headers  {}", names.join(", ")));
+    }
+    let body = text(entity, body_field(ty));
+    if !body.is_empty() && !matches!(body.trim(), "{}" | "null") {
+        let content_type = headers
+            .and_then(|h| h.iter().find(|(name, _)| name.eq_ignore_ascii_case("content-type")))
+            .map(|(_, value)| js_template(Some(value)))
+            .unwrap_or_default();
+        let kind = short_type(&content_type, body.as_bytes());
+        lines.push(format!("body     {} {kind}", size(body.len())).trim_end().to_string());
+    }
+    let scripts: Vec<&str> = [("preScript", "pre"), ("postScript", "post"), ("testScript", "test")]
+        .iter()
+        .filter(|(key, _)| !text(entity, key).trim().is_empty())
+        .map(|(_, name)| *name)
+        .collect();
+    if !scripts.is_empty() {
+        lines.push(format!("scripts  {}", scripts.join(", ")));
+    }
+    lines.join("\n")
+}
+
+/// `requests show --curl`: a REST request as a curl command, its variables resolved by the engine and its
+/// secret header values masked unless `--reveal` is given at a terminal.
+fn curl_command(ctx: &mut Context, workspace: &str, ty: &RequestType, entity: &Value) -> Result<String> {
+    if ty.name != "rest" {
+        return Err(CliError::usage("only REST requests print as curl"));
+    }
+    let reveal = revealed(ctx.args);
+    let mut resolve = |text: &str| -> Result<String> {
+        let answer = ctx.request("env.resolveText", json!({ "workspaceId": workspace, "text": text }))?;
+        Ok(answer.get("text").and_then(Value::as_str).unwrap_or(text).to_string())
+    };
+    let method = text(entity, "method").to_uppercase();
+    let mut words = vec!["curl".to_string()];
+    if !method.is_empty() && method != "GET" {
+        words.extend(["-X".to_string(), method]);
+    }
+    words.push(quote(&resolve(&text(entity, "url"))?));
+    for (name, value) in entity.get("headers").and_then(Value::as_object).into_iter().flatten() {
+        let value = resolve(&js_template(Some(value)))?;
+        let value = if reveal { value } else { mask_header(name, &value) };
+        words.extend(["-H".to_string(), quote(&format!("{name}: {value}"))]);
+    }
+    let body = text(entity, "body");
+    if !body.is_empty() {
+        words.extend(["--data-raw".to_string(), quote(&resolve(&body)?)]);
+    }
+    Ok(words.join(" "))
+}
+
 pub fn requests(ctx: &mut Context, sub: Option<&str>) -> Result<String> {
     let args = ctx.args;
     let mut describing = describing_options();
     describing.push("type");
     match sub.unwrap_or("list") {
         "list" => {
-            ctx.accept(&["type"], 0)?;
+            ctx.accept(&["type", "folder", "grep", "ids"], 0)?;
             let types = types_of(args)?;
             let workspace = workspace_id(ctx)?;
             let all = saved(ctx, &workspace, &types)?;
-            let entities: Vec<Value> = all.iter().map(|(ty, entity)| tagged(ty, entity)).collect();
-            let rows: Vec<Value> = all.iter().map(|(ty, entity)| row(ty, entity)).collect();
-            Ok(ctx.print(&Value::Array(entities), || table(&rows, &["id", "type", "name", "method", "url"])))
+            let folders = folder_paths(ctx, "requestFolders")?;
+            let folder = args.flag("folder").map(|f| f.trim_matches('/').to_lowercase());
+            let grep = args.flag("grep").map(str::to_lowercase);
+            let mut kept: Vec<(String, &RequestType, &Value)> = all
+                .iter()
+                .map(|(ty, entity)| (folders.get(&text(entity, "folderId")).cloned().unwrap_or_default(), *ty, entity))
+                .filter(|(path, ty, entity)| {
+                    let path = path.to_lowercase();
+                    let in_folder = folder
+                        .as_deref()
+                        .is_none_or(|f| path.trim_end_matches('/') == f || path.starts_with(&format!("{f}/")));
+                    let found = grep.as_deref().is_none_or(|g| {
+                        [text(entity, "name"), text(entity, ty.url_key), kind_label(ty, entity)]
+                            .iter()
+                            .any(|field| field.to_lowercase().contains(g))
+                    });
+                    in_folder && found
+                })
+                .collect();
+            kept.sort_by_cached_key(|(path, _, entity)| (path.to_lowercase(), text(entity, "name").to_lowercase()));
+            let entities: Vec<Value> = kept
+                .iter()
+                .map(|(path, ty, entity)| with_field(&tagged(ty, entity), "folderPath", json!(path)))
+                .collect();
+            Ok(ctx.print(&Value::Array(entities), || {
+                if kept.is_empty() {
+                    return "(none)".to_string();
+                }
+                // With no folder anywhere the first column would only be blank space.
+                let folderless = kept.iter().all(|(path, ..)| path.is_empty());
+                let cells: Vec<Vec<String>> = kept
+                    .iter()
+                    .map(|(path, ty, entity)| {
+                        let mut cells = vec![kind_label(ty, entity), list_url(ty, entity), text(entity, "name")];
+                        if !folderless {
+                            cells.insert(0, path.clone());
+                        }
+                        if args.has("ids") {
+                            cells.insert(0, id_of(entity));
+                        }
+                        cells
+                    })
+                    .collect();
+                aligned(&cells)
+            }))
         }
         "show" => {
-            ctx.accept(&["type"], 1)?;
+            ctx.accept(&["type", "curl", "reveal"], 1)?;
             let wanted = need(args.positional(2), "request id or name")?;
             let workspace = workspace_id(ctx)?;
             let (ty, entity) = find(ctx, &workspace, &wanted)?;
+            // The listing carries the content but not the memory: this read tells the engine what was shown.
+            let seen = json!({ "workspaceId": workspace, "kind": ty.kind, "id": id_of(&entity) });
+            let _ = ctx.request("entity.load", seen);
+            if args.has("curl") {
+                return curl_command(ctx, &workspace, ty, &entity);
+            }
             let entity = tagged(ty, &entity);
-            Ok(ctx.print(&entity, || json(&entity)))
+            if ctx.json {
+                return Ok(json(&entity));
+            }
+            let folders = folder_paths(ctx, "requestFolders")?;
+            Ok(describe(ty, &entity, folders.get(&text(&entity, "folderId")).map_or("", String::as_str)))
         }
         "create" | "add" => {
             describing.push("curl");
@@ -549,7 +787,7 @@ pub fn requests(ctx: &mut Context, sub: Option<&str>) -> Result<String> {
                 // The engine reads the command and says which type of request it is.
                 Some(curl) => {
                     if args.flag("url").is_some() || args.positional(2).is_some() {
-                        return Err(CliError::msg("--curl already says where the request goes; leave out the URL"));
+                        return Err(CliError::usage("--curl already says where the request goes; leave out the URL"));
                     }
                     let built = ctx.request("curl.buildRequest", json!({ "curl": curl }))?;
                     let kind = js_template(built.get("kind"));
@@ -590,13 +828,14 @@ pub fn requests(ctx: &mut Context, sub: Option<&str>) -> Result<String> {
             Ok(ctx.print(&saved, || format!("Saved {} request {}", ty.name, id_of(&saved))))
         }
         "update" => {
+            describing.push("force");
             ctx.accept(&describing, 1)?;
             let wanted = need(args.positional(2), "request id or name")?;
             let workspace = workspace_id(ctx)?;
             let (ty, mut entity) = find(ctx, &workspace, &wanted)?;
             check_options(ty, args, &[])?;
             if !apply_options(ty, &mut entity, args)? {
-                return Err(CliError::msg(format!(
+                return Err(CliError::usage(format!(
                     "nothing to change: give at least one option of a {} request (see: bifurc requests --help)",
                     ty.name
                 )));
@@ -611,26 +850,32 @@ pub fn requests(ctx: &mut Context, sub: Option<&str>) -> Result<String> {
         }
         "send" => {
             describing.extend(SEND_OPTIONS);
-            ctx.accept(&describing, 1)?;
+            ctx.accept(&[describing.as_slice(), &OUTPUT_OPTIONS, &OVERRIDE_OPTIONS].concat(), 1)?;
             match args.positional(2) {
                 // A saved request goes by id: the engine loads it, resolves it and runs its scripts.
                 Some(wanted) => {
                     let workspace = workspace_id(ctx)?;
                     let (ty, entity) = find(ctx, &workspace, wanted)?;
                     let exchange = exchange_options(ty);
-                    let given = args
-                        .names()
-                        .into_iter()
-                        .find(|name| *name != "type" && describing.contains(name) && !exchange.contains(name));
+                    // `--data` replaces the body of what is sent once; the rest of the request stays as saved.
+                    let given = args.names().into_iter().find(|name| {
+                        *name != "type"
+                            && describing.contains(name)
+                            && !exchange.contains(name)
+                            && !(*name == "data" && ty.send.is_some())
+                    });
                     if let Some(option) = given {
-                        return Err(CliError::msg(format!(
+                        return Err(CliError::usage(format!(
                             "a saved request is sent as it is saved, without --{option}; change it with: bifurc requests update"
                         )));
                     }
+                    refuse_overrides(ty, args)?;
                     let id = id_of(&entity);
                     match ty.send {
                         Some(command) => {
-                            let response = ctx.request(command, json!({ "workspaceId": workspace, "id": id }))?;
+                            let mut payload = json!({ "workspaceId": workspace, "id": id });
+                            add_overrides(ctx, ty, &workspace, Some(&entity), &mut payload)?;
+                            let response = ctx.request(command, payload)?;
                             sent(ctx, ty, response)
                         }
                         None if ty.name == "sse" => crate::stream::stream_exchange(ctx, &workspace, &id, None),
@@ -641,17 +886,23 @@ pub fn requests(ctx: &mut Context, sub: Option<&str>) -> Result<String> {
                 }
                 None => {
                     if args.flag("url").is_none() {
-                        return Err(CliError::msg(
+                        return Err(CliError::usage(
                             "missing request id or name, or --url for a request that is not saved",
                         ));
                     }
                     let ty = type_named(args.flag("type").unwrap_or("rest"))?;
                     let exchange = exchange_options(ty);
                     if let Some(option) = SEND_OPTIONS.iter().find(|o| args.has(o) && !exchange.contains(o)) {
-                        return Err(CliError::msg(format!(
+                        return Err(CliError::usage(format!(
                             "--{option} is not an option of a {} request (see: bifurc requests --help)",
                             ty.name
                         )));
+                    }
+                    refuse_overrides(ty, args)?;
+                    if args.has("patch") {
+                        return Err(CliError::usage(
+                            "--patch changes a saved request's body; give the body with --data",
+                        ));
                     }
                     let entity = described(ty, args, exchange)?;
                     let workspace = workspace_id(ctx)?;
@@ -666,6 +917,7 @@ pub fn requests(ctx: &mut Context, sub: Option<&str>) -> Result<String> {
                             if ty.name == "rest" {
                                 payload["scripts"] = json!({});
                             }
+                            add_overrides(ctx, ty, &workspace, None, &mut payload)?;
                             let response = ctx.request(command, payload)?;
                             sent(ctx, ty, response)
                         }
@@ -772,21 +1024,71 @@ mod tests {
     }
 
     #[test]
-    fn list_shows_every_type_in_the_same_columns() {
+    fn list_shows_every_type_in_the_same_columns_sorted_by_name() {
         let argv = ["requests"];
         let (out, _) = run(&argv, saved_requests(), |c| requests(c, None));
         assert_eq!(
             out.unwrap(),
-            "ID  TYPE       NAME    METHOD                URL\n\
-             r1  rest       Ping    GET                   http://x/ping\n\
-             q1  graphql    Viewer  Viewer                http://x/graphql\n\
-             g1  grpc       Hello   pkg.Greeter/SayHello  localhost:50051\n\
-             s1  soap       Add     urn:Add               http://x/soap\n\
-             k1  websocket  Feed                          ws://x/feed\n\
-             e1  sse        Events  GET                   http://x/events\n\
-             i1  socketio   Chat    /chat                 http://x\n\
-             m1  mcp        Tools   stdio                 npx my-server"
+            "SOAP     http://x/soap         Add\n\
+             SIO      http://x              Chat\n\
+             GET      http://x/events       Events\n\
+             WS       ws://x/feed           Feed\n\
+             GRPC     pkg.Greeter/SayHello  Hello\n\
+             GET      http://x/ping         Ping\n\
+             MCP      npx my-server         Tools\n\
+             GRAPHQL  http://x/graphql      Viewer"
         );
+    }
+
+    /// Requests in folders `auth/`, `auth/admin/`, `orders/` and the root.
+    fn foldered() -> Vec<Answer> {
+        let mut answers = saved_requests();
+        answers[0] = (
+            "config.get",
+            Ok(json!({"activeWorkspaceId": "w1", "requestFolders": [
+                {"id": "f1", "name": "auth", "parentId": null},
+                {"id": "f2", "name": "admin", "parentId": "f1"},
+                {"id": "f3", "name": "orders", "parentId": null}]})),
+        );
+        answers[1] = (
+            "entity.list:requests",
+            listing(json!([
+                {"id": "a", "name": "Login", "method": "POST", "url": "{{baseUrl}}/login", "folderId": "f1"},
+                {"id": "b", "name": "Create user", "method": "POST", "url": "{{baseUrl}}/users", "folderId": "f1"},
+                {"id": "c", "name": "Get order", "method": "GET", "url": "{{baseUrl}}/orders/{{id}}", "folderId": "f3"},
+                {"id": "d", "name": "Ban", "method": "DELETE", "url": "http://x/ban", "folderId": "f2"},
+                {"id": "e", "name": "Root one", "method": "GET", "url": "{{baseUrl}}"}])),
+        );
+        answers
+    }
+
+    fn list_of(extra: &[&str]) -> String {
+        let argv = [&["requests", "list", "--type", "rest"], extra].concat();
+        run(&argv, foldered(), |c| requests(c, sub(&argv))).0.unwrap()
+    }
+
+    #[test]
+    fn list_has_the_folder_method_url_without_a_leading_variable_and_name() {
+        let want = [
+            "             GET     {{baseUrl}}     Root one",
+            "auth/        POST    /users          Create user",
+            "auth/        POST    /login          Login",
+            "auth/admin/  DELETE  http://x/ban    Ban",
+            "orders/      GET     /orders/{{id}}  Get order",
+        ];
+        assert_eq!(list_of(&[]), want.join("\n"));
+    }
+
+    #[test]
+    fn list_filters_by_folder_and_text_and_can_show_ids() {
+        assert_eq!(list_of(&["--folder", "AUTH/"]).lines().count(), 3);
+        assert_eq!(list_of(&["--folder", "auth/admin"]), "auth/admin/  DELETE  http://x/ban  Ban");
+        assert_eq!(list_of(&["--folder", "adm"]), "(none)");
+        assert_eq!(list_of(&["--grep", "LOGIN"]), "auth/  POST  /login  Login");
+        assert_eq!(list_of(&["--grep", "delete"]), "auth/admin/  DELETE  http://x/ban  Ban");
+        assert_eq!(list_of(&["--grep", "/orders", "--ids"]), "c  orders/  GET  /orders/{{id}}  Get order");
+        let json: Value = serde_json::from_str(&list_of(&["--json", "--folder", "orders"])).unwrap();
+        assert_eq!(json[0]["folderPath"], "orders/");
     }
 
     #[test]
@@ -794,18 +1096,19 @@ mod tests {
         let argv = ["requests", "list", "--type", "grpc", "--json"];
         let (out, calls) = run(&argv, saved_requests(), |c| requests(c, sub(&argv)));
         let listed: Value = serde_json::from_str(&out.unwrap()).unwrap();
-        assert_eq!(listed, json!([with_field(&grpc(), "type", json!("grpc"))]));
+        let want = with_field(&with_field(&grpc(), "type", json!("grpc")), "folderPath", json!(""));
+        assert_eq!(listed, json!([want]));
         assert_eq!(payloads(&calls, "entity.list"), [json!({"workspaceId": "w1", "kind": "grpcRequests"})]);
 
         let argv = ["requests", "list", "-t", "ws"];
         let (out, _) = run(&argv, saved_requests(), |c| requests(c, sub(&argv)));
-        assert_eq!(out.unwrap(), "ID  TYPE       NAME  METHOD  URL\nk1  websocket  Feed          ws://x/feed");
+        assert_eq!(out.unwrap(), "WS  ws://x/feed  Feed");
 
         let argv = ["requests", "list", "--type", "carrier-pigeon"];
         let (out, calls) = run(&argv, saved_requests(), |c| requests(c, sub(&argv)));
         assert_eq!(
             out.unwrap_err(),
-            CliError::msg(
+            CliError::usage(
                 "unknown request type \"carrier-pigeon\": one of rest, graphql, grpc, soap, websocket, sse, socketio, mcp"
             )
         );
@@ -822,19 +1125,71 @@ mod tests {
             ("chat", "socketio"),
             ("tools", "mcp"),
         ] {
-            let argv = ["requests", "show", wanted];
+            let argv = ["requests", "show", wanted, "--json"];
             let (out, _) = run(&argv, saved_requests(), |c| requests(c, sub(&argv)));
             assert_eq!(serde_json::from_str::<Value>(&out.unwrap()).unwrap()["type"], ty, "{wanted}");
         }
         let argv = ["requests", "show", "nope"];
         let (out, _) = run(&argv, saved_requests(), |c| requests(c, sub(&argv)));
-        assert_eq!(out.unwrap_err(), CliError::msg("no request \"nope\" (see: bifurc requests list)"));
+        assert_eq!(out.unwrap_err(), CliError::not_found("no request \"nope\" (see: bifurc requests list)"));
         let argv = ["requests", "show", "Hello", "--type", "rest"];
         let (out, _) = run(&argv, saved_requests(), |c| requests(c, sub(&argv)));
-        assert_eq!(out.unwrap_err(), CliError::msg("no request \"Hello\" (see: bifurc requests list)"));
+        assert_eq!(out.unwrap_err(), CliError::not_found("no request \"Hello\" (see: bifurc requests list)"));
         let argv = ["requests", "show"];
         let (out, _) = run(&argv, vec![], |c| requests(c, sub(&argv)));
-        assert_eq!(out.unwrap_err(), CliError::msg("missing request id or name"));
+        assert_eq!(out.unwrap_err(), CliError::usage("missing request id or name"));
+    }
+
+    #[test]
+    fn a_misspelt_name_suggests_the_close_ones() {
+        let argv = ["requests", "show", "Logn"];
+        let (out, _) = run(&argv, foldered(), |c| requests(c, sub(&argv)));
+        assert_eq!(out.unwrap_err(), CliError::not_found("no request \"Logn\" — did you mean \"Login\"?"));
+    }
+
+    fn show_of(wanted: &str, extra: &[&str]) -> (Result<String>, Vec<(String, Value)>) {
+        let mut answers = foldered();
+        answers[1] = (
+            "entity.list:requests",
+            listing(json!([{"id": "mvbzxzympjvgk", "name": "Get orders", "method": "GET", "folderId": "f3",
+                "url": "{{baseUrl}}/orders.json",
+                "headers": {"Authorization": "Bearer abcdef", "Content-Type": "application/json"},
+                "body": "{\"a\":1,\"b\":\"two\",\"c\":[1,2,3]}", "preScript": "x", "testScript": "y"}])),
+        );
+        answers.push(("env.resolveText", Ok(json!({"text": "resolved"}))));
+        let argv = [&["requests", "show", wanted], extra].concat();
+        run(&argv, answers, |c| requests(c, sub(&argv)))
+    }
+
+    #[test]
+    fn show_is_a_compact_summary_of_what_applies() {
+        assert_eq!(
+            show_of("get orders", &[]).0.unwrap(),
+            "GET {{baseUrl}}/orders.json\n\
+             rest · orders/ · id mvbzxzympjvgk\n\
+             headers  Authorization, Content-Type\n\
+             body     29B json\n\
+             scripts  pre, test"
+        );
+        let argv = ["requests", "show", "Feed"];
+        let (out, _) = run(&argv, saved_requests(), |c| requests(c, sub(&argv)));
+        assert_eq!(out.unwrap(), "WS ws://x/feed\nwebsocket · id k1");
+    }
+
+    #[test]
+    fn show_curl_resolves_variables_masks_secrets_and_is_for_rest_only() {
+        let (out, calls) = show_of("Get orders", &["--curl"]);
+        assert_eq!(
+            out.unwrap(),
+            "curl resolved -H 'Authorization: ••••(8)' -H 'Content-Type: resolved' --data-raw resolved"
+        );
+        assert_eq!(
+            payloads(&calls, "env.resolveText")[0],
+            json!({"workspaceId": "w1", "text": "{{baseUrl}}/orders.json"})
+        );
+        let argv = ["requests", "show", "Hello", "--curl"];
+        let (out, _) = run(&argv, saved_requests(), |c| requests(c, sub(&argv)));
+        assert_eq!(out.unwrap_err(), CliError::usage("only REST requests print as curl"));
     }
 
     #[test]
@@ -986,7 +1341,7 @@ mod tests {
             ),
             (
                 vec!["requests", "create", "-t", "ws", "--url", "ws://x", "-d", "hi"],
-                "--body is not an option of a websocket request (see: bifurc requests --help)",
+                "--data is not an option of a websocket request (see: bifurc requests --help)",
             ),
             (vec!["requests", "create", "--url", "u", "-H", "nocolon"], "header \"nocolon\" must be \"name: value\""),
             (
@@ -995,7 +1350,7 @@ mod tests {
             ),
         ] {
             let (out, calls) = run(&argv, saved_requests(), |c| requests(c, sub(&argv)));
-            assert_eq!(out.unwrap_err(), CliError::msg(message), "{argv:?}");
+            assert_eq!(out.unwrap_err(), CliError::usage(message), "{argv:?}");
             assert!(calls.is_empty(), "{argv:?}");
         }
         let argv = ["requests", "create", "--url", "u", "--body-file", "/definitely/not/here"];
@@ -1025,7 +1380,7 @@ mod tests {
 
         let argv = ["requests", "create", "--curl", "curl http://x", "--url", "http://y"];
         let (out, calls) = run(&argv, answers, |c| requests(c, sub(&argv)));
-        assert_eq!(out.unwrap_err(), CliError::msg("--curl already says where the request goes; leave out the URL"));
+        assert_eq!(out.unwrap_err(), CliError::usage("--curl already says where the request goes; leave out the URL"));
         assert!(calls.is_empty());
     }
 
@@ -1063,7 +1418,7 @@ mod tests {
         let (out, calls) = run(&argv, saved_requests(), |c| requests(c, sub(&argv)));
         assert_eq!(
             out.unwrap_err(),
-            CliError::msg("--query is not an option of a grpc request (see: bifurc requests --help)")
+            CliError::usage("--query is not an option of a grpc request (see: bifurc requests --help)")
         );
         assert!(payloads(&calls, "entity.update").is_empty());
 
@@ -1071,7 +1426,7 @@ mod tests {
         let (out, _) = run(&argv, saved_requests(), |c| requests(c, sub(&argv)));
         assert_eq!(
             out.unwrap_err(),
-            CliError::msg(
+            CliError::usage(
                 "nothing to change: give at least one option of a grpc request (see: bifurc requests --help)"
             )
         );
@@ -1084,14 +1439,14 @@ mod tests {
         let mut answers = saved_requests();
         answers.push(("request.send", Ok(response)));
         let (out, calls) = run(&argv, answers, |c| requests(c, sub(&argv)));
-        assert_eq!(out.unwrap(), "HTTP 200  (3 ms)\na: b\n\nok");
+        assert_eq!(out.unwrap(), "200 OK · 3ms · 2B text");
         assert_eq!(payloads(&calls, "request.send"), [json!({"workspaceId": "w1", "id": "r1"})]);
 
         let argv = ["requests", "send", "Hello"];
         let mut answers = saved_requests();
         answers.push(("grpc.send", Ok(json!({"ok": true, "status": 0, "durationMs": 3, "responses": ["{}"]}))));
         let (out, calls) = run(&argv, answers, |c| requests(c, sub(&argv)));
-        assert_eq!(out.unwrap(), "gRPC OK  (3 ms)\n\n{}");
+        assert_eq!(out.unwrap(), "gRPC OK · 3ms · 1 message");
         assert_eq!(payloads(&calls, "grpc.send"), [json!({"workspaceId": "w1", "id": "g1"})]);
 
         for (wanted, command) in [("q1", "graphql.send"), ("s1", "soap.send")] {
@@ -1099,7 +1454,7 @@ mod tests {
             let mut answers = saved_requests();
             answers.push((command, Ok(json!({"status": 200, "durationMs": 1, "headers": {}, "body": "plain"}))));
             let (out, calls) = run(&argv, answers, |c| requests(c, sub(&argv)));
-            assert_eq!(out.unwrap(), "HTTP 200  (1 ms)\n\nplain");
+            assert_eq!(out.unwrap(), "200 OK · 1ms · 5B text");
             assert_eq!(payloads(&calls, command), [json!({"workspaceId": "w1", "id": wanted})]);
         }
     }
@@ -1110,11 +1465,135 @@ mod tests {
         let (out, calls) = run(&argv, saved_requests(), |c| requests(c, sub(&argv)));
         assert_eq!(
             out.unwrap_err(),
-            CliError::msg(
+            CliError::usage(
                 "a saved request is sent as it is saved, without --method; change it with: bifurc requests update"
             )
         );
         assert!(payloads(&calls, "request.send").is_empty());
+    }
+
+    /// Send `argv` with the saved requests, the engine answering a plain 200 to `command`: the result and the
+    /// payload the engine got.
+    fn send_with(argv: &[&str], command: &'static str) -> (Result<String>, Vec<Value>) {
+        let mut answers = saved_requests();
+        answers.push(("config.get", Ok(config())));
+        answers.push((
+            "entity.list:environments",
+            listing(json!([{"id": "__global__", "name": "Global"}, {"id": "e9", "name": "Staging"}])),
+        ));
+        answers.push((command, Ok(json!({"status": 200, "durationMs": 1, "headers": {}, "body": ""}))));
+        let (out, calls) = run(argv, answers, |c| requests(c, sub(argv)));
+        (out, payloads(&calls, command))
+    }
+
+    #[test]
+    fn var_and_env_ride_along_with_a_saved_or_an_inline_send() {
+        let (out, sent) = send_with(
+            &["requests", "send", "r1", "--var", "a=1", "--var", "b=x=y", "--env", "staging"],
+            "request.send",
+        );
+        out.unwrap();
+        assert_eq!(
+            sent,
+            [json!({"workspaceId": "w1", "id": "r1", "variables": {"a": "1", "b": "x=y"}, "environmentId": "e9"})]
+        );
+        let (out, sent) =
+            send_with(&["requests", "send", "--url", "http://x", "--var", "a=", "--env", "e9"], "request.send");
+        out.unwrap();
+        assert_eq!(sent[0]["variables"], json!({"a": ""}));
+        assert_eq!(sent[0]["environmentId"], "e9");
+        assert_eq!(sent[0]["request"]["url"], "http://x");
+    }
+
+    #[test]
+    fn a_bad_var_or_an_unknown_env_is_refused() {
+        for bad in ["novalue", "=x"] {
+            let (out, sent) = send_with(&["requests", "send", "r1", "--var", bad], "request.send");
+            assert_eq!(out.unwrap_err(), CliError::usage(format!("--var must be KEY=VALUE, not \"{bad}\"")));
+            assert!(sent.is_empty());
+        }
+        let (out, sent) = send_with(&["requests", "send", "r1", "--env", "nope"], "request.send");
+        assert_eq!(out.unwrap_err(), CliError::not_found("no environment \"nope\" (see: bifurc env list)"));
+        assert!(sent.is_empty());
+    }
+
+    #[test]
+    fn data_replaces_the_saved_body_of_each_type() {
+        for (id, command, field) in [
+            ("r1", "request.send", "body"),
+            ("s1", "soap.send", "body"),
+            ("q1", "graphql.send", "variables"),
+            ("g1", "grpc.send", "requestBody"),
+        ] {
+            let (out, sent) = send_with(&["requests", "send", id, "--data", "{\"n\":1}"], command);
+            out.unwrap();
+            assert_eq!(sent, [json!({"workspaceId": "w1", "id": id, "overrides": {field: "{\"n\":1}"}})]);
+        }
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("b.json").to_string_lossy().into_owned();
+        std::fs::write(&file, "from file").unwrap();
+        let at_file = format!("@{file}");
+        let (out, sent) = send_with(&["requests", "send", "r1", "-d", at_file.as_str()], "request.send");
+        out.unwrap();
+        assert_eq!(sent[0]["overrides"], json!({"body": "from file"}));
+    }
+
+    #[test]
+    fn patch_changes_fields_of_the_saved_or_given_json_body() {
+        // The saved body of `g1` is `{}`; two patches, the second one nested.
+        let (out, sent) =
+            send_with(&["requests", "send", "g1", "--patch", ".qty=2", "--patch", ".a.b=\"x\""], "grpc.send");
+        out.unwrap();
+        let body: Value = serde_json::from_str(sent[0]["overrides"]["requestBody"].as_str().unwrap()).unwrap();
+        assert_eq!(body, json!({"qty": 2, "a": {"b": "x"}}));
+        // Over the body `--data` gives, not the saved one.
+        let (out, sent) = send_with(&["requests", "send", "r1", "-d", "{\"a\":1}", "--patch", ".a=3"], "request.send");
+        out.unwrap();
+        assert_eq!(sent[0]["overrides"], json!({"body": "{\"a\":3}"}));
+        // A body that is not JSON.
+        let (out, sent) = send_with(&["requests", "send", "s1", "--patch", ".a=1"], "soap.send");
+        assert_eq!(out.unwrap_err(), CliError::usage("--patch needs a JSON body, and the body of \"Add\" is not JSON"));
+        assert!(sent.is_empty());
+    }
+
+    #[test]
+    fn output_options_are_refused_for_a_request_that_streams() {
+        for flag in [["--select", ".a"], ["--out", "f"], ["--expect-status", "200"]] {
+            let argv = ["requests", "send", "--type", "websocket", "--url", "ws://x", flag[0], flag[1]];
+            let (out, _) = run(&argv, saved_requests(), |c| requests(c, sub(&argv)));
+            assert_eq!(out.unwrap_err(), CliError::usage(format!("{} does not apply to a websocket request", flag[0])));
+        }
+        let argv = ["requests", "send", "--type", "websocket", "--url", "ws://x", "--quiet"];
+        let (out, _) = run(&argv, saved_requests(), |c| requests(c, sub(&argv)));
+        assert_eq!(out.unwrap_err(), CliError::usage("--quiet does not apply to a websocket request"));
+    }
+
+    #[test]
+    fn the_override_options_are_refused_where_they_do_not_apply() {
+        for (id, name) in [("k1", "websocket"), ("e1", "sse"), ("i1", "socketio"), ("m1", "mcp")] {
+            for option in [["--var", "a=1"], ["--env", "e9"], ["--patch", ".a=1"]] {
+                let (out, _) = send_with(&["requests", "send", id, option[0], option[1]], "request.send");
+                let message =
+                    format!("{} applies to rest, graphql, soap and grpc sends, not to a {name} request", option[0]);
+                assert_eq!(out.unwrap_err(), CliError::usage(message));
+            }
+        }
+        let argv = ["requests", "send", "--type", "websocket", "--url", "ws://x", "--var", "a=1"];
+        let (out, _) = run(&argv, saved_requests(), |c| requests(c, sub(&argv)));
+        assert!(out.is_err());
+        let (out, _) = send_with(&["requests", "send", "--url", "http://x", "--patch", ".a=1"], "request.send");
+        assert_eq!(
+            out.unwrap_err(),
+            CliError::usage("--patch changes a saved request's body; give the body with --data")
+        );
+        // Other describing options stay refused for a saved send.
+        let (out, _) = send_with(&["requests", "send", "r1", "--var", "a=1", "-H", "x: y"], "request.send");
+        assert_eq!(
+            out.unwrap_err(),
+            CliError::usage(
+                "a saved request is sent as it is saved, without --header; change it with: bifurc requests update"
+            )
+        );
     }
 
     #[test]
@@ -1122,7 +1601,7 @@ mod tests {
         let argv = ["requests", "send", "--url", "http://x", "-X", "put", "-H", "a: 1", "-d", "hi", "-w", "w3"];
         let response = json!({"status": 201, "durationMs": 1, "headers": {}, "body": ""});
         let (out, calls) = run(&argv, vec![("request.send", Ok(response))], |c| requests(c, sub(&argv)));
-        assert!(out.unwrap().starts_with("HTTP 201"));
+        assert!(out.unwrap().starts_with("201 Created"));
         assert_eq!(
             calls[0].1,
             json!({"workspaceId": "w3", "scripts": {},
@@ -1150,7 +1629,7 @@ mod tests {
         ];
         let reply = json!({"ok": true, "status": 0, "durationMs": 3, "metadata": {"m": "1"}, "responses": ["{}"]});
         let (out, calls) = run(&argv, vec![("grpc.send", Ok(reply))], |c| requests(c, sub(&argv)));
-        assert_eq!(out.unwrap(), "gRPC OK  (3 ms)\nm: 1\n\n{}");
+        assert_eq!(out.unwrap(), "gRPC OK · 3ms · 1 message");
         assert_eq!(
             calls[0],
             (
@@ -1188,24 +1667,27 @@ mod tests {
         let mut answers = saved_requests();
         answers.push(("request.send", Ok(response)));
         let (out, _) = run(&argv, answers, |c| requests(c, sub(&argv)));
-        assert_eq!(out.unwrap_err(), CliError::Failed("HTTP 200  (3 ms)\n\n\nFAIL  is 201 — got 200".into()));
+        assert_eq!(
+            out.unwrap_err(),
+            CliError::Failed("200 OK · 3ms · 0B · tests 0/1 ✗\n✗ test \"is 201\": got 200".into())
+        );
 
         let response = json!({"status": 200, "durationMs": 3, "headers": {}, "body": "", "postScriptError": "boom",
                               "tests": [{"name": "ok", "passed": true}]});
         let mut answers = saved_requests();
         answers.push(("request.send", Ok(response)));
         let (out, _) = run(&argv, answers, |c| requests(c, sub(&argv)));
-        assert!(matches!(out.unwrap_err(), CliError::Failed(report) if report.contains("post-script error: boom")));
+        assert!(matches!(out.unwrap_err(), CliError::Failed(report) if report.contains("✗ post-script error: boom")));
     }
 
     #[test]
-    fn a_failed_grpc_call_is_an_error_and_with_json_a_failed_report() {
+    fn a_failed_grpc_call_fails_the_command_with_its_reason() {
         let reply = json!({"ok": false, "error": "UNAVAILABLE: down", "status": 14});
         let argv = ["requests", "send", "g1"];
         let mut answers = saved_requests();
         answers.push(("grpc.send", Ok(reply.clone())));
         let (out, _) = run(&argv, answers, |c| requests(c, sub(&argv)));
-        assert_eq!(out.unwrap_err(), CliError::msg("UNAVAILABLE: down"));
+        assert_eq!(out.unwrap_err(), CliError::Failed("gRPC 14 UNAVAILABLE · 0ms\n✗ UNAVAILABLE: down".into()));
 
         let argv = ["requests", "send", "g1", "--json"];
         let mut answers = saved_requests();
@@ -1220,12 +1702,324 @@ mod tests {
         let (out, calls) = run(&argv, saved_requests(), |c| requests(c, sub(&argv)));
         assert_eq!(
             out.unwrap_err(),
-            CliError::msg("missing request id or name, or --url for a request that is not saved")
+            CliError::usage("missing request id or name, or --url for a request that is not saved")
         );
         assert!(calls.is_empty());
         let argv = ["requests", "frob"];
         let (out, _) = run(&argv, vec![], |c| requests(c, sub(&argv)));
-        assert_eq!(out.unwrap_err(), CliError::msg("unknown: requests frob (see: bifurc requests --help)"));
+        assert_eq!(out.unwrap_err(), CliError::usage("unknown: requests frob (see: bifurc requests --help)"));
+    }
+
+    /// Send the saved REST request `r1` with `extra` options, the engine answering `response`: the result and
+    /// the bytes `--raw` handed out.
+    fn send_r1(extra: &[&str], response: Value) -> (Result<String>, Option<Vec<u8>>) {
+        let mut argv = vec!["requests", "send", "r1"];
+        argv.extend(extra);
+        let mut answers = saved_requests();
+        answers.push(("request.send", Ok(response)));
+        let raw = std::cell::RefCell::new(None);
+        let (out, _) = run(&argv, answers, |c| {
+            let out = requests(c, sub(&argv));
+            *raw.borrow_mut() = c.raw.take();
+            out
+        });
+        (out, raw.into_inner())
+    }
+
+    /// What `request.send` answers: the body is base64 as the engine sends it.
+    fn reply(status: u16, headers: Value, body: &[u8], tests: Value) -> Value {
+        use base64::Engine as _;
+        json!({"status": status, "durationMs": 12, "headers": headers,
+               "body": base64::engine::general_purpose::STANDARD.encode(body), "tests": tests})
+    }
+
+    fn json_reply(body: &str) -> Value {
+        reply(200, json!({"Content-Type": "application/json"}), body.as_bytes(), json!([]))
+    }
+
+    /// `requests send r1` with `extra`, the engine answering `response`: the result and the payloads of
+    /// `session.setVariables`.
+    fn extract_with(extra: &[&str], response: Value) -> (Result<String>, Vec<Value>) {
+        let mut argv = vec!["requests", "send", "r1"];
+        argv.extend(extra);
+        let mut answers = saved_requests();
+        answers.push(("request.send", Ok(response)));
+        answers.push(("session.setVariables", Ok(json!({"ok": true}))));
+        let (out, calls) = run(&argv, answers, |c| requests(c, sub(&argv)));
+        (out, payloads(&calls, "session.setVariables"))
+    }
+
+    #[test]
+    fn extract_keeps_values_as_session_variables_and_says_so_masked_when_secret() {
+        let body = r#"{"cart":{"id":"c_91","n":2},"token":"abcdef"}"#;
+        let (out, stored) = extract_with(
+            &[
+                "--extract",
+                "cartId=.cart.id",
+                "--extract",
+                "n=.cart.n",
+                "--extract",
+                "authToken=.token",
+                "--extract",
+                "code=status",
+            ],
+            json_reply(body),
+        );
+        let out = out.unwrap();
+        assert_eq!(out.lines().nth(1).unwrap(), "extracted cartId=c_91 n=2 authToken=••••(6) code=200");
+        assert_eq!(stored, [json!({"variables": {"cartId": "c_91", "n": "2", "authToken": "abcdef", "code": "200"}})]);
+        let (out, _) = extract_with(&["--extract", "id=.id", "--json"], json_reply(r#"{"id":"x"}"#));
+        assert_eq!(serde_json::from_str::<Value>(&out.unwrap()).unwrap()["extracted"], json!({"id": "x"}));
+    }
+
+    #[test]
+    fn an_extract_path_that_finds_nothing_fails_with_a_reason() {
+        let (out, stored) = extract_with(&["--extract", "id=.nope"], json_reply(r#"{"id":1}"#));
+        let Err(CliError::Failed(text)) = out else { panic!("{out:?}") };
+        assert_eq!(text.lines().nth(1).unwrap(), "✗ extract id: .nope matched nothing");
+        assert!(stored.is_empty());
+        let (out, _) = extract_with(&["--extract", "id"], json_reply("{}"));
+        assert_eq!(out.unwrap_err().code(), 2);
+    }
+
+    #[test]
+    fn fresh_session_asks_for_a_throwaway_jar_of_a_rest_send() {
+        let (out, sent) = send_with(&["requests", "send", "r1", "--fresh-session"], "request.send");
+        out.unwrap();
+        assert_eq!(sent[0]["freshJar"], true);
+    }
+
+    #[test]
+    fn the_default_output_is_one_summary_line() {
+        let tests = json!([{"name": "a", "passed": true}, {"name": "b", "passed": true}]);
+        let (out, _) = send_r1(&[], reply(200, json!({"content-type": "application/json"}), b"{\"id\":1}", tests));
+        assert_eq!(out.unwrap(), "200 OK · 12ms · 8B json · tests 2/2 ✓");
+        let (out, _) = send_r1(&[], reply(201, json!({"content-type": "application/json"}), b"{\"id\":77}", json!([])));
+        assert_eq!(out.unwrap(), "201 Created · 12ms · 9B json");
+        let (out, _) = send_r1(&[], reply(299, json!({}), b"", json!([])));
+        assert_eq!(out.unwrap(), "299 · 12ms · 0B");
+    }
+
+    #[test]
+    fn an_error_status_adds_up_to_384_bytes_of_the_body() {
+        let body = format!("{{\"error\":\"{}\"}}", "x".repeat(600));
+        let (out, _) =
+            send_r1(&[], reply(422, json!({"content-type": "application/json"}), body.as_bytes(), json!([])));
+        let out = out.unwrap();
+        let lines: Vec<&str> = out.lines().collect();
+        assert_eq!(lines[0], "422 Unprocessable Entity · 12ms · 612B json");
+        assert_eq!(lines[1], &body[..384]);
+        assert_eq!(lines[2], "… 228B truncated — use --out or --select");
+        assert_eq!(lines.len(), 3);
+    }
+
+    #[test]
+    fn a_reauthenticated_send_says_so_and_a_failed_login_is_the_reason() {
+        let mut ok = reply(200, json!({"content-type": "text/plain"}), b"hi", json!([]));
+        ok["reauthenticated"] = json!(true);
+        let (out, _) = send_r1(&[], ok.clone());
+        assert_eq!(out.unwrap(), "200 OK · 12ms · 2B text · ↻ re-authenticated");
+        let (out, _) = send_r1(&["--json"], ok);
+        assert_eq!(serde_json::from_str::<Value>(&out.unwrap()).unwrap()["reauthenticated"], true);
+        let mut refused = reply(401, json!({"content-type": "text/plain"}), b"no", json!([]));
+        refused["reauthentication"] = json!({"ok": false, "error": "the login request answered 500"});
+        let (out, _) = send_r1(&[], refused);
+        assert_eq!(
+            out.unwrap_err(),
+            CliError::Failed(
+                "401 Unauthorized · 12ms · 2B text
+✗ re-authentication failed: the login request answered 500
+no"
+                .into()
+            )
+        );
+    }
+
+    #[test]
+    fn a_failed_test_fails_with_its_reason_and_the_body_preview() {
+        let tests = json!([{"name": "is 201", "passed": false, "error": "got 200"}]);
+        let (out, _) = send_r1(&[], reply(200, json!({"content-type": "text/plain"}), b"hi", tests));
+        assert_eq!(
+            out.unwrap_err(),
+            CliError::Failed("200 OK · 12ms · 2B text · tests 0/1 ✗\n✗ test \"is 201\": got 200\nhi".into())
+        );
+    }
+
+    #[test]
+    fn body_prints_the_text_cut_at_max_body_and_zero_means_all() {
+        let text = "a".repeat(30);
+        let ok = reply(200, json!({"content-type": "text/plain"}), text.as_bytes(), json!([]));
+        let (out, _) = send_r1(&["--body"], ok.clone());
+        assert_eq!(out.unwrap(), format!("200 OK · 12ms · 30B text\n{text}"));
+        let (out, _) = send_r1(&["--body", "--max-body", "10"], ok.clone());
+        let cut = format!("200 OK · 12ms · 30B text\n{}\n… 20B truncated — use --out or --select", "a".repeat(10));
+        assert_eq!(out.unwrap(), cut);
+        let (out, _) = send_r1(&["--body", "--max-body", "0"], ok.clone());
+        assert_eq!(out.unwrap(), format!("200 OK · 12ms · 30B text\n{text}"));
+        let (out, _) = send_r1(&["--body", "--max-body", "lots"], ok);
+        assert_eq!(out.unwrap_err(), CliError::usage("--max-body must be a whole number, not \"lots\""));
+    }
+
+    #[test]
+    fn select_prints_only_the_values_picked() {
+        let (out, _) = send_r1(&["--select", ".items[].id"], json_reply("{\"items\":[{\"id\":1},{\"id\":\"b\"}]}"));
+        assert_eq!(out.unwrap(), "1\nb");
+        let html = reply(200, json!({"content-type": "text/html"}), b"<p>", json!([]));
+        let (out, _) = send_r1(&["--select", ".a"], html);
+        assert_eq!(out.unwrap_err(), CliError::msg("--select needs a JSON body, but this response is html"));
+        // An error status shows the summary: the values of an error body are not what was asked for.
+        let (out, _) = send_r1(&["--select", ".a"], reply(404, json!({}), b"{\"a\":1}", json!([])));
+        assert_eq!(out.unwrap(), "404 Not Found · 12ms · 7B json\n{\"a\":1}");
+    }
+
+    #[test]
+    fn expect_status_and_expect_fail_with_exit_1_and_a_reason() {
+        let (out, _) = send_r1(&["--expect-status", "200"], json_reply("{}"));
+        assert_eq!(out.unwrap(), "200 OK · 12ms · 2B json");
+        let (out, _) = send_r1(&["--expect-status", "201"], json_reply("{}"));
+        assert_eq!(
+            out.unwrap_err(),
+            CliError::Failed("200 OK · 12ms · 2B json\n✗ expect status == 201, got 200\n{}".into())
+        );
+        let (out, _) = send_r1(&["--expect", "status < 300", "--expect", ".n >= 2"], json_reply("{\"n\":3}"));
+        assert!(out.is_ok());
+        let (out, _) = send_r1(&["--expect", "status < 300", "--expect", ".n >= 2"], json_reply("{\"n\":1}"));
+        assert!(matches!(out.unwrap_err(), CliError::Failed(r) if r.contains("✗ expect .n >= 2, got 1")));
+        let text = reply(200, json!({"content-type": "text/plain"}), b"x", json!([]));
+        let (out, _) = send_r1(&["--expect", ".n == 1"], text.clone());
+        assert!(
+            matches!(out.unwrap_err(), CliError::Failed(r) if r.contains("✗ expect .n == 1, but the body is not JSON"))
+        );
+        let (out, _) = send_r1(&["--expect", "status == 200"], text);
+        assert!(out.is_ok());
+        let (out, _) = send_r1(&["--expect", "nonsense"], json_reply("{}"));
+        assert!(matches!(out.unwrap_err(), CliError::Exit(2, _)));
+    }
+
+    #[test]
+    fn headers_are_listed_with_secrets_masked() {
+        let headers =
+            json!({"Content-Type": "text/plain", "Authorization": "Bearer abc", "Set-Cookie": "sid=1; Path=/"});
+        let (out, _) = send_r1(&["--headers"], reply(200, headers.clone(), b"", json!([])));
+        assert_eq!(
+            out.unwrap(),
+            "200 OK · 12ms · 0B text\nContent-Type: text/plain\nAuthorization: ••••(10)\nSet-Cookie: ••••(13)"
+        );
+        // Not a terminal here, so --reveal is ignored.
+        let (out, _) = send_r1(&["--headers", "--reveal"], reply(200, headers, b"", json!([])));
+        assert!(out.unwrap().contains("Authorization: ••••(10)"));
+    }
+
+    #[test]
+    fn json_is_the_contract_object() {
+        let tests = json!([{"name": "a", "passed": false, "error": "no"}]);
+        let ok = reply(200, json!({"Content-Type": "application/json", "X-Token": "t"}), b"{\"a\":[1,2]}", tests);
+        let (out, _) = send_r1(&["--json", "--headers", "--select", ".a[]", "--expect", ".a | length == 2"], ok);
+        let Err(CliError::Failed(out)) = out else { panic!("a failed test fails the command") };
+        let out: Value = serde_json::from_str(&out).unwrap();
+        assert_eq!(
+            out,
+            json!({"schemaVersion": 1, "status": 200, "statusText": "OK", "durationMs": 12, "size": 11,
+                   "contentType": "application/json",
+                   "tests": [{"name": "a", "passed": false, "error": "no"}],
+                   "body": "{\"a\":[1,2]}", "bodyTruncated": false, "error": "test \"a\": no",
+                   "headers": {"Content-Type": "application/json", "X-Token": "••••(1)"}, "selected": [1, 2],
+                   "expectations": [{"text": ".a | length == 2", "passed": true, "error": null}]})
+        );
+        let (out, _) = send_r1(&["--json"], json_reply("{}"));
+        let out: Value = serde_json::from_str(&out.unwrap()).unwrap();
+        assert_eq!((&out["body"], &out["error"], out.get("headers")), (&Value::Null, &Value::Null, None));
+    }
+
+    #[test]
+    fn raw_hands_out_exactly_the_body_bytes_and_quiet_prints_nothing() {
+        let bytes: &[u8] = &[0, 159, 146, 150];
+        let (out, raw) = send_r1(&["--raw"], reply(200, json!({}), bytes, json!([])));
+        assert_eq!((out.unwrap(), raw.as_deref()), (String::new(), Some(bytes)));
+        // A failure is reported on stderr, so that stdout stays the body.
+        let failing = reply(200, json!({}), b"x", json!([{"name": "t", "passed": false}]));
+        let (out, raw) = send_r1(&["--raw"], failing.clone());
+        assert_eq!((out.unwrap_err(), raw), (CliError::msg("✗ test \"t\""), Some(b"x".to_vec())));
+        let (out, raw) = send_r1(&["--quiet"], json_reply("{}"));
+        assert_eq!((out.unwrap(), raw), (String::new(), None));
+        let (out, _) = send_r1(&["--quiet"], failing);
+        assert_eq!(out.unwrap_err(), CliError::Failed(String::new()));
+    }
+
+    #[test]
+    fn out_saves_the_whole_body_and_a_binary_body_is_never_printed() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("body.bin").to_string_lossy().into_owned();
+        let bytes: Vec<u8> = (0..=255u8).cycle().take(4300).collect();
+        let binary = reply(200, json!({"content-type": "application/octet-stream"}), &bytes, json!([]));
+        let (out, _) = send_r1(&["--out", &file, "--body"], binary);
+        assert_eq!(
+            out.unwrap(),
+            format!("200 OK · 12ms · 4.2KB binary\nbinary body not shown (4.2KB) — use --out\nsaved {file} (4.2KB)")
+        );
+        assert_eq!(std::fs::read(&file).unwrap(), bytes);
+        // Not even a failure shows it.
+        let (out, _) = send_r1(&[], reply(500, json!({}), &[0xff, 0xfe, 0xfd], json!([])));
+        assert_eq!(out.unwrap(), "500 Internal Server Error · 12ms · 3B binary");
+    }
+
+    #[test]
+    fn graphql_and_soap_answer_in_the_same_format() {
+        for (id, command) in [("q1", "graphql.send"), ("s1", "soap.send")] {
+            let argv = ["requests", "send", id, "--expect-status", "200"];
+            let mut answers = saved_requests();
+            let headers = json!({"content-type": "application/json"});
+            answers.push((command, Ok(json!({"status": 200, "durationMs": 4, "headers": headers, "body": "{}"}))));
+            let (out, _) = run(&argv, answers, |c| requests(c, sub(&argv)));
+            assert_eq!(out.unwrap(), "200 OK · 4ms · 2B json", "{command}");
+        }
+    }
+
+    #[test]
+    fn grpc_summarises_messages_and_names_a_failed_status() {
+        let two = json!({"ok": true, "status": 0, "durationMs": 12, "responses": ["{\"a\":1}", "{}"]});
+        let argv = ["requests", "send", "g1", "--json"];
+        let mut answers = saved_requests();
+        answers.push(("grpc.send", Ok(two.clone())));
+        let (out, _) = run(&argv, answers, |c| requests(c, sub(&argv)));
+        let out: Value = serde_json::from_str(&out.unwrap()).unwrap();
+        assert_eq!((&out["statusText"], &out["status"], &out["size"]), (&json!("OK"), &json!(0), &json!(12)));
+
+        let argv = ["requests", "send", "g1", "--body"];
+        let mut answers = saved_requests();
+        answers.push(("grpc.send", Ok(two)));
+        let (out, _) = run(&argv, answers, |c| requests(c, sub(&argv)));
+        assert_eq!(out.unwrap(), "gRPC OK · 12ms · 2 messages\n[{\"a\":1},{}]");
+
+        let argv = ["requests", "send", "g1"];
+        let mut answers = saved_requests();
+        let failed = json!({"ok": false, "status": 5, "statusMessage": "no such user", "durationMs": 9});
+        answers.push(("grpc.send", Ok(failed)));
+        let (out, _) = run(&argv, answers, |c| requests(c, sub(&argv)));
+        assert_eq!(out.unwrap_err(), CliError::Failed("gRPC 5 NOT_FOUND · 9ms\n✗ no such user".into()));
+    }
+
+    #[test]
+    fn data_is_the_request_body_and_at_file_reads_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let file = dir.path().join("body.json").to_string_lossy().into_owned();
+        std::fs::write(&file, "{\"a\":1}").unwrap();
+        let at_file = format!("@{file}");
+        let response = json!({"status": 200, "durationMs": 1, "headers": {}, "body": ""});
+        for (flag, value, expected) in [
+            ("--data", "hi", "hi"),
+            ("-d", "hi", "hi"),
+            ("--body-file", file.as_str(), "{\"a\":1}"),
+            ("--data", at_file.as_str(), "{\"a\":1}"),
+        ] {
+            let argv = ["requests", "send", "--url", "http://x", flag, value, "-w", "w3"];
+            let (_, calls) = run(&argv, vec![("request.send", Ok(response.clone()))], |c| requests(c, sub(&argv)));
+            assert_eq!(calls[0].1["request"]["body"], expected, "{flag}");
+        }
+        // `--body` is still the request body outside of a send.
+        let argv = ["requests", "create", "--url", "http://x", "--body", "b"];
+        let (_, calls) = run(&argv, saved_requests(), |c| requests(c, sub(&argv)));
+        assert_eq!(payloads(&calls, "entity.create")[0]["entity"]["body"], "b");
     }
 
     fn socket(status: &str, messages: Value) -> Result<Value> {
@@ -1285,7 +2079,7 @@ mod tests {
 
         let argv = ["requests", "send", "k1", "--wait", "soon"];
         let (out, _) = run(&argv, saved_requests(), |c| requests(c, sub(&argv)));
-        assert_eq!(out.unwrap_err(), CliError::msg("--wait must be a number of seconds, not \"soon\""));
+        assert_eq!(out.unwrap_err(), CliError::usage("--wait must be a number of seconds, not \"soon\""));
     }
 
     #[test]

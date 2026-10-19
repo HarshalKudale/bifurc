@@ -1,6 +1,5 @@
 //! Output formatting: tables, JSON, and the human renderings of a few payloads.
 
-use base64::Engine as _;
 use serde_json::Value;
 
 use crate::discovery::RuntimeInfo;
@@ -67,45 +66,19 @@ pub fn table(rows: &[Value], columns: &[&str]) -> String {
     lines.join("\n")
 }
 
-/// A saved or unsaved request's response as printed by `requests send`.
-pub fn describe_send(result: &Value) -> String {
-    let mut lines =
-        vec![format!("HTTP {}  ({} ms)", js_template(result.get("status")), js_template(result.get("durationMs")))];
-    if let Some(headers) = result.get("headers").and_then(Value::as_object) {
-        lines.extend(headers.iter().map(|(k, v)| format!("{k}: {}", js_template(Some(v)))));
-    }
-    let body = result.get("body").and_then(Value::as_str).unwrap_or_default();
-    let decoded =
-        base64::engine::general_purpose::STANDARD_NO_PAD.decode(body.trim_end_matches('=')).unwrap_or_default();
-    lines.push(String::new());
-    lines.push(String::from_utf8_lossy(&decoded).into_owned());
-    for (key, label) in [("preScriptError", "pre-script error"), ("postScriptError", "post-script error")] {
-        if let Some(message) = result.get(key).and_then(Value::as_str).filter(|m| !m.is_empty()) {
-            lines.push(String::new());
-            lines.push(format!("{label}: {message}"));
-        }
-    }
-    for test in result.get("tests").and_then(Value::as_array).into_iter().flatten() {
-        let passed = test.get("passed").and_then(Value::as_bool).unwrap_or(false);
-        let name = js_template(test.get("name"));
-        let error = match test.get("error").and_then(Value::as_str).filter(|e| !e.is_empty()) {
-            Some(error) => format!(" — {error}"),
-            None => String::new(),
-        };
-        lines.push(format!("{}  {name}{error}", if passed { "PASS" } else { "FAIL" }));
-    }
-    lines.join("\n")
-}
-
-/// The response of a GraphQL or SOAP request as printed by `requests send`: its body is text already.
-pub fn describe_text_response(result: &Value) -> String {
-    let mut lines =
-        vec![format!("HTTP {}  ({} ms)", js_template(result.get("status")), js_template(result.get("durationMs")))];
-    if let Some(headers) = result.get("headers").and_then(Value::as_object) {
-        lines.extend(headers.iter().map(|(k, v)| format!("{k}: {}", js_template(Some(v)))));
-    }
-    lines.push(String::new());
-    lines.push(result.get("body").and_then(Value::as_str).unwrap_or_default().to_string());
+/// Rows of cells as columns padded to the widest cell, two spaces apart, with no heading.
+pub fn aligned(cells: &[Vec<String>]) -> String {
+    let columns = cells.iter().map(Vec::len).max().unwrap_or(0);
+    let widths: Vec<usize> =
+        (0..columns).map(|i| cells.iter().filter_map(|row| row.get(i)).map(|c| width(c)).max().unwrap_or(0)).collect();
+    let lines: Vec<String> = cells
+        .iter()
+        .map(|row| {
+            let padded: Vec<String> =
+                row.iter().enumerate().map(|(i, c)| format!("{c}{}", " ".repeat(widths[i] - width(c)))).collect();
+            padded.join("  ").trim_end().to_string()
+        })
+        .collect();
     lines.join("\n")
 }
 
@@ -261,26 +234,6 @@ pub fn describe_stream(snapshot: &Value) -> String {
     lines.join("\n")
 }
 
-/// A gRPC result as printed by `requests send`: the status line, the metadata, then each response.
-pub fn describe_grpc(result: &Value) -> String {
-    let status = result.get("status").and_then(Value::as_i64).unwrap_or(0);
-    let message = result.get("statusMessage").and_then(Value::as_str).unwrap_or_default();
-    let mut lines = vec![format!(
-        "gRPC {}{}  ({} ms)",
-        if status == 0 { "OK".to_string() } else { format!("status {status}") },
-        if status == 0 || message.is_empty() { String::new() } else { format!(" {message}") },
-        js_template(result.get("durationMs"))
-    )];
-    if let Some(metadata) = result.get("metadata").and_then(Value::as_object) {
-        lines.extend(metadata.iter().map(|(k, v)| format!("{k}: {}", js_template(Some(v)))));
-    }
-    for response in result.get("responses").and_then(Value::as_array).into_iter().flatten() {
-        lines.push(String::new());
-        lines.push(js_string(response));
-    }
-    lines.join("\n")
-}
-
 /// The services and methods a server reflects, as `grpc reflect` prints them.
 pub fn describe_reflection(result: &Value) -> String {
     let mut lines = Vec::new();
@@ -305,28 +258,127 @@ pub fn describe_reflection(result: &Value) -> String {
     lines.join("\n")
 }
 
-/// The four lines of `bifurc status`.
-pub fn describe_status(engine: &RuntimeInfo, server: &Value, active_workspace: &Value) -> String {
-    let proxy = if server.get("running").is_some_and(truthy) {
-        format!("listening on {}", js_template(server.get("port")))
-    } else {
-        match server.get("error").filter(|e| truthy(e)) {
-            Some(error) => format!("stopped ({})", js_string(error)),
-            None => "stopped".to_string(),
-        }
-    };
-    let workspace = match active_workspace {
-        Value::Object(w) => format!("{} ({})", js_template(w.get("name")), js_template(w.get("id"))),
-        other => js_string(other),
-    };
-    [
-        format!("engine     pid {}, {} {}, v{}", engine.pid, engine.transport, engine.address, engine.engine_version),
-        format!("data dir   {}", engine.data_dir),
-        format!("proxy      {proxy}"),
-        format!("workspace  {workspace}"),
-    ]
-    .join("\n")
+/// The answers `bifurc status` gathers; one that could not be had is `None` and its part is left out.
+pub struct StatusParts {
+    pub server: Option<Value>,
+    pub config: Option<Value>,
+    pub capture: Option<Value>,
+    pub cookies: Option<Value>,
+    /// `mocks.serveStatus`: the local mock servers that run.
+    pub mock_servers: Option<Value>,
+    /// `mail.status`: the local mail sink.
+    pub mail: Option<Value>,
+    /// `webhook.list`: the webhook receivers that run.
+    pub webhooks: Option<Value>,
+    /// `cassette.recordStatus`: the cassette being recorded, if any.
+    pub recording: Option<Value>,
+    /// `cassette.replayStatus`: the cassette being replayed, if any.
+    pub replaying: Option<Value>,
+    /// `approvals.list`: the calls a policy holds for a person.
+    pub approvals: Option<Value>,
+    /// `fault.list`: the fault rules in force.
+    pub faults: Option<Value>,
 }
+
+impl StatusParts {
+    /// How many held calls wait for a person (`None` when none do).
+    pub fn approvals_pending(&self) -> Option<usize> {
+        let n = self.approvals.as_ref()?.get("pending")?.as_array()?.len();
+        (n > 0).then_some(n)
+    }
+
+    /// The name of the environment in force (`none` when no one is), from the engine's own choice.
+    pub fn environment(&self) -> Option<String> {
+        let config = self.config.as_ref()?;
+        let id = config.get("activeEnvironmentId").filter(|id| !id.is_null());
+        let found = config.get("environments").and_then(Value::as_array).and_then(|all| {
+            all.iter().find(|e| e.get("id") == id && e.get("id").and_then(Value::as_str) != Some("__global__"))
+        });
+        Some(found.map_or("none".to_string(), |e| js_template(e.get("name"))))
+    }
+
+    /// How many mocks are enabled.
+    pub fn mocks(&self) -> Option<usize> {
+        let all = self.config.as_ref()?.get("mocks")?.as_array()?;
+        Some(all.iter().filter(|m| m.get("enabled").is_some_and(truthy)).count())
+    }
+
+    /// How many domains hold cookies.
+    pub fn cookies_domains(&self) -> Option<usize> {
+        Some(self.cookies.as_ref()?.get("domains")?.as_array()?.len())
+    }
+}
+
+/// The two lines of `bifurc status`.
+pub fn describe_status(engine: &RuntimeInfo, active_workspace: &Value, parts: &StatusParts) -> String {
+    let mut first = vec![format!("engine {}", engine.engine_version)];
+    if let Some(server) = &parts.server {
+        let port = parts.config.as_ref().and_then(|c| c.get("forwardProxyPort")).or(server.get("port"));
+        let state = if server.get("running").is_some_and(truthy) { "on" } else { "off" };
+        first.push(format!("proxy :{} {state}", js_template(port)));
+    }
+    if parts.config.is_some() {
+        first.push(format!(
+            "workspace {}",
+            match active_workspace {
+                Value::Object(w) => js_template(w.get("name")),
+                other => js_string(other),
+            }
+        ));
+    }
+    first.extend(parts.environment().map(|name| format!("env {name}")));
+    let mut second = Vec::new();
+    second.extend(parts.approvals_pending().map(|n| format!("approvals {n} pending")));
+    second.extend(parts.faults.as_ref().and_then(crate::faults::brief));
+    second.extend(parts.mocks().map(|n| format!("mocks {n} on")));
+    let ports: Vec<String> = parts
+        .mock_servers
+        .iter()
+        .flat_map(|s| s["servers"].as_array())
+        .flatten()
+        .map(|s| format!(":{}", js_template(s.get("port"))))
+        .collect();
+    if !ports.is_empty() {
+        second.push(format!("mock server {}", ports.join(",")));
+    }
+    if let Some(mail) = &parts.mail {
+        let port = js_template(mail.get("port"));
+        second.push(match (mail.get("running").is_some_and(truthy), mail.get("error").and_then(Value::as_str)) {
+            (true, _) => format!("mail :{port} ({})", js_template(mail.get("count"))),
+            (false, Some(reason)) => format!("mail :{port} off ({reason})"),
+            (false, None) => format!("mail :{port} off"),
+        });
+    }
+    let hooks: Vec<String> = parts
+        .webhooks
+        .iter()
+        .flat_map(|w| w["listeners"].as_array())
+        .flatten()
+        .map(|l| format!(":{}", js_template(l.get("port"))))
+        .collect();
+    if !hooks.is_empty() {
+        second.push(format!("webhooks {}", hooks.join(",")));
+    }
+    if let Some(rec) = parts.recording.as_ref().and_then(|r| r.get("recording")).filter(|r| r.is_object()) {
+        second.push(format!("recording {}", crate::record::summary(rec)));
+    }
+    if let Some(rep) = parts.replaying.as_ref().and_then(|r| r.get("replaying")).filter(|r| r.is_object()) {
+        second.push(format!("replaying {}", crate::replay::progress(rep)));
+    }
+    if let Some(capture) = &parts.capture {
+        let limit = capture.get("limit").and_then(Value::as_u64).unwrap_or(MAX_CAPTURE);
+        let paused = if capture.get("paused").is_some_and(truthy) { " paused" } else { "" };
+        second.push(format!("capture {}/{}{paused}", js_template(capture.get("matched")), limit));
+    }
+    second.extend(parts.cookies_domains().map(|n| format!("cookies {n} domain{}", if n == 1 { "" } else { "s" })));
+    [first, second].iter().filter(|line| !line.is_empty()).map(|line| line.join(" · ")).collect::<Vec<_>>().join(
+        "
+",
+    )
+}
+
+/// What the engine keeps of captured traffic, per workspace, when it does not say.
+const MAX_CAPTURE: u64 = 200;
 
 /// JavaScript truthiness.
 pub fn truthy(value: &Value) -> bool {
@@ -392,34 +444,6 @@ mod tests {
     fn json_is_two_space_pretty() {
         assert_eq!(json(&json!({"a": [1, 2], "b": {}})), "{\n  \"a\": [\n    1,\n    2\n  ],\n  \"b\": {}\n}");
         assert_eq!(json(&json!([])), "[]");
-    }
-
-    #[test]
-    fn a_send_result_prints_status_headers_decoded_body_and_tests() {
-        let result = json!({
-            "status": 200,
-            "durationMs": 12,
-            "headers": {"content-type": "text/plain", "x-n": 1},
-            "body": "aGVsbG8=",
-            "tests": [{"name": "ok", "passed": true}, {"name": "bad", "passed": false, "error": "nope"}],
-            "preScriptError": "pre boom",
-            "postScriptError": "post boom",
-        });
-        assert_eq!(
-            describe_send(&result),
-            "HTTP 200  (12 ms)\ncontent-type: text/plain\nx-n: 1\n\nhello\n\npre-script error: pre boom\n\n\
-             post-script error: post boom\nPASS  ok\nFAIL  bad — nope"
-        );
-    }
-
-    #[test]
-    fn a_text_response_prints_its_body_as_it_is() {
-        let result = json!({"status": 200, "durationMs": 7, "headers": {"content-type": "application/json"},
-                            "body": "{\"data\":{}}"});
-        assert_eq!(
-            describe_text_response(&result),
-            "HTTP 200  (7 ms)\ncontent-type: application/json\n\n{\"data\":{}}"
-        );
     }
 
     #[test]
@@ -526,30 +550,94 @@ boom"
         assert_eq!(describe_stream(&failed), "SSE error  http://h/e\nerror: HTTP 404 Not Found");
     }
 
-    #[test]
-    fn an_empty_body_still_leaves_the_blank_separator() {
-        let result = json!({"status": 204, "durationMs": 1, "headers": {}, "body": ""});
-        assert_eq!(describe_send(&result), "HTTP 204  (1 ms)\n\n");
+    fn none_again() -> StatusParts {
+        StatusParts {
+            server: None,
+            config: None,
+            capture: None,
+            cookies: None,
+            mock_servers: None,
+            mail: None,
+            webhooks: None,
+            recording: None,
+            replaying: None,
+            approvals: None,
+            faults: None,
+        }
     }
 
     #[test]
-    fn status_shows_engine_proxy_and_workspace() {
+    fn status_is_two_lines_and_leaves_out_what_could_not_be_had() {
         let info = RuntimeInfo::from_json(json!({
-            "pid": 5, "transport": "socket", "address": "addr", "dataDir": "/d", "engineVersion": "0.4.0"
+            "pid": 5, "transport": "socket", "address": "addr", "dataDir": "/d", "engineVersion": "0.6.0"
         }))
         .unwrap();
-        let workspace = json!({"id": "w1", "name": "Default"});
+        let workspace = json!({"id": "w1", "name": "smoke"});
+        let config = json!({"forwardProxyPort": 8080, "activeEnvironmentId": "e1", "environments": [
+            {"id": "__global__", "name": "Global"}, {"id": "e1", "name": "dev"}],
+            "mocks": [{"enabled": true}, {"enabled": false}, {"enabled": true}]});
+        let parts = StatusParts {
+            server: Some(json!({"running": true, "port": 1})),
+            config: Some(config),
+            capture: Some(json!({"matched": 143, "paused": false})),
+            cookies: Some(json!({"domains": [{}, {}, {}]})),
+            mock_servers: Some(json!({"servers": [{"port": 4010}]})),
+            mail: Some(json!({"port": 1025, "running": true, "count": 3})),
+            webhooks: Some(json!({"listeners": [{"port": 4020}]})),
+            recording: None,
+            replaying: None,
+            approvals: None,
+            faults: None,
+        };
         assert_eq!(
-            describe_status(&info, &json!({"running": true, "port": 8080}), &workspace),
-            "engine     pid 5, socket addr, v0.4.0\ndata dir   /d\nproxy      listening on 8080\nworkspace  Default (w1)"
+            describe_status(&info, &workspace, &parts),
+            "engine 0.6.0 · proxy :8080 on · workspace smoke · env dev
+mocks 2 on · mock server :4010 · mail :1025 (3) · webhooks :4020 · capture 143/200 · cookies 3 domains"
         );
-        assert!(
-            describe_status(&info, &json!({"running": false}), &json!("w9"))
-                .ends_with("proxy      stopped\nworkspace  w9")
+        let parts = StatusParts {
+            server: Some(json!({"running": false, "port": 9})),
+            config: None,
+            capture: Some(json!({"matched": 0, "paused": true})),
+            cookies: None,
+            mock_servers: None,
+            mail: Some(json!({"port": 1025, "running": false, "error": "Port 1025 is already in use", "count": 0})),
+            webhooks: None,
+            recording: None,
+            replaying: None,
+            approvals: None,
+            faults: None,
+        };
+        assert_eq!(
+            describe_status(&info, &json!(null), &parts),
+            "engine 0.6.0 · proxy :9 off
+mail :1025 off (Port 1025 is already in use) · capture 0/200 paused"
         );
-        assert!(
-            describe_status(&info, &json!({"running": false, "error": "EADDRINUSE"}), &workspace)
-                .contains("proxy      stopped (EADDRINUSE)")
-        );
+        let none = StatusParts {
+            server: None,
+            config: Some(json!({"environments": []})),
+            capture: None,
+            cookies: None,
+            mock_servers: None,
+            mail: None,
+            webhooks: None,
+            recording: None,
+            replaying: None,
+            approvals: None,
+            faults: None,
+        };
+        assert_eq!(describe_status(&info, &workspace, &none), "engine 0.6.0 · workspace smoke · env none");
+        let recording = StatusParts {
+            recording: Some(json!({"recording": {"name": "checkout", "interactions": 1, "hosts": ["a.com", "b.com"]}})),
+            replaying: Some(json!({"replaying": {"name": "checkout", "served": 3, "unmatchedCount": 1}})),
+            ..none
+        };
+        let held = StatusParts { approvals: Some(json!({"pending": [{}, {}]})), ..none_again() };
+        assert!(describe_status(&info, &workspace, &held).ends_with("approvals 2 pending"));
+        let faulty =
+            StatusParts { faults: Some(json!({"faults": [{"target": "a.test", "reset": true}]})), ..none_again() };
+        assert!(describe_status(&info, &workspace, &faulty).ends_with("faults 1 (a.test reset)"));
+        assert!(describe_status(&info, &workspace, &recording).ends_with(
+            "recording checkout · 1 interaction · a.com,b.com · replaying checkout · 3 served · 1 unmatched"
+        ));
     }
 }

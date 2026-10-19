@@ -35,6 +35,26 @@
   },
   "invalid": {}
  },
+ "approvals.decide": {
+  "valid": {
+   "id": "m1abc",
+   "decision": "approve",
+   "reason": "checked the order",
+   "interactive": true
+  },
+  "invalid": {
+   "id": "m1abc"
+  }
+ },
+ "approvals.list": {
+  "valid": {
+   "workspaceId": "ws1",
+   "all": true
+  },
+  "invalid": {
+   "all": "yes"
+  }
+ },
  "audit.diff": {
   "valid": {
    "commitHash": "c1",
@@ -183,6 +203,19 @@
   },
   "invalid": {}
  },
+ "capture.pin": {
+  "valid": {
+   "workspaceId": "ws1",
+   "ids": [
+    "log-1"
+   ],
+   "pinned": false
+  },
+  "invalid": {
+   "workspaceId": "ws1",
+   "ids": []
+  }
+ },
  "capture.remove": {
   "valid": {
    "workspaceId": "ws1",
@@ -217,6 +250,82 @@
   },
   "invalid": {}
  },
+ "cassette.list": {
+  "valid": {
+   "workspaceId": "ws1"
+  },
+  "invalid": {}
+ },
+ "cassette.recordStart": {
+  "valid": {
+   "workspaceId": "ws1",
+   "name": "checkout",
+   "hosts": [
+    "api.stripe.com"
+   ]
+  },
+  "invalid": {}
+ },
+ "cassette.recordStatus": {
+  "valid": {},
+  "invalid": {
+   "extra": true
+  }
+ },
+ "cassette.recordStop": {
+  "valid": {},
+  "invalid": {
+   "extra": true
+  }
+ },
+ "cassette.replayStart": {
+  "valid": {
+   "workspaceId": "ws1",
+   "name": "checkout",
+   "passthrough": true
+  },
+  "invalid": {}
+ },
+ "cassette.replayStatus": {
+  "valid": {},
+  "invalid": {
+   "extra": true
+  }
+ },
+ "cassette.replayStop": {
+  "valid": {},
+  "invalid": {
+   "extra": true
+  }
+ },
+ "changes.list": {
+  "valid": {
+   "workspaceId": "ws1",
+   "after": 3,
+   "advance": true
+  },
+  "invalid": {
+   "after": "3"
+  }
+ },
+ "claims.list": {
+  "valid": {
+   "workspaceId": "ws1"
+  },
+  "invalid": {
+   "workspaceId": 1
+  }
+ },
+ "claims.set": {
+  "valid": {
+   "kind": "mocks",
+   "id": "m1",
+   "release": true
+  },
+  "invalid": {
+   "kind": "mocks"
+  }
+ },
  "config.get": {
   "valid": {},
   "invalid": {
@@ -230,6 +339,32 @@
    }
   },
   "invalid": {}
+ },
+ "contract.fromOpenApi": {
+  "valid": {
+   "text": "openapi: 3.0.0"
+  },
+  "invalid": {}
+ },
+ "contract.listSnapshots": {
+  "valid": {
+   "workspaceId": "ws1"
+  },
+  "invalid": {}
+ },
+ "contract.saveSnapshots": {
+  "valid": {
+   "workspaceId": "ws1",
+   "snapshots": [
+    {
+     "requestId": "r1",
+     "status": 200
+    }
+   ]
+  },
+  "invalid": {
+   "workspaceId": "ws1"
+  }
  },
  "cookies.clear": {
   "valid": {
@@ -253,6 +388,18 @@
   },
   "invalid": {}
  },
+ "cookies.set": {
+  "valid": {
+   "workspaceId": "w",
+   "domain": "x.test",
+   "name": "a",
+   "value": "1"
+  },
+  "invalid": {
+   "workspaceId": "w",
+   "name": "a"
+  }
+ },
  "curl.buildMock": {
   "valid": {
    "curl": "curl http://x"
@@ -268,6 +415,81 @@
   "invalid": {
    "curlCommand": "curl http://x"
   }
+ },
+ "devservice.define": {
+  "valid": {
+   "workspaceId": "ws1",
+   "name": "api",
+   "cmd": "npm run dev",
+   "port": 3000,
+   "logFile": "/tmp/api.log",
+   "env": {
+    "A": "1"
+   }
+  },
+  "invalid": {}
+ },
+ "devservice.down": {
+  "valid": {
+   "workspaceId": "ws1",
+   "name": "api"
+  },
+  "invalid": {}
+ },
+ "devservice.freePort": {
+  "valid": {
+   "port": 3000,
+   "kill": true
+  },
+  "invalid": {}
+ },
+ "devservice.grep": {
+  "valid": {
+   "workspaceId": "ws1",
+   "needles": [
+    "abc123"
+   ],
+   "probes": [
+    "x-bifurc-trace"
+   ],
+   "context": 2,
+   "name": "api",
+   "sinceTs": 1,
+   "untilTs": 2
+  },
+  "invalid": {}
+ },
+ "devservice.list": {
+  "valid": {
+   "workspaceId": "ws1"
+  },
+  "invalid": {}
+ },
+ "devservice.logs": {
+  "valid": {
+   "workspaceId": "ws1",
+   "name": "api",
+   "last": 50,
+   "sinceTs": 1
+  },
+  "invalid": {}
+ },
+ "devservice.remove": {
+  "valid": {
+   "workspaceId": "ws1",
+   "name": "api"
+  },
+  "invalid": {}
+ },
+ "devservice.up": {
+  "valid": {
+   "workspaceId": "ws1",
+   "name": "api",
+   "secrets": {
+    "TOKEN": "x"
+   }
+  },
+  "invalid": {}
  },
  "engine.companions": {
   "valid": {},
@@ -447,10 +669,44 @@
    "extra": true
   }
  },
+ "fault.add": {
+  "valid": {
+   "target": "api.localhost/orders",
+   "status": 429,
+   "rate": 30
+  },
+  "invalid": {
+   "target": "api.localhost",
+   "rate": 0
+  }
+ },
+ "fault.clear": {
+  "valid": {},
+  "invalid": {
+   "id": 1
+  }
+ },
+ "fault.list": {
+  "valid": {},
+  "invalid": {
+   "extra": true
+  }
+ },
  "flow.cancel": {
   "valid": {
    "workspaceId": "ws1",
    "id": "f1"
+  },
+  "invalid": {
+   "workspaceId": "ws1"
+  }
+ },
+ "flow.fromSteps": {
+  "valid": {
+   "workspaceId": "ws1",
+   "text": "name: F\nsteps: []",
+   "name": "F",
+   "folderId": "d1"
   },
   "invalid": {
    "workspaceId": "ws1"
@@ -835,6 +1091,48 @@
    "blobId": "blob_test"
   }
  },
+ "jwt.mint": {
+  "valid": {
+   "workspaceId": "x",
+   "vault": "x"
+  },
+  "invalid": {}
+ },
+ "mail.clear": {
+  "valid": {},
+  "invalid": {
+   "x": 1
+  }
+ },
+ "mail.get": {
+  "valid": {
+   "id": "abc"
+  },
+  "invalid": {}
+ },
+ "mail.list": {
+  "valid": {
+   "to": "a@b.co",
+   "last": 5
+  },
+  "invalid": {
+   "last": -1
+  }
+ },
+ "mail.status": {
+  "valid": {},
+  "invalid": {
+   "x": 1
+  }
+ },
+ "mail.wait": {
+  "valid": {
+   "to": "a@b.co",
+   "sinceTs": 1,
+   "timeoutMs": 1000
+  },
+  "invalid": {}
+ },
  "mcp.call": {
   "valid": {
    "workspaceId": "ws1",
@@ -902,6 +1200,45 @@
   "invalid": {
    "workspaceId": "ws1"
   }
+ },
+ "mocks.serve": {
+  "valid": {
+   "workspaceId": "ws1",
+   "port": 4010,
+   "host": "127.0.0.1",
+   "fallthrough": "http://localhost:3000",
+   "detach": true
+  },
+  "invalid": {}
+ },
+ "mocks.serveStatus": {
+  "valid": {},
+  "invalid": {
+   "extra": true
+  }
+ },
+ "mocks.serveStop": {
+  "valid": {
+   "port": 4010
+  },
+  "invalid": {
+   "port": "x"
+  }
+ },
+ "policy.check": {
+  "valid": {
+   "workspaceId": "ws1",
+   "method": "DELETE",
+   "url": "https://api.example.com/orders/1",
+   "env": "prod"
+  },
+  "invalid": {}
+ },
+ "policy.show": {
+  "valid": {
+   "workspaceId": "ws1"
+  },
+  "invalid": {}
  },
  "proxy.status": {
   "valid": {
@@ -1094,6 +1431,42 @@
   "valid": {},
   "invalid": {
    "extra": true
+  }
+ },
+ "session.clearVariables": {
+  "valid": {
+   "keys": [
+    "a"
+   ]
+  },
+  "invalid": {
+   "keys": "a"
+  }
+ },
+ "session.get": {
+  "valid": {
+   "workspaceId": "w"
+  },
+  "invalid": {
+   "workspaceId": 1
+  }
+ },
+ "session.reset": {
+  "valid": {},
+  "invalid": {
+   "workspaceId": 1
+  }
+ },
+ "session.setVariables": {
+  "valid": {
+   "variables": {
+    "a": "1"
+   }
+  },
+  "invalid": {
+   "variables": {
+    "a": 1
+   }
   }
  },
  "settings.update": {
@@ -1473,6 +1846,30 @@
    "passphrase": "x"
   },
   "invalid": {}
+ },
+ "webhook.list": {
+  "valid": {},
+  "invalid": {
+   "extra": true
+  }
+ },
+ "webhook.listen": {
+  "valid": {
+   "workspaceId": "ws1",
+   "port": 4020,
+   "name": "stripe",
+   "forward": "http://api.localhost/webhooks/stripe",
+   "detach": true
+  },
+  "invalid": {}
+ },
+ "webhook.stop": {
+  "valid": {
+   "id": "k3f9"
+  },
+  "invalid": {
+   "id": 1
+  }
  },
  "workspace.add": {
   "valid": {
