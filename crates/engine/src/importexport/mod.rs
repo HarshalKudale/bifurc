@@ -7,7 +7,7 @@ mod exporters;
 mod formats;
 mod importers;
 mod registry;
-mod support;
+pub(crate) mod support;
 mod types;
 
 use crate::kernel::CommandRegistry;

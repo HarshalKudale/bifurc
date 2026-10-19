@@ -1,7 +1,8 @@
 //! The captured-traffic history, per workspace. The engine records it whether or not any client is
 //! watching, unless the workspace's capture is paused.
 //!
-//! Newest first, at most [`MAX_CAPTURE_ENTRIES`] per workspace. Persisted under `<dataDir>/.capture/`,
+//! Newest first: every pinned entry (`"pinned": true`) plus the newest `captureLimit` (default
+//! [`DEFAULT_CAPTURE_LIMIT`]) unpinned ones per workspace. Persisted under `<dataDir>/.capture/`,
 //! outside the git-tracked workspace directories: captured traffic carries real headers and bodies and must
 //! never be committed with the workspace. Entries are kept as JSON so a file round-trips unchanged.
 
@@ -20,10 +21,11 @@ use tokio::runtime::Handle;
 use crate::{
     protocol::{EngineError, Result},
     runtime::notice,
-    workspace::paths::data_dir,
+    workspace::{paths::data_dir, settings::load_settings},
 };
 
-pub const MAX_CAPTURE_ENTRIES: usize = 200;
+pub use crate::workspace::settings::DEFAULT_CAPTURE_LIMIT;
+
 const WRITE_DELAY: Duration = Duration::from_millis(500);
 
 /// What `encodeURIComponent` leaves alone besides letters and digits.
@@ -46,6 +48,10 @@ struct Store {
     next_token: u64,
     /// Workspaces whose capture is paused. In memory only: an engine restart resumes capturing.
     paused: HashSet<String>,
+    /// The unpinned entries kept per workspace; read from the settings on first use, refreshed when they change.
+    limit: Option<usize>,
+    /// The trace header name (`None` = off); outer `None` = not read yet.
+    trace_header: Option<Option<String>>,
 }
 
 static STORE: Mutex<Option<Store>> = Mutex::new(None);
@@ -67,13 +73,64 @@ fn capture_file(ws_id: &str) -> PathBuf {
     data_dir().join(".capture").join(format!("{}.json", utf8_percent_encode(ws_id, URI_COMPONENT)))
 }
 
+pub(super) fn is_pinned(entry: &Value) -> bool {
+    entry.get("pinned").and_then(Value::as_bool) == Some(true)
+}
+
+/// Keep every pinned entry and the newest `limit` unpinned ones; the order stays.
+fn evict(entries: &mut Vec<Value>, limit: usize) {
+    let mut unpinned = 0;
+    entries.retain(|entry| {
+        is_pinned(entry) || {
+            unpinned += 1;
+            unpinned <= limit
+        }
+    });
+}
+
+fn limit_of(store: &mut Store) -> usize {
+    *store.limit.get_or_insert_with(|| load_settings().capture_limit())
+}
+
+/// The limit changed in the settings: take it, and evict from the workspaces in memory.
+pub fn refresh_capture_limit() {
+    with_store(|store| {
+        let limit = load_settings().capture_limit();
+        store.limit = Some(limit);
+        store.trace_header = Some(load_settings().trace_header());
+        let shrunk: Vec<String> = store
+            .entries
+            .iter_mut()
+            .filter_map(|(ws_id, entries)| {
+                let before = entries.len();
+                evict(entries, limit);
+                (entries.len() < before).then(|| ws_id.clone())
+            })
+            .collect();
+        for ws_id in shrunk {
+            schedule_write(store, &ws_id);
+        }
+    });
+}
+
+/// The header the proxies stamp the capture id into (`None` = off); cached like the limit.
+pub fn trace_header() -> Option<String> {
+    with_store(|store| store.trace_header.get_or_insert_with(|| load_settings().trace_header()).clone())
+}
+
+/// The limit in force.
+pub fn capture_limit() -> usize {
+    with_store(limit_of)
+}
+
 fn entries_of<'a>(store: &'a mut Store, ws_id: &str) -> &'a mut Vec<Value> {
+    let limit = limit_of(store);
     store.entries.entry(ws_id.to_string()).or_insert_with(|| {
         let loaded =
             std::fs::read(capture_file(ws_id)).ok().and_then(|bytes| serde_json::from_slice::<Value>(&bytes).ok());
         match loaded {
             Some(Value::Array(mut entries)) => {
-                entries.truncate(MAX_CAPTURE_ENTRIES);
+                evict(&mut entries, limit);
                 entries
             }
             _ => Vec::new(),
@@ -146,10 +203,16 @@ pub fn record_capture(entry: &Value) {
         if store.paused.contains(ws_id) {
             return;
         }
+        let limit = limit_of(store);
         let entries = entries_of(store, ws_id);
+        let pinned = entries.iter().any(|existing| existing.get("id") == id && is_pinned(existing));
         entries.retain(|existing| existing.get("id") != id);
-        entries.insert(0, entry.clone());
-        entries.truncate(MAX_CAPTURE_ENTRIES);
+        let mut entry = entry.clone();
+        if pinned {
+            entry["pinned"] = Value::Bool(true);
+        }
+        entries.insert(0, entry);
+        evict(entries, limit);
         schedule_write(store, ws_id);
     });
 }
@@ -200,6 +263,35 @@ pub fn remove_capture(ws_id: &str, ids: &[String]) -> usize {
     })
 }
 
+/// Pin or unpin the given exchanges. Returns how many changed and which ids are not in the history. An
+/// unpinned entry beyond the limit is evicted at once.
+pub fn pin_capture(ws_id: &str, ids: &[String], pinned: bool) -> (usize, Vec<String>) {
+    with_store(|store| {
+        let limit = limit_of(store);
+        let entries = entries_of(store, ws_id);
+        let (mut changed, mut missing) = (0, Vec::new());
+        for id in ids {
+            match entries.iter_mut().find(|e| e.get("id").and_then(Value::as_str) == Some(id)) {
+                None => missing.push(id.clone()),
+                Some(entry) if is_pinned(entry) != pinned => {
+                    changed += 1;
+                    if pinned {
+                        entry["pinned"] = Value::Bool(true);
+                    } else if let Some(object) = entry.as_object_mut() {
+                        object.remove("pinned");
+                    }
+                }
+                Some(_) => {}
+            }
+        }
+        if changed > 0 {
+            evict(entries, limit);
+            schedule_write(store, ws_id);
+        }
+        (changed, missing)
+    })
+}
+
 /// Write every pending workspace now (shutdown, tests).
 pub fn flush_capture() {
     let pending: Vec<String> = with_store(|store| store.pending.keys().cloned().collect());
@@ -240,9 +332,72 @@ mod tests {
             record_capture(&entry("ws1", &format!("e{i}")));
         }
         let all = ids("ws1");
-        assert_eq!(all.len(), MAX_CAPTURE_ENTRIES);
+        assert_eq!(all.len(), DEFAULT_CAPTURE_LIMIT);
         assert_eq!(all[0], "e249");
         assert_eq!(all[199], "e50");
+        reset_capture();
+    }
+
+    fn pinned_ids(ws: &str) -> Vec<String> {
+        let all = list_capture(ws);
+        all.iter().filter(|e| is_pinned(e)).map(|e| e["id"].as_str().unwrap().to_string()).collect()
+    }
+
+    #[test]
+    fn pinned_entries_survive_eviction_and_do_not_count_toward_the_limit() {
+        let _root = scratch_data_root();
+        reset_capture();
+        record_capture(&entry("ws1", "keep"));
+        assert_eq!(pin_capture("ws1", &["keep".into(), "nope".into()], true), (1, vec!["nope".to_string()]));
+        assert_eq!(pin_capture("ws1", &["keep".into()], true).0, 0);
+        for i in 0..DEFAULT_CAPTURE_LIMIT + 5 {
+            record_capture(&entry("ws1", &format!("e{i}")));
+        }
+        let all = ids("ws1");
+        assert_eq!(all.len(), DEFAULT_CAPTURE_LIMIT + 1);
+        assert_eq!(all.last().unwrap(), "keep");
+        // Re-recording the pinned exchange keeps its pin; unpinning it past the limit evicts it.
+        record_capture(&entry("ws1", "keep"));
+        assert_eq!(pinned_ids("ws1"), ["keep"]);
+        assert_eq!(ids("ws1").len(), DEFAULT_CAPTURE_LIMIT + 1);
+        assert_eq!(pin_capture("ws1", &["keep".into()], false).0, 1);
+        assert_eq!(ids("ws1").len(), DEFAULT_CAPTURE_LIMIT);
+        reset_capture();
+    }
+
+    #[test]
+    fn a_lowered_limit_evicts_the_unpinned_entries_in_memory() {
+        let _root = scratch_data_root();
+        reset_capture();
+        for i in 0..30 {
+            record_capture(&entry("ws1", &format!("e{i}")));
+        }
+        pin_capture("ws1", &["e0".into()], true);
+        let mut settings = load_settings();
+        settings.set("captureLimit", json!(10));
+        crate::workspace::settings::save_settings(&settings).unwrap();
+        refresh_capture_limit();
+        assert_eq!(capture_limit(), 10);
+        let all = ids("ws1");
+        assert_eq!((all.len(), all[0].as_str(), all[10].as_str()), (11, "e29", "e0"));
+        reset_capture();
+    }
+
+    #[test]
+    fn a_file_without_pinned_loads_and_one_with_it_round_trips() {
+        let root = scratch_data_root();
+        reset_capture();
+        let dir = root.dir.path().join(".capture");
+        std::fs::create_dir_all(&dir).unwrap();
+        let pinned = json!({ "id": "p", "ts": 1, "workspaceId": "ws1", "pinned": true });
+        std::fs::write(dir.join("ws1.json"), serde_json::to_string(&json!([entry("ws1", "a"), pinned])).unwrap())
+            .unwrap();
+        assert_eq!(ids("ws1"), ["a", "p"]);
+        assert_eq!(pinned_ids("ws1"), ["p"]);
+        pin_capture("ws1", &["a".into()], true);
+        flush_capture();
+        reset_capture();
+        assert_eq!(pinned_ids("ws1"), ["a", "p"]);
         reset_capture();
     }
 

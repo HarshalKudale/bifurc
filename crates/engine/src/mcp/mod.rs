@@ -5,7 +5,7 @@
 
 mod answer;
 mod arguments;
-mod client;
+pub(crate) mod client;
 mod commands;
 mod registry;
 

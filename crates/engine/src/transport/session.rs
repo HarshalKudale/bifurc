@@ -219,12 +219,23 @@ impl Session {
             return Err(error);
         }
 
+        let session = match payload.get("session") {
+            None | Some(Value::Null) => None,
+            Some(Value::String(name))
+                if (1..=40).contains(&name.len())
+                    && name.chars().all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_' | '.')) =>
+            {
+                Some(name.clone())
+            }
+            Some(_) => return Err(invalid("session: expected 1 to 40 letters, digits, '-', '_' or '.'")),
+        };
         let identity = SessionIdentity {
             session_id: uuid::Uuid::new_v4().to_string(),
             client_name: Some(client_name.to_string()),
             client_version: Some(client_version.to_string()),
             peer: opts.peer.clone(),
             client_info: payload.get("clientInfo").and_then(super::companions::sanitize_client_info),
+            session,
             scopes: Some(opts.scopes_for.as_ref().map(|f| f(payload)).unwrap_or_else(shell_scopes)),
         };
 
@@ -319,17 +330,29 @@ impl Session {
             let registry = session.inner.opts.registry.clone();
             let client = ctx.session.as_ref().and_then(|s| s.client_name.clone());
             let command = crate::analytics::describe(&action, &payload);
+            // The command line runs in a session: a named one of its own, or the default one (see `env::session`).
+            let in_session = ctx
+                .session
+                .as_ref()
+                .filter(|s| s.client_name.as_deref() == Some("cli"))
+                .map(|s| (crate::env::session::workspace_of(&payload), s.session.clone().unwrap_or_default()));
+            let invoking = registry.invoke(&action, payload, ctx);
+            let invoking = async move {
+                match in_session {
+                    Some((ws_id, name)) => crate::env::session::enter(&ws_id, &name, invoking).await,
+                    None => invoking.await,
+                }
+            };
+            // Changes the command records say which client (and session) made them.
+            let invoking = crate::workspace::changes::as_client(client.as_deref(), invoking);
             // A handler that panics still answers: the client is not left waiting, and the failure is counted.
-            let result = std::panic::AssertUnwindSafe(crate::runtime::with_command(
-                &action,
-                registry.invoke(&action, payload, ctx),
-            ))
-            .catch_unwind()
-            .await
-            .unwrap_or_else(|_| {
-                Err(EngineError::engine(format!("\"{action}\" crashed inside the engine"))
-                    .keyed("transport.handler_crashed", json!({ "action": action })))
-            });
+            let result = std::panic::AssertUnwindSafe(crate::runtime::with_command(&action, invoking))
+                .catch_unwind()
+                .await
+                .unwrap_or_else(|_| {
+                    Err(EngineError::engine(format!("\"{action}\" crashed inside the engine"))
+                        .keyed("transport.handler_crashed", json!({ "action": action })))
+                });
             if let Some(client) = client.filter(|_| registry.is_registered(&action)) {
                 let outcome = result.as_ref().map_err(|error| error.code.as_str());
                 crate::analytics::record_command(command, &action, &client, outcome);
@@ -424,6 +447,10 @@ impl Session {
             state.identity.clone()
         };
         self.inner.pump.close();
+        if let Some(identity) = &identity {
+            crate::mocks::stop_owned_by(&identity.session_id);
+            crate::webhook::stop_owned_by(&identity.session_id);
+        }
         if let (Some(identity), Some(hook)) = (identity, &self.inner.opts.on_session_end) {
             hook(&identity);
         }
@@ -440,6 +467,7 @@ mod tests {
         let bus: &'static EngineEventBus = Box::leak(Box::new(EngineEventBus::new()));
         let mut registry = CommandRegistry::new();
         registry.register_sync("proxy.status", |_, _| Ok(json!({ "running": false })));
+        crate::mocks::register(&mut registry);
         let (tx, rx) = unbounded_channel();
         let opts = SessionOptions {
             registry: Arc::new(registry),
@@ -539,6 +567,22 @@ mod tests {
             Outbound::FrameThenClose(frame) => assert_eq!(frame["error"]["code"], "UNAUTHORIZED"),
             other => panic!("{other:?}"),
         }
+    }
+
+    #[tokio::test]
+    async fn a_mock_server_started_in_a_session_stops_when_the_session_ends() {
+        let _root = crate::testing::scratch_data_root();
+        let (session, mut rx, _) = session();
+        session.handle_frame(hello());
+        frame(&mut rx).await;
+        session.handle_frame(
+            json!({ "id": "1", "action": "mocks.serve", "payload": { "workspaceId": "ws1", "port": 0 } }),
+        );
+        let port = frame(&mut rx).await["data"]["port"].as_u64().unwrap() as u16;
+        assert!(tokio::net::TcpStream::connect(("127.0.0.1", port)).await.is_ok());
+        session.close();
+        tokio::time::sleep(std::time::Duration::from_millis(100)).await;
+        assert!(tokio::net::TcpStream::connect(("127.0.0.1", port)).await.is_err());
     }
 
     #[tokio::test]
