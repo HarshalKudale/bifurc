@@ -109,7 +109,7 @@ fn wait_for(ctx: &mut Context, workspace: &str, service: &Value, timeout: Durati
     let (name, port) = (js_template(service.get("name")), service["port"].as_u64().unwrap_or(0) as u16);
     let started = Instant::now();
     loop {
-        let last = match probe_port("127.0.0.1", port) {
+        let last = match probe_port("localhost", port) {
             Ok(()) => return Ok(format!("ready · {name} · port {port} · {:.1}s", started.elapsed().as_secs_f64())),
             Err(reason) => reason,
         };
