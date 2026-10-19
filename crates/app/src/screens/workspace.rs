@@ -172,6 +172,7 @@ impl WorkspaceScreen {
             cx.subscribe_in(&model, window, |this, _, event: &ModelEvent, window, cx| match event {
                 ModelEvent::SyncStatus | ModelEvent::AccountChanged(_) => this.refresh_sync(cx),
                 ModelEvent::CookiesChanged => this.refresh_cookies(cx),
+                ModelEvent::PolicyChanged => this.refresh_policy(cx),
                 ModelEvent::EngineRestarted => {
                     this.load_formats(cx);
                     this.refresh_sync(cx);

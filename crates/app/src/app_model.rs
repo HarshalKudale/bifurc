@@ -38,7 +38,7 @@ impl Global for ModelHandle {}
 /// follows every write with the git state, and says `configChanged: false` when `entity.changed` already
 /// described the whole change; without that field (an older engine, or a pull, sync or import) it means
 /// "re-read the workspace".
-const EVENTS: [&str; 40] = [
+const EVENTS: [&str; 41] = [
     "event.request.stream",
     "event.flow.progress",
     "event.flow.finished",
@@ -52,6 +52,7 @@ const EVENTS: [&str; 40] = [
     "event.entity.changed",
     "event.sync.entityStatus",
     "event.history.changed",
+    "event.policy.changed",
     "event.vault.changed",
     "event.cookies.changed",
     "event.faults.changed",
@@ -235,6 +236,8 @@ pub enum ModelEvent {
     SyncStatus,
     /// `event.history.changed`: the active workspace has a commit it did not have, or lost one.
     HistoryChanged,
+    /// `event.policy.changed`: the active workspace's policy file was added, edited or removed.
+    PolicyChanged,
     /// A sync that will commit is about to run: the user may give its commits a message first.
     AskSyncMessage(SyncScope),
     /// `event.account.changed`: a sign-in finished or failed, or an account was signed out.
@@ -623,6 +626,11 @@ impl AppModel {
                     if event.payload.get("workspaceId").and_then(Value::as_str) == Some(self.workspace_id()) =>
                 {
                     cx.emit(ModelEvent::HistoryChanged);
+                }
+                "event.policy.changed"
+                    if event.payload.get("workspaceId").and_then(Value::as_str) == Some(self.workspace_id()) =>
+                {
+                    cx.emit(ModelEvent::PolicyChanged);
                 }
                 "event.account.changed" => {
                     self.refresh_setup(cx);

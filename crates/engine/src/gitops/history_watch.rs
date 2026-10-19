@@ -14,7 +14,7 @@ use tokio::task::JoinHandle;
 use crate::{
     kernel::bus::bus,
     utils::json::str_of,
-    workspace::{fs::ws_dir, settings::load_settings},
+    workspace::{fs::ws_dir, policy, settings::load_settings},
 };
 
 const LOOK_EVERY: Duration = Duration::from_secs(2);
@@ -32,7 +32,7 @@ fn mark(ws_id: &str) -> Mark {
 
 /// The workspaces whose mark is not the one in `seen`, which is brought up to date. A workspace seen for the
 /// first time has not changed: its history is whatever a client reads first.
-fn moved(seen: &mut HashMap<String, Mark>, now: Vec<(String, Mark)>) -> Vec<String> {
+fn moved<M: PartialEq>(seen: &mut HashMap<String, M>, now: Vec<(String, M)>) -> Vec<String> {
     let mut changed = Vec::new();
     for (ws_id, mark) in &now {
         if seen.get(ws_id).is_some_and(|before| before != mark) {
@@ -46,21 +46,24 @@ fn moved(seen: &mut HashMap<String, Mark>, now: Vec<(String, Mark)>) -> Vec<Stri
 pub fn start_history_watch() {
     let task = tokio::spawn(async {
         let mut seen = HashMap::new();
+        let mut seen_policy = HashMap::new();
         let mut ticker = tokio::time::interval(LOOK_EVERY);
         loop {
             ticker.tick().await;
-            let now = load_settings()
+            let ids: Vec<String> = load_settings()
                 .workspaces()
                 .iter()
                 .map(|ws| str_of(ws, "id").to_string())
                 .filter(|id| !id.is_empty())
-                .map(|id| {
-                    let mark = mark(&id);
-                    (id, mark)
-                })
                 .collect();
+            let now = ids.iter().map(|id| (id.clone(), mark(id))).collect();
             for ws_id in moved(&mut seen, now) {
                 bus().emit("history.changed", json!({ "workspaceId": ws_id }));
+            }
+            // The policy file is edited by hand: no command tells a client it changed.
+            let policies = ids.iter().map(|id| (id.clone(), policy::stamp(id))).collect();
+            for ws_id in moved(&mut seen_policy, policies) {
+                bus().emit("policy.changed", json!({ "workspaceId": ws_id }));
             }
         }
     });
