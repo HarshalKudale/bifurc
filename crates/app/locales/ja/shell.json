@@ -45,6 +45,8 @@
   "chrome.count_mapping_other": "マッピング {count} 件",
   "chrome.count_rule_one": "ルール {count} 件",
   "chrome.count_rule_other": "ルール {count} 件",
+  "chrome.count_fault_one": "障害 {count} 件",
+  "chrome.count_fault_other": "障害 {count} 件",
   "chrome.count_flow_one": "フロー {count} 件",
   "chrome.count_flow_other": "フロー {count} 件",
   "chrome.count_environment_one": "環境 {count} 件",
