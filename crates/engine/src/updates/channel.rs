@@ -75,16 +75,47 @@ impl Channel {
     /// The name, in a release's `packages`, of the file this install is replaced with.
     pub fn package_key(self) -> Option<String> {
         let arm = std::env::consts::ARCH == "aarch64";
-        let (package, arch) = match self {
-            Channel::Installer => ("nsis", if arm { "arm64" } else { "x64" }),
-            Channel::Portable => ("zip", if arm { "arm64" } else { "x64" }),
-            Channel::AppImage => ("appimage", if arm { "aarch64" } else { "x86_64" }),
-            Channel::Deb => ("deb", if arm { "arm64" } else { "amd64" }),
-            Channel::Tarball => ("tarball", if arm { "aarch64" } else { "x86_64" }),
-            Channel::Dmg => ("dmg", if arm { "arm64" } else { "x64" }),
-            _ => return None,
+        let package = self.updater_package()?;
+        let arch = match package {
+            "appimage" | "tarball" => {
+                if arm {
+                    "aarch64"
+                } else {
+                    "x86_64"
+                }
+            }
+            "deb" => {
+                if arm {
+                    "arm64"
+                } else {
+                    "amd64"
+                }
+            }
+            _ => {
+                if arm {
+                    "arm64"
+                } else {
+                    "x64"
+                }
+            }
         };
         Some(format!("{package}-{arch}"))
+    }
+
+    /// The kind of package `bifurc-updater` installs over this install, for the installs that sit in a folder
+    /// the person owns. A package manager that runs the installer (winget) or unpacks the zip (Scoop) leaves the
+    /// same files in the same places, so the same package replaces them. The Store's files are the Store's and
+    /// the AUR's are root's; a dmg's `Bifurc.app` is in /Applications or ~/Applications, which the person can write.
+    pub fn updater_package(self) -> Option<&'static str> {
+        match self {
+            Channel::Installer | Channel::Winget => Some("nsis"),
+            Channel::Scoop | Channel::Portable => Some("zip"),
+            Channel::AppImage => Some("appimage"),
+            Channel::Deb => Some("deb"),
+            Channel::Tarball => Some("tarball"),
+            Channel::Dmg => Some("dmg"),
+            _ => None,
+        }
     }
 
     /// The command that updates an install a package manager owns.

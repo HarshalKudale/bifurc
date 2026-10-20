@@ -36,7 +36,7 @@ use crate::{
     i18n::{self, t, t_with},
     model::{
         config::{AccountInfo, EngineSettings, RequestDefaults},
-        update::UpdateAction,
+        update::{UpdateAction, UpdateProgress},
     },
     preferences::Preferences,
     screens::workspace_setup::{Purpose, open_setup_dialog},
@@ -45,6 +45,7 @@ use crate::{
 
 /// The Microsoft Store listing, whatever way this copy was installed; its page carries the ratings.
 const STORE_REVIEW_URL: &str = "https://apps.microsoft.com/detail/9ncb4fdzzqpv#ratings-and-reviews";
+const UPDATE_DOWNLOAD_PAGE: &str = "https://bifurc.app/download";
 const REPOSITORY_URL: &str = "https://github.com/HarshalKudale/bifurc";
 const RELEASES_URL: &str = "https://github.com/HarshalKudale/bifurc-releases/releases";
 
@@ -1223,12 +1224,55 @@ impl SettingsScreen {
     fn available_update_item(&self, cx: &App) -> Option<SettingItem> {
         let status = self.model.read(cx).update().clone();
         let (update, action) = (status.available?, status.action?);
+        let progress = self.model.read(cx).update_progress().cloned();
         let model = self.model.clone();
         let item = SettingItem::render(move |options, _, cx| {
             let theme = cx.theme().clone();
             let security = update.critical.then(|| t("settings.update.security").to_owned());
             let notes = [update.summary.clone(), update.steps(), security];
             let get = match &action {
+                UpdateAction::Updater => {
+                    let apply_model = model.clone();
+                    let busy = progress.as_ref().is_some_and(UpdateProgress::busy);
+                    let failed = progress.as_ref().is_some_and(|progress| progress.state == "failed");
+                    let note = progress.as_ref().and_then(|progress| match progress.state.as_str() {
+                        "starting" => Some(t("settings.update.starting").to_owned()),
+                        "downloading" => Some(match progress.percent() {
+                            Some(percent) => t_with("settings.update.downloading", &[("percent", &percent)]),
+                            None => t("settings.update.downloading_unknown").to_owned(),
+                        }),
+                        "installing" => Some(t("settings.update.installing").to_owned()),
+                        "failed" => Some(t_with(
+                            "settings.update.apply_failed",
+                            &[("error", &progress.error.clone().unwrap_or_default())],
+                        )),
+                        _ => None,
+                    });
+                    v_flex()
+                        .items_end()
+                        .gap_1()
+                        .child(
+                            Button::new("update-now")
+                                .with_size(options.size())
+                                .label(t("settings.update.now"))
+                                .loading(busy)
+                                .disabled(busy)
+                                .on_click(move |_, _, cx| apply_model.update(cx, |model, cx| model.apply_update(cx))),
+                        )
+                        .children(note.map(|note| {
+                            div()
+                                .text_xs()
+                                .text_color(if failed { theme.danger } else { theme.muted_foreground })
+                                .child(note)
+                        }))
+                        // The updater could not do it; the website still can.
+                        .children(failed.then(|| {
+                            Link::new("update-download")
+                                .href(UPDATE_DOWNLOAD_PAGE)
+                                .child(t_with("settings.update.download", &[("version", &update.next())]))
+                        }))
+                        .into_any_element()
+                }
                 UpdateAction::Store(url) => Link::new("update-store")
                     .href(url.clone())
                     .child(t("settings.update.open_store"))
