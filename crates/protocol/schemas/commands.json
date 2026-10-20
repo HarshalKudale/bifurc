@@ -3323,6 +3323,11 @@
    "properties": {},
    "additionalProperties": false
   },
+  "update.apply": {
+   "type": "object",
+   "properties": {},
+   "additionalProperties": false
+  },
   "update.skip": {
    "type": "object",
    "properties": {

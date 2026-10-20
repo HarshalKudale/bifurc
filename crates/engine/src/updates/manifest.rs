@@ -103,7 +103,8 @@ fn text(version: Version) -> String {
 /// ```
 ///
 /// `version` is where the install ends up, `next` the step to take now, and `downloadUrl` the file of that
-/// step for this install, when the manifest names one and it is where downloads are published.
+/// step for this install, when the manifest names one and it is where downloads are published, with its
+/// `sha256` when the manifest gives that too.
 pub fn plan(manifest: &Value, current: &str, channel: Channel) -> Value {
     let Some(current) = parse_version(current) else { return Value::Null };
     let cap = channel.manifest_key().and_then(|key| opt_str(manifest.get("channels")?, key)).and_then(parse_version);
@@ -115,9 +116,9 @@ pub fn plan(manifest: &Value, current: &str, channel: Channel) -> Value {
     let (Some(next), Some(target)) = (steps.first(), steps.last()) else { return Value::Null };
     let release = |version: &Version| known.iter().find(|release| release.version == *version).map(|r| r.raw);
     let (Some(next_raw), Some(target_raw)) = (release(next), release(target)) else { return Value::Null };
-    let download = channel
-        .package_key()
-        .and_then(|key| opt_str(next_raw.get("packages")?.get(key)?, "url").and_then(trusted).map(str::to_string));
+    let package = channel.package_key().and_then(|key| next_raw.get("packages")?.get(key));
+    let download = package.and_then(|package| opt_str(package, "url")).and_then(trusted).map(str::to_string);
+    let sha256 = download.as_ref().and(package).and_then(|package| opt_str(package, "sha256")).map(str::to_string);
     // A security release anywhere on the way makes the whole update one that should not wait.
     let critical =
         known.iter().any(|r| r.version > current && r.version <= *target && bool_of(r.raw, "critical", false));
@@ -130,6 +131,7 @@ pub fn plan(manifest: &Value, current: &str, channel: Channel) -> Value {
         "path": steps.iter().map(|step| text(*step)).collect::<Vec<_>>(),
         "next": text(*next),
         "downloadUrl": download,
+        "sha256": sha256,
     })
 }
 
