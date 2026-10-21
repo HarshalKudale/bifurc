@@ -43,8 +43,10 @@ jobs:
           fi
           echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
           export PATH="$HOME/.cargo/bin:$PATH"
-          rustup toolchain install stable --profile minimal --target ${{ matrix.target }}
+          # Inside the checkout, so it is the toolchain rust-toolchain.toml pins that gets the target.
+          rustup toolchain install stable --profile minimal
           rustup default stable
+          rustup target add ${{ matrix.target }}
 
       - name: Build
         env:
