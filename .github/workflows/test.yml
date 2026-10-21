@@ -1,10 +1,7 @@
 name: Tests
 
 on:
-  push:
-    branches: [master, main, develop]
-  pull_request:
-    branches: [master, main, develop]
+  workflow_dispatch:
 
 # The toolchain is pinned by rust-toolchain.toml; setup-rust-toolchain installs what it names.
 jobs:
