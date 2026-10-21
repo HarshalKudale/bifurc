@@ -11,6 +11,15 @@ param(
 $ErrorActionPreference = "Stop"
 $repo = Resolve-Path (Join-Path $PSScriptRoot "..")
 Set-Location $repo
+# The build bakes BIFURC_GITHUB_CLIENT_ID / BIFURC_POSTHOG_* into the engine from the environment or .env.
+$envFile = Join-Path $repo ".env"
+if (-not (Test-Path $envFile)) { throw ".env is missing at the repo root: the build would have no GitHub login or analytics keys" }
+foreach ($line in Get-Content $envFile) {
+    if ($line -match '^\s*(?:export\s+)?([A-Za-z_][A-Za-z0-9_]*)\s*=\s*(.*?)\s*$' -and $line -notmatch '^\s*#') {
+        [Environment]::SetEnvironmentVariable($Matches[1], $Matches[2].Trim("'", '"'), "Process")
+    }
+}
+if (-not $env:BIFURC_GITHUB_CLIENT_ID) { throw "BIFURC_GITHUB_CLIENT_ID is not set in .env" }
 $tagArgs = if ($ReleaseTag) { "--release-tag $ReleaseTag" } else { "" }
 
 if (-not $SkipWindows) {
@@ -26,6 +35,7 @@ if (-not $SkipLinux) {
     $script = @"
 set -euo pipefail
 cd '$wslRepo'
+set -a; . <(tr -d '\r' < .env); set +a
 deps="build-essential clang cmake pkg-config libasound2-dev libfontconfig-dev libwayland-dev libx11-xcb-dev libxkbcommon-x11-dev libssl-dev libzstd-dev libvulkan1 dpkg-dev curl file libfuse2"
 missing=`$(for p in `$deps; do dpkg -s "`$p" >/dev/null 2>&1 || echo "`$p"; done)
 if [ -n "`$missing" ]; then sudo apt-get update && sudo apt-get install -y `$missing; fi
