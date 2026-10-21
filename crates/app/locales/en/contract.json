@@ -1,0 +1,20 @@
+{
+  "check": "Check contract",
+  "check_tooltip": "Send the paired request and compare its answer with this mock",
+  "check_all_tooltip": "Check every mock against its real API",
+  "running": "Checking…",
+  "running_all": "Checking mocks…",
+  "matches": "Matches {request} ({source})",
+  "unpaired": "Not checked: {reason}",
+  "failed": "Contract check failed: {error}",
+  "truncated": "…and {count} more",
+  "summary": "{ok} match, {drifted} drifted, {failed} failed, {unpaired} not paired",
+  "menu.check_folder": "Check contract",
+  "options.title": "Check all mocks",
+  "options.folder_title": "Check mocks in folder",
+  "options.from_capture": "Compare with captured traffic",
+  "options.from_snapshot": "Compare with saved snapshots",
+  "options.ignore": "Ignore paths",
+  "options.ignore_placeholder": ".id, .items[].updatedAt",
+  "options.run": "Check"
+}

@@ -2,13 +2,18 @@ name: Package desktop app (Rust UI)
 
 # The Rust UI + engine + CLI, packaged. One `cargo xtask package` per platform makes everything that platform
 # has: on Windows the installer, the Store package, a portable zip, and the winget and Scoop
-# manifests; on Linux the AppImage, the .deb, a tarball, and the AUR package's source.
+# manifests; on Linux the AppImage, the .deb, a tarball, and the AUR package's source; on macOS the .dmg.
 # Run by hand, or called by `release.yml`, which publishes what this builds.
 on:
   workflow_dispatch:
     inputs:
       include_linux:
         description: "Build the Linux packages"
+        required: false
+        default: true
+        type: boolean
+      include_macos:
+        description: "Build the macOS disk image"
         required: false
         default: true
         type: boolean
@@ -19,6 +24,10 @@ on:
   workflow_call:
     inputs:
       include_linux:
+        required: false
+        default: true
+        type: boolean
+      include_macos:
         required: false
         default: true
         type: boolean
@@ -39,13 +48,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          cache: false
 
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: |
-            .
-            ui
+          workspaces: .
           shared-key: release
           cache-on-failure: true
 
@@ -82,13 +91,13 @@ jobs:
     steps:
       - uses: actions/checkout@v4
 
-      - uses: dtolnay/rust-toolchain@stable
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          cache: false
 
       - uses: Swatinem/rust-cache@v2
         with:
-          workspaces: |
-            .
-            ui
+          workspaces: .
           shared-key: release
           cache-on-failure: true
 
@@ -117,4 +126,34 @@ jobs:
             release/desktop/*.tar.gz
             release/desktop/manifests/
           include-hidden-files: true
+          if-no-files-found: error
+
+  macos:
+    if: ${{ inputs.include_macos }}
+    runs-on: macos-14
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          cache: false
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: .
+          shared-key: release
+          cache-on-failure: true
+
+      - name: Package
+        env:
+          RELEASE_TAG: ${{ inputs.release_tag }}
+          BIFURC_GITHUB_CLIENT_ID: ${{ vars.BIFURC_GITHUB_CLIENT_ID }}
+          BIFURC_POSTHOG_KEY: ${{ vars.BIFURC_POSTHOG_KEY }}
+          BIFURC_POSTHOG_HOST: ${{ vars.BIFURC_POSTHOG_HOST }}
+        run: cargo xtask package ${RELEASE_TAG:+--release-tag "$RELEASE_TAG"}
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: bifurc-macos
+          path: release/desktop/*.dmg
           if-no-files-found: error

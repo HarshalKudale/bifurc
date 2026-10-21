@@ -1,9 +1,12 @@
 //! Packages the desktop app — the Rust UI, the Rust engine, the Rust CLI and the MCP server — as one install.
 //!
 //! ```text
+//! cargo xtask dev-ui                        # debug build of the engine and tray helper, then run the UI (`cargo dev:ui`)
+//! cargo xtask licenses [--check]            # regenerate (or verify) crates/app/licenses/third-party.json
 //! cargo xtask package                       # everything this platform has: packages and store manifests
 //! cargo xtask package --target nsis,msix    # windows: installer exe, Store package
 //! cargo xtask package --target appimage,deb # linux
+//! cargo xtask package --target dmg          # macos: the whole thing is the default there
 //! cargo xtask package --target dir          # the staged folder only
 //! cargo xtask package --skip-build          # package what is already built
 //! cargo xtask package --release-tag v1.2.3  # the release the manifests download from (default: v<version>)
@@ -20,6 +23,7 @@
 //! | `deb`      | linux    | `bifurc_<version>_<arch>.deb`                                             |
 //! | `tarball`  | linux    | `Bifurc-<version>-linux-<arch>.tar.gz`, the staged folder as it is        |
 //! | `aur`      | linux    | `manifests/aur/…`: `PKGBUILD`, `.SRCINFO`, `bifurc.install`               |
+//! | `dmg`      | macos    | `Bifurc-<version>-mac-<arch>.dmg`: `Bifurc.app` and an Applications link  |
 //!
 //! A manifest names the file a package manager downloads and its hash, so its target builds that file too:
 //! `winget` the installer, `scoop` the zip, `aur` the tarball. The download is the file of that
@@ -30,19 +34,22 @@
 //! ```text
 //! bifurc-ui[.exe]      the interface
 //! bifurc-engine[.exe]  the engine
-//! bifurc-tray.exe      the engine's tray icon (Windows)
-//! bin/bifurc[.exe]     the `bifurc` command — the only folder that goes on PATH; runs resources/bifurc-cli
-//! resources/bifurc-mcp[.exe]  the MCP server (`packages/mcp-rust`), started by `bifurc --mcp`; not on PATH
-//! resources/bifurc-cli[.exe]   the CLI (`packages/cli-rust`)
+//! bifurc-tray[.exe]    the engine's tray icon (Windows), menu-bar icon (macOS) or StatusNotifierItem (Linux)
+//! bifurc-updater[.exe] replaces this install with a newer release; every package but the Store's has it, and
+//!                      an engine that finds it beside itself offers "Update now" (`crates/updater`)
+//! bin/bifurc[.exe]     the `bifurc` command (`crates/bifurc`: the CLI, or the MCP server with `--mcp`) — the only
+//!                      folder that goes on PATH
 //! ```
 //!
-//! `ui/crates/engine-client/src/sidecar.rs` and `ui/crates/cli/src/main.rs` look for exactly these paths
+//! `crates/engine-client/src/sidecar.rs` and `crates/cli/src/locate.rs` look for exactly these paths
 //! beside their own executable, and the engine finds the tray helper beside itself, so the folder works from
 //! wherever it is put and no installer has to write a configuration.
 //!
 //! The one thing a wrapper adds is `resources/install.json`, which names it (`{"package": "nsis"}`): how the
-//! engine knows how this copy is updated (`packages/engine-rust/src/updates/channel.rs`). The staged folder
+//! engine knows how this copy is updated (`crates/engine/src/updates/channel.rs`). The staged folder
 //! itself has none, and is a build.
+
+mod licenses;
 
 use std::{
     env, fs,
@@ -71,6 +78,18 @@ fn deb_arch() -> &'static str {
     if env::consts::ARCH == "aarch64" { "arm64" } else { "amd64" }
 }
 
+/// The target triple to cross-compile for (`BIFURC_BUILD_TARGET`), when it is set. Not `CARGO_BUILD_TARGET`
+/// itself: the `cargo xtask` alias would then build xtask for that target too, and it must run on this machine.
+fn build_target() -> Option<String> {
+    env::var("BIFURC_BUILD_TARGET").ok().filter(|t| !t.is_empty())
+}
+
+/// What the disk image's name calls it: the architecture being built, which is not this machine's when cross-compiling.
+fn mac_arch() -> &'static str {
+    let arch = build_target().unwrap_or_else(|| env::consts::ARCH.to_owned());
+    if arch.starts_with("aarch64") { "arm64" } else { "x64" }
+}
+
 /// What Scoop calls it.
 fn scoop_arch() -> &'static str {
     if env::consts::ARCH == "aarch64" { "arm64" } else { "64bit" }
@@ -79,6 +98,8 @@ fn scoop_arch() -> &'static str {
 /// Every target of each platform, in the order they are made: a manifest after the file it describes.
 const WINDOWS_TARGETS: [&str; 5] = ["nsis", "msix", "zip", "winget", "scoop"];
 const LINUX_TARGETS: [&str; 4] = ["appimage", "deb", "tarball", "aur"];
+const MACOS_TARGETS: [&str; 1] = ["dmg"];
+const MACOS: bool = cfg!(target_os = "macos");
 
 /// The package a manifest's target describes, which is built with it.
 fn needs(target: &str) -> Option<&'static str> {
@@ -145,11 +166,17 @@ fn run() -> Result<()> {
     let mut args = env::args().skip(1);
     match args.next().as_deref() {
         Some("package") => {}
+        Some("dev-ui") => return dev_ui(),
+        Some("licenses") => {
+            let repo = Path::new(env!("CARGO_MANIFEST_DIR")).parent().ok_or("no repository above xtask")?;
+            return licenses::run(repo, args.any(|a| a == "--check"));
+        }
         _ => {
             return Err(format!(
-                "usage: cargo xtask package [--target dir,{},{}] [--skip-build] [--release-tag <tag>]",
+                "usage: cargo xtask dev-ui | cargo xtask licenses [--check] | cargo xtask package [--target dir,{},{},{}] [--skip-build] [--release-tag <tag>]",
                 WINDOWS_TARGETS.join(","),
-                LINUX_TARGETS.join(",")
+                LINUX_TARGETS.join(","),
+                MACOS_TARGETS.join(",")
             ));
         }
     }
@@ -161,7 +188,13 @@ fn run() -> Result<()> {
             None => Ok(None),
         }
     };
-    let platform_targets: &[&str] = if WINDOWS { &WINDOWS_TARGETS } else { &LINUX_TARGETS };
+    let platform_targets: &[&str] = if WINDOWS {
+        &WINDOWS_TARGETS
+    } else if MACOS {
+        &MACOS_TARGETS
+    } else {
+        &LINUX_TARGETS
+    };
     let mut targets: Vec<&str> = match value_of("--target")? {
         Some(spec) => spec.split(',').filter(|t| !t.is_empty()).collect(),
         None => platform_targets.to_vec(),
@@ -170,10 +203,24 @@ fn run() -> Result<()> {
         if *target == "dir" || platform_targets.contains(target) {
             continue;
         }
-        if WINDOWS_TARGETS.contains(target) || LINUX_TARGETS.contains(target) {
-            return Err(format!("{target} is built on {}; this is {}", if WINDOWS { "linux" } else { "windows" }, env::consts::OS));
+        let built_on = if WINDOWS_TARGETS.contains(target) {
+            Some("windows")
+        } else if LINUX_TARGETS.contains(target) {
+            Some("linux")
+        } else if MACOS_TARGETS.contains(target) {
+            Some("macos")
+        } else {
+            None
+        };
+        if let Some(built_on) = built_on {
+            return Err(format!("{target} is built on {built_on}; this is {}", env::consts::OS));
         }
-        return Err(format!("unknown target \"{target}\" (dir, {}, {})", WINDOWS_TARGETS.join(", "), LINUX_TARGETS.join(", ")));
+        return Err(format!(
+            "unknown target \"{target}\" (dir, {}, {}, {})",
+            WINDOWS_TARGETS.join(", "),
+            LINUX_TARGETS.join(", "),
+            MACOS_TARGETS.join(", ")
+        ));
     }
     for needed in targets.clone().into_iter().filter_map(needs) {
         if !targets.contains(&needed) {
@@ -186,10 +233,16 @@ fn run() -> Result<()> {
     let ctx = Ctx {
         out_dir: repo.join("release").join("desktop"),
         repo,
-        repository: env::var("GITHUB_REPOSITORY").ok().filter(|r| !r.is_empty()).unwrap_or_else(|| DEFAULT_REPOSITORY.to_owned()),
-        release_tag: value_of("--release-tag")?.filter(|tag| !tag.is_empty()).map_or_else(|| format!("v{VERSION}"), str::to_owned),
+        repository: env::var("GITHUB_REPOSITORY")
+            .ok()
+            .filter(|r| !r.is_empty())
+            .unwrap_or_else(|| DEFAULT_REPOSITORY.to_owned()),
+        release_tag: value_of("--release-tag")?
+            .filter(|tag| !tag.is_empty())
+            .map_or_else(|| format!("v{VERSION}"), str::to_owned),
     };
 
+    licenses::run(&ctx.repo, true)?; // a release must not ship stale notices
     if !skip_build {
         build(&ctx)?;
     }
@@ -213,6 +266,9 @@ fn run() -> Result<()> {
         if wanted("scoop") {
             made.push(manifest_scoop(&ctx, &zip)?);
         }
+    }
+    if wanted("dmg") {
+        made.push(package_dmg(&ctx, &staged)?);
     }
     if wanted("appimage") {
         made.push(package_appimage(&ctx, &staged)?);
@@ -423,35 +479,43 @@ fn release_rustflags(ctx: &Ctx) -> String {
 }
 
 fn build(ctx: &Ctx) -> Result<()> {
-    let rustflags = release_rustflags(ctx);
-    // The engine, the CLI and the MCP server: the repository's own cargo workspace.
-    let mut engine = Command::new("cargo");
-    engine
-        .args(["build", "--release", "--locked", "-p", "bifurc-engine", "-p", "bifurc-cli", "-p", "bifurc-mcp"])
-        .env("RUSTFLAGS", &rustflags)
+    // One workspace, one cargo: the engine, the `bifurc` command (CLI and MCP server), the tray helper and the app.
+    let mut cargo = Command::new("cargo");
+    cargo
+        .args(["build", "--release", "--locked"])
+        .args(["-p", "bifurc-engine", "-p", "bifurc", "-p", "bifurc-tray", "-p", "bifurc-updater", "-p", "bifurc-ui"])
+        .env("RUSTFLAGS", release_rustflags(ctx))
         .current_dir(&ctx.repo);
-    // The UI workspace: the app, which builds the tray helper beside it (`ui/crates/app/build.rs`), and the
-    // `bifurc` launcher that goes on PATH.
-    let mut ui = Command::new("cargo");
-    ui.args(["build", "--release", "--locked", "-p", "bifurc-ui", "-p", "bifurc-cli"])
-        .env("RUSTFLAGS", &rustflags)
-        .current_dir(ctx.repo.join("ui"));
-    // The two workspaces have their own target directories, so they build side by side: a fat-LTO link runs on
-    // one core, and the other build uses the rest.
-    std::thread::scope(|scope| {
-        let engine = scope.spawn(|| exec(engine, false));
-        let ui = exec(ui, false);
-        engine.join().unwrap_or_else(|_| Err("the engine build panicked".to_owned()))?;
-        ui
-    })
+    if let Some(target) = build_target() {
+        cargo.env("CARGO_BUILD_TARGET", target);
+    }
+    exec(cargo, false)
 }
 
-/// A release build from `workspace` (the repository root, or `ui`).
-fn cargo_output(ctx: &Ctx, name: &str, root: bool) -> Result<PathBuf> {
-    let base = if root { ctx.repo.clone() } else { ctx.repo.join("ui") };
-    let target_dir = env_path("CARGO_TARGET_DIR").map_or_else(|| base.join("target"), |dir| base.join(dir));
-    let file = target_dir.join("release").join(name);
-    if file.exists() { Ok(file) } else { Err(format!("{} is missing — build first (drop --skip-build)", file.display())) }
+/// `cargo dev:ui`: the UI starts the engine, and the engine runs the tray helper, both from `target/debug`
+/// beside the UI. `cargo run -p bifurc-ui` builds neither, so they are built first.
+fn dev_ui() -> Result<()> {
+    let repo = Path::new(env!("CARGO_MANIFEST_DIR")).join("..");
+    let mut build = Command::new("cargo");
+    build.args(["build", "-p", "bifurc-engine", "-p", "bifurc-tray"]).current_dir(&repo);
+    // A running engine locks its own and the tray's executable on Windows; the ones there keep working.
+    if let Err(problem) = exec(build, false) {
+        println!("warning: the engine and tray helper were not rebuilt: {problem}");
+    }
+    let mut run = Command::new("cargo");
+    run.args(["run", "-p", "bifurc-ui"]).current_dir(&repo);
+    exec(run, false)
+}
+
+/// A release build of `name` from the repository's cargo target directory.
+fn cargo_output(ctx: &Ctx, name: &str) -> Result<PathBuf> {
+    let target_dir = env_path("CARGO_TARGET_DIR").map_or_else(|| ctx.repo.join("target"), |dir| ctx.repo.join(dir));
+    let file = target_dir.join(build_target().unwrap_or_default()).join("release").join(name);
+    if file.exists() {
+        Ok(file)
+    } else {
+        Err(format!("{} is missing — build first (drop --skip-build)", file.display()))
+    }
 }
 
 // ---------------------------------------------------------------------------------------------------------
@@ -459,40 +523,50 @@ fn cargo_output(ctx: &Ctx, name: &str, root: bool) -> Result<PathBuf> {
 // ---------------------------------------------------------------------------------------------------------
 
 fn stage(ctx: &Ctx) -> Result<PathBuf> {
-    let dir = ctx.out_dir.join(if WINDOWS { "win-unpacked" } else { "linux-unpacked" });
+    let dir = ctx.out_dir.join(if WINDOWS {
+        "win-unpacked"
+    } else if MACOS {
+        "mac-unpacked"
+    } else {
+        "linux-unpacked"
+    });
     empty_dir(&dir)?;
-    copy_file(&cargo_output(ctx, &format!("bifurc-ui{EXE}"), false)?, &dir.join(format!("bifurc-ui{EXE}")))?;
-    if WINDOWS {
-        copy_file(&cargo_output(ctx, "bifurc-tray.exe", false)?, &dir.join("bifurc-tray.exe"))?;
-    }
-    // The launcher (ui workspace) is `bin/bifurc`; the CLI it runs (repository workspace) and the engine are the others.
-    copy_file(&cargo_output(ctx, &format!("bifurc{EXE}"), false)?, &dir.join("bin").join(format!("bifurc{EXE}")))?;
-    copy_file(&cargo_output(ctx, &format!("bifurc{EXE}"), true)?, &dir.join("resources").join(format!("bifurc-cli{EXE}")))?;
-    // The MCP server is a command of its own: it finds the engine above its `bin/` (`cli-rust/src/locate.rs`).
-    copy_file(&cargo_output(ctx, &format!("bifurc-mcp{EXE}"), true)?, &dir.join("resources").join(format!("bifurc-mcp{EXE}")))?;
-    copy_file(&cargo_output(ctx, &format!("bifurc-engine{EXE}"), true)?, &dir.join(format!("bifurc-engine{EXE}")))?;
+    copy_file(&cargo_output(ctx, &format!("bifurc-ui{EXE}"))?, &dir.join(format!("bifurc-ui{EXE}")))?;
+    copy_file(&cargo_output(ctx, &format!("bifurc-tray{EXE}"))?, &dir.join(format!("bifurc-tray{EXE}")))?;
+    make_executable(&dir.join(format!("bifurc-tray{EXE}")))?;
+    // Left out of the Store package by `package_msix`: the Store owns those files.
+    copy_file(&cargo_output(ctx, &format!("bifurc-updater{EXE}"))?, &dir.join(format!("bifurc-updater{EXE}")))?;
+    make_executable(&dir.join(format!("bifurc-updater{EXE}")))?;
+    // `bin/bifurc` finds the engine above its `bin/` (`cli/src/locate.rs`).
+    copy_file(&cargo_output(ctx, &format!("bifurc{EXE}"))?, &dir.join("bin").join(format!("bifurc{EXE}")))?;
+    copy_file(&cargo_output(ctx, &format!("bifurc-engine{EXE}"))?, &dir.join(format!("bifurc-engine{EXE}")))?;
     copy_file(&ctx.repo.join("build").join("icon.png"), &dir.join("resources").join("icon.png"))?;
     copy_file(&ctx.repo.join("LICENSE"), &dir.join("LICENSE"))?;
-    for file in [format!("bifurc-ui{EXE}"), format!("bifurc-engine{EXE}"), format!("bin/bifurc{EXE}"), format!("resources/bifurc-mcp{EXE}"), format!("resources/bifurc-cli{EXE}")] {
+    for file in [format!("bifurc-ui{EXE}"), format!("bifurc-engine{EXE}"), format!("bin/bifurc{EXE}")] {
         make_executable(&dir.join(file))?;
     }
     smoke_test(&dir)?;
     Ok(dir)
 }
 
-/// The staged `bifurc` must reach the staged CLI, and the staged MCP server and engine must run, before anything
-/// wraps them.
+/// The staged `bifurc` (CLI and MCP server) and engine must run, before anything wraps them.
 fn smoke_test(dir: &Path) -> Result<()> {
+    if build_target().is_some_and(|target| !target.starts_with(env::consts::ARCH)) {
+        println!("cross-compiled for another architecture: the staged executables cannot run here");
+        return Ok(());
+    }
     let cli = Command::new(dir.join("bin").join(format!("bifurc{EXE}"))).args(["commands", "--json"]).output();
     match cli {
         Ok(out) if out.status.success() => {}
         Ok(out) => return Err(format!("the staged CLI does not run:\n{}", String::from_utf8_lossy(&out.stderr))),
         Err(e) => return Err(format!("the staged CLI does not run:\n{e}")),
     }
-    let mcp = Command::new(dir.join("resources").join(format!("bifurc-mcp{EXE}"))).arg("--version").output();
+    let mcp = Command::new(dir.join("bin").join(format!("bifurc{EXE}"))).args(["--mcp", "--version"]).output();
     match mcp {
         Ok(out) if out.status.success() => {}
-        Ok(out) => return Err(format!("the staged MCP server does not run:\n{}", String::from_utf8_lossy(&out.stderr))),
+        Ok(out) => {
+            return Err(format!("the staged MCP server does not run:\n{}", String::from_utf8_lossy(&out.stderr)));
+        }
         Err(e) => return Err(format!("the staged MCP server does not run:\n{e}")),
     }
     let engine = Command::new(dir.join(format!("bifurc-engine{EXE}"))).arg("--help").output();
@@ -501,7 +575,13 @@ fn smoke_test(dir: &Path) -> Result<()> {
         Ok(out) => return Err(format!("the staged engine does not run:\n{}", String::from_utf8_lossy(&out.stderr))),
         Err(e) => return Err(format!("the staged engine does not run:\n{e}")),
     }
-    println!("staged CLI, MCP server and engine start");
+    let updater = Command::new(dir.join(format!("bifurc-updater{EXE}"))).arg("--version").output();
+    match updater {
+        Ok(out) if out.status.success() => {}
+        Ok(out) => return Err(format!("the staged updater does not run:\n{}", String::from_utf8_lossy(&out.stderr))),
+        Err(e) => return Err(format!("the staged updater does not run:\n{e}")),
+    }
+    println!("staged CLI, MCP server, engine and updater start");
     Ok(())
 }
 
@@ -510,20 +590,15 @@ fn smoke_test(dir: &Path) -> Result<()> {
 // ---------------------------------------------------------------------------------------------------------
 
 fn find_makensis() -> Result<PathBuf> {
-    let builder_cache = env_path("LOCALAPPDATA").map(|d| d.join("electron-builder").join("Cache").join("nsis"));
-    let cached: Vec<Option<PathBuf>> = builder_cache
-        .and_then(|dir| fs::read_dir(dir).ok())
-        .into_iter()
-        .flatten()
-        .flatten()
-        .map(|entry| Some(entry.path().join("makensis.exe")))
-        .collect();
-    first_existing(
-        [env_path("MAKENSIS"), on_path("makensis"), env_path("ProgramFiles(x86)").map(|d| d.join("NSIS").join("makensis.exe")), env_path("ProgramFiles").map(|d| d.join("NSIS").join("makensis.exe"))]
-            .into_iter()
-            .chain(cached),
-    )
-    .ok_or_else(|| "makensis was not found. Install NSIS (https://nsis.sourceforge.io) or set MAKENSIS to makensis.exe.".to_owned())
+    first_existing([
+        env_path("MAKENSIS"),
+        on_path("makensis"),
+        env_path("ProgramFiles(x86)").map(|d| d.join("NSIS").join("makensis.exe")),
+        env_path("ProgramFiles").map(|d| d.join("NSIS").join("makensis.exe")),
+    ])
+    .ok_or_else(|| {
+        "makensis was not found. Install NSIS (https://nsis.sourceforge.io) or set MAKENSIS to makensis.exe.".to_owned()
+    })
 }
 
 fn package_nsis(ctx: &Ctx, staged: &Path) -> Result<PathBuf> {
@@ -561,7 +636,7 @@ fn find_sdk_tool(name: &str) -> Result<PathBuf> {
         .collect();
     // Newest first, comparing each dotted number as a number.
     let key = |v: &str| v.split('.').map(|part| part.parse::<u64>().unwrap_or(0)).collect::<Vec<_>>();
-    versions.sort_by(|a, b| key(b).cmp(&key(a)));
+    versions.sort_by_key(|b| std::cmp::Reverse(key(b)));
     first_existing(versions.iter().map(|sdk| kits.as_ref().map(|k| k.join(sdk).join(sdk_arch()).join(name))))
         .ok_or_else(|| format!("{name} was not found. Install the Windows SDK."))
 }
@@ -570,6 +645,8 @@ fn package_msix(ctx: &Ctx, staged: &Path) -> Result<PathBuf> {
     let layout = ctx.out_dir.join("msix-layout");
     empty_dir(&layout)?;
     copy_dir(staged, &layout)?;
+    // The Store updates this package, and installs it where an updater could not replace it.
+    let _ = fs::remove_file(layout.join(format!("bifurc-updater{EXE}")));
     mark(&layout, "msix")?;
     // The icons are indexed from a folder of their own, so indexing never reads file names in the layout as
     // resource qualifiers.
@@ -585,13 +662,20 @@ fn package_msix(ctx: &Ctx, staged: &Path) -> Result<PathBuf> {
     copy_dir(&icons, &layout)?;
     // A package version is four numbers, and the Store keeps the fourth for itself.
     let manifest = layout.join("AppxManifest.xml");
-    write_file(&manifest, &template(ctx, "windows/AppxManifest.xml", &[("VERSION", &format!("{VERSION}.0")), ("ARCH", sdk_arch())])?)?;
+    write_file(
+        &manifest,
+        &template(ctx, "windows/AppxManifest.xml", &[("VERSION", &format!("{VERSION}.0")), ("ARCH", sdk_arch())])?,
+    )?;
 
     // The index that lets Windows pick the unplated, size-matched icons for the taskbar and the Start menu.
     let pri_config = ctx.out_dir.join("priconfig.xml");
     let makepri = find_sdk_tool("makepri.exe")?;
     let mut create = Command::new(&makepri);
-    create.args(["createconfig", "/cf"]).arg(&pri_config).args(["/dq", "en-US", "/pv", "10.0.0", "/o"]).current_dir(&ctx.repo);
+    create
+        .args(["createconfig", "/cf"])
+        .arg(&pri_config)
+        .args(["/dq", "en-US", "/pv", "10.0.0", "/o"])
+        .current_dir(&ctx.repo);
     exec(create, true)?;
     let mut index = Command::new(&makepri);
     index
@@ -625,10 +709,15 @@ fn package_zip(ctx: &Ctx, staged: &Path) -> Result<PathBuf> {
     // Windows' own tar (bsdtar) writes a zip when the name says so. Named by its path: a `tar` earlier on
     // PATH may be GNU tar, which does not.
     let tar = env_path("SystemRoot").map(|root| root.join("System32").join("tar.exe")).filter(|tar| tar.exists());
-    let mut command = Command::new(tar.ok_or("tar.exe was not found in System32 (it ships with Windows 10 1803 and later)")?);
+    let mut command =
+        Command::new(tar.ok_or("tar.exe was not found in System32 (it ships with Windows 10 1803 and later)")?);
     command.args(["-a", "-c", "-f"]).arg(&out).arg("-C").arg(staged);
     // Each entry by name, so the archive's paths start at the app's files and not at `./`.
-    let mut entries: Vec<_> = fs::read_dir(staged).map_err(|e| format!("{}: {e}", staged.display()))?.flatten().map(|e| e.file_name()).collect();
+    let mut entries: Vec<_> = fs::read_dir(staged)
+        .map_err(|e| format!("{}: {e}", staged.display()))?
+        .flatten()
+        .map(|e| e.file_name())
+        .collect();
     entries.sort();
     command.args(entries);
     exec(command, true)?;
@@ -668,24 +757,81 @@ fn manifest_scoop(ctx: &Ctx, zip: &Path) -> Result<PathBuf> {
 }
 
 // ---------------------------------------------------------------------------------------------------------
+// macOS: disk image
+// ---------------------------------------------------------------------------------------------------------
+
+/// `Bifurc.app` in a disk image beside an Applications link. The staged folder is the app's `Contents/MacOS`,
+/// so the interface, the engine, the tray helper and `bin/` and `resources/` stay where they look for each other.
+/// `bin/bifurc` goes on PATH the first time the engine of this install runs (`runtime/shell_path.rs`).
+///
+/// Not signed or notarized: a downloaded copy is opened once with right click, Open.
+fn package_dmg(ctx: &Ctx, staged: &Path) -> Result<PathBuf> {
+    let root = ctx.out_dir.join("dmg-root");
+    empty_dir(&root)?;
+    let contents = root.join("Bifurc.app").join("Contents");
+    let macos = contents.join("MacOS");
+    copy_dir(staged, &macos)?;
+    mark(&macos, "dmg")?;
+    write_file(&contents.join("Info.plist"), &template(ctx, "macos/Info.plist", &[("VERSION", VERSION)])?)?;
+    make_icns(ctx, &contents.join("Resources").join("Bifurc.icns"))?;
+    symlink("/Applications", &root.join("Applications"))?;
+
+    let out = ctx.out_dir.join(format!("Bifurc-{VERSION}-mac-{}.dmg", mac_arch()));
+    let _ = fs::remove_file(&out);
+    let mut command = Command::new("hdiutil");
+    command.args(["create", "-volname", "Bifurc", "-fs", "HFS+", "-format", "UDZO", "-ov", "-srcfolder"]);
+    command.arg(&root).arg(&out).current_dir(&ctx.repo);
+    exec(command, false)?;
+    // Not left behind: Spotlight would list this copy of the app beside the installed one.
+    let _ = fs::remove_dir_all(&root);
+    let _ = fs::remove_dir_all(ctx.out_dir.join("Bifurc.iconset"));
+    Ok(out)
+}
+
+/// The app icon in the format macOS wants, from the 512 px PNG.
+fn make_icns(ctx: &Ctx, out: &Path) -> Result<()> {
+    let iconset = ctx.out_dir.join("Bifurc.iconset");
+    empty_dir(&iconset)?;
+    let png = ctx.repo.join("build").join("icon.png");
+    for (size, name) in [
+        (16, "16x16"),
+        (32, "16x16@2x"),
+        (32, "32x32"),
+        (64, "32x32@2x"),
+        (128, "128x128"),
+        (256, "128x128@2x"),
+        (256, "256x256"),
+        (512, "256x256@2x"),
+        (512, "512x512"),
+        (1024, "512x512@2x"),
+    ] {
+        let mut sips = Command::new("sips");
+        sips.args(["-z", &size.to_string(), &size.to_string()])
+            .arg(&png)
+            .arg("--out")
+            .arg(iconset.join(format!("icon_{name}.png")));
+        exec(sips, true)?;
+    }
+    fs::create_dir_all(out.parent().ok_or("no folder for the icon")?).map_err(|e| format!("{}: {e}", out.display()))?;
+    let mut iconutil = Command::new("iconutil");
+    iconutil.args(["-c", "icns"]).arg(&iconset).arg("-o").arg(out);
+    exec(iconutil, true)
+}
+
+// ---------------------------------------------------------------------------------------------------------
 // Linux: .deb, tarball, and the AUR package's source
 // ---------------------------------------------------------------------------------------------------------
 
-/// The app's five executables, which are what its shared library dependencies are read from.
-fn staged_executables(dir: &Path) -> [PathBuf; 5] {
-    [
-        dir.join("bifurc-ui"),
-        dir.join("bifurc-engine"),
-        dir.join("bin").join("bifurc"),
-        dir.join("resources").join("bifurc-mcp"),
-        dir.join("resources").join("bifurc-cli"),
-    ]
+/// The app's three executables, which are what its shared library dependencies are read from.
+fn staged_executables(dir: &Path) -> [PathBuf; 3] {
+    [dir.join("bifurc-ui"), dir.join("bifurc-engine"), dir.join("bin").join("bifurc")]
 }
 
 /// The packages the executables' shared libraries come from, as `dpkg-shlibdeps` finds them on this machine.
 /// Vulkan is loaded at run time and is in no executable's list, so it is added.
 fn deb_depends(ctx: &Ctx, lib: &Path) -> String {
-    const FALLBACK: &str = "libc6, libgcc-s1, libasound2, libfontconfig1, libx11-xcb1, libxkbcommon0, libxkbcommon-x11-0, libzstd1";
+    const FALLBACK: &str =
+        "libc6, libgcc-s1, libasound2, libfontconfig1, libx11-xcb1, libxkbcommon0, libxkbcommon-x11-0, libzstd1";
     // The tool reads a source package's control file from where it runs; an empty one is enough for it.
     let work = ctx.out_dir.join("deb-shlibdeps");
     let found = (|| -> Result<String> {
@@ -792,7 +938,9 @@ fn find_appimagetool(ctx: &Ctx) -> Result<PathBuf> {
     let tool = cache.join(format!("appimagetool-{arch}.AppImage"));
     if !tool.exists() {
         fs::create_dir_all(&cache).map_err(|e| format!("{}: {e}", cache.display()))?;
-        let url = format!("https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-{arch}.AppImage");
+        let url = format!(
+            "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-{arch}.AppImage"
+        );
         let mut curl = Command::new("curl");
         curl.args(["-fsSL", "-o"]).arg(&tool).arg(&url);
         exec(curl, false)?;
@@ -817,7 +965,17 @@ fn package_appimage(ctx: &Ctx, staged: &Path) -> Result<PathBuf> {
     let icon = ctx.repo.join("build").join("icon.png");
     copy_file(&icon, &app_dir.join("bifurc.png"))?;
     copy_file(&icon, &app_dir.join(".DirIcon"))?;
-    copy_file(&icon, &app_dir.join("usr").join("share").join("icons").join("hicolor").join("512x512").join("apps").join("bifurc.png"))?;
+    copy_file(
+        &icon,
+        &app_dir
+            .join("usr")
+            .join("share")
+            .join("icons")
+            .join("hicolor")
+            .join("512x512")
+            .join("apps")
+            .join("bifurc.png"),
+    )?;
 
     let out = ctx.out_dir.join(format!("Bifurc-{VERSION}-{arch}.AppImage"));
     // The tool is itself an AppImage; unpacking instead of mounting spares the build machine FUSE.

@@ -1,0 +1,67 @@
+{
+  "placeholder.repository_name": "repository-name",
+  "placeholder.workspace_name": "ワークスペース名",
+  "placeholder.filter_repos": "リポジトリを絞り込み",
+
+  "error.start_sign_in": "サインインを開始できませんでした。{reason}",
+  "error.sign_in_failed": "サインインできませんでした。{reason}",
+  "error.sign_in_not_completed": "GitHub が完了しませんでした。",
+  "error.wrong_account": "@{login} としてサインインしましたが、このワークスペースは別のアカウントに属しています。",
+  "error.list_repos": "リポジトリを一覧表示できませんでした。{message}",
+
+  "git.missing.title": "Git がインストールされていません",
+  "git.missing.description": "現在作成したワークスペースは、このコンピューター上の単なるファイルです。履歴も監査ログもなく、変更を元に戻すことも同期もできません。それらを使うには、Git をインストールしてから再確認してください。",
+
+  "login.enter_code": "GitHub でこのコードを入力してサインインしてください:",
+  "login.waiting": "GitHub を待機しています",
+
+  "account.heading": "GitHub アカウント",
+  "account.help_team": "ワークスペースは、このアカウントとして、アカウントに付与された権限で同期されます。GitHub でこのアカウントと共有されているワークスペース(所有者またはコラボレーターとして)をインポートできます。",
+  "account.help_owner": "ワークスペースは、このアカウントとして同期されます。ワークスペースを使用できるのは、それを所有するアカウントだけです。",
+  "account.help_optional": "任意です。このワークスペースをリモートリポジトリと同期する場合にのみ必要で、後から追加できます。",
+  "account.not_set_up": "このビルドでは GitHub サインインが設定されていないため、ワークスペースはこのコンピューター上にとどまります。",
+  "account.login": "@{login}",
+  "account.login_signed_out": "@{login} (サインアウト済み)",
+  "account.none": "アカウントなし",
+  "account.sign_in_again": "再度サインイン",
+  "account.add": "アカウントを追加",
+
+  "sign_in.title": "GitHub にサインイン",
+
+  "mode.new": "新しいワークスペース",
+  "mode.import": "GitHub からインポート",
+
+  "repos.heading": "リポジトリ",
+  "repos.sign_in_first": "サインインして、リポジトリを選択してください。",
+  "repos.loading": "リポジトリを読み込んでいます",
+  "repos.empty_team": "このアカウントには、自分のものも共有されたものも、リポジトリがまだありません。",
+  "repos.empty_owner": "このアカウントが所有するリポジトリはまだありません。",
+  "repos.read_only_note": "お使いのアカウントにはこのリポジトリの読み取り権限があるため、ワークスペースは読み取り専用になります。リポジトリの更新は取り込まれ、行った変更はこのデバイスにとどまります。",
+
+  "tag.private": "プライベート",
+  "tag.shared": "共有",
+  "tag.read_only": "読み取り専用",
+  "tag.on_device": "このデバイス上",
+
+  "publish.name_label": "リポジトリ名",
+  "publish.name_help": "アカウントに新しいリポジトリが作成されます。既存のリポジトリにプッシュすることはなく、後からリポジトリを変更することもできません。",
+  "publish.private": "プライベートリポジトリ",
+  "publish.sync_all": "一度も同期されていないものもすべて同期する (項目ごとに 1 コミット)",
+
+  "name.label": "名前",
+
+  "submit.publish": "公開",
+  "submit.create": "ワークスペースを作成",
+  "submit.import": "インポート",
+
+  "dialog.publish": "GitHub に公開",
+  "dialog.add": "ワークスペースを追加",
+
+  "button.check_again": "再確認",
+  "button.copy_code": "コードをコピー",
+  "button.open_github": "GitHub を開く",
+  "button.cancel": "キャンセル",
+  "button.try_again": "再試行",
+  "button.close": "閉じる",
+  "button.back": "戻る"
+}

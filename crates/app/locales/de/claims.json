@@ -1,0 +1,8 @@
+{
+  "banner": "{by} bearbeitet dies gerade. Hier ist es schreibgeschützt, bis die Bearbeitung beendet ist.",
+  "take_over": "Übernehmen",
+  "confirm.title": "\"{name}\" von {by} übernehmen?",
+  "confirm.body": "{by} kann Änderungen daran nicht mehr speichern. Was noch nicht gespeichert wurde, geht verloren.",
+  "confirm.ok": "Übernehmen",
+  "row.tooltip": "Beansprucht von {by}, bis {until}"
+}

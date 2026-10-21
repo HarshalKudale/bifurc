@@ -1,0 +1,67 @@
+{
+  "placeholder.repository_name": "repository-name",
+  "placeholder.workspace_name": "Workspace name",
+  "placeholder.filter_repos": "Filter repositories",
+
+  "error.start_sign_in": "Couldn't start the sign-in. {reason}",
+  "error.sign_in_failed": "Couldn't sign in. {reason}",
+  "error.sign_in_not_completed": "GitHub did not complete it.",
+  "error.wrong_account": "You signed in as @{login}, but this workspace belongs to another account.",
+  "error.list_repos": "Couldn't list repositories. {message}",
+
+  "git.missing.title": "Git is not installed",
+  "git.missing.description": "Workspaces made now are plain files on this computer: no history, no audit log, no way to revert a change, and no sync. Install Git, then check again, to get them.",
+
+  "login.enter_code": "Enter this code on GitHub to sign in:",
+  "login.waiting": "Waiting for GitHub",
+
+  "account.heading": "GitHub account",
+  "account.help_team": "The workspace syncs as this account, with the access the account was given. A workspace shared with this account on GitHub, as an owner or collaborator, can be imported.",
+  "account.help_owner": "The workspace syncs as this account. Only the account that owns a workspace can use it.",
+  "account.help_optional": "Optional. Only needed to sync this workspace with a remote repository; it can be added later.",
+  "account.not_set_up": "GitHub sign-in is not set up in this build, so workspaces stay on this computer.",
+  "account.login": "@{login}",
+  "account.login_signed_out": "@{login} (signed out)",
+  "account.none": "No account",
+  "account.sign_in_again": "Sign in again",
+  "account.add": "Add account",
+
+  "sign_in.title": "Sign in to GitHub",
+
+  "mode.new": "New workspace",
+  "mode.import": "Import from GitHub",
+
+  "repos.heading": "Repository",
+  "repos.sign_in_first": "Sign in to choose one of your repositories.",
+  "repos.loading": "Loading repositories",
+  "repos.empty_team": "This account has no repositories yet, of its own or shared with it.",
+  "repos.empty_owner": "This account owns no repositories yet.",
+  "repos.read_only_note": "Your account has read access to this repository, so the workspace will be read-only here: you get what the repository gets, and what you change stays on this device.",
+
+  "tag.private": "Private",
+  "tag.shared": "Shared",
+  "tag.read_only": "Read-only",
+  "tag.on_device": "On this device",
+
+  "publish.name_label": "Repository name",
+  "publish.name_help": "A new repository is created on the account. An existing one is never pushed into, and the repository can't be changed afterwards.",
+  "publish.private": "Private repository",
+  "publish.sync_all": "Also sync everything that was never synced, one commit per item",
+
+  "name.label": "Name",
+
+  "submit.publish": "Publish",
+  "submit.create": "Create workspace",
+  "submit.import": "Import",
+
+  "dialog.publish": "Publish to GitHub",
+  "dialog.add": "Add workspace",
+
+  "button.check_again": "Check again",
+  "button.copy_code": "Copy code",
+  "button.open_github": "Open GitHub",
+  "button.cancel": "Cancel",
+  "button.try_again": "Try again",
+  "button.close": "Close",
+  "button.back": "Back"
+}

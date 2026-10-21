@@ -1,0 +1,8 @@
+{
+  "banner": "{by} が編集中です。編集が終わるまで、ここでは読み取り専用です。",
+  "take_over": "引き継ぐ",
+  "confirm.title": "「{name}」を {by} から引き継ぎますか?",
+  "confirm.body": "{by} は変更を保存できなくなります。まだ保存されていない内容は失われます。",
+  "confirm.ok": "引き継ぐ",
+  "row.tooltip": "{by} が確保中(期限 {until})"
+}
