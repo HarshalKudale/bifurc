@@ -1,0 +1,65 @@
+name: Release macOS (self-hosted)
+
+# Manual stand-in for release.yml while the hosted runners are out of free minutes: builds the macOS packages
+# for an existing tag on the self-hosted (Intel) macOS runner and attaches them to that tag's release. The
+# runner is x64; the arm64 build is cross-compiled on it. One .dmg per architecture.
+on:
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: "Release tag to build and attach the packages to"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+env:
+  CARGO_INCREMENTAL: "0"
+  CARGO_TERM_COLOR: always
+
+jobs:
+  macos:
+    runs-on: [self-hosted, macos]
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-apple-darwin
+            arch: x64
+          - target: aarch64-apple-darwin
+            arch: arm64
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag_name }}
+
+      # Not setup-rust-toolchain: on macOS it runs `brew install bash`, and this runner has no Homebrew.
+      - name: Install Rust
+        run: |
+          if ! command -v rustup > /dev/null && [ ! -x "$HOME/.cargo/bin/rustup" ]; then
+            curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y --profile minimal --default-toolchain none
+          fi
+          echo "$HOME/.cargo/bin" >> "$GITHUB_PATH"
+          export PATH="$HOME/.cargo/bin:$PATH"
+          # Inside the checkout, so it is the toolchain rust-toolchain.toml pins that gets the target.
+          rustup toolchain install stable --profile minimal
+          rustup default stable
+          rustup target add ${{ matrix.target }}
+
+      # `cargo xtask package` builds the workspace and wraps it in Bifurc.app and a .dmg. CARGO_BUILD_TARGET is how
+      # the arm64 build is cross-compiled on this Intel machine.
+      - name: Package
+        env:
+          CARGO_BUILD_TARGET: ${{ matrix.target }}
+          RELEASE_TAG: ${{ inputs.tag_name }}
+          BIFURC_GITHUB_CLIENT_ID: ${{ vars.BIFURC_GITHUB_CLIENT_ID }}
+          BIFURC_POSTHOG_KEY: ${{ vars.BIFURC_POSTHOG_KEY }}
+          BIFURC_POSTHOG_HOST: ${{ vars.BIFURC_POSTHOG_HOST }}
+        run: cargo xtask package --target dmg --release-tag "$RELEASE_TAG"
+
+      - name: Attach to the release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag_name }}
+          files: release/desktop/*.dmg
