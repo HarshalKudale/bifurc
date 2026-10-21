@@ -10,6 +10,7 @@ release/
 # ===== Runtime data =====
 # The engine's data root when it is run from the repo (`--data-dir ./data`): runtime.json and workspace state.
 data/
+!crates/engine/tests/data/
 
 # ===== Environment files =====
 # Build-time keys (see .env.example).
@@ -24,6 +25,7 @@ logs/
 # ===== Certificates =====
 # Local dev certs; a test CA named ca.pem may be committed.
 *.pem
+!crates/engine/tests/data/*.pem
 *.key
 *.crt
 *.cert
