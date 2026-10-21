@@ -78,9 +78,15 @@ fn deb_arch() -> &'static str {
     if env::consts::ARCH == "aarch64" { "arm64" } else { "amd64" }
 }
 
-/// What the disk image's name calls it.
+/// The target triple cargo is told to cross-compile for (`CARGO_BUILD_TARGET`), when it is set.
+fn build_target() -> Option<String> {
+    env::var("CARGO_BUILD_TARGET").ok().filter(|t| !t.is_empty())
+}
+
+/// What the disk image's name calls it: the architecture being built, which is not this machine's when cross-compiling.
 fn mac_arch() -> &'static str {
-    if env::consts::ARCH == "aarch64" { "arm64" } else { "x64" }
+    let arch = build_target().unwrap_or_else(|| env::consts::ARCH.to_owned());
+    if arch.starts_with("aarch64") { "arm64" } else { "x64" }
 }
 
 /// What Scoop calls it.
@@ -500,7 +506,7 @@ fn dev_ui() -> Result<()> {
 /// A release build of `name` from the repository's cargo target directory.
 fn cargo_output(ctx: &Ctx, name: &str) -> Result<PathBuf> {
     let target_dir = env_path("CARGO_TARGET_DIR").map_or_else(|| ctx.repo.join("target"), |dir| ctx.repo.join(dir));
-    let file = target_dir.join("release").join(name);
+    let file = target_dir.join(build_target().unwrap_or_default()).join("release").join(name);
     if file.exists() {
         Ok(file)
     } else {
@@ -541,6 +547,10 @@ fn stage(ctx: &Ctx) -> Result<PathBuf> {
 
 /// The staged `bifurc` (CLI and MCP server) and engine must run, before anything wraps them.
 fn smoke_test(dir: &Path) -> Result<()> {
+    if build_target().is_some_and(|target| !target.starts_with(env::consts::ARCH)) {
+        println!("cross-compiled for another architecture: the staged executables cannot run here");
+        return Ok(());
+    }
     let cli = Command::new(dir.join("bin").join(format!("bifurc{EXE}"))).args(["commands", "--json"]).output();
     match cli {
         Ok(out) if out.status.success() => {}
