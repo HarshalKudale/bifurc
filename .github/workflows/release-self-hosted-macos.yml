@@ -47,11 +47,11 @@ jobs:
           rustup default stable
           rustup target add ${{ matrix.target }}
 
-      # `cargo xtask package` builds the workspace and wraps it in Bifurc.app and a .dmg. CARGO_BUILD_TARGET is how
+      # `cargo xtask package` builds the workspace and wraps it in Bifurc.app and a .dmg. BIFURC_BUILD_TARGET is how
       # the arm64 build is cross-compiled on this Intel machine.
       - name: Package
         env:
-          CARGO_BUILD_TARGET: ${{ matrix.target }}
+          BIFURC_BUILD_TARGET: ${{ matrix.target }}
           RELEASE_TAG: ${{ inputs.tag_name }}
           BIFURC_GITHUB_CLIENT_ID: ${{ vars.BIFURC_GITHUB_CLIENT_ID }}
           BIFURC_POSTHOG_KEY: ${{ vars.BIFURC_POSTHOG_KEY }}

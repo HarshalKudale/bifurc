@@ -78,9 +78,10 @@ fn deb_arch() -> &'static str {
     if env::consts::ARCH == "aarch64" { "arm64" } else { "amd64" }
 }
 
-/// The target triple cargo is told to cross-compile for (`CARGO_BUILD_TARGET`), when it is set.
+/// The target triple to cross-compile for (`BIFURC_BUILD_TARGET`), when it is set. Not `CARGO_BUILD_TARGET`
+/// itself: the `cargo xtask` alias would then build xtask for that target too, and it must run on this machine.
 fn build_target() -> Option<String> {
-    env::var("CARGO_BUILD_TARGET").ok().filter(|t| !t.is_empty())
+    env::var("BIFURC_BUILD_TARGET").ok().filter(|t| !t.is_empty())
 }
 
 /// What the disk image's name calls it: the architecture being built, which is not this machine's when cross-compiling.
@@ -485,6 +486,9 @@ fn build(ctx: &Ctx) -> Result<()> {
         .args(["-p", "bifurc-engine", "-p", "bifurc", "-p", "bifurc-tray", "-p", "bifurc-updater", "-p", "bifurc-ui"])
         .env("RUSTFLAGS", release_rustflags(ctx))
         .current_dir(&ctx.repo);
+    if let Some(target) = build_target() {
+        cargo.env("CARGO_BUILD_TARGET", target);
+    }
     exec(cargo, false)
 }
 
