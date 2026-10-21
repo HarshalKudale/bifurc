@@ -1,0 +1,68 @@
+name: Release Windows (self-hosted)
+
+# Manual stand-in for release.yml while the hosted runners are out of free minutes: builds the Windows
+# packages for an existing tag on the self-hosted Windows runner and attaches them to that tag's release.
+on:
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: "Release tag to build and attach the packages to"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+env:
+  CARGO_INCREMENTAL: "0"
+  CARGO_TERM_COLOR: always
+
+jobs:
+  windows:
+    runs-on: [self-hosted, windows]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag_name }}
+
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          cache: false
+
+      # The Windows SDK (makeappx, makepri) is expected on the machine; NSIS is installed once if missing.
+      - name: Install NSIS
+        shell: pwsh
+        run: |
+          if (-not (Get-Command makensis -ErrorAction SilentlyContinue) -and -not (Test-Path "C:\Program Files (x86)\NSIS\makensis.exe")) {
+            choco install nsis --no-progress -y
+          }
+          "C:\Program Files (x86)\NSIS" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
+
+      - name: Package
+        shell: bash
+        env:
+          RELEASE_TAG: ${{ inputs.tag_name }}
+          BIFURC_GITHUB_CLIENT_ID: ${{ vars.BIFURC_GITHUB_CLIENT_ID }}
+          BIFURC_POSTHOG_KEY: ${{ vars.BIFURC_POSTHOG_KEY }}
+          BIFURC_POSTHOG_HOST: ${{ vars.BIFURC_POSTHOG_HOST }}
+        run: cargo xtask package --release-tag "$RELEASE_TAG"
+
+      # The store manifests are folders; a release holds files. The Scoop manifest also goes up on its own,
+      # so `scoop install <its url>` works straight from the release.
+      - name: Bundle the store manifests
+        shell: pwsh
+        working-directory: release/desktop
+        run: |
+          $version = (Select-String -Path "$env:GITHUB_WORKSPACE\Cargo.toml" -Pattern '^version\s*=\s*"(.*)"' | Select-Object -First 1).Matches[0].Groups[1].Value
+          Compress-Archive -Path manifests -DestinationPath "Bifurc-$version-windows-store-manifests.zip" -Force
+          Copy-Item manifests\scoop\bifurc.json bifurc.json
+
+      - name: Attach to the release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag_name }}
+          files: |
+            release/desktop/*-setup.exe
+            release/desktop/*.msix
+            release/desktop/*.zip
+            release/desktop/bifurc.json
