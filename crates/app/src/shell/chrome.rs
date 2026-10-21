@@ -293,7 +293,6 @@ impl Shell {
             Screen::HealthBar => self.healthbar.read(cx).status_line(),
             Screen::Capture => self.capture.read(cx).status_line(cx),
             Screen::Mail => self.mail.read(cx).status_line(),
-            Screen::Webhooks => self.webhooks.read(cx).status_line(),
             Screen::Settings | Screen::WorkspaceConfig | Screen::AuditLog => String::new(),
         }
     }

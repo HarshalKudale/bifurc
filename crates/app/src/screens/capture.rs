@@ -54,9 +54,6 @@ use crate::{
     },
 };
 
-/// The origin the Webhooks screen's listeners record their requests under.
-const WEBHOOK: &str = "webhook";
-
 /// Several exchanges being saved one after the other as requests or mocks.
 struct SaveRun {
     /// `(capture id, name)` still to save, in the order they are saved.
@@ -225,9 +222,6 @@ pub struct CaptureScreen {
     selected: Option<String>,
     /// Exchanges ticked in the list, for saving several at once.
     checked: HashSet<String>,
-    /// Narrows the screen to the requests of one origin, without its toolbar: the Webhooks screen embeds a
-    /// Capture of what its listeners received. `None` is the Capture screen itself.
-    origin: Option<&'static str>,
     /// Show only this kind of response; `None` shows all.
     type_filter: Option<ResourceType>,
     /// Which handlers' exchanges are listed, in [`Handler::ALL`] order. Mappings are off by default.
@@ -270,20 +264,6 @@ fn read_only_editor(window: &mut Window, cx: &mut Context<CaptureScreen>) -> Ent
 
 impl CaptureScreen {
     pub fn new(model: Entity<AppModel>, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        Self::build(model, None, window, cx)
-    }
-
-    /// A Capture of what the webhook listeners received (origin `webhook`), for the Webhooks screen.
-    pub fn received(model: Entity<AppModel>, window: &mut Window, cx: &mut Context<Self>) -> Self {
-        Self::build(model, Some(WEBHOOK), window, cx)
-    }
-
-    fn build(
-        model: Entity<AppModel>,
-        origin: Option<&'static str>,
-        window: &mut Window,
-        cx: &mut Context<Self>,
-    ) -> Self {
         let filter = cx.new(|cx| InputState::new(window, cx).placeholder(t("capture.filter.placeholder")));
         let request_body = read_only_editor(window, cx);
         let response_body = read_only_editor(window, cx);
@@ -291,8 +271,7 @@ impl CaptureScreen {
             cx.subscribe_in(&model, window, |this, _, event: &ModelEvent, window, cx| match event {
                 ModelEvent::Traffic(payload) if !this.paused => {
                     let active = this.model.read(cx).workspace_id().to_owned();
-                    let mut incoming = traffic::only_workspace(traffic::parse_event(payload), &active);
-                    incoming.retain(|entry| this.origin.is_none_or(|origin| entry.origin.as_deref() == Some(origin)));
+                    let incoming = traffic::only_workspace(traffic::parse_event(payload), &active);
                     // The selected exchange changed (its status landed, say): its detail is out of date.
                     let refresh =
                         this.selected.as_ref().filter(|id| incoming.iter().any(|entry| &entry.id == *id)).cloned();
@@ -329,7 +308,6 @@ impl CaptureScreen {
             selected: None,
             checked: HashSet::new(),
             type_filter: None,
-            origin,
             handlers: [false, true, true, true],
             pinned_only: false,
             limit: traffic::MAX_ENTRIES,
@@ -364,10 +342,8 @@ impl CaptureScreen {
 
     /// Whether the list shows `entry`: it passes the text filter, the type filter and the handler filter.
     fn shows(&self, entry: &TrafficEntry, needle: &str) -> bool {
-        (match self.origin {
-            Some(origin) => entry.origin.as_deref() == Some(origin),
-            None => Handler::ALL.iter().zip(self.handlers).any(|(handler, on)| on && *handler == entry.handler()),
-        }) && (!self.pinned_only || entry.pinned)
+        Handler::ALL.iter().zip(self.handlers).any(|(handler, on)| on && *handler == entry.handler())
+            && (!self.pinned_only || entry.pinned)
             && self.type_filter.is_none_or(|kind| entry.resource_type() == kind)
             && entry.matches(needle)
     }
@@ -377,17 +353,14 @@ impl CaptureScreen {
         self.entries.iter().filter(|entry| self.shows(entry, &needle)).collect()
     }
 
-    /// Reads the history again (also the Webhooks screen's, when it is brought to the front).
+    /// Reads the history again.
     pub fn reload(&mut self, _: &mut Window, cx: &mut Context<Self>) {
         let model = self.model.read(cx);
         if model.workspace_id().is_empty() {
             return;
         }
         let client = model.client().clone();
-        let mut payload = json!({ "workspaceId": model.workspace_id(), "summary": true });
-        if let Some(origin) = self.origin {
-            payload["origin"] = json!(origin);
-        }
+        let payload = json!({ "workspaceId": model.workspace_id(), "summary": true });
         call(&client, cx, "capture.list", payload, |this, outcome, cx| {
             match outcome {
                 Ok(result) => {
@@ -1393,9 +1366,6 @@ impl CaptureScreen {
             self.entries.iter().enumerate().filter(|(_, entry)| self.shows(entry, &needle)).map(|(ix, _)| ix).collect();
         let visible_ids: Vec<String> = visible.iter().map(|ix| self.entries[*ix].id.clone()).collect();
         let all_checked = !visible_ids.is_empty() && visible_ids.iter().all(|id| self.checked.contains(id));
-        if self.entries.is_empty() && self.origin.is_some() {
-            return page::empty(t("webhooks.received.empty.title"), t("webhooks.received.empty.body"));
-        }
         if self.entries.is_empty() {
             return page::empty(
                 t("capture.empty.no_traffic.title"),
@@ -1961,9 +1931,6 @@ impl Render for CaptureScreen {
         );
         let detail = self.selected_entry().cloned().map(|entry| self.render_detail(&entry, cx));
         let split = list_over_detail("capture-split", self.render_list(cx), detail);
-        if self.origin.is_some() {
-            return split.into_any_element();
-        }
         let body = v_flex().size_full().child(self.render_toolbar(cx)).child(div().flex_1().min_h_0().child(split));
         page::screen(header, body, cx).into_any_element()
     }

@@ -2,7 +2,7 @@
 //! `listen` blocks and prints a line per inbound request; the engine ends the listener with this command's
 //! connection, so Ctrl+C or a killed CI step never leaves the port busy.
 
-use std::{collections::HashSet, io::Write, time::Instant};
+use std::{io::Write, time::Instant};
 
 use serde_json::{Value, json};
 
@@ -11,7 +11,7 @@ use crate::{
     commands::{Context, created, need, unknown_verb, workspace_id},
     error::{CliError, NOT_FOUND, Result},
     format::js_template,
-    response::{Response, present, size},
+    response::{Response, present},
 };
 
 pub fn webhooks(ctx: &mut Context, sub: Option<&str>, out: &mut dyn Write) -> Result<String> {
@@ -44,79 +44,50 @@ pub fn webhooks(ctx: &mut Context, sub: Option<&str>, out: &mut dyn Write) -> Re
     }
 }
 
-/// `listening http://127.0.0.1:4020 (stripe) → http://api.localhost/webhooks/stripe`
-fn start_line(url: &str, name: Option<&str>, forward: Option<&str>) -> String {
-    let name = name.map_or(String::new(), |n| format!(" ({n})"));
-    let forward = forward.map_or(String::new(), |f| format!(" → {f}"));
-    format!("listening {url}{name}{forward}")
-}
-
-/// `POST /hooks/stripe → 200 · 11B`
-fn request_line(entry: &Value) -> String {
-    let url = js_template(entry.get("url"));
-    let rest = url.split_once("://").map_or(url.as_str(), |(_, rest)| rest);
-    let path = rest.find('/').map_or("/", |at| &rest[at..]);
-    let bytes = entry["size"].as_u64().unwrap_or(0) as usize;
-    format!("{} {path} → {} · {}", js_template(entry.get("method")), js_template(entry.get("status")), size(bytes))
-}
-
+/// `webhooks listen [--name x] [--folder f] [--url <target>]`: a public address (cloudflared quick tunnel) that waits
+/// for one webhook, as the Capture button of a webhook request does; what arrives is saved as a webhook request.
 fn listen(ctx: &mut Context, out: &mut dyn Write) -> Result<String> {
-    ctx.accept(&["port", "name", "forward", "detach", "quiet"], 0)?;
+    ctx.accept(&["name", "folder", "url"], 0)?;
     let args = ctx.args;
-    let port = capture::number(ctx, "port")?;
-    if port.is_some_and(|p| p > 65535) {
-        return Err(CliError::usage("--port is a number from 0 to 65535"));
-    }
     let workspace = workspace_id(ctx)?;
-    let mut payload = json!({ "workspaceId": workspace, "detach": args.has("detach") });
-    if let Some(port) = port {
-        payload["port"] = json!(port);
-    }
-    for key in ["name", "forward"] {
-        if let Some(value) = args.flag(key) {
-            payload[key] = json!(value);
-        }
-    }
-    let started = ctx.request("webhook.listen", payload).map_err(|err| match err {
-        CliError::Engine { code, .. } if code == "CONFLICT" => {
-            CliError::msg(format!("port {} is in use (see: bifurc services list)", port.unwrap_or(0)))
-        }
-        CliError::Engine { code, message } if code == "BAD_REQUEST" => CliError::usage(message),
-        other => other,
-    })?;
-    let line = start_line(&js_template(started.get("url")), args.flag("name"), args.flag("forward"));
-    if args.has("detach") {
-        return Ok(ctx.print(&started, || line.clone()));
-    }
-
-    let _ = writeln!(out, "{line} (Ctrl+C to stop)");
-    let _ = out.flush();
-    let quiet = args.has("quiet");
-    let (mut seen, suffix) = (HashSet::new(), format!(":{}", js_template(started.get("port"))));
-    let since = capture::now_ms();
-    if !quiet {
-        ctx.request("subscribe", json!({ "events": [capture::EVENT] }))?;
-    }
-    // The listener ends when this connection does; until then, report what it receives.
-    loop {
-        if !quiet {
-            let listed = capture::summaries(ctx, &workspace, json!({ "origin": "webhook", "since": since }))?;
-            for entry in listed["entries"].as_array().into_iter().flatten().rev() {
-                let url = js_template(entry.get("url"));
-                let authority =
-                    url.split_once("://").map_or(url.as_str(), |(_, rest)| rest).split('/').next().unwrap_or_default();
-                if !authority.ends_with(&suffix) || !seen.insert(js_template(entry.get("id"))) {
-                    continue;
-                }
-                if writeln!(out, "{}", request_line(entry)).and_then(|()| out.flush()).is_err() {
-                    return Ok(String::new());
-                }
+    let folder_id = match args.flag("folder") {
+        Some(folder) => {
+            let parts: Vec<&str> = folder.split('/').filter(|part| !part.is_empty()).collect();
+            if parts.is_empty() {
+                return Err(CliError::usage("--folder needs a folder name"));
             }
+            Some(crate::curl::folder_id(ctx, &workspace, "request", &parts)?)
         }
-        if ctx.engine()?.next_event()?.is_none() {
-            return Ok(String::new());
+        None => None,
+    };
+    let started = ctx.request("webhook.capture.start", json!({ "workspaceId": workspace }))?;
+    let capture_id = js_template(started.get("captureId"));
+    let _ = writeln!(out, "listening {} (Ctrl+C to stop)", js_template(started.get("url")));
+    let _ = out.flush();
+    let got = loop {
+        let answer = ctx.request("webhook.capture.wait", json!({ "captureId": capture_id, "timeoutMs": 25_000 }))?;
+        match answer["reason"].as_str() {
+            _ if answer["captured"] == true => break answer,
+            Some("waiting") => continue,
+            Some(reason) => return Err(CliError::msg(format!("no webhook arrived (capture {reason})"))),
+            None => return Err(CliError::msg("no webhook arrived")),
         }
+    };
+    let _ = writeln!(out, "{} received", js_template(got.get("method")));
+    let mut entity = json!({
+        "name": args.flag("name").unwrap_or("Captured webhook"),
+        "url": args.flag("url").unwrap_or_default(),
+        "payload": got["payload"],
+        "headers": got["headers"],
+        "signatureHeader": got["signatureHeader"],
+    });
+    if let Some(folder_id) = folder_id {
+        entity["folderId"] = json!(folder_id);
     }
+    let made = ctx
+        .request("entity.create", json!({ "kind": "webhookRequests", "workspaceId": workspace, "entity": entity }))?;
+    let saved = created(&made);
+    Ok(ctx.print(&saved, || format!("Saved webhook request \"{}\"", js_template(saved.get("name")))))
 }
 
 /// `webhooks stop [<name|port>]`: one listener by its name or port, or every one when none is given.
@@ -309,8 +280,6 @@ fn save(ctx: &mut Context) -> Result<String> {
 
 #[cfg(test)]
 mod tests {
-    use base64::{Engine as _, engine::general_purpose::STANDARD};
-
     use super::*;
     use crate::testing::{Answer, config, payloads, run_with_events};
 
@@ -321,43 +290,40 @@ mod tests {
         (result, calls, String::from_utf8(out).unwrap())
     }
 
-    fn started() -> Vec<Answer> {
+    fn capturing(captured: Value) -> Vec<Answer> {
         vec![
             ("config.get", Ok(config())),
-            ("webhook.listen", Ok(json!({"id": "k1", "port": 4020, "url": "http://127.0.0.1:4020"}))),
+            ("webhook.capture.start", Ok(json!({"captureId": "c1", "url": "https://calm-fox.trycloudflare.com"}))),
+            ("webhook.capture.wait", Ok(captured)),
+            ("entity.create", Ok(json!({"entity": {"id": "r1", "name": "Stripe in"}}))),
         ]
     }
 
     #[test]
-    fn detach_sends_the_options_and_prints_one_line() {
-        let argv = ["webhooks", "listen", "--detach", "--name", "stripe", "--forward", "http://api.localhost/hook"];
-        let (out, calls, printed) = go(&argv, started(), vec![]);
-        assert_eq!(out.unwrap(), "listening http://127.0.0.1:4020 (stripe) → http://api.localhost/hook");
+    fn listen_prints_the_public_address_and_saves_what_arrives_as_a_webhook_request() {
+        let got = json!({"captured": true, "method": "POST", "payload": "{\"a\": 1}",
+            "headers": {"user-agent": "Stripe/1.0"}, "signatureHeader": "Stripe-Signature"});
+        let argv = ["webhooks", "listen", "--name", "Stripe in", "--url", "http://localhost:3000/hook"];
+        let (out, calls, printed) = go(&argv, capturing(got), vec![]);
+        assert_eq!(out.unwrap(), "Saved webhook request \"Stripe in\"");
+        assert_eq!(printed, "listening https://calm-fox.trycloudflare.com (Ctrl+C to stop)
+POST received
+");
+        assert_eq!(payloads(&calls, "webhook.capture.start"), [json!({"workspaceId": "w1"})]);
+        assert_eq!(payloads(&calls, "webhook.capture.wait")[0]["captureId"], "c1");
         assert_eq!(
-            payloads(&calls, "webhook.listen"),
-            [json!({"workspaceId": "w1", "detach": true, "name": "stripe", "forward": "http://api.localhost/hook"})]
+            payloads(&calls, "entity.create"),
+            [json!({"kind": "webhookRequests", "workspaceId": "w1", "entity": {
+                "name": "Stripe in", "url": "http://localhost:3000/hook", "payload": "{\"a\": 1}",
+                "headers": {"user-agent": "Stripe/1.0"}, "signatureHeader": "Stripe-Signature"}})]
         );
-        assert_eq!(printed, "");
-        let (out, _, _) = go(&["webhooks", "listen", "--detach"], started(), vec![]);
-        assert_eq!(out.unwrap(), "listening http://127.0.0.1:4020");
     }
 
     #[test]
-    fn a_busy_port_and_a_bad_forward_are_reported() {
-        let busy = Err(CliError::Engine { code: "CONFLICT".into(), message: "Port 4020 is already in use".into() });
-        let (out, _, _) = go(
-            &["webhooks", "listen", "--port", "4020"],
-            vec![("config.get", Ok(config())), ("webhook.listen", busy)],
-            vec![],
-        );
-        assert_eq!(out.unwrap_err().line(), "bifurc: port 4020 is in use (see: bifurc services list)");
-        let bad = Err(CliError::Engine { code: "BAD_REQUEST".into(), message: "--forward is a URL".into() });
-        let (out, _, _) = go(
-            &["webhooks", "listen", "--forward", "x"],
-            vec![("config.get", Ok(config())), ("webhook.listen", bad)],
-            vec![],
-        );
-        assert_eq!(out.unwrap_err().code(), 2);
+    fn listen_saves_nothing_when_the_capture_ends_empty() {
+        let (out, calls, _) = go(&["webhooks", "listen"], capturing(json!({"captured": false, "reason": "expired"})), vec![]);
+        assert_eq!(out.unwrap_err().line(), "bifurc: no webhook arrived (capture expired)");
+        assert!(payloads(&calls, "entity.create").is_empty());
     }
 
     #[test]
@@ -443,27 +409,6 @@ mod tests {
         );
         let (out, _, _) = go(&["webhooks", "save", "1111"], answers, vec![]);
         assert_eq!(out.unwrap_err().code(), 2);
-    }
-
-    #[test]
-    fn the_foreground_prints_a_line_per_request_of_its_own_port() {
-        let mut answers = started();
-        answers.push(("subscribe", Ok(json!({}))));
-        let own = |id: &str, url: &str| json!({"id": id, "method": "POST", "url": url, "status": 200, "size": 11});
-        answers.push((
-            "capture.list",
-            Ok(
-                json!({"entries": [own("b", "http://127.0.0.1:4020/hooks/b"), own("a", "http://127.0.0.1:4020/hooks/a"),
-                                   own("c", "http://127.0.0.1:9999/other")]}),
-            ),
-        ));
-        let (out, calls, printed) = go(&["webhooks", "listen"], answers, vec![json!({"event": "event.log.entry"})]);
-        assert_eq!(out.unwrap(), "");
-        assert_eq!(
-            printed,
-            "listening http://127.0.0.1:4020 (Ctrl+C to stop)\nPOST /hooks/a → 200 · 11B\nPOST /hooks/b → 200 · 11B\n"
-        );
-        assert_eq!(payloads(&calls, "capture.list")[0]["origin"], "webhook");
     }
 
     /// Answers for a trigger: a vault, and the engine's reply to `webhook.trigger`.

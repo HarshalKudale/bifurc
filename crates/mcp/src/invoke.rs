@@ -611,7 +611,7 @@ mod tests {
             ("webhooks", json!({"verb": "list", "name": "stripe", "last": 5, "json": true})),
             (
                 "webhooks",
-                json!({"verb": "listen", "port": 4020, "name": "stripe", "forward": "http://api.localhost/hook", "detach": true}),
+                json!({"verb": "listen", "name": "Stripe in", "folder": "hooks", "url": "http://api.localhost/hook"}),
             ),
             ("webhooks", json!({"verb": "stop", "id": "stripe"})),
             (

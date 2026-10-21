@@ -215,7 +215,7 @@ fn running_servers_of_this_workspace_can_be_stopped(cx: &mut gpui_kit::TestAppCo
             {"port": 4011, "workspaceId": "w2", "fallthrough": null, "detached": true, "hits": 0},
         ]}),
     );
-    ui.show(Screen::Webhooks);
+    ui.show(Screen::Capture);
     ui.show(Screen::Mocks);
     assert!(ui.has("mock-server-stop-4010") && ui.has("mock-server-copy-4010"));
     assert!(!ui.has("mock-server-stop-4011"), "another workspace's server");

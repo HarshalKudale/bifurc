@@ -87,7 +87,7 @@ Groups (bifurc <group> --help shows the arguments and options of each verb)
   logs          <service> [--errors] [--since 2m] [--grep x] [--last 50]   A dev server's output, filtered
   port          free <port> [--kill]                                  What holds a port, and stopping it
   mail          list | show | last | clear                            Mail the local SMTP sink caught; codes and links
-  webhooks      listen | stop | list | show | save | trigger  Receive webhooks locally, optionally forward them
+  webhooks      listen | stop | list | show | save | trigger  Capture a webhook from the internet as a request
   jwt           decode | mint                                         Read a token's claims and expiry; sign a test token
   policy        show | check                                          Guardrails for agents: the workspace's policy.yaml
   approvals     list | approve | deny                                 Calls a policy holds for a person; decided at a terminal
@@ -875,12 +875,12 @@ The engine receives webhooks on a local port (127.0.0.1) and captures each one w
 body (origin webhook), so a signature check still passes when it is sent again. See them with
 `capture list --origin webhook` and `capture show <id>`; `status` shows `webhooks :4020`.
 
-  listen [--port N] [--name x] [--forward <url>] [--detach] [--quiet]
-                                         Any method and path is accepted and answered 200 {\"ok\":true}. With
-                                         --forward the request goes on unchanged (the path it came on is appended
-                                         to the URL's path) and the upstream's answer comes back; refused: 502.
-                                         Blocks and prints a line per request until Ctrl+C or the end of the
-                                         command; --detach keeps it running under the engine. No --port: a free one
+  listen [--name x] [--folder f] [--url <target>]
+                                         Print a public address (a cloudflared quick tunnel; install it in
+                                         onboarding or Settings > Requests) and wait up to 10 minutes for one
+                                         webhook. What arrives (payload, headers, signature header name) is saved
+                                         as a webhook request: --name (default \"Captured webhook\"), in --folder,
+                                         sent to --url. The Capture button of a webhook request does the same
   stop [<name|port>]                     Stop that listener, or every one
   list [--name x] [--last 20]            #id, time, method, URL, status, origin, listener; newest first
   show <id> [capture show flags]         As `capture show`, for a webhook only (--req-body, --req-headers, ...)
@@ -1119,7 +1119,7 @@ pub fn examples(group: &str) -> Option<&'static [&'static str]> {
             "bifurc openapi infer --json",
         ],
         "webhooks" => &[
-            "bifurc webhooks listen --name stripe --forward http://api.localhost/webhooks/stripe --detach",
+            "bifurc webhooks listen --name \"Stripe checkout\" --folder hooks --url http://localhost:3000/webhooks/stripe",
             "bifurc webhooks stop stripe",
             "bifurc webhooks list --name stripe --last 5",
             "bifurc webhooks trigger stripe --vault app --patch '.data.object.amount_total=500'",
