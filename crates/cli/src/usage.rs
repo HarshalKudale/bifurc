@@ -87,7 +87,7 @@ Groups (bifurc <group> --help shows the arguments and options of each verb)
   logs          <service> [--errors] [--since 2m] [--grep x] [--last 50]   A dev server's output, filtered
   port          free <port> [--kill]                                  What holds a port, and stopping it
   mail          list | show | last | clear                            Mail the local SMTP sink caught; codes and links
-  webhooks      listen | stop | list | show | replay | save | trigger  Receive webhooks locally, optionally forward them
+  webhooks      listen | stop | list | show | save | trigger  Receive webhooks locally, optionally forward them
   jwt           decode | mint                                         Read a token's claims and expiry; sign a test token
   policy        show | check                                          Guardrails for agents: the workspace's policy.yaml
   approvals     list | approve | deny                                 Calls a policy holds for a person; decided at a terminal
@@ -884,12 +884,6 @@ body (origin webhook), so a signature check still passes when it is sent again. 
   stop [<name|port>]                     Stop that listener, or every one
   list [--name x] [--last 20]            #id, time, method, URL, status, origin, listener; newest first
   show <id> [capture show flags]         As `capture show`, for a webhook only (--req-body, --req-headers, ...)
-  replay <id> [--to <url>] [output flags]
-                                         Send it again with its method, exact headers and raw body, to where it
-                                         was forwarded (else its own URL). --to replaces scheme, host and port
-                                         and keeps the path and query, unless it has a path of its own. Prints
-                                         the response as `requests send` does (--body, --headers, --select,
-                                         --expect-status ...); refused: exit 4
   save <id> --as-request [--name x] [--folder f]
                                          Save it as a request (to the forward URL when it had one)
   fixtures                               The sample events: stripe.checkout.session.completed, github.push
@@ -899,7 +893,7 @@ body (origin webhook), so a signature check still passes when it is sent again. 
                                          --vault signs it with that secret (default STRIPE_WEBHOOK_SECRET or
                                          GITHUB_WEBHOOK_SECRET): stripe-signature or x-hub-signature-256.
                                          --patch edits the payload before signing. Prints the response as
-                                         `replay` does";
+                                         `requests send` does";
 
 const MAIL: &str = "Usage: bifurc mail <verb>
 
@@ -1128,8 +1122,7 @@ pub fn examples(group: &str) -> Option<&'static [&'static str]> {
             "bifurc webhooks listen --name stripe --forward http://api.localhost/webhooks/stripe --detach",
             "bifurc webhooks stop stripe",
             "bifurc webhooks list --name stripe --last 5",
-            "bifurc webhooks replay k3f9 --to http://localhost:3000 --expect-status 200",
-            "bifurc webhooks trigger stripe --vault app --patch '.data.object.amount_total=500' --expect-status 200",
+            "bifurc webhooks trigger stripe --vault app --patch '.data.object.amount_total=500'",
         ],
         "jwt" => &[
             "bifurc jwt decode eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.c2ln",

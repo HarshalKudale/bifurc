@@ -38,8 +38,7 @@ use crate::{
     components::{
         Syntax,
         binary::{BinaryBody, save_to_file, suggested_file_name},
-        dialogs::{PromptField, prompt},
-        master_detail::list_over_detail,
+                master_detail::list_over_detail,
         page,
     },
     engine::{call, call_in, describe, failure, fetch_artifact},
@@ -1218,39 +1217,6 @@ impl CaptureScreen {
         cx.notify();
     }
 
-    /// Sends the selected webhook again (`webhook.replay`): to the listener's forward URL, else to where it
-    /// came from, or to `to` when given. The answer's status is shown as a notification.
-    fn replay(&mut self, to: Option<String>, window: &mut Window, cx: &mut Context<Self>) {
-        let Some(id) = self.selected.clone() else { return };
-        let model = self.model.read(cx);
-        let client = model.client().clone();
-        let mut payload = json!({ "workspaceId": model.workspace_id(), "id": id });
-        if let Some(to) = to {
-            payload["to"] = json!(to);
-        }
-        call_in(&client, window, cx, "webhook.replay", payload, |this, outcome, window, cx| match failure(&outcome) {
-            Some(message) => this.report(t("webhooks.error.replay"), message, cx),
-            None => {
-                let status = outcome.ok().and_then(|sent| sent.get("status")?.as_u64()).unwrap_or_default();
-                let text = t_with("webhooks.replayed", &[("status", &status)]);
-                let note = if status < 400 { Notification::success(text) } else { Notification::warning(text) };
-                window.push_notification(note, cx);
-            }
-        });
-    }
-
-    fn ask_replay_to(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        prompt(
-            cx.weak_entity(),
-            window,
-            cx,
-            t("webhooks.replay_to.title"),
-            t("webhooks.replay"),
-            vec![PromptField::new(t("webhooks.field.url"), t("webhooks.field.url_placeholder"))],
-            |this, values, window, cx| this.replay(values.into_iter().next(), window, cx),
-        );
-    }
-
     /// Puts the selected exchange's request on the clipboard as a cURL command, like the REST editor's snippet.
     fn copy_curl(&mut self, window: &mut Window, cx: &mut Context<Self>) {
         let Detail::Ready(shown) = &self.detail else { return };
@@ -1910,20 +1876,6 @@ impl CaptureScreen {
                             .child(entry.url.clone()),
                     )
                     .child(Self::status_tag(entry.status))
-                    .when(self.origin == Some(WEBHOOK), |this| {
-                        this.child(
-                            Button::new("webhook-replay")
-                                .small()
-                                .label(t("webhooks.replay"))
-                                .on_click(cx.listener(|this, _, window, cx| this.replay(None, window, cx))),
-                        )
-                        .child(
-                            Button::new("webhook-replay-to")
-                                .small()
-                                .label(t("webhooks.replay_to"))
-                                .on_click(cx.listener(|this, _, window, cx| this.ask_replay_to(window, cx))),
-                        )
-                    })
                     .child({
                         let pinned = entry.pinned;
                         Button::new("capture-pin")

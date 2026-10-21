@@ -1,10 +1,10 @@
-//! An open GraphQL, gRPC or SOAP request.
+//! An open GraphQL, gRPC, SOAP or webhook request.
 //!
-//! The three share one editor because they share one shape: a name, a target, a few short fields, one or
+//! They share one editor because they share one shape: a name, a target, a few short fields, one or
 //! two documents, and a table of headers. What differs is which stored field each control edits, and that is
-//! a table ([`fields_of`]) rather than three copies of the same view.
+//! a table ([`fields_of`]) rather than a copy of the same view for each.
 //!
-//! These protocols are sent by id (`graphql.send`, `grpc.send`, `soap.send`): the engine reads the stored
+//! These protocols are sent by id (`graphql.send`, `grpc.send`, `soap.send`, `webhook.send`): the engine reads the stored
 //! request, resolves its variables and runs its scripts. So sending an edited request saves it first.
 //!
 //! A draft is created by Save. Once it exists there is no Save step: an edit is written a moment after it
@@ -24,12 +24,12 @@ use gpui_kit::component::{
 };
 use gpui_kit::{
     AppContext as _, Context, Entity, EventEmitter, IntoElement, ParentElement as _, Render, SharedString, Styled as _,
-    Subscription, Window, div,
+    Subscription, Window, div, px,
 };
 use serde_json::{Map, Value, json};
 
 use super::{
-    Carry, LoadState, SaveMode, SessionEvent, engine_folder,
+    Carry, LoadState, SaveMode, SessionEvent, capture_overlay::CaptureOverlay, engine_folder,
     exchange::{Exchange, HistorySource, Replay},
     graphql::SchemaPanel,
     wsdl::WsdlPanel,
@@ -38,6 +38,7 @@ use crate::{
     app_model::{AppModel, ModelEvent},
     components::{
         Autosave, KeyValueEvent, KeyValueTable, SettingsChanged, SettingsForm, Syntax, VarEditor, page, request_bar,
+        tunnel::Tunnel,
     },
     engine::{call_in, describe, error_text},
     i18n::{t, t_with},
@@ -96,6 +97,20 @@ const SOAP_FIELDS: &[FieldSpec] = &[
     field("headers", "session.protocol.headers", "", FieldKind::Pairs),
 ];
 
+const WEBHOOK_FIELDS: &[FieldSpec] = &[
+    field("url", "session.protocol.webhook_url", "session.protocol.webhook_url_placeholder", FieldKind::Line),
+    field("vault", "session.protocol.vault", "session.protocol.vault_placeholder", FieldKind::Line),
+    field("secretName", "session.protocol.secret", "session.protocol.secret_placeholder", FieldKind::Line),
+    field(
+        "signatureHeader",
+        "session.protocol.signature_header",
+        "session.protocol.signature_header_placeholder",
+        FieldKind::Line,
+    ),
+    field("payload", "session.protocol.payload", "{ }", FieldKind::Document(Syntax::Json)),
+    field("headers", "session.protocol.headers", "", FieldKind::Pairs),
+];
+
 /// A hint is a key; an example value (a URL, a sample document) is shown as it is.
 fn placeholder_of(spec: &FieldSpec) -> &'static str {
     if spec.placeholder.starts_with("session.") { t(spec.placeholder) } else { spec.placeholder }
@@ -107,6 +122,7 @@ fn fields_of(kind: RequestKind) -> &'static [FieldSpec] {
         RequestKind::GraphQl => GRAPHQL_FIELDS,
         RequestKind::Grpc => GRPC_FIELDS,
         RequestKind::Soap => SOAP_FIELDS,
+        RequestKind::Webhook => WEBHOOK_FIELDS,
         RequestKind::Rest | RequestKind::WebSocket | RequestKind::Sse | RequestKind::SocketIo | RequestKind::Mcp => &[],
     }
 }
@@ -136,6 +152,7 @@ fn default_name(kind: RequestKind) -> String {
 fn body_key(kind: RequestKind) -> Option<&'static str> {
     match kind {
         RequestKind::Soap => Some("body"),
+        RequestKind::Webhook => Some("payload"),
         RequestKind::Grpc => Some("requestBody"),
         RequestKind::GraphQl
         | RequestKind::Rest
@@ -156,6 +173,7 @@ fn defaults_of(kind: RequestKind) -> Map<String, Value> {
             "protocol": "grpc", "requestBody": "{}", "metadata": {}, "useReflection": true, "streamingType": "unary",
         }),
         RequestKind::Soap => json!({ "protocol": "soap", "soapAction": "", "headers": {}, "body": "" }),
+        RequestKind::Webhook => json!({ "payload": "{}", "headers": {} }),
         RequestKind::Rest | RequestKind::WebSocket | RequestKind::Sse | RequestKind::SocketIo | RequestKind::Mcp => {
             json!({})
         }
@@ -292,6 +310,13 @@ fn parse_services(result: &Value) -> Vec<ServiceInfo> {
         .collect()
 }
 
+/// What a webhook request offers beyond its fields: the sample events to start a payload from, and whether
+/// a webhook can be captured (cloudflared is installed).
+struct WebhookPicker {
+    template_box: Entity<ComboboxState<Vec<String>>>,
+    tunnel: Entity<Tunnel>,
+}
+
 enum Control {
     Text(VarEditor),
     Pairs(Entity<KeyValueTable>),
@@ -325,6 +350,14 @@ pub struct ProtocolSession {
     exchange: Entity<Exchange>,
     /// Only a gRPC request has one.
     grpc: Option<GrpcPicker>,
+    /// Only a webhook request has one.
+    webhook: Option<WebhookPicker>,
+    /// The capture this tab is waiting on; empty while it is being started.
+    capture_id: Option<String>,
+    /// Counts the captures started, so the answer to one that was cancelled is not taken for the current one.
+    capture_attempt: u64,
+    /// What the blocked window shows while a capture runs.
+    capture_overlay: Option<Entity<CaptureOverlay>>,
     /// Only a GraphQL request has one: the schema read from its endpoint, kept in memory.
     schema: Option<SchemaPanel>,
     /// Only a SOAP request has one: the operations read from its WSDL, kept in memory.
@@ -482,6 +515,23 @@ impl ProtocolSession {
             }
         });
 
+        let webhook = (kind == RequestKind::Webhook).then(|| {
+            let template_box =
+                cx.new(|cx| ComboboxState::new(Vec::<String>::new(), vec![], window, cx).searchable(true));
+            subscriptions.push(cx.subscribe_in(
+                &template_box,
+                window,
+                |this, _, event: &ComboboxEvent<Vec<String>>, window, cx| {
+                    if let ComboboxEvent::Change(values) = event {
+                        this.choose_template(values.first().cloned().unwrap_or_default(), window, cx);
+                    }
+                },
+            ));
+            let tunnel = cx.new(|cx| Tunnel::new(model.clone(), cx));
+            subscriptions.push(cx.observe(&tunnel, |_, _, cx| cx.notify()));
+            WebhookPicker { template_box, tunnel }
+        });
+
         let mut this = Self {
             model,
             kind,
@@ -498,6 +548,10 @@ impl ProtocolSession {
             baseline: (String::new(), Vec::new()),
             exchange,
             grpc,
+            webhook,
+            capture_id: None,
+            capture_attempt: 0,
+            capture_overlay: None,
             schema,
             wsdl,
             stream_id: format!("grpc-{}", cx.entity_id().as_u64()),
@@ -510,6 +564,7 @@ impl ProtocolSession {
             _subscriptions: subscriptions,
         };
         this.baseline = this.values(cx);
+        this.load_templates(window, cx);
         this
     }
 
@@ -643,6 +698,12 @@ impl ProtocolSession {
                     headers.push(("SOAPAction".into(), text("soapAction")));
                 }
                 Some(RequestParts { method: "POST".into(), url: text("endpointUrl"), headers, body: text("body") })
+            }
+            RequestKind::Webhook => {
+                if !headers.iter().any(|(name, _)| name.eq_ignore_ascii_case("content-type")) {
+                    headers.push(("Content-Type".into(), "application/json".into()));
+                }
+                Some(RequestParts { method: "POST".into(), url: text("url"), headers, body: text("payload") })
             }
             _ => None,
         }
@@ -933,6 +994,214 @@ impl ProtocolSession {
     fn method_info(&self, service: &str, method: &str) -> Option<MethodInfo> {
         let picker = self.grpc.as_ref()?;
         picker.services.iter().find(|s| s.name == service)?.methods.iter().find(|m| m.name == method).cloned()
+    }
+
+    /// Offers the engine's sample events in the template list.
+    fn load_templates(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.webhook.is_none() {
+            return;
+        }
+        let client = self.model.read(cx).client().clone();
+        call_in(&client, window, cx, "webhook.fixtures", json!({}), |this, outcome, window, cx| {
+            let Some(picker) = this.webhook.as_ref() else { return };
+            let names: Vec<String> = outcome
+                .ok()
+                .and_then(|listed| {
+                    listed.get("fixtures").and_then(Value::as_array).map(|rows| {
+                        rows.iter().filter_map(|row| row.get("name").and_then(Value::as_str).map(str::to_owned)).collect()
+                    })
+                })
+                .unwrap_or_default();
+            picker.template_box.update(cx, |list, cx| list.set_items(names, window, cx));
+        });
+    }
+
+    /// Starts the payload from a sample event: the engine builds it with fresh ids, and gives the headers its
+    /// sender uses and the name of the header it signs into. Headers already there stay unless the sample sets them.
+    fn choose_template(&mut self, name: String, window: &mut Window, cx: &mut Context<Self>) {
+        if name.is_empty() {
+            return;
+        }
+        let client = self.model.read(cx).client().clone();
+        call_in(&client, window, cx, "webhook.template", json!({ "name": name }), |this, outcome, window, cx| {
+            match outcome {
+                Ok(template) => {
+                    let text = |key: &str| template.get(key).and_then(Value::as_str).unwrap_or_default().to_owned();
+                    this.set_text("payload", text("payload"), window, cx);
+                    let signature = text("signatureHeader");
+                    if !signature.is_empty() {
+                        this.set_text("signatureHeader", signature, window, cx);
+                    }
+                    this.merge_headers(header_pairs(template.get("headers").unwrap_or(&Value::Null)), window, cx);
+                    this.changed(cx);
+                }
+                Err(error) => window.push_notification(
+                    Notification::error(describe(&error)).title(t("session.protocol.template_failed")),
+                    cx,
+                ),
+            }
+        });
+    }
+
+    /// Adds `incoming` to the headers table; a header that is there already takes the new value.
+    fn merge_headers(&mut self, incoming: Vec<(String, String)>, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(Control::Pairs(table)) = self.control("headers") else { return };
+        let table = table.clone();
+        let mut all = table.read(cx).pairs(cx);
+        for (name, value) in incoming {
+            match all.iter_mut().find(|(own, _)| own.eq_ignore_ascii_case(&name)) {
+                Some(slot) => slot.1 = value,
+                None => all.push((name, value)),
+            }
+        }
+        table.update(cx, |table, cx| table.set_pairs(&all, window, cx));
+    }
+
+    /// The sample list, above the payload.
+    fn sample_row(&self) -> gpui_kit::AnyElement {
+        let Some(picker) = &self.webhook else { return div().into_any_element() };
+        h_flex()
+            .flex_none()
+            .gap_3()
+            .px_3()
+            .py_2()
+            .items_center()
+            .child(div().flex_none().text_sm().child(t("session.protocol.template")))
+            .child(
+                div().w_80().child(
+                    Combobox::new(&picker.template_box)
+                        .placeholder(t("session.protocol.template_placeholder"))
+                        .search_placeholder(t("session.protocol.search_templates"))
+                        .w_full(),
+                ),
+            )
+            .into_any_element()
+    }
+
+    /// Waits for a webhook from outside. The window is blocked at once, saying the address is being made; when
+    /// the engine has opened it the same view shows it, and the first request that arrives fills the payload,
+    /// the headers and the signature header.
+    fn capture(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        if self.capture_id.is_some() || self.webhook.is_none() {
+            return;
+        }
+        self.capture_id = Some(String::new());
+        self.capture_attempt += 1;
+        let attempt = self.capture_attempt;
+        let view = cx.weak_entity();
+        let overlay = cx.new(|_| {
+            CaptureOverlay::new(move |window, cx| {
+                view.update(cx, |this, cx| this.cancel_capture(window, cx)).ok();
+            })
+        });
+        self.capture_overlay = Some(overlay.clone());
+        window.open_dialog(cx, move |dialog, _, _| {
+            // The dialog is as large as the window lets it be, and nothing but Cancel closes it.
+            dialog
+                .w(px(10_000.))
+                .h(px(10_000.))
+                .margin_top(px(0.))
+                .close_button(false)
+                .overlay_closable(false)
+                .keyboard(false)
+                .child(overlay.clone())
+        });
+        cx.notify();
+        let client = self.model.read(cx).client().clone();
+        let payload = json!({ "workspaceId": self.workspace_id });
+        let cancel_client = client.clone();
+        call_in(&client, window, cx, "webhook.capture.start", payload, move |this, outcome, window, cx| {
+            let started = outcome.as_ref().ok().and_then(|started| started.get("captureId")?.as_str().map(str::to_owned));
+            // Cancelled while it was starting: the engine's answer is of no use, and it is told to drop it.
+            if this.capture_attempt != attempt || this.capture_id.is_none() {
+                if let Some(id) = started {
+                    call_in(&cancel_client, window, cx, "webhook.capture.cancel", json!({ "captureId": id }), |_, _, _, _| {});
+                }
+                return;
+            }
+            match outcome {
+                Ok(started) => {
+                    let text = |key: &str| started.get(key).and_then(Value::as_str).unwrap_or_default().to_owned();
+                    let id = text("captureId");
+                    this.capture_id = Some(id.clone());
+                    if let Some(overlay) = &this.capture_overlay {
+                        overlay.update(cx, |overlay, cx| overlay.set_url(text("url"), cx));
+                    }
+                    this.wait_capture(id, window, cx);
+                    cx.notify();
+                }
+                Err(error) => {
+                    this.finish_capture(window, cx);
+                    window.push_notification(
+                        Notification::error(describe(&error)).title(t("session.capture.failed")),
+                        cx,
+                    );
+                }
+            }
+        });
+    }
+
+    /// Asks the engine for the captured request; it answers `waiting` after a while, and then it is asked again.
+    fn wait_capture(&mut self, id: String, window: &mut Window, cx: &mut Context<Self>) {
+        let client = self.model.read(cx).client().clone();
+        let payload = json!({ "captureId": id, "timeoutMs": 25_000 });
+        call_in(&client, window, cx, "webhook.capture.wait", payload, move |this, outcome, window, cx| {
+            // Cancelled, or the tab started another one, in the meantime.
+            if this.capture_id.as_deref() != Some(id.as_str()) {
+                return;
+            }
+            match outcome {
+                Ok(result) if result.get("captured").and_then(Value::as_bool) == Some(true) => {
+                    this.finish_capture(window, cx);
+                    this.fill_from_capture(&result, window, cx);
+                }
+                Ok(result) if result.get("reason").and_then(Value::as_str) == Some("waiting") => {
+                    this.wait_capture(id, window, cx);
+                }
+                Ok(_) => {
+                    this.finish_capture(window, cx);
+                    window.push_notification(Notification::warning(t("session.capture.expired")), cx);
+                }
+                Err(error) => {
+                    this.finish_capture(window, cx);
+                    window.push_notification(
+                        Notification::error(describe(&error)).title(t("session.capture.failed")),
+                        cx,
+                    );
+                }
+            }
+        });
+    }
+
+    fn finish_capture(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.capture_id = None;
+        self.capture_overlay = None;
+        window.close_dialog(cx);
+        cx.notify();
+    }
+
+    /// The dialog's Cancel, and a closing tab: the engine drops the listener and the tunnel.
+    fn cancel_capture(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        let Some(id) = self.capture_id.take() else { return };
+        self.capture_overlay = None;
+        if !id.is_empty() {
+            let client = self.model.read(cx).client().clone();
+            call_in(&client, window, cx, "webhook.capture.cancel", json!({ "captureId": id }), |_, _, _, _| {});
+        }
+        window.close_dialog(cx);
+        cx.notify();
+    }
+
+    fn fill_from_capture(&mut self, result: &Value, window: &mut Window, cx: &mut Context<Self>) {
+        let text = |key: &str| result.get(key).and_then(Value::as_str).unwrap_or_default().to_owned();
+        self.set_text("payload", text("payload"), window, cx);
+        let signature = text("signatureHeader");
+        if !signature.is_empty() {
+            self.set_text("signatureHeader", signature, window, cx);
+        }
+        self.merge_headers(header_pairs(result.get("headers").unwrap_or(&Value::Null)), window, cx);
+        self.changed(cx);
+        window.push_notification(Notification::success(t("session.capture.done")), cx);
     }
 
     /// The service and method controls: two searchable lists once the schema is known, the typed names
@@ -1255,6 +1524,7 @@ impl ProtocolSession {
 
     /// Writes an edit that is still waiting, now: the tab is about to close.
     pub fn flush(&mut self, window: &mut Window, cx: &mut Context<Self>) {
+        self.cancel_capture(window, cx);
         // The tab is closing: ask the engine to drop the call whether or not it has finished connecting.
         if self.live {
             self.request_cancel(window, cx);
@@ -1590,7 +1860,17 @@ impl Render for ProtocolSession {
         let tabs = sections.len() + usize::from(extra_label.is_some()) + usize::from(self.settings.is_some());
         let section = self.section.min(tabs.saturating_sub(1));
         let content = match sections.get(section) {
-            Some((ix, _)) => Some(match &self.controls[*ix] {
+            Some((ix, spec)) => Some(match &self.controls[*ix] {
+                Control::Text(editor) if spec.key == "payload" && self.webhook.is_some() => v_flex()
+                    .size_full()
+                    .child(self.sample_row())
+                    .child(
+                        div()
+                            .flex_1()
+                            .min_h_0()
+                            .child(Editor::new(editor.state()).bordered(false).h_full()),
+                    )
+                    .into_any_element(),
                 Control::Text(editor) => Editor::new(editor.state()).bordered(false).h_full().into_any_element(),
                 Control::Pairs(table) => table.clone().into_any_element(),
             }),
@@ -1630,6 +1910,18 @@ impl Render for ProtocolSession {
                     .label(t("session.protocol.end_streaming"))
                     .disabled(!open)
                     .on_click(cx.listener(|this, _, window, cx| this.end_streaming(window, cx))),
+            );
+        }
+
+        if let Some(picker) = &self.webhook {
+            let ready = picker.tunnel.read(cx).installed;
+            secondary.push(
+                Button::new("webhook-capture")
+                    .outline()
+                    .label(t("session.capture.button"))
+                    .tooltip(if ready { t("session.capture.button_tooltip") } else { t("session.capture.install_first") })
+                    .disabled(!ready || self.capture_id.is_some())
+                    .on_click(cx.listener(|this, _, window, cx| this.capture(window, cx))),
             );
         }
 

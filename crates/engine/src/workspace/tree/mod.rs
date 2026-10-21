@@ -47,7 +47,7 @@ pub enum Scope {
     Flows,
 }
 
-const REQUEST_TYPES: [(&str, &str); 8] = [
+const REQUEST_TYPES: [(&str, &str); 9] = [
     ("requests", "rest"),
     ("graphqlRequests", "graphql"),
     ("grpcRequests", "grpc"),
@@ -56,6 +56,7 @@ const REQUEST_TYPES: [(&str, &str); 8] = [
     ("sseRequests", "sse"),
     ("socketioRequests", "socketio"),
     ("mcpRequests", "mcp"),
+    ("webhookRequests", "webhook"),
 ];
 
 const MOCK_TYPES: [(&str, &str); 1] = [("mocks", "mock")];

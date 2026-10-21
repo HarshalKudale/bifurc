@@ -19,6 +19,7 @@
   "kind_summary.sse": "Ein einseitiger Stream von Ereignissen eines Servers",
   "kind_summary.socketio": "Eine Verbindung, die benannte Ereignisse sendet und empfängt",
   "kind_summary.mcp": "Die Tools, Prompts und Ressourcen eines MCP-Servers",
+  "kind_summary.webhook": "Ein signiertes Beispielereignis oder eine eigene Nutzlast an eine Webhook-URL senden",
   "panel.request_title": "Anfrage",
   "panel.request_empty_description": "Eine Anfrage öffnen, um sie hier zu bearbeiten.",
   "panel.response_empty_title": "Keine Antwort",

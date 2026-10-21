@@ -31,7 +31,7 @@ use serde_json::{Value, json};
 
 use crate::{
     app_model::{AppModel, ModelEvent, ProxyStatus},
-    components::{certificate::Certificate, dialogs::confirm_danger},
+    components::{certificate::Certificate, dialogs::confirm_danger, tunnel::Tunnel},
     engine::{call, call_in, failure},
     i18n::{self, t, t_with},
     model::{
@@ -226,6 +226,7 @@ fn capitalized(text: &str) -> String {
 pub struct SettingsScreen {
     model: Entity<AppModel>,
     certificate: Entity<Certificate>,
+    tunnel: Entity<Tunnel>,
     accounts: Vec<AccountRow>,
     /// The browser extensions connected to the companion server.
     companions: Vec<CompanionRow>,
@@ -265,9 +266,12 @@ impl SettingsScreen {
         ];
         let certificate = cx.new(|cx| Certificate::new(model.clone(), cx));
         subscriptions.push(cx.observe(&certificate, |_, _, cx| cx.notify()));
+        let tunnel = cx.new(|cx| Tunnel::new(model.clone(), cx));
+        subscriptions.push(cx.observe(&tunnel, |_, _, cx| cx.notify()));
         let mut this = Self {
             model,
             certificate,
+            tunnel,
             accounts: Vec::new(),
             companions: Vec::new(),
             signing_out: None,
@@ -749,6 +753,7 @@ impl SettingsScreen {
     /// The defaults a request's own Settings tab overrides.
     fn requests_page(&self) -> SettingPage {
         let model = &self.model;
+        let tunnel = self.tunnel.clone();
         let flag = |title, description, read: fn(&RequestDefaults) -> bool, change: fn(&mut RequestDefaults, bool)| {
             let (reader, writer) = (model.clone(), model.clone());
             SettingItem::new(
@@ -797,6 +802,36 @@ impl SettingsScreen {
                     .description(t("settings.requests.timeout.description")),
                 )
                 .footer(|_, _| t("settings.requests.footer")),
+            SettingGroup::new().title(t("settings.capture.group")).item(
+                SettingItem::render(move |options, _, cx| {
+                    let install = tunnel.clone();
+                    let state = tunnel.read(cx);
+                    let status = if !state.supported {
+                        t("settings.capture.unsupported")
+                    } else if state.installed {
+                        t("settings.capture.installed")
+                    } else {
+                        t("settings.capture.missing")
+                    };
+                    h_flex()
+                        .w_full()
+                        .gap_2()
+                        .child(div().flex_1().min_w_0().child(status))
+                        .child(
+                            Button::new("install-cloudflared")
+                                .with_size(options.size())
+                                .label(if state.installed {
+                                    t("settings.capture.reinstall")
+                                } else {
+                                    t("settings.capture.install")
+                                })
+                                .loading(state.installing)
+                                .disabled(!state.supported || state.installing)
+                                .on_click(move |_, _, cx| install.update(cx, |tunnel, cx| tunnel.install(cx))),
+                        )
+                })
+                .keywords(["cloudflared", "tunnel", "webhook", "capture"]),
+            ),
         ])
     }
 

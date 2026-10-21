@@ -1,4 +1,4 @@
-//! `webhooks listen|stop|list|show|replay|save|fixtures|trigger`: the engine's webhook receiver (see `engine/src/webhook.rs`). Without `--detach`
+//! `webhooks listen|stop|list|show|save|fixtures|trigger`: the engine's webhook receiver (see `engine/src/webhook.rs`). Without `--detach`
 //! `listen` blocks and prints a line per inbound request; the engine ends the listener with this command's
 //! connection, so Ctrl+C or a killed CI step never leaves the port busy.
 
@@ -25,7 +25,6 @@ pub fn webhooks(ctx: &mut Context, sub: Option<&str>, out: &mut dyn Write) -> Re
             webhook_id(ctx, &workspace, &wanted)?;
             capture::show(ctx)
         }
-        Some("replay") => replay(ctx),
         Some("save") => save(ctx),
         Some("fixtures") => {
             ctx.accept(&[], 0)?;
@@ -204,29 +203,6 @@ fn forwarded_url(entry_url: &str, forward: &str) -> String {
         path => path,
     };
     format!("{}{path}", forward.split(['?', '#']).next().unwrap_or_default().trim_end_matches('/'))
-}
-
-/// `webhooks replay <id> [--to <url>]`: the captured request again, with its method, headers and raw body bytes.
-fn replay(ctx: &mut Context) -> Result<String> {
-    ctx.accept(
-        &["to", "body", "headers", "select", "out", "max-body", "raw", "quiet", "reveal", "expect-status", "expect"],
-        1,
-    )?;
-    let wanted = need(ctx.args.positional(2), "the webhook's id (see: bifurc webhooks list)")?;
-    let workspace = workspace_id(ctx)?;
-    let id = webhook_id(ctx, &workspace, &wanted)?;
-    let mut payload = json!({ "workspaceId": workspace, "id": id });
-    if let Some(to) = ctx.args.flag("to") {
-        payload["to"] = json!(to);
-    }
-    let started = Instant::now();
-    let mut sent = ctx.request("webhook.replay", payload).map_err(|err| match err {
-        CliError::Engine { code, message } if code == "BAD_REQUEST" => CliError::usage(message),
-        CliError::Engine { code, message } if code == "NOT_FOUND" => CliError::not_found(message),
-        other => other,
-    })?;
-    sent["durationMs"] = json!(started.elapsed().as_millis() as u64);
-    present(ctx, &Response::from_rest(&sent))
 }
 
 /// `2026-10-18T09:30:00Z` for unix seconds (civil-from-days).
@@ -444,34 +420,6 @@ mod tests {
         let (out, calls, _) = go(&["webhooks", "show", "#1111"], answers, vec![]);
         assert!(out.unwrap().starts_with("POST http://127.0.0.1:4020/hooks/a · webhook"));
         assert_eq!(payloads(&calls, "capture.get")[0]["id"], "mg1a1111");
-    }
-
-    #[test]
-    fn replay_asks_the_engine_and_prints_its_answer_as_before() {
-        let reply = json!({"status": 200, "headers": {"content-type": "application/json"}, "body": STANDARD.encode("{\"ok\":true}")});
-        let mut answers = buffer();
-        answers.push(("webhook.replay", Ok(reply)));
-        let (out, calls, _) =
-            go(&["webhooks", "replay", "1111", "--to", "http://127.0.0.1:4021"], answers.clone(), vec![]);
-        assert!(out.unwrap().starts_with("200 OK"));
-        assert_eq!(
-            payloads(&calls, "webhook.replay"),
-            [json!({"workspaceId": "w1", "id": "mg1a1111", "to": "http://127.0.0.1:4021"})]
-        );
-        let refused = |code: &str, message: &str| Err(CliError::Engine { code: code.into(), message: message.into() });
-        for (code, exit, line) in [
-            ("BAD_REQUEST", 2, "bifurc: --to is a URL"),
-            ("NOT_FOUND", 3, "bifurc: no webhook"),
-            ("UPSTREAM_FAILED", 4, "bifurc: UPSTREAM_FAILED: refused"),
-        ] {
-            let mut answers = buffer();
-            answers.push((
-                "webhook.replay",
-                refused(code, line.trim_start_matches("bifurc: UPSTREAM_FAILED: ").trim_start_matches("bifurc: ")),
-            ));
-            let err = go(&["webhooks", "replay", "1111"], answers, vec![]).0.unwrap_err();
-            assert_eq!((err.code(), err.line().as_str()), (exit, line));
-        }
     }
 
     #[test]

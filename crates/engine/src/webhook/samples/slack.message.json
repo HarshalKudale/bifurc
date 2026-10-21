@@ -1,0 +1,20 @@
+{
+  "name": "slack.message",
+  "about": "A message with a block for a Slack incoming webhook (unsigned)",
+  "headers": {
+    "Content-Type": "application/json"
+  },
+  "signatureHeader": "",
+  "payload": {
+    "text": "Deploy finished",
+    "blocks": [
+      {
+        "type": "section",
+        "text": {
+          "type": "mrkdwn",
+          "text": "*Deploy finished* :tada:\nVersion 1.4.2 is live."
+        }
+      }
+    ]
+  }
+}

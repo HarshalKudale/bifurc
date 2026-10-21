@@ -1,0 +1,32 @@
+{
+  "name": "discord.message",
+  "about": "A message with an embed for a Discord incoming webhook (unsigned)",
+  "headers": {
+    "Content-Type": "application/json"
+  },
+  "signatureHeader": "",
+  "payload": {
+    "username": "Bifurc",
+    "content": "Deploy finished",
+    "embeds": [
+      {
+        "title": "Deployment",
+        "description": "Version 1.4.2 is live.",
+        "color": 5763719,
+        "timestamp": "{{iso}}",
+        "fields": [
+          {
+            "name": "Environment",
+            "value": "production",
+            "inline": true
+          },
+          {
+            "name": "Status",
+            "value": "success",
+            "inline": true
+          }
+        ]
+      }
+    ]
+  }
+}

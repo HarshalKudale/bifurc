@@ -1,0 +1,39 @@
+{
+  "name": "stripe.invoice.paid",
+  "about": "A paid Stripe invoice (invoice.paid event)",
+  "headers": {
+    "Content-Type": "application/json; charset=utf-8",
+    "User-Agent": "Stripe/1.0 (+https://stripe.com/docs/webhooks)"
+  },
+  "signatureHeader": "Stripe-Signature",
+  "payload": {
+    "id": "evt_{{alnum:24}}",
+    "object": "event",
+    "api_version": "2024-06-20",
+    "created": "{{unix}}",
+    "type": "invoice.paid",
+    "livemode": false,
+    "pending_webhooks": 1,
+    "request": {
+      "id": null,
+      "idempotency_key": null
+    },
+    "data": {
+      "object": {
+        "id": "in_{{alnum:24}}",
+        "object": "invoice",
+        "amount_due": 2000,
+        "amount_paid": 2000,
+        "amount_remaining": 0,
+        "currency": "usd",
+        "customer": "cus_{{alnum:14}}",
+        "customer_email": "jenny@example.com",
+        "paid": true,
+        "status": "paid",
+        "number": "{{hex:8}}-0001",
+        "subscription": "sub_{{alnum:24}}",
+        "created": "{{unix}}"
+      }
+    }
+  }
+}

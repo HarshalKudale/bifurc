@@ -5,6 +5,7 @@
 //! kind it is behind the handful of things the shell does to every tab — title it, ask if it is dirty, save
 //! it, run it, and find its response view.
 
+pub mod capture_overlay;
 pub mod connection;
 pub mod exchange;
 pub mod graphql;

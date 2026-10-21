@@ -1,0 +1,44 @@
+{
+  "name": "stripe.checkout.session.completed",
+  "about": "A paid Stripe Checkout session (checkout.session.completed event)",
+  "headers": {
+    "Content-Type": "application/json; charset=utf-8",
+    "User-Agent": "Stripe/1.0 (+https://stripe.com/docs/webhooks)"
+  },
+  "signatureHeader": "Stripe-Signature",
+  "payload": {
+    "id": "evt_{{alnum:24}}",
+    "object": "event",
+    "api_version": "2024-06-20",
+    "created": "{{unix}}",
+    "type": "checkout.session.completed",
+    "livemode": false,
+    "pending_webhooks": 1,
+    "request": {
+      "id": null,
+      "idempotency_key": null
+    },
+    "data": {
+      "object": {
+        "id": "cs_test_{{alnum:40}}",
+        "object": "checkout.session",
+        "amount_subtotal": 2000,
+        "amount_total": 2000,
+        "currency": "usd",
+        "customer": "cus_{{alnum:14}}",
+        "customer_details": {
+          "email": "jenny@example.com",
+          "name": "Jenny Rosen"
+        },
+        "mode": "payment",
+        "payment_status": "paid",
+        "status": "complete",
+        "metadata": {},
+        "payment_intent": "pi_{{alnum:24}}",
+        "client_reference_id": null,
+        "created": "{{unix}}",
+        "success_url": "https://example.com/success"
+      }
+    }
+  }
+}

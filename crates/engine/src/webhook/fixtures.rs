@@ -2,93 +2,18 @@
 //! with a secret the engine reads from the unsealed vault itself, and send it through `request.replay`.
 
 use base64::{Engine as _, engine::general_purpose::STANDARD};
-use ring::{
-    hmac,
-    rand::{SecureRandom, SystemRandom},
-};
 use serde_json::{Value, json};
 
-use super::RUNNING;
+use super::{
+    RUNNING,
+    request::{secret, secret_hint, unix_secs},
+    signing, templates,
+};
 use crate::{
     kernel::{CommandContext, CommandRegistry},
     protocol::{EngineError, Result},
     utils::json::{opt_str, str_of},
 };
-
-const FIXTURES: [(&str, &str); 2] = [
-    ("stripe.checkout.session.completed", "A paid Stripe Checkout session (checkout.session.completed event)"),
-    ("github.push", "A GitHub push event with one commit"),
-];
-
-const ALNUM: &str = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789";
-const HEX: &str = "0123456789abcdef";
-
-fn unix_secs() -> u64 {
-    std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).map_or(0, |since| since.as_secs())
-}
-
-/// `len` random characters of `alphabet`.
-fn random_chars(alphabet: &str, len: usize) -> String {
-    let chars: Vec<char> = alphabet.chars().collect();
-    let mut bytes = vec![0u8; len];
-    // If the system RNG fails the ids repeat one character: still valid fake data.
-    let _ = SystemRandom::new().fill(&mut bytes);
-    bytes.iter().map(|b| chars[usize::from(*b) % chars.len()]).collect()
-}
-
-/// `2026-10-18T09:30:00Z` for unix seconds.
-fn format_time(secs: u64) -> String {
-    let iso = crate::importexport::support::iso_from_ms(secs as i64 * 1000).unwrap_or_default();
-    iso.replace(".000Z", "Z")
-}
-
-/// The event of a fixture, with fresh ids and times.
-fn fixture(name: &str, now: u64) -> Value {
-    if name == "github.push" {
-        let (before, after) = (random_chars(HEX, 40), random_chars(HEX, 40));
-        let commit = json!({ "id": after, "message": "Update README", "timestamp": format_time(now),
-            "url": format!("https://github.com/octo/demo/commit/{after}"),
-            "author": { "name": "Octo Cat", "email": "octocat@example.com", "username": "octocat" },
-            "added": [], "removed": [], "modified": ["README.md"] });
-        return json!({ "ref": "refs/heads/main", "before": before, "after": after,
-            "repository": { "id": 100_000_001, "name": "demo", "full_name": "octo/demo", "private": false,
-                "owner": { "login": "octo", "id": 1_000_001 }, "html_url": "https://github.com/octo/demo",
-                "default_branch": "main" },
-            "pusher": { "name": "octocat", "email": "octocat@example.com" },
-            "sender": { "login": "octocat", "id": 583_231 },
-            "created": false, "deleted": false, "forced": false,
-            "compare": format!("https://github.com/octo/demo/compare/{}...{}", &before[..12], &after[..12]),
-            "commits": [commit.clone()], "head_commit": commit });
-    }
-    json!({ "id": format!("evt_{}", random_chars(ALNUM, 24)), "object": "event", "api_version": "2024-06-20",
-        "created": now, "type": "checkout.session.completed", "livemode": false, "pending_webhooks": 1,
-        "request": { "id": null, "idempotency_key": null },
-        "data": { "object": { "id": format!("cs_test_{}", random_chars(ALNUM, 40)), "object": "checkout.session",
-            "amount_subtotal": 2000, "amount_total": 2000, "currency": "usd",
-            "customer": format!("cus_{}", random_chars(ALNUM, 14)),
-            "customer_details": { "email": "jenny@example.com", "name": "Jenny Rosen" },
-            "mode": "payment", "payment_status": "paid", "status": "complete", "metadata": {},
-            "payment_intent": format!("pi_{}", random_chars(ALNUM, 24)), "client_reference_id": null,
-            "created": now, "success_url": "https://example.com/success" } } })
-}
-
-/// The fixture `wanted` names: exactly, or by the start of its name in any case (`stripe`).
-fn resolve(wanted: &str) -> Result<&'static str> {
-    let lower = wanted.to_lowercase();
-    let hits: Vec<&str> = FIXTURES.iter().map(|(name, _)| *name).filter(|name| name.starts_with(&lower)).collect();
-    match (FIXTURES.iter().find(|(name, _)| *name == wanted), hits.as_slice()) {
-        (Some((name, _)), _) | (None, [name]) => Ok(name),
-        _ => {
-            let names: Vec<&str> = FIXTURES.iter().map(|(name, _)| *name).collect();
-            Err(EngineError::bad_request(format!("no fixture \"{wanted}\"; fixtures: {}", names.join(", "))))
-        }
-    }
-}
-
-fn hmac_hex(key: &[u8], data: &[u8]) -> String {
-    let tag = hmac::sign(&hmac::Key::new(hmac::HMAC_SHA256, key), data);
-    tag.as_ref().iter().map(|b| format!("{b:02x}")).collect()
-}
 
 fn kind(value: &Value) -> &'static str {
     match value {
@@ -162,64 +87,40 @@ fn target(workspace_id: &str, to: Option<&str>, name: Option<&str>) -> Result<St
 /// workspace policy still guards it. `patch` is a list of `{ path: [key | position, …], value }`.
 async fn trigger(params: Value, ctx: CommandContext) -> Result<Value> {
     let workspace_id = str_of(&params, "workspaceId");
-    let name = resolve(str_of(&params, "fixture"))?;
-    let (vault, secret_name) = (opt_str(&params, "vault"), opt_str(&params, "secret"));
-    if vault.is_none() && secret_name.is_some() {
-        return Err(EngineError::bad_request("secret needs vault to read the secret from"));
-    }
+    let template = templates::find(str_of(&params, "fixture")).map_err(EngineError::bad_request)?;
     let now = unix_secs();
-    let mut payload = fixture(name, now);
+    let mut payload = template.payload(now);
     for edit in params["patch"].as_array().into_iter().flatten() {
         let path = edit["path"].as_array().ok_or_else(|| EngineError::bad_request("a patch needs a path array"))?;
         assign(&mut payload, path, edit["value"].clone())?;
     }
-    let stripe = name.starts_with("stripe.");
-    let key_name = secret_name.unwrap_or(if stripe { "STRIPE_WEBHOOK_SECRET" } else { "GITHUB_WEBHOOK_SECRET" });
-    let secret = match vault {
-        Some(vault) => {
-            let secrets = crate::vault::secrets_by_name(workspace_id, vault).await?;
-            let found = secrets.into_iter().find(|(key, _)| key == key_name).map(|(_, value)| value);
-            Some(found.ok_or_else(|| {
-                EngineError::not_found(format!(
-                    "no secret \"{key_name}\" in vault \"{vault}\" (pick another with --secret)"
-                ))
-            })?)
-        }
-        None => None,
-    };
+    let hint = secret_hint(template.provider());
+    let signing_secret =
+        secret(workspace_id, opt_str(&params, "vault"), opt_str(&params, "secret"), Some(&hint)).await?;
     let url = target(workspace_id, opt_str(&params, "to"), opt_str(&params, "name"))?;
 
     // These exact bytes are signed and sent.
     let body = serde_json::to_vec(&payload).map_err(|err| EngineError::bad_request(err.to_string()))?;
-    let mut headers = serde_json::Map::new();
-    let mut put = |name: &str, value: String| headers.insert(name.to_string(), json!(value));
-    if stripe {
-        put("content-type", "application/json; charset=utf-8".into());
-        put("user-agent", "Stripe/1.0 (+https://stripe.com/docs/webhooks)".into());
-        if let Some(secret) = &secret {
-            let mut signed = format!("{now}.").into_bytes();
-            signed.extend(&body);
-            put("stripe-signature", format!("t={now},v1={}", hmac_hex(secret.as_bytes(), &signed)));
-        }
-    } else {
-        let id = [8, 4, 4, 4, 12].map(|n| random_chars(HEX, n)).join("-");
-        put("content-type", "application/json".into());
-        put("user-agent", "GitHub-Hookshot/bifurc".into());
-        put("x-github-event", "push".into());
-        put("x-github-delivery", id);
-        put("x-github-hook-id", random_chars("0123456789", 9));
-        if let Some(secret) = &secret {
-            put("x-hub-signature-256", format!("sha256={}", hmac_hex(secret.as_bytes(), &body)));
-        }
+    let mut headers = template.headers(now);
+    if let Some(secret) = &signing_secret {
+        let name = match template.signature_header.as_str() {
+            "" => signing::DEFAULT_SIGNATURE_HEADER,
+            name => name,
+        };
+        headers.push((name.to_string(), signing::signature(name, &body, secret, now)));
     }
+    let headers: serde_json::Map<String, Value> =
+        headers.into_iter().map(|(name, value)| (name, json!(value))).collect();
     let sent = json!({ "method": "POST", "url": url, "headers": headers, "body": STANDARD.encode(&body) });
     ctx.registry.invoke("request.replay", sent, ctx.clone()).await
 }
 
 pub fn register(registry: &mut CommandRegistry) {
     registry.register_sync("webhook.fixtures", |_, _| {
-        let rows: Vec<Value> =
-            FIXTURES.iter().map(|(name, about)| json!({ "name": name, "description": about })).collect();
+        let rows: Vec<Value> = templates::all()
+            .iter()
+            .map(|t| json!({ "name": t.name, "description": t.about, "signatureHeader": t.signature_header }))
+            .collect();
         Ok(json!({ "fixtures": rows }))
     });
     registry.register("webhook.trigger", trigger);
@@ -287,31 +188,19 @@ mod tests {
         head.split("\r\n").find_map(|line| line.strip_prefix(&format!("{name}: "))).unwrap()
     }
 
-    #[test]
-    fn hmac_matches_rfc_4231() {
-        assert_eq!(
-            hmac_hex(b"Jefe", b"what do ya want for nothing?"),
-            "5bdcc146bf60754e6a042426089575c75a003f089d2739839dec58b964ec3843"
-        );
-        assert_eq!(
-            hmac_hex(&[0xaa; 131], b"Test Using Larger Than Block-Size Key - Hash Key First"),
-            "60e431591ee0b67f0d8a26aacbf5b77f8e0bc6213728c5140546040f0ee37f54"
-        );
-    }
-
-    #[test]
-    fn times_read_like_the_cli_always_printed_them() {
-        assert_eq!(format_time(0), "1970-01-01T00:00:00Z");
-        assert_eq!(format_time(1_760_779_800), "2025-10-18T09:30:00Z");
+    fn hmac_hex(key: &[u8], data: &[u8]) -> String {
+        signing::hmac_hex(key, data)
     }
 
     #[tokio::test]
-    async fn fixtures_lists_both() {
+    async fn fixtures_lists_every_template() {
         let listed = call(&registry(), "webhook.fixtures", json!({})).await.unwrap();
         let rows = listed["fixtures"].as_array().unwrap();
         let names: Vec<&str> = rows.iter().map(|f| f["name"].as_str().unwrap()).collect();
-        assert_eq!(names, ["stripe.checkout.session.completed", "github.push"]);
-        assert!(rows[1]["description"].as_str().unwrap().contains("push"));
+        assert_eq!(names, templates::all().iter().map(|t| t.name.as_str()).collect::<Vec<_>>());
+        let push = rows.iter().find(|f| f["name"] == "github.push").unwrap();
+        assert!(push["description"].as_str().unwrap().contains("push"));
+        assert_eq!(push["signatureHeader"], "X-Hub-Signature-256");
     }
 
     /// A workspace with an unsealed vault `hooks` holding both signing secrets.
@@ -337,7 +226,7 @@ mod tests {
         let (_root, _) = vaulted(&registry).await;
 
         let (port, got) = catcher().await;
-        let params = json!({ "workspaceId": "ws1", "fixture": "stripe", "vault": "hooks",
+        let params = json!({ "workspaceId": "ws1", "fixture": "stripe.checkout", "vault": "hooks",
             "to": format!("http://127.0.0.1:{port}/in"),
             "patch": [{ "path": ["data", "object", "amount_total"], "value": 999 }] });
         let sent = call(&registry, "webhook.trigger", params).await.unwrap();
@@ -381,7 +270,7 @@ mod tests {
             async move { call(&registry, "webhook.trigger", params).await.unwrap_err() }
         };
         let with = |extra: Value| {
-            let mut params = json!({ "workspaceId": "ws1", "fixture": "stripe", "to": "http://127.0.0.1:1/" });
+            let mut params = json!({ "workspaceId": "ws1", "fixture": "stripe.checkout", "to": "http://127.0.0.1:1/" });
             params.as_object_mut().unwrap().extend(extra.as_object().unwrap().clone());
             params
         };

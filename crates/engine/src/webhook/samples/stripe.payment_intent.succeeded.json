@@ -1,0 +1,38 @@
+{
+  "name": "stripe.payment_intent.succeeded",
+  "about": "A succeeded Stripe PaymentIntent (payment_intent.succeeded event)",
+  "headers": {
+    "Content-Type": "application/json; charset=utf-8",
+    "User-Agent": "Stripe/1.0 (+https://stripe.com/docs/webhooks)"
+  },
+  "signatureHeader": "Stripe-Signature",
+  "payload": {
+    "id": "evt_{{alnum:24}}",
+    "object": "event",
+    "api_version": "2024-06-20",
+    "created": "{{unix}}",
+    "type": "payment_intent.succeeded",
+    "livemode": false,
+    "pending_webhooks": 1,
+    "request": {
+      "id": null,
+      "idempotency_key": null
+    },
+    "data": {
+      "object": {
+        "id": "pi_{{alnum:24}}",
+        "object": "payment_intent",
+        "amount": 2000,
+        "amount_received": 2000,
+        "currency": "usd",
+        "status": "succeeded",
+        "customer": "cus_{{alnum:14}}",
+        "latest_charge": "ch_{{alnum:24}}",
+        "payment_method": "pm_{{alnum:24}}",
+        "receipt_email": "jenny@example.com",
+        "metadata": {},
+        "created": "{{unix}}"
+      }
+    }
+  }
+}

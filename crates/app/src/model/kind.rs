@@ -13,10 +13,11 @@ pub enum RequestKind {
     Sse,
     SocketIo,
     Mcp,
+    Webhook,
 }
 
 impl RequestKind {
-    pub const ALL: [RequestKind; 8] = [
+    pub const ALL: [RequestKind; 9] = [
         RequestKind::Rest,
         RequestKind::GraphQl,
         RequestKind::Grpc,
@@ -25,6 +26,7 @@ impl RequestKind {
         RequestKind::Sse,
         RequestKind::SocketIo,
         RequestKind::Mcp,
+        RequestKind::Webhook,
     ];
 
     pub fn label(self) -> &'static str {
@@ -37,6 +39,7 @@ impl RequestKind {
             RequestKind::Sse => "model.kind.sse",
             RequestKind::SocketIo => "model.kind.socketio",
             RequestKind::Mcp => "model.kind.mcp",
+            RequestKind::Webhook => "model.kind.webhook",
         })
     }
 
@@ -51,6 +54,7 @@ impl RequestKind {
             RequestKind::Sse => "sseRequests",
             RequestKind::SocketIo => "socketioRequests",
             RequestKind::Mcp => "mcpRequests",
+            RequestKind::Webhook => "webhookRequests",
         }
     }
 
@@ -70,6 +74,7 @@ impl RequestKind {
             RequestKind::Sse => "sseRequests",
             RequestKind::SocketIo => "socketioRequests",
             RequestKind::Mcp => "mcpRequests",
+            RequestKind::Webhook => "webhookRequests",
         }
     }
 
@@ -80,6 +85,7 @@ impl RequestKind {
             RequestKind::GraphQl => Some("graphql.send"),
             RequestKind::Grpc => Some("grpc.send"),
             RequestKind::Soap => Some("soap.send"),
+            RequestKind::Webhook => Some("webhook.send"),
             RequestKind::WebSocket | RequestKind::Sse | RequestKind::SocketIo | RequestKind::Mcp => None,
         }
     }
@@ -95,6 +101,7 @@ impl RequestKind {
             RequestKind::Sse => "model.kind.sse",
             RequestKind::SocketIo => "model.kind.badge_socketio",
             RequestKind::Mcp => "model.kind.mcp",
+            RequestKind::Webhook => "model.kind.badge_webhook",
         })
     }
 }
@@ -141,6 +148,17 @@ mod tests {
         assert_eq!(RequestKind::Mcp.send_command(), None);
         assert_eq!(RequestKind::Mcp.badge(), "MCP");
         assert_eq!(RequestKind::from_entity_kind("mcpRequests"), Some(RequestKind::Mcp));
+    }
+
+    #[test]
+    fn webhook_is_one_of_the_request_kinds_and_is_sent_by_id() {
+        assert!(RequestKind::ALL.contains(&RequestKind::Webhook));
+        assert_eq!(RequestKind::Webhook.label(), "Webhook");
+        assert_eq!(RequestKind::Webhook.entity_kind(), "webhookRequests");
+        assert_eq!(RequestKind::Webhook.config_key(), "webhookRequests");
+        assert_eq!(RequestKind::Webhook.send_command(), Some("webhook.send"));
+        assert_eq!(RequestKind::Webhook.badge(), "HOOK");
+        assert_eq!(RequestKind::from_entity_kind("webhookRequests"), Some(RequestKind::Webhook));
     }
 
     #[test]

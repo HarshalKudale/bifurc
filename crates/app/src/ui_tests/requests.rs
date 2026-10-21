@@ -11,12 +11,128 @@ use crate::shell::Screen;
 fn an_empty_workspace_offers_the_kinds_of_request_to_start(cx: &mut gpui_kit::TestAppContext) {
     let mut ui = open_empty(cx);
     ui.show(Screen::Requests);
-    for kind in 0..8usize {
+    for kind in 0..9usize {
         assert!(ui.has(("welcome-new", kind)), "start-a-request button {kind}");
     }
     assert!(ui.has("welcome-import-curl"));
     assert!(ui.has("empty-state"), "the empty tree says so");
     assert!(!ui.has("send-request"), "no editor without a request");
+}
+
+#[gpui_kit::test]
+fn a_webhook_request_is_started_from_the_welcome_and_sent_with_its_signing_fields(cx: &mut gpui_kit::TestAppContext) {
+    let mut ui = open_empty(cx);
+    ui.show(Screen::Requests);
+    ui.fake.reply("webhook.fixtures", json!({"fixtures": [{"name": "github.ping", "provider": "github"}]}));
+    ui.fake.reply("webhook.send", json!({"status": 200, "headers": {}, "body": "ok", "durationMs": 3}));
+    ui.fake.forget_calls();
+    ui.click(("welcome-new", 8usize));
+    assert!(ui.has("send-request"), "a webhook draft opens an editor");
+    ui.settle();
+    assert_eq!(ui.fake.sent("webhook.fixtures").len(), 1, "the sample events are asked for once");
+    ui.press("ctrl-l");
+    ui.input("https://app.test/hooks");
+    ui.fake.forget_calls();
+    ui.click("send-request");
+    let sent = ui.fake.sent("webhook.send");
+    assert_eq!(sent.len(), 1);
+    let request = &sent[0]["request"];
+    assert_eq!(request["url"], "https://app.test/hooks");
+    assert_eq!(request["payload"], "{}");
+    for key in ["vault", "secretName", "signatureHeader", "headers"] {
+        assert!(request.get(key).is_some(), "{key} goes to the engine");
+    }
+    for key in ["provider", "event"] {
+        assert!(request.get(key).is_none(), "a webhook has no {key}");
+    }
+}
+
+#[gpui_kit::test]
+fn capture_stays_off_until_cloudflared_is_installed(cx: &mut gpui_kit::TestAppContext) {
+    let mut ui = open_empty(cx);
+    ui.show(Screen::Requests);
+    ui.fake.reply("webhook.fixtures", json!({"fixtures": []}));
+    ui.fake.reply("tunnel.status", json!({"installed": false, "supported": true}));
+    ui.click(("welcome-new", 8usize));
+    ui.settle();
+    assert!(ui.has("webhook-capture"), "the button is there, next to Send");
+    ui.fake.forget_calls();
+    ui.click("webhook-capture");
+    ui.settle();
+    assert!(ui.fake.sent("webhook.capture.start").is_empty(), "a disabled button starts nothing");
+}
+
+/// A webhook draft with cloudflared installed and the engine slow to open the tunnel.
+fn capturing_while_the_tunnel_opens(cx: &mut gpui_kit::TestAppContext) -> super::Ui {
+    let mut ui = open_empty(cx);
+    ui.show(Screen::Requests);
+    ui.fake.reply("webhook.fixtures", json!({"fixtures": []}));
+    ui.fake.reply("tunnel.status", json!({"installed": true, "supported": true}));
+    ui.fake.hold("webhook.capture.start");
+    ui.click(("welcome-new", 8usize));
+    ui.settle();
+    ui.press("ctrl-l");
+    ui.input("https://app.test/hooks");
+    ui.click("webhook-capture");
+    ui
+}
+
+#[gpui_kit::test]
+fn the_blocker_is_up_at_once_and_shows_the_address_when_the_engine_has_it(cx: &mut gpui_kit::TestAppContext) {
+    let mut ui = capturing_while_the_tunnel_opens(cx);
+    assert!(ui.has("capture-cancel"), "the window is blocked before the engine has answered");
+    assert!(!ui.has("capture-copy"), "there is no address to copy yet");
+    ui.fake.hold("webhook.capture.wait");
+    ui.fake.release("webhook.capture.start", json!({"captureId": "c1", "url": "https://calm-fox.trycloudflare.com"}));
+    ui.settle();
+    assert!(ui.has("capture-copy") && ui.has("capture-cancel"), "the same view now shows the address");
+    ui.click("capture-cancel");
+    assert!(!ui.has("capture-cancel"), "Cancel closes the blocker");
+    assert_eq!(ui.fake.sent("webhook.capture.cancel"), [json!({"captureId": "c1"})]);
+}
+
+#[gpui_kit::test]
+fn cancelling_while_the_tunnel_opens_drops_the_capture_the_engine_then_reports(cx: &mut gpui_kit::TestAppContext) {
+    let mut ui = capturing_while_the_tunnel_opens(cx);
+    ui.click("capture-cancel");
+    assert!(!ui.has("capture-cancel"), "Cancel closes the blocker even before the address exists");
+    assert!(ui.fake.sent("webhook.capture.cancel").is_empty(), "there is nothing to cancel yet");
+    ui.fake.release("webhook.capture.start", json!({"captureId": "c9", "url": "https://late.trycloudflare.com"}));
+    ui.settle();
+    assert_eq!(ui.fake.sent("webhook.capture.cancel"), [json!({"captureId": "c9"})]);
+    assert!(!ui.has("capture-cancel") && !ui.has("capture-copy"), "the late answer opens nothing");
+}
+
+#[gpui_kit::test]
+fn a_captured_webhook_fills_the_payload_the_headers_and_the_signature_header(cx: &mut gpui_kit::TestAppContext) {
+    let mut ui = open_empty(cx);
+    ui.show(Screen::Requests);
+    ui.fake.reply("webhook.fixtures", json!({"fixtures": []}));
+    ui.fake.reply("tunnel.status", json!({"installed": true, "supported": true}));
+    ui.fake.reply("webhook.capture.start", json!({"captureId": "c1", "url": "https://calm-fox.trycloudflare.com"}));
+    ui.fake.reply(
+        "webhook.capture.wait",
+        json!({"captured": true, "method": "POST", "payload": "{\n  \"a\": 1\n}",
+            "headers": {"X-GitHub-Event": "push"}, "signatureHeader": "X-Hub-Signature-256"}),
+    );
+    ui.fake.reply("webhook.send", json!({"status": 200, "headers": {}, "body": "ok", "durationMs": 1}));
+    ui.click(("welcome-new", 8usize));
+    ui.settle();
+    ui.press("ctrl-l");
+    ui.input("https://app.test/hooks");
+    ui.click("webhook-capture");
+    ui.settle();
+    assert_eq!(ui.fake.sent("webhook.capture.start"), [json!({"workspaceId": "w1"})]);
+    assert_eq!(ui.fake.sent("webhook.capture.wait")[0]["captureId"], "c1");
+    ui.fake.forget_calls();
+    ui.click("send-request");
+    let sent = ui.fake.sent("webhook.send");
+    assert_eq!(sent.len(), 1, "the dialog is gone and the request can be sent");
+    let request = &sent[0]["request"];
+    assert_eq!(request["payload"], "{\n  \"a\": 1\n}");
+    assert_eq!(request["signatureHeader"], "X-Hub-Signature-256");
+    assert_eq!(request["headers"]["X-GitHub-Event"], "push");
+    assert_eq!(request["url"], "https://app.test/hooks");
 }
 
 #[gpui_kit::test]

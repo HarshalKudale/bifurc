@@ -69,6 +69,7 @@
       "socketioRequests",
       "mcpRequests",
       "soapRequests",
+      "webhookRequests",
       "environments",
       "flows",
       "graphqlSchemas",
@@ -109,6 +110,7 @@
       "socketioRequests",
       "mcpRequests",
       "soapRequests",
+      "webhookRequests",
       "environments",
       "flows",
       "graphqlSchemas",
@@ -149,6 +151,7 @@
       "socketioRequests",
       "mcpRequests",
       "soapRequests",
+      "webhookRequests",
       "environments",
       "flows",
       "graphqlSchemas",
@@ -185,6 +188,7 @@
       "socketioRequests",
       "mcpRequests",
       "soapRequests",
+      "webhookRequests",
       "environments",
       "flows"
      ]
@@ -218,6 +222,7 @@
       "socketioRequests",
       "mcpRequests",
       "soapRequests",
+      "webhookRequests",
       "environments",
       "flows"
      ]
@@ -251,6 +256,7 @@
       "socketioRequests",
       "mcpRequests",
       "soapRequests",
+      "webhookRequests",
       "environments",
       "flows",
       "graphqlSchemas",
@@ -291,6 +297,7 @@
       "socketioRequests",
       "mcpRequests",
       "soapRequests",
+      "webhookRequests",
       "environments",
       "flows",
       "graphqlSchemas",
@@ -329,6 +336,7 @@
       "socketioRequests",
       "mcpRequests",
       "soapRequests",
+      "webhookRequests",
       "environments",
       "flows",
       "graphqlSchemas",
@@ -815,22 +823,171 @@
    ],
    "additionalProperties": false
   },
-  "webhook.replay": {
+  "webhook.send": {
+   "anyOf": [
+    {
+     "type": "object",
+     "properties": {
+      "workspaceId": {
+       "type": "string"
+      },
+      "id": {
+       "type": "string"
+      },
+      "variables": {
+       "type": "object",
+       "propertyNames": {
+        "type": "string"
+       },
+       "additionalProperties": {
+        "type": "string"
+       }
+      },
+      "environmentId": {
+       "type": "string"
+      },
+      "overrides": {
+       "type": "object"
+      }
+     },
+     "required": [
+      "workspaceId",
+      "id"
+     ],
+     "additionalProperties": false
+    },
+    {
+     "type": "object",
+     "properties": {
+      "workspaceId": {
+       "type": "string"
+      },
+      "request": {
+       "type": "object",
+       "properties": {
+        "url": {
+         "type": "string"
+        },
+        "payload": {
+         "type": "string"
+        },
+        "headers": {
+         "type": "object",
+         "propertyNames": {
+          "type": "string"
+         },
+         "additionalProperties": {
+          "type": "string"
+         }
+        },
+        "vault": {
+         "type": "string"
+        },
+        "secretName": {
+         "type": "string"
+        },
+        "signatureHeader": {
+         "type": "string"
+        },
+        "settings": {
+         "type": "object",
+         "properties": {
+          "verifyTls": {
+           "type": "boolean"
+          },
+          "followRedirects": {
+           "type": "boolean"
+          },
+          "timeoutMs": {
+           "type": "integer",
+           "minimum": 0
+          }
+         },
+         "additionalProperties": false
+        }
+       },
+       "required": [
+        "url",
+        "payload"
+       ],
+       "additionalProperties": false
+      },
+      "entityId": {
+       "type": "string"
+      },
+      "variables": {
+       "type": "object",
+       "propertyNames": {
+        "type": "string"
+       },
+       "additionalProperties": {
+        "type": "string"
+       }
+      },
+      "environmentId": {
+       "type": "string"
+      },
+      "overrides": {
+       "type": "object"
+      }
+     },
+     "required": [
+      "workspaceId",
+      "request"
+     ],
+     "additionalProperties": false
+    }
+   ]
+  },
+  "webhook.template": {
    "type": "object",
    "properties": {
-    "workspaceId": {
-     "type": "string"
-    },
-    "id": {
-     "type": "string"
-    },
-    "to": {
+    "name": {
      "type": "string"
     }
    },
    "required": [
-    "workspaceId",
-    "id"
+    "name"
+   ],
+   "additionalProperties": false
+  },
+  "webhook.capture.start": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "workspaceId"
+   ],
+   "additionalProperties": false
+  },
+  "webhook.capture.wait": {
+   "type": "object",
+   "properties": {
+    "captureId": {
+     "type": "string"
+    },
+    "timeoutMs": {
+     "type": "integer",
+     "minimum": 0
+    }
+   },
+   "required": [
+    "captureId"
+   ],
+   "additionalProperties": false
+  },
+  "webhook.capture.cancel": {
+   "type": "object",
+   "properties": {
+    "captureId": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "captureId"
    ],
    "additionalProperties": false
   },
@@ -5027,6 +5184,16 @@
    "additionalProperties": false
   },
   "mail.clear": {
+   "type": "object",
+   "properties": {},
+   "additionalProperties": false
+  },
+  "tunnel.status": {
+   "type": "object",
+   "properties": {},
+   "additionalProperties": false
+  },
+  "tunnel.install": {
    "type": "object",
    "properties": {},
    "additionalProperties": false

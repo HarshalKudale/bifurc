@@ -115,6 +115,7 @@ fn kind_summary(kind: RequestKind) -> &'static str {
         RequestKind::Sse => t("requests.kind_summary.sse"),
         RequestKind::SocketIo => t("requests.kind_summary.socketio"),
         RequestKind::Mcp => t("requests.kind_summary.mcp"),
+        RequestKind::Webhook => t("requests.kind_summary.webhook"),
     }
 }
 
@@ -374,7 +375,7 @@ impl RequestsScreen {
             RequestKind::Sse => Session::Sse(cx.new(|cx| SseSession::open_saved(model, id, window, cx))),
             RequestKind::SocketIo => Session::SocketIo(cx.new(|cx| SocketIoSession::open_saved(model, id, window, cx))),
             RequestKind::Mcp => Session::Mcp(cx.new(|cx| McpSession::open_saved(model, id, window, cx))),
-            RequestKind::GraphQl | RequestKind::Grpc | RequestKind::Soap => {
+            RequestKind::GraphQl | RequestKind::Grpc | RequestKind::Soap | RequestKind::Webhook => {
                 Session::Protocol(cx.new(|cx| ProtocolSession::open_saved(model, kind, id, window, cx)))
             }
         };
@@ -411,7 +412,7 @@ impl RequestsScreen {
                 Session::SocketIo(cx.new(|cx| SocketIoSession::new_draft(model, folder, window, cx)))
             }
             RequestKind::Mcp => Session::Mcp(cx.new(|cx| McpSession::new_draft(model, folder, window, cx))),
-            RequestKind::GraphQl | RequestKind::Grpc | RequestKind::Soap => {
+            RequestKind::GraphQl | RequestKind::Grpc | RequestKind::Soap | RequestKind::Webhook => {
                 Session::Protocol(cx.new(|cx| ProtocolSession::new_draft(model, kind, folder, window, cx)))
             }
         }

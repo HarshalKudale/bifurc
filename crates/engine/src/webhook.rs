@@ -3,7 +3,11 @@
 //! request on and returns the upstream's answer. Entries carry origin `webhook` and, when the listener is
 //! named, target `webhook:<name>` (no stored-shape change: both fields exist on every capture entry).
 
+mod capture;
 mod fixtures;
+mod request;
+mod signing;
+mod templates;
 
 use std::{
     net::SocketAddr,
@@ -27,7 +31,7 @@ use crate::{
         traffic::{Headers, RequestLogEntry, emit_log},
     },
     mocks::write_response,
-    protocol::{EngineError, ErrorCode, Result},
+    protocol::{EngineError, Result},
     proxy::{
         finished_entry, forward_streaming, log_body, log_outcome,
         wire::{Duplicates, parse_header_lines, read_body, read_head},
@@ -57,6 +61,25 @@ struct Listening {
     name: Option<String>,
     forward: Option<url::Url>,
     hits: Arc<AtomicU64>,
+    capture: Option<Arc<Slot>>,
+}
+
+/// Where a capture's listener leaves the first request it receives.
+#[derive(Default)]
+struct Slot {
+    request: Mutex<Option<Value>>,
+    arrived: tokio::sync::Notify,
+}
+
+impl Slot {
+    /// Keeps the first request only.
+    fn put(&self, request: Value) {
+        let mut held = self.request.lock();
+        if held.is_none() {
+            *held = Some(request);
+            self.arrived.notify_one();
+        }
+    }
 }
 
 /// The forward URL with the request's path appended to its own path, and the request's query.
@@ -124,6 +147,10 @@ async fn handle(listening: Arc<Listening>, bound: SocketAddr, mut socket: TcpStr
         emit_log(&finished_entry(&base, 200, "webhook", tag, now_ms() - t0, res_headers.clone(), log_body(answer)));
         let _ = write_response(&mut socket, 200, &res_headers, answer).await;
     }
+    // Only now: whoever waits for the capture may close the listener and the tunnel, and the sender has its answer.
+    if let Some(slot) = &listening.capture {
+        slot.put(json!({ "method": base.method, "headers": base.req_headers, "body": base.req_body }));
+    }
 }
 
 fn listen(params: &Value, ctx: &CommandContext) -> Result<Value> {
@@ -142,6 +169,22 @@ fn listen(params: &Value, ctx: &CommandContext) -> Result<Value> {
                 })
         })
         .transpose()?;
+    let owner = (!bool_of(params, "detach", false)).then(|| ctx.session.as_ref().map(|s| s.session_id.clone()));
+    let (id, port) = start_listener(workspace_id, port, name, forward, parsed, owner.flatten(), None)?;
+    Ok(json!({ "id": id, "port": port, "url": format!("http://127.0.0.1:{port}") }))
+}
+
+/// Opens a listener on `port` (0: a free one) and keeps it in [`RUNNING`]; returns its id and port. With a
+/// `capture` slot, the first request it receives is left there.
+fn start_listener(
+    workspace_id: String,
+    port: u16,
+    name: Option<String>,
+    forward: Option<String>,
+    parsed: Option<url::Url>,
+    owner: Option<String>,
+    capture: Option<Arc<Slot>>,
+) -> Result<(String, u16)> {
     let listener = std::net::TcpListener::bind(("127.0.0.1", port))
         .and_then(|l| l.set_nonblocking(true).map(|()| l))
         .map_err(|err| match err.kind() {
@@ -156,6 +199,7 @@ fn listen(params: &Value, ctx: &CommandContext) -> Result<Value> {
         name: name.clone(),
         forward: parsed,
         hits: Arc::default(),
+        capture,
     });
     let hits = listening.hits.clone();
     let task = tokio::spawn(async move {
@@ -169,13 +213,12 @@ fn listen(params: &Value, ctx: &CommandContext) -> Result<Value> {
             }
         }
     });
-    let owner = (!bool_of(params, "detach", false)).then(|| ctx.session.as_ref().map(|s| s.session_id.clone()));
     let id = mk_id();
     let started =
-        Running { id: id.clone(), port: bound.port(), name, forward, workspace_id, owner: owner.flatten(), hits, task };
+        Running { id: id.clone(), port: bound.port(), name, forward, workspace_id, owner, hits, task };
     RUNNING.lock().push(started);
     announce();
-    Ok(json!({ "id": id, "port": bound.port(), "url": format!("http://127.0.0.1:{}", bound.port()) }))
+    Ok((id, bound.port()))
 }
 
 fn stop(params: &Value) -> Result<Value> {
@@ -219,81 +262,6 @@ fn announce() {
     bus().emit("webhook.changed", list());
 }
 
-/// `scheme://authority` of a URL, and what follows it.
-fn split_origin(url: &str) -> (&str, &str) {
-    let from = url.find("://").map_or(0, |at| at + 3);
-    let end = url[from..].find(['/', '?', '#']).map_or(url.len(), |at| from + at);
-    url.split_at(end)
-}
-
-/// Where a webhook is sent again: `to` (host only: the entry's path and query go on it; with a path of its
-/// own: used whole), else the listener's forward URL, else the URL it came in on.
-fn replay_target(entry_url: &str, forward: Option<&str>, to: Option<&str>) -> Result<String> {
-    let path = match split_origin(entry_url).1 {
-        "" => "/",
-        path => path,
-    };
-    if let Some(to) = to {
-        let (origin, rest) = split_origin(to);
-        if !to.contains("://") || origin.ends_with("://") {
-            return Err(EngineError::bad_request(format!("--to is a URL like http://127.0.0.1:4021, not \"{to}\"")));
-        }
-        return Ok(if matches!(rest, "" | "/") { format!("{origin}{path}") } else { to.to_string() });
-    }
-    // Like the listener's own forwarding: the request's path is appended to the forward URL's path.
-    Ok(match forward {
-        Some(forward) => {
-            format!("{}{path}", forward.split(['?', '#']).next().unwrap_or_default().trim_end_matches('/'))
-        }
-        None => entry_url.to_string(),
-    })
-}
-
-/// `webhook.replay`: the captured request again, with its method, headers and raw body bytes, through
-/// `request.replay` so the workspace policy still guards it.
-async fn replay(params: Value, ctx: CommandContext) -> Result<Value> {
-    let (workspace_id, id) = (str_of(&params, "workspaceId"), str_of(&params, "id"));
-    let entry = crate::capture::get_capture(workspace_id, id)
-        .filter(|entry| entry["origin"] == "webhook")
-        .ok_or_else(|| EngineError::not_found(format!("no webhook \"{id}\" (see: bifurc webhooks list)")))?;
-    let to = opt_str(&params, "to");
-    // The entry's own forward (new entries); older entries fall back to the running listener's.
-    let mut forward = entry["forward"].as_str().map(str::to_string);
-    let mut stopped = None;
-    if to.is_none()
-        && forward.is_none()
-        && let Some(name) = entry["target"].as_str().and_then(|t| t.strip_prefix("webhook:"))
-    {
-        let running = RUNNING.lock();
-        let listener = running.iter().find(|l| l.name.as_deref() == Some(name));
-        forward = listener.and_then(|l| l.forward.clone());
-        if listener.is_none() {
-            stopped = Some(name.to_string());
-        }
-    }
-    let as_text = |value: &Value| value.as_str().map_or_else(|| value.to_string(), str::to_string);
-    let url = replay_target(entry["url"].as_str().unwrap_or_default(), forward.as_deref(), to)?;
-    // The body was read whole (no chunking), and the HTTP client sets its own host and length.
-    let headers: serde_json::Map<String, Value> = entry["reqHeaders"]
-        .as_object()
-        .into_iter()
-        .flatten()
-        .filter(|(name, _)| !["host", "content-length", "transfer-encoding"].contains(&name.to_lowercase().as_str()))
-        .map(|(name, value)| (name.clone(), json!(as_text(value))))
-        .collect();
-    let payload = json!({ "method": as_text(&entry["method"]), "url": url, "headers": headers,
-                          "body": entry["reqBody"].as_str().unwrap_or_default() });
-    ctx.registry.invoke("request.replay", payload, ctx.clone()).await.map_err(|mut err| {
-        // Only a listener without a stored forward lands here: its own port is what refused.
-        if let (Some(name), ErrorCode::EngineError | ErrorCode::UpstreamFailed | ErrorCode::Timeout) =
-            (stopped, err.code)
-        {
-            err.message = format!("{}; the listener \"{name}\" is stopped, use --to <url>", err.message);
-        }
-        err
-    })
-}
-
 fn list() -> Value {
     let listeners: Vec<Value> = RUNNING
         .lock()
@@ -309,8 +277,9 @@ fn list() -> Value {
 pub fn register(registry: &mut CommandRegistry) {
     registry.register_sync("webhook.listen", |params, ctx| listen(&params, ctx));
     registry.register_sync("webhook.stop", |params, _| stop(&params).inspect(|_| announce()));
-    registry.register("webhook.replay", replay);
     fixtures::register(registry);
+    request::register(registry);
+    capture::register(registry);
     registry.register_sync("webhook.list", |_, _| Ok(list()));
 }
 
@@ -505,124 +474,6 @@ mod tests {
         call(&registry, "webhook.stop", json!({ "id": detached["id"] })).await.unwrap();
         let none = call(&registry, "webhook.stop", json!({ "id": detached["id"] })).await;
         assert_eq!(none.unwrap_err().code, crate::protocol::ErrorCode::NotFound);
-    }
-
-    #[test]
-    fn the_replay_goes_to_the_forward_url_else_the_original_or_to() {
-        let came = "http://127.0.0.1:4020/hooks/a?x=1";
-        assert_eq!(replay_target(came, None, None).unwrap(), came);
-        assert_eq!(
-            replay_target(came, Some("http://api.localhost/webhooks/stripe/?y=2"), None).unwrap(),
-            "http://api.localhost/webhooks/stripe/hooks/a?x=1"
-        );
-        for host_only in ["http://127.0.0.1:4021", "http://127.0.0.1:4021/"] {
-            assert_eq!(
-                replay_target(came, Some("http://f.test"), Some(host_only)).unwrap(),
-                "http://127.0.0.1:4021/hooks/a?x=1"
-            );
-        }
-        assert_eq!(replay_target(came, None, Some("https://app.test/in?z=1")).unwrap(), "https://app.test/in?z=1");
-        assert_eq!(replay_target("http://h:1", None, Some("http://app.test")).unwrap(), "http://app.test/");
-        assert_eq!(replay_target(came, None, Some("localhost:3000")).unwrap_err().code, ErrorCode::BadRequest);
-    }
-
-    /// A one-shot HTTP server: the whole request it receives (head and body bytes) comes out of the channel.
-    async fn catcher() -> (u16, tokio::sync::oneshot::Receiver<Vec<u8>>) {
-        let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let port = listener.local_addr().unwrap().port();
-        let (tx, rx) = tokio::sync::oneshot::channel();
-        tokio::spawn(async move {
-            let (mut socket, _) = listener.accept().await.unwrap();
-            let mut got = Vec::new();
-            let mut buf = [0u8; 4096];
-            loop {
-                let n = socket.read(&mut buf).await.unwrap();
-                got.extend_from_slice(&buf[..n]);
-                if n == 0 {
-                    break;
-                }
-                let Some(end) = got.windows(4).position(|w| w == b"\r\n\r\n") else { continue };
-                let head = String::from_utf8_lossy(&got[..end]).to_lowercase();
-                let want: usize = head
-                    .split("content-length: ")
-                    .nth(1)
-                    .and_then(|v| v.split("\r\n").next()?.parse().ok())
-                    .unwrap_or(0);
-                if got.len() >= end + 4 + want {
-                    break;
-                }
-            }
-            let _ = socket.write_all(b"HTTP/1.1 200 OK\r\ncontent-length: 2\r\nconnection: close\r\n\r\nok").await;
-            let _ = tx.send(got);
-        });
-        (port, rx)
-    }
-
-    fn stored(id: &str, name: &str, forward: Option<&str>, body: &[u8]) -> Value {
-        let mut entry = json!({ "id": id, "ts": 1, "workspaceId": "ws1", "method": "POST", "origin": "webhook",
-            "url": "http://127.0.0.1:4020/hooks/a?x=1", "host": "127.0.0.1", "target": format!("webhook:{name}"),
-            "reqHeaders": { "Host": "127.0.0.1:4020", "Content-Length": "7", "Transfer-Encoding": "chunked",
-                            "stripe-signature": "t=1,v1=ab", "x-dup": "a, b" },
-            "reqBody": base64::engine::general_purpose::STANDARD.encode(body), "status": 200, "via": "webhook" });
-        if let Some(forward) = forward {
-            entry["forward"] = json!(forward);
-        }
-        crate::capture::record_capture(&entry);
-        entry
-    }
-
-    #[tokio::test]
-    async fn replay_sends_the_raw_body_without_the_hop_headers_to_the_target_in_order() {
-        let _root = crate::testing::scratch_data_root();
-        let registry = registry();
-        let raw: &[u8] = &[0xff, 0xfe, 0x00, 0x80, b'{', 0xc3, 0xa9];
-        let (port, got) = catcher().await;
-        stored("rp-to", "gone", Some("http://127.0.0.1:1/never"), raw);
-        // `to` beats the stored forward.
-        let to = format!("http://127.0.0.1:{port}");
-        let sent =
-            call(&registry, "webhook.replay", json!({ "workspaceId": "ws1", "id": "rp-to", "to": to })).await.unwrap();
-        assert_eq!(sent["status"], 200);
-        let got = got.await.unwrap();
-        let end = got.windows(4).position(|w| w == b"\r\n\r\n").unwrap();
-        let head = String::from_utf8_lossy(&got[..end]).to_lowercase();
-        assert!(head.starts_with("post /hooks/a?x=1 "), "{head}");
-        assert!(head.contains("stripe-signature: t=1,v1=ab") && head.contains("x-dup: a, b"), "{head}");
-        assert!(!head.contains("transfer-encoding") && !head.contains("127.0.0.1:4020"), "{head}");
-        assert!(head.contains("content-length: 7"), "{head}");
-        assert_eq!(&got[end + 4..], raw);
-
-        // The entry's own forward is next.
-        let (port, got) = catcher().await;
-        stored("rp-fwd", "gone", Some(&format!("http://127.0.0.1:{port}/in/")), raw);
-        call(&registry, "webhook.replay", json!({ "workspaceId": "ws1", "id": "rp-fwd" })).await.unwrap();
-        assert!(String::from_utf8_lossy(&got.await.unwrap()).starts_with("POST /in/hooks/a?x=1 "));
-    }
-
-    #[tokio::test]
-    async fn replay_falls_back_to_the_running_listener_and_names_a_stopped_one() {
-        let _root = crate::testing::scratch_data_root();
-        let registry = registry();
-        let (port, got) = catcher().await;
-        let started =
-            start(&registry, json!({ "name": "rp-live", "forward": format!("http://127.0.0.1:{port}/l") })).await;
-        stored("rp-old", "rp-live", None, b"{}");
-        call(&registry, "webhook.replay", json!({ "workspaceId": "ws1", "id": "rp-old" })).await.unwrap();
-        assert!(String::from_utf8_lossy(&got.await.unwrap()).starts_with("POST /l/hooks/a?x=1 "));
-        call(&registry, "webhook.stop", json!({ "id": started["id"] })).await.unwrap();
-
-        // Stopped, no forward stored: the original address refuses, and the error says why.
-        let free = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
-        let mut entry = stored("rp-stopped", "rp-gone", None, b"{}");
-        entry["url"] = json!(format!("http://127.0.0.1:{free}/x"));
-        crate::capture::record_capture(&entry);
-        let err =
-            call(&registry, "webhook.replay", json!({ "workspaceId": "ws1", "id": "rp-stopped" })).await.unwrap_err();
-        assert!(err.message.ends_with("the listener \"rp-gone\" is stopped, use --to <url>"), "{}", err.message);
-        let missing = call(&registry, "webhook.replay", json!({ "workspaceId": "ws1", "id": "nope" })).await;
-        assert_eq!(missing.unwrap_err().code, ErrorCode::NotFound);
-        let bad = call(&registry, "webhook.replay", json!({ "workspaceId": "ws1", "id": "rp-old", "to": "x" }));
-        assert_eq!(bad.await.unwrap_err().code, ErrorCode::BadRequest);
     }
 
     #[tokio::test]

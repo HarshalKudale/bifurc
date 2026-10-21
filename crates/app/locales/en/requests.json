@@ -19,6 +19,7 @@
   "kind_summary.sse": "A one-way stream of events from a server",
   "kind_summary.socketio": "A connection that emits and receives named events",
   "kind_summary.mcp": "The tools, prompts and resources of an MCP server",
+  "kind_summary.webhook": "Send a signed sample event, or your own payload, to a webhook URL",
   "panel.request_title": "Request",
   "panel.request_empty_description": "Open a request to edit it here.",
   "panel.response_empty_title": "No response",

@@ -40,6 +40,7 @@ pub fn extract_name_entry(kind: &str, entity: &Value) -> Option<Value> {
         "sockets" => json!({ "name": text("name"), "url": text("url") }),
         "socketioRequests" => json!({ "name": text("name"), "url": text("url"), "namespace": text("namespace") }),
         "mcpRequests" => json!({ "name": text("name"), "transport": text("transport"), "url": text("url") }),
+        "webhookRequests" => json!({ "name": text("name"), "url": text("url") }),
         "soapRequests" => {
             json!({ "name": text("name"), "endpointUrl": text("endpointUrl"), "soapAction": text("soapAction") })
         }

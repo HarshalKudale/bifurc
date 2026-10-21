@@ -1,0 +1,74 @@
+{
+  "name": "github.push",
+  "about": "A GitHub push event with one commit",
+  "headers": {
+    "Content-Type": "application/json",
+    "User-Agent": "GitHub-Hookshot/bifurc",
+    "X-GitHub-Event": "push",
+    "X-GitHub-Delivery": "{{hex:8}}-{{hex:4}}-{{hex:4}}-{{hex:4}}-{{hex:12}}"
+  },
+  "signatureHeader": "X-Hub-Signature-256",
+  "payload": {
+    "ref": "refs/heads/main",
+    "before": "{{hex:40:before}}",
+    "after": "{{hex:40:after}}",
+    "repository": {
+      "id": 100000001,
+      "name": "demo",
+      "full_name": "octo/demo",
+      "private": false,
+      "owner": {
+        "login": "octo",
+        "id": 1000001
+      },
+      "html_url": "https://github.com/octo/demo",
+      "default_branch": "main"
+    },
+    "pusher": {
+      "name": "octocat",
+      "email": "octocat@example.com"
+    },
+    "sender": {
+      "login": "octocat",
+      "id": 583231
+    },
+    "created": false,
+    "deleted": false,
+    "forced": false,
+    "compare": "https://github.com/octo/demo/compare/{{before}}...{{after}}",
+    "commits": [
+      {
+        "id": "{{after}}",
+        "message": "Update README",
+        "timestamp": "{{iso}}",
+        "url": "https://github.com/octo/demo/commit/{{after}}",
+        "author": {
+          "name": "Octo Cat",
+          "email": "octocat@example.com",
+          "username": "octocat"
+        },
+        "added": [],
+        "removed": [],
+        "modified": [
+          "README.md"
+        ]
+      }
+    ],
+    "head_commit": {
+      "id": "{{after}}",
+      "message": "Update README",
+      "timestamp": "{{iso}}",
+      "url": "https://github.com/octo/demo/commit/{{after}}",
+      "author": {
+        "name": "Octo Cat",
+        "email": "octocat@example.com",
+        "username": "octocat"
+      },
+      "added": [],
+      "removed": [],
+      "modified": [
+        "README.md"
+      ]
+    }
+  }
+}

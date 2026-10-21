@@ -1775,6 +1775,18 @@
    "extra": true
   }
  },
+ "tunnel.install": {
+  "valid": {},
+  "invalid": {
+   "extra": true
+  }
+ },
+ "tunnel.status": {
+  "valid": {},
+  "invalid": {
+   "extra": true
+  }
+ },
  "types.generate": {
   "valid": {
    "workspaceId": "ws1",
@@ -1889,6 +1901,27 @@
   },
   "invalid": {}
  },
+ "webhook.capture.cancel": {
+  "valid": {
+   "captureId": "k3f9"
+  },
+  "invalid": {}
+ },
+ "webhook.capture.start": {
+  "valid": {
+   "workspaceId": "ws1"
+  },
+  "invalid": {}
+ },
+ "webhook.capture.wait": {
+  "valid": {
+   "captureId": "k3f9",
+   "timeoutMs": 30000
+  },
+  "invalid": {
+   "timeoutMs": 1
+  }
+ },
  "webhook.fixtures": {
   "valid": {},
   "invalid": {
@@ -1911,14 +1944,21 @@
   },
   "invalid": {}
  },
- "webhook.replay": {
+ "webhook.send": {
   "valid": {
    "workspaceId": "ws1",
-   "id": "k3f9",
-   "to": "http://127.0.0.1:4021"
+   "request": {
+    "url": "http://127.0.0.1:4021",
+    "payload": "{}"
+   }
   },
   "invalid": {
-   "workspaceId": "ws1"
+   "workspaceId": "ws1",
+   "id": "w1",
+   "request": {
+    "url": "http://127.0.0.1:4021",
+    "payload": "{}"
+   }
   }
  },
  "webhook.stop": {
@@ -1928,6 +1968,12 @@
   "invalid": {
    "id": 1
   }
+ },
+ "webhook.template": {
+  "valid": {
+   "name": "github.ping"
+  },
+  "invalid": {}
  },
  "webhook.trigger": {
   "valid": {
