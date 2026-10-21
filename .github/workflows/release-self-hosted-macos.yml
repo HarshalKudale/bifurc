@@ -46,10 +46,6 @@ jobs:
           rustup toolchain install stable --profile minimal --target ${{ matrix.target }}
           rustup default stable
 
-      # GPUI compiles its Metal shaders at build time, which needs the full Xcode (not only the command line tools).
-      - name: Check Xcode
-        run: xcrun --sdk macosx metal --version
-
       - name: Build
         env:
           BIFURC_GITHUB_CLIENT_ID: ${{ vars.BIFURC_GITHUB_CLIENT_ID }}
