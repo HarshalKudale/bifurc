@@ -230,7 +230,7 @@ fn leave_interrupts_to_the_program() {
         extern "C" fn nothing(_: libc::c_int) {}
         // SAFETY: installs a handler that does nothing; unlike SIG_IGN it is reset to the default on exec.
         unsafe {
-            libc::signal(libc::SIGINT, nothing as usize);
+            libc::signal(libc::SIGINT, nothing as *const () as usize);
         }
     }
 }
