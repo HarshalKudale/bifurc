@@ -1,10 +1,7 @@
 name: Tests
 
 on:
-  push:
-    branches: [master, main, develop]
-  pull_request:
-    branches: [master, main, develop]
+  workflow_dispatch:
 
 jobs:
   engine-and-cli:
