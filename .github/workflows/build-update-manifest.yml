@@ -1,0 +1,95 @@
+name: Build the update manifest for a release
+
+# Writes updates/v1/stable.json for one release of this repository, without copying anything anywhere: the
+# files are downloaded only to be hashed, and the manifest names the addresses they have in the public
+# bifurc-releases repository (publish-public-release.yml copies them and does this as well).
+# The release already in the public manifest, if there is one, is kept and this one is added to it.
+#
+# The result is the artifact "stable.json" and the summary of the run. Commit it to the public repository as
+# updates/v1/stable.json once the release's files are there.
+on:
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag in this repository (e.g. v0.6.0)"
+        required: true
+        type: string
+      summary:
+        description: "One line on what the release brings, shown where the app announces it"
+        required: false
+        type: string
+      min_direct_from:
+        description: "Oldest version that may update to this release in one step (default: any)"
+        required: false
+        type: string
+      minimum_supported:
+        description: "Oldest version still supported; older installs are told so (default: unchanged)"
+        required: false
+        type: string
+      critical:
+        description: "The release fixes a security problem"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+env:
+  PUBLIC_REPO: HarshalKudale/bifurc-releases
+  MANIFEST_PATH: updates/v1/stable.json
+
+jobs:
+  manifest:
+    runs-on: [self-hosted, linux]
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/scripts
+
+      - name: Build the manifest
+        shell: bash
+        # What was typed into the form reaches the script as data, never as part of it.
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
+          INPUT_SUMMARY: ${{ inputs.summary }}
+          INPUT_MIN_DIRECT_FROM: ${{ inputs.min_direct_from }}
+          INPUT_MINIMUM_SUPPORTED: ${{ inputs.minimum_supported }}
+          INPUT_CRITICAL: ${{ inputs.critical }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+
+          tag="$INPUT_TAG"
+          [[ "${tag#v}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::'$tag' is not a version tag."; exit 1; }
+          gh release view "$tag" --repo "$GITHUB_REPOSITORY" > /dev/null \
+            || { echo "::error::$GITHUB_REPOSITORY has no release for $tag."; exit 1; }
+
+          mkdir -p out assets
+          manifest="out/stable.json"
+          # The public repository is readable without a token; a first release has no manifest yet.
+          curl -fsSL "https://raw.githubusercontent.com/$PUBLIC_REPO/main/$MANIFEST_PATH" -o "$manifest" || : > "$manifest"
+
+          # The same files publish-public-release.yml copies: the ones an install is replaced by.
+          gh release download "$tag" --repo "$GITHUB_REPOSITORY" --dir assets \
+            --pattern '*-setup.exe' --pattern '*-win-*.zip' --pattern '*.deb' \
+            --pattern '*.AppImage' --pattern '*-linux-*.tar.gz' --pattern '*-mac-*.dmg'
+
+          args=(--manifest "$manifest" --version "${tag#v}" --tag "$tag" --repo "$PUBLIC_REPO" --assets assets)
+          [ -n "$INPUT_SUMMARY" ] && args+=(--summary "$INPUT_SUMMARY")
+          [ -n "$INPUT_MIN_DIRECT_FROM" ] && args+=(--min-direct-from "$INPUT_MIN_DIRECT_FROM")
+          [ -n "$INPUT_MINIMUM_SUPPORTED" ] && args+=(--minimum-supported "$INPUT_MINIMUM_SUPPORTED")
+          [ "$INPUT_CRITICAL" = "true" ] && args+=(--critical)
+          python3 .github/scripts/update_manifest.py release "${args[@]}"
+
+          {
+            echo "### $MANIFEST_PATH with $tag"
+            echo '```json'
+            cat "$manifest"
+            echo '```'
+          } >> "$GITHUB_STEP_SUMMARY"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: stable.json
+          path: out/stable.json
