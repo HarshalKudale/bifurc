@@ -31,7 +31,7 @@ concurrency:
 
 env:
   PUBLIC_REPO: HarshalKudale/bifurc-releases
-  MANIFEST_PATH: updates/v1/stable.json
+  MANIFEST_ASSET: stable.json
 
 jobs:
   set-channel:
@@ -53,14 +53,12 @@ jobs:
           [ -n "$GH_TOKEN" ] || { echo "::error::The PUBLIC_RELEASES_TOKEN secret is not set."; exit 1; }
 
           manifest="$RUNNER_TEMP/stable.json"
-          sha="$(gh api "repos/$PUBLIC_REPO/contents/$MANIFEST_PATH" --jq .sha 2>/dev/null || true)"
-          [ -n "$sha" ] || { echo "::error::$PUBLIC_REPO has no $MANIFEST_PATH yet. Publish a release first."; exit 1; }
-          gh api "repos/$PUBLIC_REPO/contents/$MANIFEST_PATH" -H "Accept: application/vnd.github.raw+json" > "$manifest"
+          curl -fsSL "https://github.com/$PUBLIC_REPO/releases/latest/download/$MANIFEST_ASSET" -o "$manifest" \
+            || { echo "::error::The latest release of $PUBLIC_REPO has no $MANIFEST_ASSET yet. Publish a release first."; exit 1; }
 
           python3 .github/scripts/update_manifest.py channel \
             --manifest "$manifest" --channel "$INPUT_CHANNEL" --version "$INPUT_VERSION"
 
-          gh api --method PUT "repos/$PUBLIC_REPO/contents/$MANIFEST_PATH" \
-            -f message="Update manifest: $INPUT_CHANNEL has $INPUT_VERSION" \
-            -f content="$(base64 -w0 "$manifest")" -f sha="$sha" > /dev/null
+          latest="$(gh release view --repo "$PUBLIC_REPO" --json tagName --jq .tagName)"
+          gh release upload "$latest" --repo "$PUBLIC_REPO" --clobber "$manifest"
           echo "### $INPUT_CHANNEL now has $INPUT_VERSION" >> "$GITHUB_STEP_SUMMARY"

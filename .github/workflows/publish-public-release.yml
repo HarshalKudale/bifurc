@@ -8,7 +8,7 @@ name: Publish release to public repo
 # still adds its own source archives to every release, but this repository holds nothing but a README and
 # issue templates, so they contain no Bifurc source.
 #
-# The update manifest (updates/v1/stable.json in the public repository, served at
+# The update manifest (stable.json, attached to the latest release of the public repository and served at
 # https://bifurc.app/updates/v1/stable.json) is what a running Bifurc reads to learn of a newer version. Every
 # release copied here that is not a prerelease is added to it, with the address and hash of each file. The
 # stores and package managers are not touched: update-channel.yml records what each of them has.
@@ -53,7 +53,7 @@ concurrency:
 
 env:
   PUBLIC_REPO: HarshalKudale/bifurc-releases
-  MANIFEST_PATH: updates/v1/stable.json
+  MANIFEST_ASSET: stable.json
 
 jobs:
   replicate:
@@ -62,6 +62,14 @@ jobs:
       - uses: actions/checkout@v4
         with:
           sparse-checkout: .github/scripts
+
+      # Read before the releases are copied: copying makes a new release the latest, which has no manifest yet.
+      # The public repository is readable without a token; a first release has no manifest.
+      - name: Read the current update manifest
+        shell: bash
+        run: |
+          curl -fsSL "https://github.com/$PUBLIC_REPO/releases/latest/download/$MANIFEST_ASSET" \
+            -o "$RUNNER_TEMP/stable.json" || : > "$RUNNER_TEMP/stable.json"
 
       - name: Replicate the releases
         shell: bash
@@ -187,12 +195,6 @@ jobs:
           set -euo pipefail
 
           manifest="$RUNNER_TEMP/stable.json"
-          sha="$(gh api "repos/$PUBLIC_REPO/contents/$MANIFEST_PATH" --jq .sha 2>/dev/null || true)"
-          if [ -n "$sha" ]; then
-            gh api "repos/$PUBLIC_REPO/contents/$MANIFEST_PATH" -H "Accept: application/vnd.github.raw+json" > "$manifest"
-          else
-            : > "$manifest"
-          fi
 
           latest="$(cat "$RUNNER_TEMP/latest.txt")"
           added=()
@@ -226,13 +228,7 @@ jobs:
             exit 0
           fi
 
-          fields=(-f message="Update manifest: ${added[*]}" -f content="$(base64 -w0 "$manifest")")
-          [ -n "$sha" ] && fields+=(-f sha="$sha")
-          # --include keeps the status and headers on a failure: for a token that may not do this, the header
-          # X-Accepted-Github-Permissions names the permission the call needs.
-          if ! response="$(gh api --include --method PUT "repos/$PUBLIC_REPO/contents/$MANIFEST_PATH" "${fields[@]}" 2>&1)"; then
-            echo "::error::Could not write $MANIFEST_PATH to $PUBLIC_REPO:"
-            echo "$response" | grep -iv '^\(set-cookie\|authorization\)' | head -40
-            exit 1
-          fi
+          # Attached to the latest release, so bifurc.app/updates/v1/stable.json follows it.
+          [ -n "$latest" ] || { echo "::error::There is no latest release to attach the manifest to."; exit 1; }
+          gh release upload "$latest" --repo "$PUBLIC_REPO" --clobber "$manifest"
           echo "Update manifest: ${added[*]}" >> "$GITHUB_STEP_SUMMARY"
