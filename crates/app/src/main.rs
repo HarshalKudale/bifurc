@@ -21,7 +21,7 @@ mod ui_tests;
 
 use bifurc_engine_client::SidecarConfig;
 use gpui_kit::component::TitleBar;
-use gpui_kit::{Bounds, WindowBounds, WindowOptions, px, size};
+use gpui_kit::{Bounds, TitlebarOptions, WindowBounds, WindowOptions, px, size};
 
 use bootstrap::Bootstrap;
 use preferences::{Preferences, WindowState};
@@ -81,6 +81,8 @@ fn main() {
             window_min_size: Some(size(px(MIN_SIZE.0), px(MIN_SIZE.1))),
             // What a Linux desktop matches against `bifurc.desktop` to find the window's icon and name.
             app_id: Some("bifurc".to_owned()),
+            // The kit's default leaves the native title empty, so the taskbar showed only the icon.
+            titlebar: Some(TitlebarOptions { title: Some("Bifurc".into()), ..TitleBar::title_bar_options() }),
             ..TitleBar::window_options()
         };
         gpui_kit::open_window(options, cx, |window, cx| {

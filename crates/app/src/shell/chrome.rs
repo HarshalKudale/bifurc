@@ -395,19 +395,6 @@ impl Shell {
             h_flex()
                 .gap_3()
                 .when(!status.is_empty(), |this| this.child(div().text_color(theme.muted_foreground).child(status)))
-                .when_some(update, |this, version| {
-                    this.child(
-                        Button::new("update-available")
-                            .ghost()
-                            .xsmall()
-                            .icon(IconName::ArrowUp)
-                            .label(t("shell.chrome.update_available"))
-                            .tooltip(t_with("shell.chrome.update_tooltip", &[("version", &version)]))
-                            .on_click(
-                                cx.listener(|this, _, window, cx| this.show_screen(Screen::Settings, window, cx)),
-                            ),
-                    )
-                })
                 .children(agent_badges)
                 .child(
                     Button::new("proxy-toggle")
@@ -435,7 +422,20 @@ impl Shell {
                         } else {
                             t_with("shell.chrome.engine_version", &[("version", &engine_version)])
                         }),
-                ),
+                )
+                .when_some(update, |this, version| {
+                    this.child(
+                        Button::new("update-available")
+                            .ghost()
+                            .xsmall()
+                            .icon(IconName::ArrowUp)
+                            .label(t("shell.chrome.update_available"))
+                            .tooltip(t_with("shell.chrome.update_tooltip", &[("version", &version)]))
+                            .on_click(
+                                cx.listener(|this, _, window, cx| this.show_screen(Screen::Settings, window, cx)),
+                            ),
+                    )
+                }),
         )
     }
 }
