@@ -1,0 +1,173 @@
+name: Publish release to public repo
+
+# Copies releases made in this (private) repository to the public bifurc-releases repository, which hosts
+# the downloads and the issue tracker. Manual only: nothing is published until someone names the tags.
+#
+# Only the installable downloads are copied (Windows installer and zip, Linux .deb, AppImage and tarball).
+# Store packages, package-manager manifests and GitHub's generated "Source code" archives are not. GitHub
+# still adds its own source archives to every release, but this repository holds nothing but a README and
+# issue templates, so they contain no Bifurc source.
+#
+# The update manifest (updates/v1/stable.json in the public repository, served at
+# https://bifurc.app/updates/v1/stable.json) is what a running Bifurc reads to learn of a newer version. Every
+# release copied here that is not a prerelease is added to it, with the address and hash of each file. The
+# stores and package managers are not touched: update-channel.yml records what each of them has.
+#
+# Needs the secret PUBLIC_RELEASES_TOKEN: a fine-grained personal access token for the public repository
+# with "Contents: read and write". The workflow's own token cannot write to another repository.
+on:
+  workflow_dispatch:
+    inputs:
+      tags:
+        description: "Release tags to copy, separated by commas or spaces (e.g. v0.4.0 or v0.3.3,v0.4.0)"
+        required: true
+        type: string
+      latest:
+        description: "Tag to mark as the public repo's latest release (default: the highest of the tags above)"
+        required: false
+        type: string
+      summary:
+        description: "One line on what the latest release brings, shown where the app announces it"
+        required: false
+        type: string
+      min_direct_from:
+        description: "Oldest version that may update to the latest release in one step (default: any)"
+        required: false
+        type: string
+      minimum_supported:
+        description: "Oldest version still supported; older installs are told so (default: unchanged)"
+        required: false
+        type: string
+      critical:
+        description: "The latest release fixes a security problem"
+        required: false
+        default: false
+        type: boolean
+
+permissions:
+  contents: read
+
+concurrency:
+  group: publish-public-release
+  cancel-in-progress: false
+
+env:
+  PUBLIC_REPO: HarshalKudale/bifurc-releases
+
+jobs:
+  replicate:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          sparse-checkout: .github/scripts
+
+      - name: Replicate the releases
+        shell: bash
+        # What was typed into the form reaches the script as data, never as part of it.
+        env:
+          INPUT_TAGS: ${{ inputs.tags }}
+          INPUT_LATEST: ${{ inputs.latest }}
+          SOURCE_TOKEN: ${{ github.token }}
+          PUBLIC_TOKEN: ${{ secrets.PUBLIC_RELEASES_TOKEN }}
+          SOURCE_REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+
+          if [ -z "$PUBLIC_TOKEN" ]; then
+            echo "::error::The PUBLIC_RELEASES_TOKEN secret is not set."
+            exit 1
+          fi
+
+          tags="$(echo "$INPUT_TAGS" | tr ',' ' ')"
+          [ -n "${tags// /}" ] || { echo "::error::No tags given."; exit 1; }
+
+          for tag in $tags; do
+            if ! [[ "$tag" =~ ^[A-Za-z0-9][A-Za-z0-9._-]*$ ]]; then
+              echo "::error::'$tag' is not a valid tag name."
+              exit 1
+            fi
+          done
+
+          # Check every tag up front, so a typo does not leave half of them published.
+          for tag in $tags; do
+            GH_TOKEN="$SOURCE_TOKEN" gh release view "$tag" --repo "$SOURCE_REPO" >/dev/null \
+              || { echo "::error::$SOURCE_REPO has no release for $tag."; exit 1; }
+          done
+
+          # The default branch of the public repo is what each new tag points at: no source, just a README.
+          branch="$(GH_TOKEN="$PUBLIC_TOKEN" gh repo view "$PUBLIC_REPO" --json defaultBranchRef --jq .defaultBranchRef.name)"
+          [ -n "$branch" ] || { echo "::error::$PUBLIC_REPO has no default branch yet. Push its README first."; exit 1; }
+
+          for tag in $tags; do
+            echo "::group::$tag"
+            work="$RUNNER_TEMP/$tag"
+            mkdir -p "$work/assets"
+
+            GH_TOKEN="$SOURCE_TOKEN" gh release view "$tag" --repo "$SOURCE_REPO" \
+              --json name,body,isPrerelease > "$work/release.json"
+
+            # Only what a person installs from: the Windows installer and portable zip, and the Linux .deb,
+            # AppImage and tarball. Everything else on the private release stays there: the Store .msix,
+            # the winget and Scoop manifests (useless to download by hand), and
+            # the "Source code" archives GitHub generates (never downloaded here, they are not assets).
+            GH_TOKEN="$SOURCE_TOKEN" gh release download "$tag" --repo "$SOURCE_REPO" --dir "$work/assets" \
+              --pattern '*-setup.exe' \
+              --pattern '*-win-*.zip' \
+              --pattern '*.deb' \
+              --pattern '*.AppImage' \
+              --pattern '*-linux-*.tar.gz' \
+              --pattern '*-mac-*.dmg' \
+              --pattern 'stable.json'
+
+            if [ -z "$(ls -A "$work/assets")" ]; then
+              echo "::error::$tag has no installable files (exe, zip, deb, AppImage, tar.gz, dmg) to publish."
+              exit 1
+            fi
+
+            name="$(jq -r '.name // empty' "$work/release.json")"
+            [ -n "$name" ] || name="Bifurc $tag"
+            prerelease="$(jq -r '.isPrerelease' "$work/release.json")"
+
+            # Generated notes link to this repository's pull requests and compare pages. Those would be
+            # dead links in public, and would show private work, so any such line is dropped.
+            jq -r '.body // ""' "$work/release.json" | grep -viF "github.com/$SOURCE_REPO" > "$work/notes.md" || true
+            if ! grep -q '[^[:space:]]' "$work/notes.md"; then
+              echo "Bifurc $tag. Downloads are below. Report problems in this repository's issues." > "$work/notes.md"
+            fi
+
+            flags=()
+            [ "$prerelease" = "true" ] && flags+=(--prerelease)
+
+            if GH_TOKEN="$PUBLIC_TOKEN" gh release view "$tag" --repo "$PUBLIC_REPO" >/dev/null 2>&1; then
+              echo "Release $tag already exists in $PUBLIC_REPO; refreshing it."
+              GH_TOKEN="$PUBLIC_TOKEN" gh release edit "$tag" --repo "$PUBLIC_REPO" \
+                --title "$name" --notes-file "$work/notes.md" "${flags[@]}"
+              GH_TOKEN="$PUBLIC_TOKEN" gh release upload "$tag" --repo "$PUBLIC_REPO" --clobber "$work"/assets/*
+            else
+              GH_TOKEN="$PUBLIC_TOKEN" gh release create "$tag" --repo "$PUBLIC_REPO" \
+                --target "$branch" --title "$name" --notes-file "$work/notes.md" \
+                --latest=false "${flags[@]}" "$work"/assets/*
+            fi
+            echo "::endgroup::"
+          done
+
+          # One release is "latest": the one asked for, else the highest version among the non-prereleases.
+          latest="$INPUT_LATEST"
+          if [ -z "$latest" ]; then
+            for tag in $tags; do
+              if [ "$(jq -r '.isPrerelease' "$RUNNER_TEMP/$tag/release.json")" != "true" ]; then
+                echo "$tag"
+              fi
+            done | sort -V | tail -n 1 > "$RUNNER_TEMP/latest.txt"
+            latest="$(cat "$RUNNER_TEMP/latest.txt")"
+          fi
+          if [ -n "$latest" ]; then
+            GH_TOKEN="$PUBLIC_TOKEN" gh release edit "$latest" --repo "$PUBLIC_REPO" --latest
+          fi
+
+          {
+            echo "### Published to https://github.com/$PUBLIC_REPO/releases"
+            for tag in $tags; do echo "- $tag"; done
+            if [ -n "$latest" ]; then echo ""; echo "Latest: $latest"; fi
+          } >> "$GITHUB_STEP_SUMMARY"
