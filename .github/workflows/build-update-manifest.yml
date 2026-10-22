@@ -62,18 +62,29 @@ jobs:
 
           tag="$INPUT_TAG"
           [[ "${tag#v}" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]] || { echo "::error::'$tag' is not a version tag."; exit 1; }
-          gh release view "$tag" --repo "$GITHUB_REPOSITORY" > /dev/null \
-            || { echo "::error::$GITHUB_REPOSITORY has no release for $tag."; exit 1; }
-
           mkdir -p out assets
           manifest="out/stable.json"
           # The public repository is readable without a token; a first release has no manifest yet.
           curl -fsSL "https://raw.githubusercontent.com/$PUBLIC_REPO/main/$MANIFEST_PATH" -o "$manifest" || : > "$manifest"
 
-          # The same files publish-public-release.yml copies: the ones an install is replaced by.
-          gh release download "$tag" --repo "$GITHUB_REPOSITORY" --dir assets \
-            --pattern '*-setup.exe' --pattern '*-win-*.zip' --pattern '*.deb' \
-            --pattern '*.AppImage' --pattern '*-linux-*.tar.gz' --pattern '*-mac-*.dmg'
+          # The same files publish-public-release.yml copies: the ones an install is replaced by. The runner has
+          # no gh, so the release API is called directly; a release that does not exist stops here. curl, not
+          # urllib, downloads: it drops the token when the file is redirected to storage, which rejects it.
+          api="https://api.github.com/repos/$GITHUB_REPOSITORY/releases/tags/$tag"
+          curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/vnd.github+json" "$api" -o release.json             || { echo "::error::$GITHUB_REPOSITORY has no release for $tag (or the token cannot read it)."; exit 1; }
+          python3 - <<'PY' > wanted.txt
+          import fnmatch, json
+
+          patterns = ["*-setup.exe", "*-win-*.zip", "*.deb", "*.AppImage", "*-linux-*.tar.gz", "*-mac-*.dmg"]
+          for asset in json.load(open("release.json"))["assets"]:
+              if any(fnmatch.fnmatch(asset["name"], pattern) for pattern in patterns):
+                  print(asset["id"], asset["name"])
+          PY
+          [ -s wanted.txt ] || { echo "::error::$tag has no installable files to hash."; exit 1; }
+          while read -r id name; do
+            echo "downloading $name"
+            curl -fsSL -H "Authorization: Bearer $GH_TOKEN" -H "Accept: application/octet-stream"               "https://api.github.com/repos/$GITHUB_REPOSITORY/releases/assets/$id" -o "assets/$name"
+          done < wanted.txt
 
           args=(--manifest "$manifest" --version "${tag#v}" --tag "$tag" --repo "$PUBLIC_REPO" --assets assets)
           [ -n "$INPUT_SUMMARY" ] && args+=(--summary "$INPUT_SUMMARY")
