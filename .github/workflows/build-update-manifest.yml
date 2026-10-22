@@ -5,9 +5,9 @@ name: Build the update manifest for a release
 # bifurc-releases repository (publish-public-release.yml copies them and does this as well).
 # The release already in the public manifest, if there is one, is kept and this one is added to it.
 #
-# The result is in the summary of the run (an artifact needs GitHub storage, and the quota is used up).
-# Copy it to the public repository as
-# updates/v1/stable.json once the release's files are there.
+# The result is attached to the tag's release as stable.json (as the self-hosted release workflows attach
+# their packages; an artifact would need GitHub's storage) and shown in the summary of the run. Copy it to the
+# public repository as updates/v1/stable.json once the release's files are there.
 on:
   workflow_dispatch:
     inputs:
@@ -34,7 +34,7 @@ on:
         type: boolean
 
 permissions:
-  contents: read
+  contents: write
 
 env:
   PUBLIC_REPO: HarshalKudale/bifurc-releases
@@ -100,3 +100,9 @@ jobs:
             cat "$manifest"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
+
+      - name: Attach to the release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag }}
+          files: out/stable.json
