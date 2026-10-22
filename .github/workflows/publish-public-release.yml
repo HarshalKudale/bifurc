@@ -228,5 +228,11 @@ jobs:
 
           fields=(-f message="Update manifest: ${added[*]}" -f content="$(base64 -w0 "$manifest")")
           [ -n "$sha" ] && fields+=(-f sha="$sha")
-          gh api --method PUT "repos/$PUBLIC_REPO/contents/$MANIFEST_PATH" "${fields[@]}" > /dev/null
+          # --include keeps the status and headers on a failure: for a token that may not do this, the header
+          # X-Accepted-Github-Permissions names the permission the call needs.
+          if ! response="$(gh api --include --method PUT "repos/$PUBLIC_REPO/contents/$MANIFEST_PATH" "${fields[@]}" 2>&1)"; then
+            echo "::error::Could not write $MANIFEST_PATH to $PUBLIC_REPO:"
+            echo "$response" | grep -iv '^\(set-cookie\|authorization\)' | head -40
+            exit 1
+          fi
           echo "Update manifest: ${added[*]}" >> "$GITHUB_STEP_SUMMARY"
