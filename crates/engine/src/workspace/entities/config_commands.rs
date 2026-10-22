@@ -111,6 +111,7 @@ pub fn register(registry: &mut CommandRegistry) {
         }
         save_config(&cfg)?;
         crate::cookies::forget(id);
+        crate::mail::forget(id);
         crate::workspace::response_history::forget_workspace(id);
         notify_config_changed();
         Ok(json!({ "ok": true }))

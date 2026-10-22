@@ -55,6 +55,9 @@ const REM: f32 = 16.0;
 const DOT_SPACING: f32 = 9.0;
 const DOT_SPEED: f32 = 70.0;
 
+/// How far apart the dots of the background grid are before the canvas is zoomed.
+const GRID_SPACING: f32 = 20.0;
+
 /// How long a connection keeps moving after the run took it.
 const PULSE: Duration = Duration::from_millis(900);
 
@@ -1664,11 +1667,29 @@ impl Render for FlowCanvas {
         let (zoom, viewport, anchors, drawn) =
             (self.zoom, self.viewport.clone(), self.anchors.clone(), self.drawn.clone());
         let (ring, primary, quiet) = (theme.ring, theme.primary, theme.muted_foreground.opacity(0.7));
+        let (pan, grid) = (self.pan, theme.muted_foreground.opacity(0.25));
         // The ports note where they are while the nodes are laid out, before anything is painted.
         self.anchors.borrow_mut().clear();
         let connections = canvas(
             move |bounds: Bounds<Pixels>, _, _| viewport.set(bounds),
-            move |_, _, window, _| {
+            move |bounds, _, window, _| {
+                // The dotted background moves and scales with the nodes.
+                // Zoomed far out, every other dot, so the grid neither turns into a haze nor costs a quad per 8px.
+                let step = GRID_SPACING * zoom * if zoom < 0.6 { 2.0 } else { 1.0 };
+                let dot = 1.5;
+                let (left, top) = (f32::from(bounds.origin.x), f32::from(bounds.origin.y));
+                let (width, height) = (f32::from(bounds.size.width), f32::from(bounds.size.height));
+                let mut y = top + pan.1.rem_euclid(step);
+                while y < top + height {
+                    let mut x = left + pan.0.rem_euclid(step);
+                    while x < left + width {
+                        let corner = point(px(x - dot / 2.0), px(y - dot / 2.0));
+                        let bounds = Bounds::new(corner, size(px(dot), px(dot)));
+                        window.paint_quad(quad(bounds, px(dot / 2.0), grid, px(0.0), grid, BorderStyle::default()));
+                        x += step;
+                    }
+                    y += step;
+                }
                 let anchors = anchors.borrow();
                 let place = |key: &str| anchors.get(key).map(|at| (f32::from(at.x), f32::from(at.y)));
                 let mut paint = |from: (f32, f32), to: (f32, f32), color: Hsla, dot: f32, phase: f32| {

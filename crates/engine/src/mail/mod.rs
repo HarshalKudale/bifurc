@@ -1,5 +1,6 @@
-//! The local mail sink (`mail.*`): an SMTP server on 127.0.0.1 that keeps the last mails it receives in memory,
-//! so a test can read the verification code or link an app "sent". Nothing is stored on disk.
+//! The local mail sink (`mail.*`): an SMTP server on 127.0.0.1 that keeps the last mails it receives, so a test
+//! can read the verification code or link an app "sent". A mail goes to the inbox of the workspace that is active
+//! when it arrives; each inbox is written beside `app.json` (never in the workspace's repository).
 //!
 //! The same port also answers `GET /mail/wait` over HTTP (see [`http`]): a flow reaches the sink with an
 //! ordinary request step, which is how the `mail:` step of a flow works without a node of its own.
@@ -9,17 +10,20 @@ mod mime;
 mod smtp;
 
 use std::{
-    collections::VecDeque,
+    collections::{HashMap, VecDeque},
+    path::PathBuf,
     sync::{Arc, LazyLock},
     time::{Duration, Instant},
 };
 
 use parking_lot::Mutex;
 use percent_encoding::percent_decode_str;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 use tokio::{io::AsyncReadExt, io::AsyncWriteExt, net::TcpStream, time::timeout};
 
 use crate::{
+    env::session::workspace_of,
     kernel::{CommandRegistry, bus},
     protocol::EngineError,
     proxy::listener::{ConnectionHandler, ListenerCore},
@@ -27,7 +31,7 @@ use crate::{
         id::{mk_id, now_ms},
         json::{opt_str, str_of},
     },
-    workspace::settings::AppSettings,
+    workspace::{paths::data_dir, settings::AppSettings},
 };
 
 /// How many mails are kept; the oldest go first.
@@ -46,7 +50,7 @@ const POLL: Duration = Duration::from_millis(100);
 /// How long a new connection is given to speak first. SMTP clients wait for our greeting, HTTP ones do not.
 const SNIFF: Duration = Duration::from_millis(100);
 
-#[derive(Clone)]
+#[derive(Clone, Serialize, Deserialize)]
 struct Mail {
     id: String,
     timestamp: i64,
@@ -79,7 +83,8 @@ impl Mail {
     }
 }
 
-static INBOX: Mutex<VecDeque<Mail>> = Mutex::new(VecDeque::new());
+/// By workspace id; an inbox is read from its file the first time it is asked for.
+static INBOXES: LazyLock<Mutex<HashMap<String, VecDeque<Mail>>>> = LazyLock::new(Default::default);
 static SINK: LazyLock<ListenerCore> = LazyLock::new(ListenerCore::default);
 
 /// Add `mail`, dropping the oldest beyond `limit`.
@@ -88,6 +93,46 @@ fn keep(inbox: &mut VecDeque<Mail>, mail: Mail, limit: usize) {
     while inbox.len() > limit {
         inbox.pop_front();
     }
+}
+
+fn inbox_file(ws_id: &str) -> PathBuf {
+    data_dir().join("mail").join(format!("{ws_id}.json"))
+}
+
+/// The workspace a mail arriving now belongs to: the active one.
+fn active_workspace() -> String {
+    workspace_of(&Value::Null)
+}
+
+fn with_inbox<T>(ws_id: &str, work: impl FnOnce(&mut VecDeque<Mail>) -> T) -> T {
+    let mut inboxes = INBOXES.lock();
+    let inbox = inboxes.entry(ws_id.to_string()).or_insert_with(|| {
+        std::fs::read(inbox_file(ws_id)).ok().and_then(|bytes| serde_json::from_slice(&bytes).ok()).unwrap_or_default()
+    });
+    work(inbox)
+}
+
+/// Write `ws_id`'s inbox; before onboarding there is no workspace, and its mails stay in memory.
+fn save(ws_id: &str, inbox: &VecDeque<Mail>) {
+    if ws_id.is_empty() {
+        return;
+    }
+    let file = inbox_file(ws_id);
+    let _ = std::fs::create_dir_all(file.parent().unwrap_or(&file));
+    if let Ok(bytes) = serde_json::to_vec(inbox) {
+        let _ = std::fs::write(file, bytes);
+    }
+}
+
+/// Forget every inbox held in memory, so a new data root (a test's scratch store) starts without mails.
+pub fn forget_all() {
+    INBOXES.lock().clear();
+}
+
+/// Drop a deleted workspace's inbox and its file.
+pub fn forget(ws_id: &str) {
+    INBOXES.lock().remove(ws_id);
+    let _ = std::fs::remove_file(inbox_file(ws_id));
 }
 
 /// A message the SMTP session received; returns its id. Recipients are the envelope's and the `To` header's.
@@ -111,21 +156,27 @@ fn receive(envelope_from: &str, envelope_to: &[String], raw: &[u8]) -> String {
         html: parsed.html,
     };
     let summary = mail.summary();
-    keep(&mut INBOX.lock(), mail, MAX_MAILS);
-    bus().emit("mail.changed", json!({ "received": summary }));
+    let ws_id = active_workspace();
+    with_inbox(&ws_id, |inbox| {
+        keep(inbox, mail, MAX_MAILS);
+        save(&ws_id, inbox);
+    });
+    bus().emit("mail.changed", json!({ "workspaceId": ws_id, "received": summary }));
     id
 }
 
-/// The newest mail not older than `since`, sent to `to` when that is given.
-fn newest(to: Option<&str>, since: i64) -> Option<Mail> {
-    INBOX.lock().iter().rev().find(|m| m.timestamp >= since && to.is_none_or(|to| m.addressed(to))).cloned()
+/// The newest mail of `ws_id` not older than `since`, sent to `to` when that is given.
+fn newest(ws_id: &str, to: Option<&str>, since: i64) -> Option<Mail> {
+    with_inbox(ws_id, |inbox| {
+        inbox.iter().rev().find(|m| m.timestamp >= since && to.is_none_or(|to| m.addressed(to))).cloned()
+    })
 }
 
 /// [`newest`], waiting up to `timeout_ms` for one to arrive.
-async fn wait_for(to: Option<&str>, since: i64, timeout_ms: u64) -> Option<Mail> {
+async fn wait_for(ws_id: &str, to: Option<&str>, since: i64, timeout_ms: u64) -> Option<Mail> {
     let deadline = Instant::now() + Duration::from_millis(timeout_ms.min(MAX_WAIT_MS));
     loop {
-        if let Some(mail) = newest(to, since) {
+        if let Some(mail) = newest(ws_id, to, since) {
             return Some(mail);
         }
         if Instant::now() >= deadline {
@@ -146,7 +197,7 @@ async fn reply(socket: &mut TcpStream, status: &str, body: &Value) {
     let _ = socket.shutdown().await;
 }
 
-/// `GET /mail/wait?to=&timeoutMs=&linkMatch=`: the newest mail for `to` as `{id, subject, from, otp, link}`,
+/// `GET /mail/wait?to=&timeoutMs=&linkMatch=`: the newest mail of the active workspace for `to` as `{id, subject, from, otp, link}`,
 /// waiting up to `timeoutMs` (default 30s) for one; 408 `{error}` when none came.
 async fn http(mut socket: TcpStream) {
     let mut buf = vec![0u8; 8192];
@@ -175,7 +226,7 @@ async fn http(mut socket: TcpStream) {
     };
     let (to, link_match) = (param("to").filter(|t| !t.is_empty()), param("linkMatch"));
     let wait_ms = param("timeoutMs").and_then(|ms| ms.parse().ok()).unwrap_or(30_000);
-    match wait_for(to.as_deref(), 0, wait_ms).await {
+    match wait_for(&active_workspace(), to.as_deref(), 0, wait_ms).await {
         Some(mail) => {
             let full = mail.full(link_match.as_deref());
             let body = json!({ "id": full["id"], "subject": full["subject"], "from": full["from"], "otp": full["otp"], "link": full["link"] });
@@ -217,26 +268,28 @@ pub fn rebind(next: &AppSettings, prev: &AppSettings) {
     }
 }
 
-fn status_of(sink: &ListenerCore) -> Value {
+fn status_of(sink: &ListenerCore, ws_id: &str) -> Value {
     let error = sink.error().map(|e| e.message);
-    json!({ "port": sink.port(), "running": sink.is_running(), "error": error, "count": INBOX.lock().len() })
+    let count = with_inbox(ws_id, |inbox| inbox.len());
+    json!({ "port": sink.port(), "running": sink.is_running(), "error": error, "count": count })
 }
 
 pub fn register(registry: &mut CommandRegistry) {
-    registry.register_sync("mail.status", |_, _| Ok(status_of(&SINK)));
+    registry.register_sync("mail.status", |params, _| Ok(status_of(&SINK, &workspace_of(&params))));
 
     registry.register_sync("mail.list", |params, _| {
         let to = opt_str(&params, "to");
         let last = params["last"].as_u64().map_or(20, |n| n as usize);
-        let inbox = INBOX.lock();
-        let matched: Vec<&Mail> = inbox.iter().rev().filter(|m| to.is_none_or(|to| m.addressed(to))).collect();
-        let shown: Vec<Value> = matched.iter().take(last).map(|m| m.summary()).collect();
-        Ok(json!({ "mails": shown, "matched": matched.len() }))
+        with_inbox(&workspace_of(&params), |inbox| {
+            let matched: Vec<&Mail> = inbox.iter().rev().filter(|m| to.is_none_or(|to| m.addressed(to))).collect();
+            let shown: Vec<Value> = matched.iter().take(last).map(|m| m.summary()).collect();
+            Ok(json!({ "mails": shown, "matched": matched.len() }))
+        })
     });
 
     registry.register_sync("mail.get", |params, _| {
         let id = str_of(&params, "id");
-        let found = INBOX.lock().iter().find(|m| m.id == id).cloned();
+        let found = with_inbox(&workspace_of(&params), |inbox| inbox.iter().find(|m| m.id == id).cloned());
         let mail = found.ok_or_else(|| {
             EngineError::not_found(format!("No mail \"{id}\" (it may have been dropped: the sink keeps {MAX_MAILS})."))
         })?;
@@ -245,6 +298,7 @@ pub fn register(registry: &mut CommandRegistry) {
 
     registry.register("mail.wait", |params, _| async move {
         let found = wait_for(
+            &workspace_of(&params),
             opt_str(&params, "to"),
             params["sinceTs"].as_i64().unwrap_or(0),
             params["timeoutMs"].as_u64().unwrap_or(0),
@@ -253,9 +307,14 @@ pub fn register(registry: &mut CommandRegistry) {
         Ok(json!({ "mail": found.map(|m| m.full(opt_str(&params, "linkMatch"))) }))
     });
 
-    registry.register_sync("mail.clear", |_, _| {
-        let cleared = std::mem::take(&mut *INBOX.lock()).len();
-        bus().emit("mail.changed", json!({ "cleared": cleared }));
+    registry.register_sync("mail.clear", |params, _| {
+        let ws_id = workspace_of(&params);
+        let cleared = with_inbox(&ws_id, |inbox| {
+            let cleared = std::mem::take(inbox).len();
+            save(&ws_id, inbox);
+            cleared
+        });
+        bus().emit("mail.changed", json!({ "workspaceId": ws_id, "cleared": cleared }));
         Ok(json!({ "cleared": cleared }))
     });
 }
@@ -310,6 +369,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_mail_sent_over_smtp_is_kept_with_its_parts() {
+        let _root = crate::testing::scratch_data_root();
         let (_sink, port) = sink(MAX_MESSAGE).await;
         let mut smtp = Client::open(port).await;
         assert_eq!(smtp.send("EHLO test").await, format!("250-bifurc|250 SIZE {MAX_MESSAGE}"));
@@ -335,7 +395,7 @@ mod tests {
         assert_eq!(smtp.send("RSET").await, "250 ok");
         assert_eq!(smtp.send("QUIT").await, "221 bye");
 
-        let mail = newest(Some("dana@smtp-one.test"), 0).expect("kept");
+        let mail = newest("ws1", Some("dana@smtp-one.test"), 0).expect("kept");
         assert_eq!(done.trim_start_matches("250 ok queued as "), mail.id);
         assert_eq!((mail.from.as_str(), mail.subject.as_str()), ("app@shop.test", "Your code"));
         assert_eq!(mail.to, ["dana@smtp-one.test", "other@smtp-one.test"]);
@@ -348,6 +408,7 @@ mod tests {
 
     #[tokio::test]
     async fn a_message_over_the_limit_is_refused_and_not_kept() {
+        let _root = crate::testing::scratch_data_root();
         let (_sink, port) = sink(60).await;
         let mut smtp = Client::open(port).await;
         assert!(smtp.send("MAIL FROM:<a@b> SIZE=61").await.starts_with("552"));
@@ -363,7 +424,7 @@ mod tests {
             .unwrap();
         assert_eq!(smtp.send(".").await, "552 message too large");
         assert_eq!(smtp.send("NOOP").await, "250 ok");
-        assert!(newest(Some("big@smtp-two.test"), 0).is_none());
+        assert!(newest("ws1", Some("big@smtp-two.test"), 0).is_none());
     }
 
     async fn get(port: u16, target: &str) -> (String, Value) {
@@ -381,6 +442,7 @@ mod tests {
 
     #[tokio::test]
     async fn the_same_port_answers_http_with_the_code_and_waits_for_a_late_mail() {
+        let _root = crate::testing::scratch_data_root();
         let (_sink, port) = sink(MAX_MESSAGE).await;
         receive(
             "a@b",
@@ -408,6 +470,7 @@ mod tests {
 
     #[test]
     fn a_received_mail_is_announced() {
+        let _root = crate::testing::scratch_data_root();
         let seen = Arc::new(Mutex::new(Vec::<Value>::new()));
         let sink = seen.clone();
         let listener = bus().on("mail.changed", move |change| sink.lock().push(change.clone()));
@@ -415,6 +478,7 @@ mod tests {
         let received = seen.lock().iter().find(|c| c["received"]["id"] == id.as_str()).cloned().unwrap();
         assert_eq!(received["received"]["subject"], "Hello");
         assert_eq!(received["received"]["to"], json!(["announce@smtp-three.test"]));
+        assert_eq!(received["workspaceId"], "ws1");
         bus().off(listener);
     }
 
@@ -436,6 +500,23 @@ mod tests {
         assert_eq!(inbox.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), ["2", "3", "4", "5", "6"]);
     }
 
+    #[test]
+    fn a_mail_goes_to_the_active_workspace_and_outlives_the_engine() {
+        let root = crate::testing::scratch_data_root();
+        receive("a@b", &["kept@smtp-four.test".into()], b"Subject: Kept 4242
+
+x");
+        let mut settings = crate::workspace::settings::load_settings();
+        settings.set("activeWorkspaceId", json!("ws2"));
+        crate::workspace::settings::save_settings(&settings).unwrap();
+        assert!(newest(&active_workspace(), Some("kept@smtp-four.test"), 0).is_none());
+        forget_all();
+        assert_eq!(newest("ws1", Some("kept@smtp-four.test"), 0).unwrap().full(None)["otp"], "4242");
+        forget("ws1");
+        assert!(!root.dir.path().join("mail").join("ws1.json").exists());
+        assert!(newest("ws1", None, 0).is_none());
+    }
+
     #[tokio::test]
     async fn a_port_in_use_leaves_the_sink_off_with_the_reason_in_the_status() {
         let _root = crate::testing::scratch_data_root();
@@ -443,7 +524,7 @@ mod tests {
         let port = taken.local_addr().unwrap().port();
         let sink = ListenerCore::default();
         sink.start(port, handler(MAX_MESSAGE));
-        let status = status_of(&sink);
+        let status = status_of(&sink, "ws1");
         assert_eq!((&status["running"], &status["port"]), (&json!(false), &json!(port)));
         assert!(status["error"].as_str().unwrap().contains("already in use"), "{status}");
     }

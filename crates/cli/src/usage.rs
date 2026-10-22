@@ -898,8 +898,8 @@ body (origin webhook), so a signature check still passes when it is sent again. 
 const MAIL: &str = "Usage: bifurc mail <verb>
 
 The engine runs an SMTP server on 127.0.0.1:1025 (settings update --mailport), no login, no TLS: point the
-app under test at it and read what it \"sent\". The last 200 mails are kept in memory (gone when the engine
-stops). `status` shows `mail :1025 (3)`; `off (reason)` when the port could not be bound.
+app under test at it and read what it \"sent\". A mail goes to the workspace active when it arrives; each
+workspace keeps its last 200 on this machine (never in its repository). `status` shows `mail :1025 (3)`; `off (reason)` when the port could not be bound.
 
   list [--to <address>] [--last 20]      #id, time, recipient, subject; newest first. --to is a whole address,
                                          or part of one when it has no @
