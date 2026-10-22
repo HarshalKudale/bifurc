@@ -35,10 +35,10 @@ use crate::{
     workspace::{paths::data_dir, settings::load_settings},
 };
 
-/// The manifest, and the same file where it is published from, for when the website does not answer.
+/// The manifest, and the `stable.json` asset of the latest release it is served from, for when the website does not answer.
 const MANIFEST_URLS: [&str; 2] = [
     "https://bifurc.app/updates/v1/stable.json",
-    "https://raw.githubusercontent.com/HarshalKudale/bifurc-releases/main/updates/v1/stable.json",
+    "https://github.com/HarshalKudale/bifurc-releases/releases/latest/download/stable.json",
 ];
 const STORE_UPDATES_URL: &str = "ms-windows-store://downloadsandupdates";
 const USER_AGENT: &str = concat!("bifurc-engine/", env!("CARGO_PKG_VERSION"));
