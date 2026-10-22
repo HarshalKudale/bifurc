@@ -12,6 +12,12 @@
   "requests.timeout.title": "タイムアウト (ms)",
   "requests.timeout.description": "応答を待つ時間です。0 の場合は無制限に待ちます。",
   "requests.footer": "各リクエストの「設定」タブで、これらを上書きできます。",
+  "capture.group": "Webhookのキャプチャ",
+  "capture.installed": "cloudflaredはインストール済みです。Webhookリクエストでキャプチャできます。",
+  "capture.missing": "cloudflaredは未インストールです。インストールするまでキャプチャは使えません。",
+  "capture.unsupported": "このコンピューター向けのcloudflaredはありません。",
+  "capture.install": "cloudflaredをインストール",
+  "capture.reinstall": "再インストール",
   "page.about": "バージョン情報",
 
   "theme.group": "テーマ",

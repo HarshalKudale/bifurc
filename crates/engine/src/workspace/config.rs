@@ -365,6 +365,11 @@ pub fn load_config() -> Value {
         json!({ "headers": {}, "path": "", "auth": "", "createdAt": 0 }),
     );
     let mcp_requests = listed("mcpRequests", &["url", "transport"], json!({ "headers": {}, "createdAt": 0 }));
+    let webhook_requests = listed(
+        "webhookRequests",
+        &["url"],
+        json!({ "headers": {}, "payload": "", "createdAt": 0 }),
+    );
     let soap_requests =
         listed("soapRequests", &["endpointUrl", "soapAction"], json!({ "headers": {}, "body": "", "createdAt": 0 }));
 
@@ -389,6 +394,7 @@ pub fn load_config() -> Value {
         "sseRequests": sse_requests,
         "socketioRequests": socketio_requests,
         "mcpRequests": mcp_requests,
+        "webhookRequests": webhook_requests,
         "soapRequests": soap_requests,
         "savedWsdls": [],
     });

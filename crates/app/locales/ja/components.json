@@ -1,5 +1,6 @@
 {
   "entity_bar.status.saving": "保存中…",
+  "tunnel.installed": "cloudflaredをインストールしました。",
   "entity_bar.status.draft": "下書きです。保存すると作成されます。",
   "entity_bar.status.saved_read_only": "このデバイスに保存しました。ワークスペースは読み取り専用です。",
   "entity_bar.status.saved_not_synced": "保存済み。まだ同期されていません。",

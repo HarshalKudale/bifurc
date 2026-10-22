@@ -38,6 +38,7 @@ pub mod soap;
 pub mod socketio;
 pub mod sse;
 pub mod transport;
+pub mod tunnel;
 pub mod updates;
 pub mod utils;
 pub mod vault;

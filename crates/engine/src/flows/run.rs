@@ -152,7 +152,7 @@ pub struct Run {
     pub mcp: tokio::sync::Mutex<HashSet<String>>,
     /// The stream nodes that are connected.
     pub listening: Mutex<HashSet<String>>,
-    started_at: i64,
+    pub started_at: i64,
     cancel: CancellationToken,
     node_runs: AtomicU64,
     waves: AtomicU64,
@@ -658,6 +658,7 @@ fn deliver(run: Arc<Run>, node_id: String, token: Token) -> BoxFuture<'static, (
                 answered
             }
             (Ok(wired), NodeKind::Mcp) => nodes::mcp(&run, node, &token, &wired).await,
+            (Ok(wired), NodeKind::Mail) => nodes::mail(&run, node, &token, &wired).await,
             (Ok(wired), NodeKind::Stream) => return streams::listen(&run, node, &token, &wired, started, false).await,
         };
         fire(&run, node, &port, output, &token, started.elapsed()).await;

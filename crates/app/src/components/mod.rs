@@ -18,6 +18,7 @@ pub mod request_bar;
 pub mod request_settings;
 pub mod stream_log;
 pub mod tab_strip;
+pub mod tunnel;
 pub mod tree_drag;
 pub mod var_editor;
 

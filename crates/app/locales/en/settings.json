@@ -12,6 +12,12 @@
   "requests.timeout.title": "Timeout (ms)",
   "requests.timeout.description": "How long to wait for a response. 0 waits without limit.",
   "requests.footer": "Each request can override these in its Settings tab.",
+  "capture.group": "Webhook capture",
+  "capture.installed": "cloudflared is installed. Webhook requests can capture.",
+  "capture.missing": "cloudflared is not installed. Capture stays off until it is.",
+  "capture.unsupported": "There is no cloudflared build for this computer.",
+  "capture.install": "Install cloudflared",
+  "capture.reinstall": "Install again",
   "page.about": "About",
 
   "theme.group": "Theme",

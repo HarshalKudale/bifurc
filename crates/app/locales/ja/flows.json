@@ -134,6 +134,7 @@
   "number.max_messages": "メッセージ数で停止",
   "number.idle_timeout": "無通信が続いたら停止 (ms)",
   "number.listen": "最大待ち受け時間 (ms)",
+  "number.mail_timeout": "最大待機時間 (ms)",
 
   "mcp.default": "デフォルト {value}",
   "mcp.required": "必須",
@@ -190,6 +191,7 @@
   "node.display": "表示",
   "node.data": "データ",
   "node.sample": "サンプルレスポンス",
+  "node.mail": "メール",
 
   "start.inputs": "実行時に渡せる入力です。リクエストでは {{name}} として読み取ります",
   "request.fail_status": "成功ではないレスポンスは Error から出ます",
@@ -224,6 +226,11 @@
   "condition.join_any": " または ",
   "condition.join_all": " かつ ",
   "delay.waits": "{ms} ms 待機",
+  "mail.waits": "メールを最大 {ms} ms 待ちます",
+  "mail.to_hint": "アドレスまたはその一部。空欄なら任意のメール",
+  "mail.from_hint": "差出人の一部。空欄なら任意",
+  "mail.subject_hint": "件名の一部。空欄なら任意",
+  "mail.body_hint": "本文の一部。空欄なら任意",
   "or.summary": "最初に到着したものを通します",
   "repeat.times": "{count} 回{done}",
   "loop.done": " · {count} 回完了",

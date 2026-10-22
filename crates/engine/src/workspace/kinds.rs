@@ -153,7 +153,7 @@ pub fn validate_mapping(mapping: &Value, siblings: &[Value]) -> Result<()> {
     Ok(())
 }
 
-pub static CRUD_KINDS: [CrudKind; 13] = [
+pub static CRUD_KINDS: [CrudKind; 14] = [
     CrudKind {
         kind: "flows",
         config_key: "flows",
@@ -333,6 +333,17 @@ pub static CRUD_KINDS: [CrudKind; 13] = [
         name_entry: Some(|r| {
             entry(&[("name", field(r, "name")), ("transport", field(r, "transport")), ("url", field(r, "url"))])
         }),
+        gate_kind: None,
+    },
+    CrudKind {
+        kind: "webhookRequests",
+        config_key: "webhookRequests",
+        folder_config_key: Some("requestFolders"),
+        is_flat: false,
+        has_enabled_state: false,
+        validate: None,
+        on_add_conflict: None,
+        name_entry: Some(|r| entry(&[("name", field(r, "name")), ("url", field(r, "url"))])),
         gate_kind: None,
     },
     CrudKind {

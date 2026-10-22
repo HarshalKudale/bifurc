@@ -609,10 +609,9 @@ mod tests {
             ("mail", json!({"verb": "list", "to": "a@b.co", "last": 5})),
             ("mail", json!({"verb": "show", "id": "#k3f9", "html": true, "text": false})),
             ("webhooks", json!({"verb": "list", "name": "stripe", "last": 5, "json": true})),
-            ("webhooks", json!({"verb": "replay", "id": "#k3f9", "to": "http://localhost:3000", "expect_status": 200})),
             (
                 "webhooks",
-                json!({"verb": "listen", "port": 4020, "name": "stripe", "forward": "http://api.localhost/hook", "detach": true}),
+                json!({"verb": "listen", "name": "Stripe in", "folder": "hooks", "url": "http://api.localhost/hook"}),
             ),
             ("webhooks", json!({"verb": "stop", "id": "stripe"})),
             (
@@ -621,7 +620,7 @@ mod tests {
             ),
             (
                 "webhooks",
-                json!({"verb": "replay", "id": "#k3f9", "show_body": true, "show_headers": true, "select": ".ok", "max_body": 0}),
+                json!({"verb": "trigger", "id": "github.push", "show_body": true, "show_headers": true, "select": ".ok", "max_body": 0, "expect_status": 200}),
             ),
             ("webhooks", json!({"verb": "save", "id": "#k3f9", "as_request": true, "folder": "hooks"})),
             ("webhooks", json!({"verb": "save", "id": "#k3f9", "as_request": true, "name": "Stripe hook"})),

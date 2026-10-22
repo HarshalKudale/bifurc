@@ -19,6 +19,7 @@
   "kind_summary.sse": "サーバーからの一方向のイベントストリーム",
   "kind_summary.socketio": "名前付きイベントを送受信する接続",
   "kind_summary.mcp": "MCP サーバーのツール、プロンプト、リソース",
+  "kind_summary.webhook": "署名付きのサンプルイベントや独自のペイロードをWebhookのURLへ送信します",
   "panel.request_title": "リクエスト",
   "panel.request_empty_description": "リクエストを開くと、ここで編集できます。",
   "panel.response_empty_title": "レスポンスなし",

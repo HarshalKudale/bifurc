@@ -1,5 +1,6 @@
 {
   "entity_bar.status.saving": "Saving…",
+  "tunnel.installed": "cloudflared is installed.",
   "entity_bar.status.draft": "Draft. Save to create it.",
   "entity_bar.status.saved_read_only": "Saved on this device. The workspace is read-only.",
   "entity_bar.status.saved_not_synced": "Saved. Not synced yet.",

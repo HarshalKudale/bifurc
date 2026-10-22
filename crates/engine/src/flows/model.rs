@@ -3,7 +3,7 @@
 //! A node is one flat record whatever its type; the fields a type does not use stay at their defaults. What a
 //! client adds for itself (a node's position on the canvas) is kept in the file and ignored here.
 
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::{kernel::kinds::to_engine_kind, protocol::Result};
@@ -24,7 +24,7 @@ pub const PORT_DONE: &str = "done";
 pub const PORT_TRUE: &str = "true";
 pub const PORT_FALSE: &str = "false";
 
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "camelCase")]
 pub enum NodeKind {
     Start,
@@ -42,6 +42,7 @@ pub enum NodeKind {
     Display,
     Data,
     Sample,
+    Mail,
 }
 
 impl NodeKind {
@@ -187,8 +188,12 @@ pub struct Node {
     pub call: String,
     #[serde(default)]
     pub target: String,
+    /// MCP: what the call is given. Mail: `to`, the address (or part of one) the mail is for.
     #[serde(default)]
     pub arguments: Vec<Pair>,
+    /// Mail: how long to wait for the mail; 0 is 30 seconds.
+    #[serde(default)]
+    pub timeout_ms: u64,
 
     #[serde(default)]
     pub branches: Vec<Branch>,
@@ -233,7 +238,7 @@ impl Node {
                 fixed(&[(PORT_OUT, "Next")])
             }
             NodeKind::Data => fixed(&[(PORT_OUT, "Value")]),
-            NodeKind::Request | NodeKind::Mcp => fixed(&[(PORT_SUCCESS, "Success"), (PORT_ERROR, "Error")]),
+            NodeKind::Request | NodeKind::Mcp | NodeKind::Mail => fixed(&[(PORT_SUCCESS, "Success"), (PORT_ERROR, "Error")]),
             NodeKind::Validate => fixed(&[(PORT_PASS, "Pass"), (PORT_ERROR, "Fail")]),
             NodeKind::Evaluate => fixed(&[(PORT_OUT, "Result"), (PORT_ERROR, "Error")]),
             NodeKind::If => fixed(&[(PORT_TRUE, "True"), (PORT_FALSE, "False")]),

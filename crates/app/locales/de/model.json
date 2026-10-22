@@ -10,6 +10,8 @@
   "kind.badge_graphql": "GQL",
   "kind.badge_websocket": "WS",
   "kind.badge_socketio": "SIO",
+  "kind.webhook": "Webhook",
+  "kind.badge_webhook": "HOOK",
   "update.channel.store": "Aus dem Microsoft Store installiert, der es selbstständig aktualisiert.",
   "update.channel.winget": "Mit winget installiert, das es auf Anforderung aktualisiert.",
   "update.channel.scoop": "Mit Scoop installiert, das es auf Anforderung aktualisiert.",

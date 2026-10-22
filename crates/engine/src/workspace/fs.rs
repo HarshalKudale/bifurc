@@ -26,7 +26,7 @@ use crate::utils::{
     json::{read_json, str_of, write_json_pretty},
 };
 
-pub const ALL_ENTITY_KINDS: [&str; 13] = [
+pub const ALL_ENTITY_KINDS: [&str; 14] = [
     "flows",
     "requests",
     "mocks",
@@ -39,6 +39,7 @@ pub const ALL_ENTITY_KINDS: [&str; 13] = [
     "sseRequests",
     "socketioRequests",
     "mcpRequests",
+    "webhookRequests",
     "environments",
 ];
 

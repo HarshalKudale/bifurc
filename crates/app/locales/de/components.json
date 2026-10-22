@@ -1,5 +1,6 @@
 {
   "entity_bar.status.saving": "Wird gespeichert…",
+  "tunnel.installed": "cloudflared ist installiert.",
   "entity_bar.status.draft": "Entwurf. Zum Erstellen speichern.",
   "entity_bar.status.saved_read_only": "Auf diesem Gerät gespeichert. Der Arbeitsbereich ist schreibgeschützt.",
   "entity_bar.status.saved_not_synced": "Gespeichert. Noch nicht synchronisiert.",

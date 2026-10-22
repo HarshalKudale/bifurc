@@ -87,7 +87,7 @@ Groups (bifurc <group> --help shows the arguments and options of each verb)
   logs          <service> [--errors] [--since 2m] [--grep x] [--last 50]   A dev server's output, filtered
   port          free <port> [--kill]                                  What holds a port, and stopping it
   mail          list | show | last | clear                            Mail the local SMTP sink caught; codes and links
-  webhooks      listen | stop | list | show | replay | save | trigger  Receive webhooks locally, optionally forward them
+  webhooks      listen | stop | list | show | save | trigger  Capture a webhook from the internet as a request
   jwt           decode | mint                                         Read a token's claims and expiry; sign a test token
   policy        show | check                                          Guardrails for agents: the workspace's policy.yaml
   approvals     list | approve | deny                                 Calls a policy holds for a person; decided at a terminal
@@ -406,6 +406,10 @@ The JSON of a flow
              listenMs                                                                    message, closed, error
   mcp        requestKind mcpRequests, requestId; call: tool|prompt|resource; target: its
              name or URI; arguments: [{name, value}]                                     success, error
+  mail       arguments: [{name, value}] with names to (an address or part of one), from,
+             subject, body (a part of each, any case); empty or missing takes any.
+             timeoutMs (default 30000). Waits for the newest matching mail of this run
+             in the mail sink; output {id, subject, from, to, text, html, otp, link}      success, error
   condition  branches: [{id, name, match: all|any, rules: [{path, op, value}]}]          <branch id>…, else
   if         expression: JavaScript over input and vars                                  true, false
   validate   rules: [{path, op, value}]                                                  pass, error
@@ -422,7 +426,7 @@ The JSON of a flow
   greaterOrEqual, lessThan, lessOrEqual, exists, notExists, isEmpty, notEmpty, isType.
   An edge with no input is a run connection: when `from` leaves by `port`, `to` runs with that output as
   its input. An edge with input is a wire that fills one value of `to`: input is var:<name> (a variable of
-  the node or of its request), arg:<name> (an mcp argument) or message (a stream's message); path picks a
+  the node or of its request), arg:<name> (an mcp or mail argument) or message (a stream's message); path picks a
   part of the source's output, e.g. [\"body\", \"items\", 0, \"id\"].
   Text fields may hold {{input.body.id}} (what the node before produced), {{nodes.<id>.headers.location}}
   (what an earlier node did), {{flow.<input>}} (an input of the run) and {{variables}} of the environment.
@@ -875,21 +879,15 @@ The engine receives webhooks on a local port (127.0.0.1) and captures each one w
 body (origin webhook), so a signature check still passes when it is sent again. See them with
 `capture list --origin webhook` and `capture show <id>`; `status` shows `webhooks :4020`.
 
-  listen [--port N] [--name x] [--forward <url>] [--detach] [--quiet]
-                                         Any method and path is accepted and answered 200 {\"ok\":true}. With
-                                         --forward the request goes on unchanged (the path it came on is appended
-                                         to the URL's path) and the upstream's answer comes back; refused: 502.
-                                         Blocks and prints a line per request until Ctrl+C or the end of the
-                                         command; --detach keeps it running under the engine. No --port: a free one
+  listen [--name x] [--folder f] [--url <target>]
+                                         Print a public address (a cloudflared quick tunnel; install it in
+                                         onboarding or Settings > Requests) and wait up to 10 minutes for one
+                                         webhook. What arrives (payload, headers, signature header name) is saved
+                                         as a webhook request: --name (default \"Captured webhook\"), in --folder,
+                                         sent to --url. The Capture button of a webhook request does the same
   stop [<name|port>]                     Stop that listener, or every one
   list [--name x] [--last 20]            #id, time, method, URL, status, origin, listener; newest first
   show <id> [capture show flags]         As `capture show`, for a webhook only (--req-body, --req-headers, ...)
-  replay <id> [--to <url>] [output flags]
-                                         Send it again with its method, exact headers and raw body, to where it
-                                         was forwarded (else its own URL). --to replaces scheme, host and port
-                                         and keeps the path and query, unless it has a path of its own. Prints
-                                         the response as `requests send` does (--body, --headers, --select,
-                                         --expect-status ...); refused: exit 4
   save <id> --as-request [--name x] [--folder f]
                                          Save it as a request (to the forward URL when it had one)
   fixtures                               The sample events: stripe.checkout.session.completed, github.push
@@ -899,13 +897,13 @@ body (origin webhook), so a signature check still passes when it is sent again. 
                                          --vault signs it with that secret (default STRIPE_WEBHOOK_SECRET or
                                          GITHUB_WEBHOOK_SECRET): stripe-signature or x-hub-signature-256.
                                          --patch edits the payload before signing. Prints the response as
-                                         `replay` does";
+                                         `requests send` does";
 
 const MAIL: &str = "Usage: bifurc mail <verb>
 
 The engine runs an SMTP server on 127.0.0.1:1025 (settings update --mailport), no login, no TLS: point the
-app under test at it and read what it \"sent\". The last 200 mails are kept in memory (gone when the engine
-stops). `status` shows `mail :1025 (3)`; `off (reason)` when the port could not be bound.
+app under test at it and read what it \"sent\". A mail goes to the workspace active when it arrives; each
+workspace keeps its last 200 on this machine (never in its repository). `status` shows `mail :1025 (3)`; `off (reason)` when the port could not be bound.
 
   list [--to <address>] [--last 20]      #id, time, recipient, subject; newest first. --to is a whole address,
                                          or part of one when it has no @
@@ -1125,11 +1123,10 @@ pub fn examples(group: &str) -> Option<&'static [&'static str]> {
             "bifurc openapi infer --json",
         ],
         "webhooks" => &[
-            "bifurc webhooks listen --name stripe --forward http://api.localhost/webhooks/stripe --detach",
+            "bifurc webhooks listen --name \"Stripe checkout\" --folder hooks --url http://localhost:3000/webhooks/stripe",
             "bifurc webhooks stop stripe",
             "bifurc webhooks list --name stripe --last 5",
-            "bifurc webhooks replay k3f9 --to http://localhost:3000 --expect-status 200",
-            "bifurc webhooks trigger stripe --vault app --patch '.data.object.amount_total=500' --expect-status 200",
+            "bifurc webhooks trigger stripe --vault app --patch '.data.object.amount_total=500'",
         ],
         "jwt" => &[
             "bifurc jwt decode eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.c2ln",

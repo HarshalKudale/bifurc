@@ -134,6 +134,7 @@
   "number.max_messages": "Stop after messages",
   "number.idle_timeout": "Stop when idle for (ms)",
   "number.listen": "Listen for at most (ms)",
+  "number.mail_timeout": "Wait for at most (ms)",
 
   "mcp.default": "default {value}",
   "mcp.required": "required",
@@ -190,6 +191,7 @@
   "node.display": "Display",
   "node.data": "Data",
   "node.sample": "Sample response",
+  "node.mail": "Mail",
 
   "start.inputs": "Inputs a run can be given; a request reads one as {{name}}",
   "request.fail_status": "An answer that is not a success leaves by Error",
@@ -224,6 +226,11 @@
   "condition.join_any": " or ",
   "condition.join_all": " and ",
   "delay.waits": "Waits {ms} ms",
+  "mail.waits": "Waits up to {ms} ms for a mail",
+  "mail.to_hint": "Address or part of one; empty takes any mail",
+  "mail.from_hint": "Part of the sender; empty takes any",
+  "mail.subject_hint": "Part of the subject; empty takes any",
+  "mail.body_hint": "Part of the text; empty takes any",
   "or.summary": "Lets the first arrival through",
   "repeat.times": "{count} times{done}",
   "loop.done": " · {count} done",

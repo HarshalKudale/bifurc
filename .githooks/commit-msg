@@ -1,0 +1,40 @@
+#!/bin/sh
+# Refuses a commit that breaks the repository's commit rules:
+#   - author and committer are HarshalKudale <harshalkudale56@gmail.com>;
+#   - no Co-Authored-By or other AI attribution line in the message;
+#   - author and committer dates fall on a weekend (Sat/Sun) or a weekday at/after 21:00 IST.
+# Enable once per clone: git config core.hooksPath .githooks
+
+NAME="HarshalKudale"
+EMAIL="harshalkudale56@gmail.com"
+IST=19800 # +05:30 in seconds
+
+fail() {
+    echo "commit-msg: $1" >&2
+    exit 1
+}
+
+if grep -iqE '^[[:space:]]*co-authored-by:|generated with \[?claude|noreply@anthropic\.com' "$1"; then
+    fail "the message has a Co-Authored-By or AI attribution line; remove it."
+fi
+
+# `git var` gives "Name <email> <epoch> <zone>", honouring GIT_AUTHOR_* and GIT_COMMITTER_*.
+check() {
+    who=$1
+    ident=$(git var "GIT_${who}_IDENT") || fail "cannot read the $who identity."
+    case "$ident" in
+        "$NAME <$EMAIL> "*) ;;
+        *) fail "the $who is \"${ident% * *}\", not \"$NAME <$EMAIL>\"." ;;
+    esac
+    epoch=$(echo "$ident" | awk '{ print $(NF-1) }')
+    local_seconds=$((epoch + IST))
+    weekday=$(( (local_seconds / 86400 + 4) % 7 )) # 1970-01-01 was a Thursday; 0 = Sunday, 6 = Saturday
+    hour=$(( (local_seconds % 86400) / 3600 ))
+    if [ "$weekday" -ne 0 ] && [ "$weekday" -ne 6 ] && [ "$hour" -lt 21 ]; then
+        fail "the $who date is a weekday before 21:00 IST; set GIT_AUTHOR_DATE and GIT_COMMITTER_DATE to a weekend or a weekday at/after 21:00 IST."
+    fi
+}
+
+check AUTHOR
+check COMMITTER
+exit 0

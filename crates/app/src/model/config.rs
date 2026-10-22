@@ -653,9 +653,12 @@ impl ConfigSnapshot {
 
 fn stub_target(kind: RequestKind, stub: &Value) -> String {
     match kind {
-        RequestKind::Rest | RequestKind::WebSocket | RequestKind::Sse | RequestKind::SocketIo | RequestKind::Mcp => {
-            text(stub, "url").unwrap_or_default()
-        }
+        RequestKind::Rest
+        | RequestKind::WebSocket
+        | RequestKind::Sse
+        | RequestKind::SocketIo
+        | RequestKind::Mcp
+        | RequestKind::Webhook => text(stub, "url").unwrap_or_default(),
         RequestKind::GraphQl | RequestKind::Soap => text(stub, "endpointUrl").unwrap_or_default(),
         RequestKind::Grpc => {
             let address = text(stub, "serverAddress").unwrap_or_default();

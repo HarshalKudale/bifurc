@@ -261,10 +261,11 @@ enum Number {
     MaxMessages,
     IdleTimeout,
     Listen,
+    MailTimeout,
 }
 
 impl Number {
-    const ALL: [Number; 7] = [
+    const ALL: [Number; 8] = [
         Number::Delay,
         Number::Count,
         Number::Retries,
@@ -272,6 +273,7 @@ impl Number {
         Number::MaxMessages,
         Number::IdleTimeout,
         Number::Listen,
+        Number::MailTimeout,
     ];
 
     fn label(self) -> &'static str {
@@ -283,6 +285,7 @@ impl Number {
             Number::MaxMessages => "flows.number.max_messages",
             Number::IdleTimeout => "flows.number.idle_timeout",
             Number::Listen => "flows.number.listen",
+            Number::MailTimeout => "flows.number.mail_timeout",
         })
     }
 
@@ -295,6 +298,7 @@ impl Number {
             Number::MaxMessages => node.max_messages,
             Number::IdleTimeout => node.idle_timeout_ms,
             Number::Listen => node.listen_ms,
+            Number::MailTimeout => node.timeout_ms,
         }
     }
 
@@ -307,6 +311,7 @@ impl Number {
             Number::MaxMessages => node.max_messages = value,
             Number::IdleTimeout => node.idle_timeout_ms = value,
             Number::Listen => node.listen_ms = value,
+            Number::MailTimeout => node.timeout_ms = value,
         }
     }
 }
@@ -670,7 +675,7 @@ impl NodeEditor {
 
     /// Fresh fields for the arguments of the node, each saying what the server takes for it.
     fn rebuild_arguments(&mut self, window: &mut Window, cx: &mut Context<Self>) {
-        let node = self.node.as_ref().filter(|node| node.kind == NodeKind::Mcp);
+        let node = self.node.as_ref().filter(|node| matches!(node.kind, NodeKind::Mcp | NodeKind::Mail));
         let held = node.map(|node| node.arguments.clone()).unwrap_or_default();
         let item =
             node.and_then(|node| self.mcp_items(&node.call).iter().find(|item| item.name == node.target)).cloned();
@@ -690,10 +695,15 @@ impl NodeEditor {
                 fields.push((pair.name, ArgumentField::Choice { state, required }));
                 continue;
             }
-            let hint = argument
-                .map(argument_hint)
-                .filter(|hint| !hint.is_empty())
-                .unwrap_or_else(|| t("flows.editor.value_hint").to_owned());
+            let mails = node.is_some_and(|node| node.kind == NodeKind::Mail);
+            let fallback = match pair.name.as_str() {
+                "to" if mails => "flows.mail.to_hint",
+                "from" if mails => "flows.mail.from_hint",
+                "subject" if mails => "flows.mail.subject_hint",
+                "body" if mails => "flows.mail.body_hint",
+                _ => "flows.editor.value_hint",
+            };
+            let hint = argument.map(argument_hint).filter(|hint| !hint.is_empty()).unwrap_or_else(|| t(fallback).to_owned());
             let field = cx.new(|cx| InputState::new(window, cx).placeholder(hint).default_value(pair.value));
             subscriptions.push(cx.subscribe(&field, |this: &mut Self, _, event: &InputEvent, cx| {
                 if matches!(event, InputEvent::Change) {
@@ -787,7 +797,7 @@ impl NodeEditor {
             number.write(&mut node, read(input).trim().parse().unwrap_or(0));
         }
         match node.kind {
-            NodeKind::Mcp => {
+            NodeKind::Mcp | NodeKind::Mail => {
                 for pair in &mut node.arguments {
                     pair.value = match self.arguments.iter().find(|(name, _)| *name == pair.name) {
                         Some((_, ArgumentField::Text(field))) => read(field),
@@ -1280,6 +1290,7 @@ impl Render for NodeEditor {
                 ));
             }
             NodeKind::Delay => sections.push(self.render_numbers(&[Number::Delay], cx)),
+            NodeKind::Mail => sections.push(self.render_numbers(&[Number::MailTimeout], cx)),
             NodeKind::Repeat => sections.push(self.render_numbers(&[Number::Count], cx)),
             NodeKind::ForEach => {
                 sections.push(Self::labelled(

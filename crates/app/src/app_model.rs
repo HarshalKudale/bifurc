@@ -38,7 +38,7 @@ impl Global for ModelHandle {}
 /// follows every write with the git state, and says `configChanged: false` when `entity.changed` already
 /// described the whole change; without that field (an older engine, or a pull, sync or import) it means
 /// "re-read the workspace".
-const EVENTS: [&str; 42] = [
+const EVENTS: [&str; 41] = [
     "event.request.stream",
     "event.flow.progress",
     "event.flow.finished",
@@ -60,7 +60,6 @@ const EVENTS: [&str; 42] = [
     "event.devservice.changed",
     "event.devservice.output",
     "event.mail.changed",
-    "event.webhook.changed",
     "event.claims.changed",
     "event.cassette.changed",
     "event.approval.requested",
@@ -253,8 +252,6 @@ pub enum ModelEvent {
     DevServiceOutput(Value),
     /// `event.mail.changed`: the mail sink received a mail (`received`) or was emptied (`cleared`).
     MailChanged(Value),
-    /// `event.webhook.changed`: a webhook listener started or stopped; the payload is every listener, as `webhook.list` has them.
-    WebhookChanged(Value),
     /// `event.claims.changed`: someone claimed, released or took over an entity; the model already holds the new list.
     ClaimsChanged,
     /// `event.approval.requested`: an agent's call is waiting for a person to approve or deny it.
@@ -667,7 +664,6 @@ impl AppModel {
                 "event.devservice.changed" => cx.emit(ModelEvent::DevServiceChanged(event.payload)),
                 "event.devservice.output" => cx.emit(ModelEvent::DevServiceOutput(event.payload)),
                 "event.mail.changed" => cx.emit(ModelEvent::MailChanged(event.payload)),
-                "event.webhook.changed" => cx.emit(ModelEvent::WebhookChanged(event.payload)),
                 "event.claims.changed" => self.apply_claims(&event.payload, cx),
                 "event.faults.changed" => {
                     self.faults = FaultRule::list_from_value(&event.payload);

@@ -183,6 +183,7 @@
   "flow.connection_ended_early": "サーバーが応答する前に接続が終了しました",
   "flow.connection_failed": "接続に失敗しました",
   "flow.expression_failed": "式の評価に失敗しました: {detail}",
+  "flow.no_mail": "{ms} ms 以内に条件に合うメールが届きませんでした。",
   "flow.failed": "失敗しました",
   "flow.grpc_ended": "呼び出しはステータス {code} で終了しました: {message}",
   "flow.http_status": "HTTP {status}",

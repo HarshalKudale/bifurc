@@ -10,6 +10,8 @@
   "kind.badge_graphql": "GQL",
   "kind.badge_websocket": "WS",
   "kind.badge_socketio": "SIO",
+  "kind.webhook": "Webhook",
+  "kind.badge_webhook": "HOOK",
   "update.channel.store": "Microsoft Store からインストールされています。更新は Microsoft Store が自動で行います。",
   "update.channel.winget": "winget でインストールされています。更新は winget の実行時に行われます。",
   "update.channel.scoop": "Scoop でインストールされています。更新は Scoop の実行時に行われます。",

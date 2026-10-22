@@ -1419,3 +1419,48 @@ async fn an_environments_login_flow_runs_on_a_401_in_the_same_jar() {
             .await;
     assert_eq!((sent["status"].clone(), sent["reauthenticated"].clone()), (json!(200), json!(true)), "{sent}");
 }
+
+#[tokio::test]
+async fn a_mail_node_waits_for_a_mail_of_this_run_and_hands_on_its_code() {
+    let store = store();
+    let to = |address: &str| vec![address.to_string()];
+    // A mail of an earlier run is never taken.
+    crate::mail::receive("app@shop.test", &to("dana@flow-mail.test"), b"Subject: Code 111111\r\n\r\nold");
+    tokio::time::sleep(Duration::from_millis(5)).await;
+    store.flow(
+        "signup",
+        json!({
+            "inputs": [{ "name": "email", "value": "" }],
+            "nodes": [start(), {
+                "id": "inbox", "type": "mail", "timeoutMs": 5000,
+                "arguments": [{ "name": "to", "value": "{{flow.email}}" }, { "name": "subject", "value": "CODE" }],
+            }],
+            "edges": [edge("start", "out", "inbox")],
+        }),
+    );
+    // A mail of this run that the filter does not pick comes first, to the same address.
+    let late = tokio::spawn(async {
+        tokio::time::sleep(Duration::from_millis(150)).await;
+        crate::mail::receive("app@shop.test", &["dana@flow-mail.test".into()], b"Subject: Welcome 999999\r\n\r\nhi");
+        tokio::time::sleep(Duration::from_millis(300)).await;
+        crate::mail::receive("app@shop.test", &["dana@flow-mail.test".into()], b"Subject: Code 482913\r\n\r\nnew");
+    });
+    let report = run_with("signup", json!({ "inputs": { "email": "dana@flow-mail.test" } })).await;
+    late.await.unwrap();
+    assert_eq!(report["status"], "succeeded", "{report}");
+    assert_eq!(node(&report, "inbox")["port"], "success");
+    assert_eq!(node(&report, "inbox")["output"]["otp"], "482913");
+
+    store.flow(
+        "nothing",
+        json!({
+            "nodes": [start(), {
+                "id": "inbox", "type": "mail", "timeoutMs": 100, "arguments": [{ "name": "to", "value": "nobody@flow-mail.test" }],
+            }],
+            "edges": [edge("start", "out", "inbox")],
+        }),
+    );
+    let report = run("nothing").await;
+    assert_eq!(report["status"], "failed");
+    assert!(str_of(&report, "error").contains("No matching mail for nobody@flow-mail.test arrived within 100ms"), "{report}");
+}

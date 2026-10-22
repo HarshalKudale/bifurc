@@ -134,6 +134,7 @@
   "number.max_messages": "Nach Nachrichten stoppen",
   "number.idle_timeout": "Stoppen bei Leerlauf von (ms)",
   "number.listen": "Höchstens zuhören (ms)",
+  "number.mail_timeout": "Höchstens warten (ms)",
 
   "mcp.default": "Standard {value}",
   "mcp.required": "erforderlich",
@@ -190,6 +191,7 @@
   "node.display": "Anzeige",
   "node.data": "Daten",
   "node.sample": "Beispielantwort",
+  "node.mail": "Mail",
 
   "start.inputs": "Eingaben, die ein Lauf erhalten kann; eine Anfrage liest eine als {{name}}",
   "request.fail_status": "Eine Antwort ohne Erfolg verlässt den Knoten über „Fehler“",
@@ -224,6 +226,11 @@
   "condition.join_any": " oder ",
   "condition.join_all": " und ",
   "delay.waits": "Wartet {ms} ms",
+  "mail.waits": "Wartet bis zu {ms} ms auf eine Mail",
+  "mail.to_hint": "Adresse oder Teil davon; leer nimmt jede Mail",
+  "mail.from_hint": "Teil des Absenders; leer nimmt jeden",
+  "mail.subject_hint": "Teil des Betreffs; leer nimmt jeden",
+  "mail.body_hint": "Teil des Textes; leer nimmt jeden",
   "or.summary": "Lässt die erste Ankunft durch",
   "repeat.times": "{count}-mal{done}",
   "loop.done": " · {count} erledigt",

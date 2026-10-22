@@ -35,7 +35,7 @@ use serde_json::{Value, json};
 
 use crate::{
     app_model::{AppModel, Load, ModelEvent, ProxyStatus, SetupState},
-    components::certificate::Certificate,
+    components::{certificate::Certificate, tunnel::Tunnel},
     engine::{call, call_in, failure},
     i18n::{self, t, t_with},
     preferences::Preferences,
@@ -57,18 +57,20 @@ enum Stage {
     Overview,
     Preferences,
     Https,
+    Capture,
     Proxies,
     Workspace,
 }
 
 impl Stage {
-    const ALL: [Stage; 8] = [
+    const ALL: [Stage; 9] = [
         Stage::Language,
         Stage::Terms,
         Stage::Privacy,
         Stage::Overview,
         Stage::Preferences,
         Stage::Https,
+        Stage::Capture,
         Stage::Proxies,
         Stage::Workspace,
     ];
@@ -81,6 +83,7 @@ impl Stage {
             Stage::Overview => "onboarding.stage.overview.label",
             Stage::Preferences => "onboarding.stage.preferences.label",
             Stage::Https => "onboarding.stage.https.label",
+            Stage::Capture => "onboarding.stage.capture.label",
             Stage::Proxies => "onboarding.stage.proxies.label",
             Stage::Workspace => "onboarding.stage.workspace.label",
         })
@@ -146,6 +149,7 @@ fn ports_problem(reverse: Option<u16>, forward: Option<u16>) -> Option<&'static 
 pub struct Onboarding {
     model: Entity<AppModel>,
     certificate: Entity<Certificate>,
+    tunnel: Entity<Tunnel>,
     workspace: Entity<WorkspaceSetup>,
     /// `None` until the engine has said how far this data directory already is.
     stage: Option<Stage>,
@@ -173,6 +177,7 @@ pub struct Onboarding {
 impl Onboarding {
     pub fn new(model: Entity<AppModel>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let certificate = cx.new(|cx| Certificate::new(model.clone(), cx));
+        let tunnel = cx.new(|cx| Tunnel::new(model.clone(), cx));
         let this = cx.weak_entity();
         let workspace = cx.new(|cx| {
             WorkspaceSetup::new(model.clone(), Purpose::First, window, cx).on_back(move |window, cx| {
@@ -192,12 +197,14 @@ impl Onboarding {
                 }
             }),
             cx.observe(&certificate, |_, _, cx| cx.notify()),
+            cx.observe(&tunnel, |_, _, cx| cx.notify()),
             cx.subscribe(&reverse_port, |this, _, event: &InputEvent, cx| this.on_port_event(event, cx)),
             cx.subscribe(&forward_port, |this, _, event: &InputEvent, cx| this.on_port_event(event, cx)),
         ];
         let mut this = Self {
             model,
             certificate,
+            tunnel,
             workspace,
             stage: None,
             terms_accepted: false,
@@ -285,7 +292,8 @@ impl Onboarding {
             Some(Stage::Privacy) => self.accept_privacy(window, cx),
             Some(Stage::Overview) => self.go_to(Stage::Preferences, window, cx),
             Some(Stage::Preferences) => self.go_to(Stage::Https, window, cx),
-            Some(Stage::Https) => self.go_to(Stage::Proxies, window, cx),
+            Some(Stage::Https) => self.go_to(Stage::Capture, window, cx),
+            Some(Stage::Capture) => self.go_to(Stage::Proxies, window, cx),
             Some(Stage::Proxies) => self.start_servers(window, cx),
             Some(Stage::Workspace) | None => {}
         }
@@ -767,6 +775,32 @@ impl Onboarding {
             .into_any_element()
     }
 
+    fn render_capture(&self, cx: &mut Context<Self>) -> AnyElement {
+        let theme = cx.theme().clone();
+        let tunnel = self.tunnel.read(cx);
+        let install = self.tunnel.clone();
+        let state = if !tunnel.supported {
+            t("onboarding.capture.unsupported")
+        } else if tunnel.installed {
+            t("onboarding.capture.installed")
+        } else {
+            t("onboarding.capture.missing")
+        };
+        let action = Button::new("onboarding-install-tunnel")
+            .outline()
+            .label(if tunnel.installed { t("onboarding.capture.reinstall") } else { t("onboarding.capture.install") })
+            .loading(tunnel.installing)
+            .disabled(!tunnel.supported || tunnel.installing)
+            .on_click(move |_, _, cx| install.update(cx, |tunnel, cx| tunnel.install(cx)));
+        let note = tunnel
+            .note
+            .clone()
+            .map(|(ok, text)| div().text_sm().text_color(if ok { theme.success } else { theme.danger }).child(text));
+        Self::group(cx)
+            .child(v_flex().gap_2().child(Self::row(t("onboarding.capture.title"), state, action, cx)).children(note))
+            .into_any_element()
+    }
+
     /// A listener's state and the button that starts or stops it.
     fn listener_controls(
         id: &'static str,
@@ -956,6 +990,7 @@ impl Onboarding {
                 (t("onboarding.stage.preferences.title"), t("onboarding.stage.preferences.description"))
             }
             Stage::Https => (t("onboarding.stage.https.title"), t("onboarding.stage.https.description")),
+            Stage::Capture => (t("onboarding.stage.capture.title"), t("onboarding.stage.capture.description")),
             Stage::Proxies => (t("onboarding.stage.proxies.title"), t("onboarding.stage.proxies.description")),
             Stage::Workspace => (t("onboarding.stage.workspace.title"), t("onboarding.stage.workspace.description")),
         };
@@ -970,6 +1005,7 @@ impl Onboarding {
             Stage::Overview => self.render_overview(cx),
             Stage::Preferences => self.render_preferences(cx),
             Stage::Https => self.render_https(cx),
+            Stage::Capture => self.render_capture(cx),
             Stage::Proxies => self.render_proxies(cx),
             // The workspace view draws its own actions: its main one is what makes the workspace.
             Stage::Workspace => self.workspace.clone().into_any_element(),

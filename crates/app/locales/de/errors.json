@@ -183,6 +183,7 @@
   "flow.connection_ended_early": "Die Verbindung wurde beendet, bevor der Server geantwortet hat",
   "flow.connection_failed": "Die Verbindung ist fehlgeschlagen",
   "flow.expression_failed": "Der Ausdruck ist fehlgeschlagen: {detail}",
+  "flow.no_mail": "Innerhalb von {ms} ms ist keine passende Mail eingegangen.",
   "flow.failed": "Fehlgeschlagen",
   "flow.grpc_ended": "Der Aufruf endete mit Status {code}: {message}",
   "flow.http_status": "HTTP {status}",

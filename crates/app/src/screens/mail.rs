@@ -2,7 +2,7 @@
 //! handed in memory, so an app under development can send sign-up, one-time-code and reset mails without a
 //! real provider.
 //!
-//! The sink belongs to the engine, not to a workspace. The list is read once (`mail.list`, which carries only a
+//! The sink belongs to the engine; its mails belong to the workspace active when they arrived. The list is read once (`mail.list`, which carries only a
 //! summary of each mail) and extended by `event.mail.changed`; the body of one mail, with the code and link
 //! the engine found in it, is fetched by id (`mail.get`) when it is selected. The engine keeps 200 mails, so a
 //! mail that was selected can be gone by the time it is asked for.
@@ -158,7 +158,7 @@ impl MailScreen {
                 // The screen is built before the engine is known; the first snapshot is when it can load. A
                 // restarted engine has an empty inbox.
                 ModelEvent::ConfigChanged if !this.loaded => this.refresh(cx),
-                ModelEvent::EngineRestarted => this.refresh(cx),
+                ModelEvent::EngineRestarted | ModelEvent::WorkspaceSwitched => this.refresh(cx),
                 _ => {}
             }),
             cx.subscribe(&filter, |_, _, event: &InputEvent, cx| {
@@ -230,6 +230,10 @@ impl MailScreen {
 
     /// `event.mail.changed`: a mail arrived, or the inbox was emptied. The list follows without a refetch.
     fn apply_change(&mut self, payload: &Value, cx: &mut Context<Self>) {
+        let workspace = payload.get("workspaceId").and_then(Value::as_str);
+        if workspace.is_some_and(|ws| ws != self.model.read(cx).workspace_id()) {
+            return;
+        }
         if let Some(mail) = payload.get("received").and_then(Summary::from_value) {
             // The same mail can come both from the list read and from the event.
             if !self.mails.iter().any(|known| known.id == mail.id) {
