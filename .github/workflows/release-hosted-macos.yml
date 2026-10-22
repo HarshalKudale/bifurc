@@ -1,0 +1,63 @@
+name: Release macOS (GitHub-hosted)
+
+# release-self-hosted-macos.yml on a GitHub-hosted runner: builds the macOS packages for an existing tag and
+# attaches them to that tag's release, replacing any file of the same name already there. The runner is arm64;
+# the x64 build is cross-compiled on it. One .dmg per architecture.
+on:
+  workflow_dispatch:
+    inputs:
+      tag_name:
+        description: "Release tag to build and attach the packages to"
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+env:
+  CARGO_INCREMENTAL: "0"
+  CARGO_TERM_COLOR: always
+
+jobs:
+  macos:
+    runs-on: macos-14
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - target: x86_64-apple-darwin
+            arch: x64
+          - target: aarch64-apple-darwin
+            arch: arm64
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.tag_name }}
+
+      - uses: actions-rust-lang/setup-rust-toolchain@v1
+        with:
+          cache: false
+          target: ${{ matrix.target }}
+
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: .
+          shared-key: release-${{ matrix.arch }}
+          cache-on-failure: true
+
+      # BIFURC_BUILD_TARGET is how the x64 build is cross-compiled on this arm64 machine.
+      - name: Package
+        env:
+          BIFURC_BUILD_TARGET: ${{ matrix.target }}
+          RELEASE_TAG: ${{ inputs.tag_name }}
+          BIFURC_GITHUB_CLIENT_ID: ${{ vars.BIFURC_GITHUB_CLIENT_ID }}
+          BIFURC_POSTHOG_KEY: ${{ vars.BIFURC_POSTHOG_KEY }}
+          BIFURC_POSTHOG_HOST: ${{ vars.BIFURC_POSTHOG_HOST }}
+        run: cargo xtask package --target dmg --release-tag "$RELEASE_TAG"
+
+      - name: Attach to the release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ inputs.tag_name }}
+          overwrite_files: true
+          files: release/desktop/*.dmg

@@ -113,9 +113,8 @@ and adds a launcher entry; everything runs from that copy.
 
 The installer needs NSIS (`makensis` on `PATH`, in `Program Files`, or `MAKENSIS`), the Store package needs the
 Windows SDK (`makeappx`, `makepri`), the zip Windows' own `tar.exe`, the `.deb` `dpkg-deb` (and `dpkg-shlibdeps`,
-which reads its dependencies from the executables). `.github/workflows/package-desktop.yml` runs
-`cargo xtask package` once per platform and builds all of it; `release.yml` calls that workflow and publishes
-what it built.
+which reads its dependencies from the executables). `.github/workflows/release-{hosted,self-hosted}-<platform>.yml`
+run `cargo xtask package` for one platform and attach what it built to a tag's release.
 
 ## Using it
 
