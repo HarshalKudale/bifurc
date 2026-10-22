@@ -5,7 +5,8 @@ name: Build the update manifest for a release
 # bifurc-releases repository (publish-public-release.yml copies them and does this as well).
 # The release already in the public manifest, if there is one, is kept and this one is added to it.
 #
-# The result is the artifact "stable.json" and the summary of the run. Commit it to the public repository as
+# The result is in the summary of the run (an artifact needs GitHub storage, and the quota is used up).
+# Copy it to the public repository as
 # updates/v1/stable.json once the release's files are there.
 on:
   workflow_dispatch:
@@ -99,8 +100,3 @@ jobs:
             cat "$manifest"
             echo '```'
           } >> "$GITHUB_STEP_SUMMARY"
-
-      - uses: actions/upload-artifact@v4
-        with:
-          name: stable.json
-          path: out/stable.json
