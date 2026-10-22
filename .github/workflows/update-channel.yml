@@ -17,6 +17,10 @@ on:
           - winget
           - scoop
           - aur
+      tag:
+        description: "The release whose stable.json is changed: the one the update check reads (e.g. v0.6.0)"
+        required: true
+        type: string
       version:
         description: "The version it has (e.g. 0.5.0)"
         required: true
@@ -47,18 +51,18 @@ jobs:
         env:
           INPUT_CHANNEL: ${{ inputs.channel }}
           INPUT_VERSION: ${{ inputs.version }}
+          INPUT_TAG: ${{ inputs.tag }}
           GH_TOKEN: ${{ secrets.PUBLIC_RELEASES_TOKEN }}
         run: |
           set -euo pipefail
           [ -n "$GH_TOKEN" ] || { echo "::error::The PUBLIC_RELEASES_TOKEN secret is not set."; exit 1; }
 
           manifest="$RUNNER_TEMP/stable.json"
-          curl -fsSL "https://github.com/$PUBLIC_REPO/releases/latest/download/$MANIFEST_ASSET" -o "$manifest" \
-            || { echo "::error::The latest release of $PUBLIC_REPO has no $MANIFEST_ASSET yet. Publish a release first."; exit 1; }
+          curl -fsSL "https://github.com/$PUBLIC_REPO/releases/download/$INPUT_TAG/$MANIFEST_ASSET" -o "$manifest" \
+            || { echo "::error::The $INPUT_TAG release of $PUBLIC_REPO has no $MANIFEST_ASSET. Publish it first."; exit 1; }
 
           python3 .github/scripts/update_manifest.py channel \
             --manifest "$manifest" --channel "$INPUT_CHANNEL" --version "$INPUT_VERSION"
 
-          latest="$(gh release view --repo "$PUBLIC_REPO" --json tagName --jq .tagName)"
-          gh release upload "$latest" --repo "$PUBLIC_REPO" --clobber "$manifest"
+          gh release upload "$INPUT_TAG" --repo "$PUBLIC_REPO" --clobber "$manifest"
           echo "### $INPUT_CHANNEL now has $INPUT_VERSION" >> "$GITHUB_STEP_SUMMARY"
