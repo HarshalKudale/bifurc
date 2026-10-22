@@ -161,8 +161,8 @@ enum Gesture {
     },
 }
 
-pub fn kind_icon(kind: NodeKind) -> IconName {
-    match kind {
+pub fn kind_icon(kind: NodeKind) -> Icon {
+    Icon::new(match kind {
         NodeKind::Start => IconName::Play,
         NodeKind::Request => IconName::Globe,
         NodeKind::Stream => IconName::Inbox,
@@ -178,7 +178,8 @@ pub fn kind_icon(kind: NodeKind) -> IconName {
         NodeKind::Display => IconName::Eye,
         NodeKind::Data => IconName::Asterisk,
         NodeKind::Sample => IconName::FileText,
-    }
+        NodeKind::Mail => return Icon::new(gpui_kit::assets::IconName::Mail),
+    })
 }
 
 /// A point of the curve a connection follows: it leaves and arrives level, bending in between.
@@ -878,6 +879,10 @@ impl FlowCanvas {
             NodeKind::Validate => node.rules.iter().map(rule_summary).collect(),
             NodeKind::Evaluate | NodeKind::If => vec![node.expression.clone()],
             NodeKind::Delay => vec![t_with("flows.delay.waits", &[("ms", &node.delay_ms)])],
+            NodeKind::Mail => {
+                let ms = if node.timeout_ms == 0 { 30_000 } else { node.timeout_ms };
+                vec![t_with("flows.mail.waits", &[("ms", &ms)])]
+            }
             NodeKind::Or => vec![t("flows.or.summary").to_owned()],
             NodeKind::Repeat => vec![t_with("flows.repeat.times", &[("count", &node.count), ("done", &done())])],
             NodeKind::ForEach => {
@@ -1360,7 +1365,7 @@ impl FlowCanvas {
             .when(node.kind.is_run(), |this| {
                 this.child(self.port(anchor_in(&node.id, ""), 0.75, false, theme.background, cx))
             })
-            .child(Icon::new(kind_icon(node.kind)).small().text_color(theme.muted_foreground).flex_none())
+            .child(kind_icon(node.kind).small().text_color(theme.muted_foreground).flex_none())
             .child(title)
             .when(run.is_some_and(|run| run.runs > 1), |this| {
                 this.child(

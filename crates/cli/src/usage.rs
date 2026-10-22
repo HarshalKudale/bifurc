@@ -406,6 +406,10 @@ The JSON of a flow
              listenMs                                                                    message, closed, error
   mcp        requestKind mcpRequests, requestId; call: tool|prompt|resource; target: its
              name or URI; arguments: [{name, value}]                                     success, error
+  mail       arguments: [{name, value}] with names to (an address or part of one), from,
+             subject, body (a part of each, any case); empty or missing takes any.
+             timeoutMs (default 30000). Waits for the newest matching mail of this run
+             in the mail sink; output {id, subject, from, to, text, html, otp, link}      success, error
   condition  branches: [{id, name, match: all|any, rules: [{path, op, value}]}]          <branch id>…, else
   if         expression: JavaScript over input and vars                                  true, false
   validate   rules: [{path, op, value}]                                                  pass, error
@@ -422,7 +426,7 @@ The JSON of a flow
   greaterOrEqual, lessThan, lessOrEqual, exists, notExists, isEmpty, notEmpty, isType.
   An edge with no input is a run connection: when `from` leaves by `port`, `to` runs with that output as
   its input. An edge with input is a wire that fills one value of `to`: input is var:<name> (a variable of
-  the node or of its request), arg:<name> (an mcp argument) or message (a stream's message); path picks a
+  the node or of its request), arg:<name> (an mcp or mail argument) or message (a stream's message); path picks a
   part of the source's output, e.g. [\"body\", \"items\", 0, \"id\"].
   Text fields may hold {{input.body.id}} (what the node before produced), {{nodes.<id>.headers.location}}
   (what an earlier node did), {{flow.<input>}} (an input of the run) and {{variables}} of the environment.

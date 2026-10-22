@@ -274,8 +274,10 @@ fn check_edge(flow: &Flow, edge: &Edge, reach: &HashMap<&str, HashSet<&str>>) ->
             _ => None,
         };
     }
-    let takes_inputs =
-        matches!(to.kind, NodeKind::Request | NodeKind::Stream | NodeKind::Mcp | NodeKind::Evaluate | NodeKind::If);
+    let takes_inputs = matches!(
+        to.kind,
+        NodeKind::Request | NodeKind::Stream | NodeKind::Mcp | NodeKind::Mail | NodeKind::Evaluate | NodeKind::If
+    );
     if !takes_inputs {
         return Some(said(
             "flow.problem.edge_no_inputs",
@@ -438,7 +440,7 @@ pub fn check(ws_id: &str, flow: &Flow) -> Vec<Problem> {
                     check_path(&mut report, node, &node.path);
                 }
             }
-            NodeKind::Delay | NodeKind::Or | NodeKind::Display | NodeKind::Data | NodeKind::Sample => {}
+            NodeKind::Delay | NodeKind::Or | NodeKind::Display | NodeKind::Data | NodeKind::Sample | NodeKind::Mail => {}
         }
         let runs = node.kind == NodeKind::Start || started.contains(node.id.as_str());
         if !runs && !node.kind.is_constant() {
@@ -514,7 +516,7 @@ fn inputs_of(flow: &Flow, node: &Node, variables: &[String], env: &Value) -> Vec
             }
         }
     }
-    if node.kind == NodeKind::Mcp {
+    if matches!(node.kind, NodeKind::Mcp | NodeKind::Mail) {
         let given = |pair: &super::model::Pair| Some(pair.value.clone()).filter(|value| !value.is_empty());
         listed.extend(node.arguments.iter().map(|pair| (format!("arg:{}", pair.name), given(pair))));
     }
@@ -568,6 +570,7 @@ pub fn describe(ws_id: &str, flow: &Flow) -> Value {
         nodes.insert(
             node.id.clone(),
             json!({
+                "type": node.kind,
                 "ports": ports,
                 "request": entity.as_ref().map(|entity| request_summary(node, entity)),
                 "inputs": inputs_of(flow, node, &variables, &env),

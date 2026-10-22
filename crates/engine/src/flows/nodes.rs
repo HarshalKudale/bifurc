@@ -306,6 +306,47 @@ async fn call_once(run: &Run, node: &Node, token: &Token, wired: &Wired) -> Outc
     failed(said("flow.connection_ended_early", json!({}), "The connection ended before the server answered"))
 }
 
+/// Wait in the local mail sink for the mail its arguments pick: `to`, `from`, `subject` and `body`, each what
+/// is wired, else what was typed; an empty one picks any. Only a mail that arrived after the run started
+/// counts, so a code of an earlier run is never taken.
+pub async fn mail(run: &Arc<Run>, node: &Node, token: &Token, wired: &Wired) -> Outcome {
+    let scope = run.scope(token);
+    let given = |name: &str| -> Result<Option<String>, EngineError> {
+        let text = match named(wired, "arg:").find(|(wired, _)| wired == name) {
+            Some((_, value)) => text_of(&value),
+            None => {
+                let typed = node.arguments.iter().find(|pair| pair.name == name).map_or("", |pair| &pair.value);
+                render(typed, &scope)?
+            }
+        };
+        Ok(Some(text.trim().to_string()).filter(|text| !text.is_empty()))
+    };
+    let filter = (|| {
+        Ok::<_, EngineError>(crate::mail::Filter {
+            to: given("to")?,
+            from: given("from")?,
+            subject: given("subject")?,
+            body: given("body")?,
+        })
+    })();
+    let filter = match filter {
+        Ok(filter) => filter,
+        Err(error) => return failed(error),
+    };
+    let wait_ms = if node.timeout_ms == 0 { 30_000 } else { node.timeout_ms };
+    match crate::mail::wait(&run.ws_id, &filter, run.started_at, wait_ms).await {
+        Some(mail) => outcome(mail, None),
+        None => {
+            let who = filter.to.as_ref().map_or(String::new(), |to| format!(" for {to}"));
+            failed(said(
+                "flow.no_mail",
+                json!({ "to": filter.to, "ms": wait_ms }),
+                format!("No matching mail{who} arrived within {wait_ms}ms."),
+            ))
+        }
+    }
+}
+
 /// Call the node's tool, prompt or resource on its MCP server.
 pub async fn mcp(run: &Arc<Run>, node: &Node, token: &Token, wired: &Wired) -> Outcome {
     with_retries(node, || call_once(run, node, token, wired)).await

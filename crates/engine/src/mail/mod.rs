@@ -136,7 +136,7 @@ pub fn forget(ws_id: &str) {
 }
 
 /// A message the SMTP session received; returns its id. Recipients are the envelope's and the `To` header's.
-fn receive(envelope_from: &str, envelope_to: &[String], raw: &[u8]) -> String {
+pub(crate) fn receive(envelope_from: &str, envelope_to: &[String], raw: &[u8]) -> String {
     let parsed = mime::parse(raw);
     let mut to: Vec<String> = Vec::new();
     for address in envelope_to.iter().chain(&parsed.to) {
@@ -165,18 +165,43 @@ fn receive(envelope_from: &str, envelope_to: &[String], raw: &[u8]) -> String {
     id
 }
 
-/// The newest mail of `ws_id` not older than `since`, sent to `to` when that is given.
-fn newest(ws_id: &str, to: Option<&str>, since: i64) -> Option<Mail> {
-    with_inbox(ws_id, |inbox| {
-        inbox.iter().rev().find(|m| m.timestamp >= since && to.is_none_or(|to| m.addressed(to))).cloned()
-    })
+/// Which mail is wanted. `to` is matched as [`Mail::addressed`] does; the rest are a part of the sender, the
+/// subject, or the text or HTML body, in any case. What is not given matches every mail.
+#[derive(Default)]
+pub struct Filter {
+    pub to: Option<String>,
+    pub from: Option<String>,
+    pub subject: Option<String>,
+    pub body: Option<String>,
 }
 
-/// [`newest`], waiting up to `timeout_ms` for one to arrive.
-async fn wait_for(ws_id: &str, to: Option<&str>, since: i64, timeout_ms: u64) -> Option<Mail> {
+impl Filter {
+    fn matches(&self, mail: &Mail) -> bool {
+        let has = |text: &str, part: &Option<String>| {
+            part.as_ref().is_none_or(|part| text.to_lowercase().contains(&part.trim().to_lowercase()))
+        };
+        self.to.as_deref().is_none_or(|to| mail.addressed(to))
+            && has(&mail.from, &self.from)
+            && has(&mail.subject, &self.subject)
+            && (has(&mail.text, &self.body) || has(&mail.html, &self.body))
+    }
+}
+
+/// The newest mail of `ws_id` not older than `since`, sent to `to` when that is given.
+#[cfg(test)]
+fn newest(ws_id: &str, to: Option<&str>, since: i64) -> Option<Mail> {
+    newest_matching(ws_id, &Filter { to: to.map(str::to_string), ..Filter::default() }, since)
+}
+
+fn newest_matching(ws_id: &str, filter: &Filter, since: i64) -> Option<Mail> {
+    with_inbox(ws_id, |inbox| inbox.iter().rev().find(|m| m.timestamp >= since && filter.matches(m)).cloned())
+}
+
+/// The newest mail that `filter` matches, waiting up to `timeout_ms` for one to arrive.
+async fn wait_for(ws_id: &str, filter: &Filter, since: i64, timeout_ms: u64) -> Option<Mail> {
     let deadline = Instant::now() + Duration::from_millis(timeout_ms.min(MAX_WAIT_MS));
     loop {
-        if let Some(mail) = newest(ws_id, to, since) {
+        if let Some(mail) = newest_matching(ws_id, filter, since) {
             return Some(mail);
         }
         if Instant::now() >= deadline {
@@ -184,6 +209,12 @@ async fn wait_for(ws_id: &str, to: Option<&str>, since: i64, timeout_ms: u64) ->
         }
         tokio::time::sleep(POLL).await;
     }
+}
+
+/// For a flow's mail node: the newest mail of `ws_id` that `filter` matches and that arrived at `since` or
+/// later, with its code and link, waiting up to `timeout_ms` for one.
+pub async fn wait(ws_id: &str, filter: &Filter, since: i64, timeout_ms: u64) -> Option<Value> {
+    wait_for(ws_id, filter, since, timeout_ms).await.map(|mail| mail.full(None))
 }
 
 async fn reply(socket: &mut TcpStream, status: &str, body: &Value) {
@@ -226,7 +257,8 @@ async fn http(mut socket: TcpStream) {
     };
     let (to, link_match) = (param("to").filter(|t| !t.is_empty()), param("linkMatch"));
     let wait_ms = param("timeoutMs").and_then(|ms| ms.parse().ok()).unwrap_or(30_000);
-    match wait_for(&active_workspace(), to.as_deref(), 0, wait_ms).await {
+    let filter = Filter { to: to.clone(), ..Filter::default() };
+    match wait_for(&active_workspace(), &filter, 0, wait_ms).await {
         Some(mail) => {
             let full = mail.full(link_match.as_deref());
             let body = json!({ "id": full["id"], "subject": full["subject"], "from": full["from"], "otp": full["otp"], "link": full["link"] });
@@ -297,9 +329,10 @@ pub fn register(registry: &mut CommandRegistry) {
     });
 
     registry.register("mail.wait", |params, _| async move {
+        let filter = Filter { to: opt_str(&params, "to").map(str::to_string), ..Filter::default() };
         let found = wait_for(
             &workspace_of(&params),
-            opt_str(&params, "to"),
+            &filter,
             params["sinceTs"].as_i64().unwrap_or(0),
             params["timeoutMs"].as_u64().unwrap_or(0),
         )
@@ -498,6 +531,31 @@ mod tests {
             keep(&mut inbox, mail(n), 5);
         }
         assert_eq!(inbox.iter().map(|m| m.id.as_str()).collect::<Vec<_>>(), ["2", "3", "4", "5", "6"]);
+    }
+
+    #[test]
+    fn a_filter_picks_by_any_part_of_sender_subject_or_body_in_any_case() {
+        let mail = Mail {
+            id: "1".into(),
+            timestamp: 0,
+            from: "Shop <no-reply@shop.test>".into(),
+            to: vec!["dana@x.test".into()],
+            subject: "Your sign-in code".into(),
+            text: String::new(),
+            html: "<p>Code: 123456</p>".into(),
+        };
+        let filter = |from: &str, subject: &str, body: &str| Filter {
+            to: Some("dana@x.test".into()),
+            from: Some(from.into()),
+            subject: Some(subject.into()),
+            body: Some(body.into()),
+        };
+        assert!(filter("NO-REPLY@shop", "sign-in", "code:").matches(&mail));
+        assert!(Filter::default().matches(&mail));
+        assert!(!filter("billing@", "sign-in", "code:").matches(&mail));
+        assert!(!filter("shop", "reset", "code:").matches(&mail));
+        assert!(!filter("shop", "sign-in", "reset").matches(&mail));
+        assert!(!Filter { to: Some("other@x.test".into()), ..Filter::default() }.matches(&mail));
     }
 
     #[test]

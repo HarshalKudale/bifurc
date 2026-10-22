@@ -183,6 +183,7 @@
   "flow.connection_ended_early": "The connection ended before the server answered",
   "flow.connection_failed": "The connection failed",
   "flow.expression_failed": "The expression failed: {detail}",
+  "flow.no_mail": "No matching mail arrived within {ms} ms.",
   "flow.failed": "Failed",
   "flow.grpc_ended": "The call ended with status {code}: {message}",
   "flow.http_status": "HTTP {status}",

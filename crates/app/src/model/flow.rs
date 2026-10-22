@@ -30,14 +30,16 @@ pub enum NodeKind {
     Display,
     Data,
     Sample,
+    Mail,
 }
 
 impl NodeKind {
     /// The kinds a node can be added as, in the order a menu lists them. A flow has its one start node.
-    pub const ADDABLE: [NodeKind; 14] = [
+    pub const ADDABLE: [NodeKind; 15] = [
         NodeKind::Request,
         NodeKind::Stream,
         NodeKind::Mcp,
+        NodeKind::Mail,
         NodeKind::If,
         NodeKind::Condition,
         NodeKind::Validate,
@@ -68,6 +70,7 @@ impl NodeKind {
             NodeKind::Display => "flows.node.display",
             NodeKind::Data => "flows.node.data",
             NodeKind::Sample => "flows.node.sample",
+            NodeKind::Mail => "flows.node.mail",
         })
     }
 
@@ -89,6 +92,7 @@ impl NodeKind {
             NodeKind::Display => "display",
             NodeKind::Data => "data",
             NodeKind::Sample => "sample",
+            NodeKind::Mail => "mail",
         }
     }
 
@@ -203,8 +207,12 @@ pub struct FlowNode {
     pub call: String,
     #[serde(default, skip_serializing_if = "String::is_empty")]
     pub target: String,
+    /// MCP: what the call is given. Mail: `to`, the address (or part of one) the mail is for.
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub arguments: Vec<Pair>,
+    /// Mail: how long to wait for the mail; 0 is 30 seconds.
+    #[serde(default, skip_serializing_if = "is_zero")]
+    pub timeout_ms: u64,
 
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub branches: Vec<Branch>,
@@ -262,6 +270,7 @@ impl FlowNode {
             call: String::new(),
             target: String::new(),
             arguments: Vec::new(),
+            timeout_ms: 0,
             branches: Vec::new(),
             delay_ms: 0,
             rules: Vec::new(),
@@ -275,6 +284,12 @@ impl FlowNode {
         match kind {
             NodeKind::Mcp => node.call = "tool".to_owned(),
             NodeKind::Delay => node.delay_ms = 1000,
+            NodeKind::Mail => {
+                // Which mail is taken: to whom, from whom, and a part of its subject and body.
+                let fields = ["to", "from", "subject", "body"];
+                node.arguments = fields.map(|name| Pair { name: name.to_owned(), value: String::new() }).to_vec();
+                node.timeout_ms = 30_000;
+            }
             NodeKind::Repeat => node.count = 3,
             NodeKind::Condition => node.branches.push(Branch {
                 id: "match".to_owned(),
@@ -873,6 +888,13 @@ mod tests {
         assert_eq!((first.as_str(), second.as_str()), ("request", "request_2"));
         let condition = doc.add_node(NodeKind::Condition, 0.0, 0.0);
         assert_eq!(doc.node(&condition).unwrap().branches.len(), 1);
+        let mail = doc.add_node(NodeKind::Mail, 0.0, 0.0);
+        let written = serde_json::to_value(doc.node(&mail).unwrap()).unwrap();
+        assert_eq!(
+            (&written["type"], &written["arguments"], &written["timeoutMs"]),
+            (&json!("mail"), &json!(["to", "from", "subject", "body"].map(|name| json!({ "name": name, "value": "" }))), &json!(30_000))
+        );
+        doc.remove_node(&mail);
 
         assert!(doc.connect("start", "out", "request"));
         assert!(!doc.connect("start", "out", "request"), "the same connection twice");

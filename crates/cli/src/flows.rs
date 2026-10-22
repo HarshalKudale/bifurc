@@ -387,6 +387,8 @@ fn steps_of(report: &Value, described: &Value, order: &[String]) -> Vec<Step> {
         .filter_map(|node| {
             let status = node.get("status").and_then(Value::as_str)?;
             let request = described.get(id_of(node)).and_then(|n| n.get("request")).filter(|r| r.is_object());
+            // A mail node is a step too: it waited for something the app under test sent.
+            let mail = described.get(id_of(node)).and_then(|n| n.get("type")).and_then(Value::as_str) == Some("mail");
             let name = js_template(node.get("name"));
             // A check made from a step's `expect` is told by its name; what failed is the expectation.
             let check = request.is_none() && name.starts_with("expect ");
@@ -399,16 +401,20 @@ fn steps_of(report: &Value, described: &Value, order: &[String]) -> Vec<Step> {
                     error.map(one_line).or_else(|| (status == "failed").then(|| "failed".to_string()))
                 })
             };
-            if !matches!(status, "succeeded" | "failed") || (request.is_none() && failure.is_none()) {
+            if !matches!(status, "succeeded" | "failed") || (request.is_none() && !mail && failure.is_none()) {
                 return None;
             }
+            let output = node.get("output").unwrap_or(&Value::Null);
             let label = match request {
                 Some(r) => format!("{} {}", js_template(r.get("method")), path_of(&js_template(r.get("address"))))
                     .trim_start()
                     .to_string(),
+                None if mail => match output.get("subject").and_then(Value::as_str) {
+                    Some(subject) => format!("MAIL {subject}"),
+                    None => format!("MAIL {}", js_template(node.get("name"))),
+                },
                 None => js_template(node.get("name")),
             };
-            let output = node.get("output").unwrap_or(&Value::Null);
             Some(Step {
                 label,
                 status: output.get("status").filter(|s| !s.is_null()).map(|s| js_template(Some(s))),
@@ -973,6 +979,26 @@ flow failed at step 1 · 166ms"
         assert!(lines.is_empty());
         let report: Value = serde_json::from_str(&out.unwrap()).unwrap();
         assert_eq!((&report["runId"], &report["nodes"][1]["output"]["status"]), (&json!("run1"), &json!(200)));
+    }
+
+    #[test]
+    fn a_mail_node_is_a_step_of_the_run() {
+        let report = json!({"nodes": [
+            {"id": "n2", "name": "Sign up", "status": "succeeded", "durationMs": 12, "output": {"status": 201}},
+            {"id": "n3", "name": "Mail", "status": "succeeded", "durationMs": 840,
+             "output": {"subject": "Your code 482913", "otp": "482913"}},
+            {"id": "n4", "name": "Late mail", "status": "failed", "durationMs": 100, "error": "No matching mail arrived within 100ms.",
+             "output": {"ok": false}},
+        ]});
+        let described = json!({
+            "n2": {"type": "request", "request": {"name": "Sign up", "method": "POST", "address": "http://x/signup"}},
+            "n3": {"type": "mail", "request": null},
+            "n4": {"type": "mail", "request": null},
+        });
+        let steps = steps_of(&report, &described, &[]);
+        let labels: Vec<&str> = steps.iter().map(|step| step.label.as_str()).collect();
+        assert_eq!(labels, ["POST /signup", "MAIL Your code 482913", "MAIL Late mail"]);
+        assert_eq!(steps[2].failure.as_deref(), Some("No matching mail arrived within 100ms."));
     }
 
     #[test]
