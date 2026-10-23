@@ -663,3 +663,130 @@ async fn a_blind_tunnel_meets_only_host_rules_without_a_status() {
     crate::faults::clear_for_tests(&reset);
     proxy.stop();
 }
+
+/// Sends a text message over `socket`, and returns the text that comes back.
+async fn echo<S: tokio::io::AsyncRead + tokio::io::AsyncWrite + Unpin>(
+    socket: &mut tokio_tungstenite::WebSocketStream<S>,
+    text: &str,
+) -> String {
+    use futures::{SinkExt, StreamExt};
+    use tokio_tungstenite::tungstenite::Message;
+    socket.send(Message::text(text)).await.unwrap();
+    loop {
+        match tokio::time::timeout(Duration::from_secs(10), socket.next()).await.unwrap() {
+            Some(Ok(Message::Text(reply))) => return reply.as_str().to_string(),
+            Some(Ok(_)) => continue,
+            other => panic!("no reply: {other:?}"),
+        }
+    }
+}
+
+#[tokio::test]
+async fn a_websocket_through_the_proxy_is_relayed_and_its_messages_logged() {
+    use websocket::test_support::{Collected, upper_echo};
+    let _root = scratch_data_root();
+    let entries = Collected::on("log.entry");
+    let messages = Collected::on("log.message");
+    let upstream = upper_echo().await;
+    let proxy_port = free_port().await;
+    let proxy = start_proxy(proxy_port);
+
+    let url = format!("http://127.0.0.1:{upstream}/chat");
+    let mut socket = TcpStream::connect(("127.0.0.1", proxy_port)).await.unwrap();
+    let upgrade = format!(
+        "GET {url} HTTP/1.1\r\nHost: 127.0.0.1:{upstream}\r\nUpgrade: websocket\r\nConnection: Upgrade\r\n\
+         Sec-WebSocket-Key: dGhlIHNhbXBsZSBub25jZQ==\r\nSec-WebSocket-Version: 13\r\n\r\n"
+    );
+    socket.write_all(upgrade.as_bytes()).await.unwrap();
+    let (head, leftover) = wire::read_head(&mut socket).await.unwrap();
+    assert_eq!(head.target, "101", "{head:?}");
+    assert!(
+        head.header_lines.iter().any(|l| l.eq_ignore_ascii_case("sec-websocket-accept: s3pPLMBiTxaQ9kYGzzhZRbK+xOo=")),
+        "{head:?}"
+    );
+    assert!(leftover.is_empty());
+    let mut socket = tokio_tungstenite::WebSocketStream::from_raw_socket(
+        socket,
+        tokio_tungstenite::tungstenite::protocol::Role::Client,
+        None,
+    )
+    .await;
+
+    assert_eq!(echo(&mut socket, "hello").await, "HELLO");
+    let open = entries.wait(|e| e["url"] == url.as_str() && e["live"] == true).await;
+    assert_eq!((open["kind"].as_str(), open["status"].as_u64(), open["via"].as_str()), (Some("ws"), Some(101), Some("proxy")));
+    let sent = messages.wait(|m| m["message"]["direction"] == "sent").await;
+    assert_eq!((sent["logId"].as_str(), sent["message"]["data"].as_str()), (open["id"].as_str(), Some("hello")));
+    let received = messages.wait(|m| m["message"]["direction"] == "received").await;
+    assert_eq!(received["message"]["data"], "HELLO");
+
+    socket.close(None).await.unwrap();
+    let closed = entries.wait(|e| e["url"] == url.as_str() && e.get("live").is_none()).await;
+    assert_eq!((closed["id"].as_str(), closed["kind"].as_str()), (open["id"].as_str(), Some("ws")));
+    proxy.stop();
+}
+
+#[tokio::test]
+async fn a_plain_websocket_in_an_intercepted_tunnel_is_relayed() {
+    use websocket::test_support::{Collected, upper_echo};
+    let _root = scratch_data_root();
+    let entries = Collected::on("log.entry");
+    let upstream = upper_echo().await;
+    let (server_config, _) = tls_intercept::tests::self_signed_pair();
+    let (mut client_end, server_end) = tokio::io::duplex(64 * 1024);
+    let shared = Arc::new(server::Shared::default());
+    tokio::spawn(async move {
+        let (mut tunnelled, head, body) = tls_intercept::intercept_tls_with(server_end, server_config).await.unwrap();
+        let secure = tunnelled.is_tls();
+        server::dispatch_tunnelled(&shared, &mut tunnelled, &head, &body, "127.0.0.1", upstream, secure).await;
+    });
+
+    let mut established = vec![0u8; tls_intercept::tests::ESTABLISHED.len()];
+    client_end.read_exact(&mut established).await.unwrap();
+    let url = format!("ws://127.0.0.1:{upstream}/feed");
+    let (mut socket, response) = tokio_tungstenite::client_async(url.as_str(), client_end).await.unwrap();
+    assert_eq!(response.status().as_u16(), 101);
+    assert_eq!(echo(&mut socket, "tick").await, "TICK");
+    let logged = format!("http://127.0.0.1:{upstream}/feed");
+    let open = entries.wait(|e| e["url"] == logged.as_str()).await;
+    assert_eq!((open["kind"].as_str(), open["live"].as_bool()), (Some("ws"), Some(true)));
+}
+
+#[tokio::test]
+async fn an_event_stream_is_logged_live_with_its_events_before_it_ends() {
+    use websocket::test_support::Collected;
+    let _root = scratch_data_root();
+    let entries = Collected::on("log.entry");
+    let messages = Collected::on("log.message");
+    let (release, held) = tokio::sync::oneshot::channel::<()>();
+    let listener = TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let upstream = listener.local_addr().unwrap().port();
+    tokio::spawn(async move {
+        let (mut socket, _) = listener.accept().await.unwrap();
+        let mut buf = [0u8; 4096];
+        let _ = socket.read(&mut buf).await;
+        let head = "HTTP/1.1 200 OK\r\ncontent-type: text/event-stream\r\nconnection: close\r\n\r\n";
+        socket.write_all(head.as_bytes()).await.unwrap();
+        socket.write_all(b"event: tick\nid: 7\ndata: {\"n\":1}\n\n").await.unwrap();
+        let _ = held.await;
+        let _ = socket.shutdown().await;
+    });
+    let proxy_port = free_port().await;
+    let proxy = start_proxy(proxy_port);
+    let url = format!("http://127.0.0.1:{upstream}/events");
+    let request = format!("GET {url} HTTP/1.1\r\nHost: 127.0.0.1:{upstream}\r\n\r\n");
+    let reading = tokio::spawn(async move { through(proxy_port, &request).await });
+
+    let open = entries.wait(|e| e["url"] == url.as_str()).await;
+    assert_eq!((open["kind"].as_str(), open["live"].as_bool(), open["status"].as_u64()), (Some("sse"), Some(true), Some(200)));
+    let event = messages.wait(|m| m["logId"] == open["id"]).await;
+    assert_eq!(event["message"]["data"], "{\"n\":1}");
+    assert_eq!((event["message"]["event"].as_str(), event["message"]["eventId"].as_str()), (Some("tick"), Some("7")));
+    assert_eq!(event["message"]["direction"], "received");
+
+    release.send(()).unwrap();
+    assert!(reading.await.unwrap().ends_with("data: {\"n\":1}\n\n"));
+    let closed = entries.wait(|e| e["url"] == url.as_str() && e.get("live").is_none()).await;
+    assert_eq!(closed["kind"], "sse");
+    proxy.stop();
+}

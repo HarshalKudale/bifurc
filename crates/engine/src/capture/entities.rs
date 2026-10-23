@@ -63,20 +63,44 @@ fn string_or_empty(value: Option<&Value>) -> Value {
     }
 }
 
+/// The collection a captured exchange is saved into: a WebSocket as a socket, an event stream as an SSE
+/// request, anything else as a REST request.
+pub fn request_kind_of(entry: &Value) -> &'static str {
+    match entry.get("kind").and_then(Value::as_str) {
+        Some("ws") => "wsConnections",
+        Some("sse") => "sseRequests",
+        _ => "requests",
+    }
+}
+
 /// A captured request as a saved request: hop-by-hop headers dropped, the body decoded to text. A binary,
 /// multipart or non-UTF-8 body is kept as the captured base64 with `bodyEncoding: "base64"`. `name` is blank;
-/// the caller labels it.
+/// the caller labels it. A captured WebSocket becomes a `websocket` request on its `ws(s)://` address, without
+/// the handshake headers its client makes itself.
 pub fn captured_to_request(entry: &Value) -> Value {
     let req_headers = entry.get("reqHeaders").filter(|v| !v.is_null());
     let req_body = entry.get("reqBody").and_then(Value::as_str).unwrap_or("");
+    let socket = request_kind_of(entry) == "wsConnections";
     let mut headers = Map::new();
     for (name, value) in req_headers.and_then(Value::as_object).into_iter().flatten() {
-        if !is_skipped_header(&name.to_lowercase()) {
+        let lower = name.to_lowercase();
+        let handshake = socket && lower.starts_with("sec-websocket-");
+        if !is_skipped_header(&lower) && !handshake {
             headers.insert(name.clone(), value.clone());
         }
     }
     let mut out = Map::new();
     out.insert("name".into(), json!(""));
+    if socket {
+        out.insert("type".into(), json!("websocket"));
+        let url = entry.get("url").and_then(Value::as_str).unwrap_or("");
+        out.insert("url".into(), json!(url.replacen("http", "ws", 1)));
+        out.insert("headers".into(), Value::Object(headers));
+        return Value::Object(out);
+    }
+    if request_kind_of(entry) == "sseRequests" {
+        out.insert("type".into(), json!("sse"));
+    }
     if let Some(method) = entry.get("method") {
         out.insert("method".into(), method.clone());
     }
@@ -310,5 +334,25 @@ mod tests {
         assert_eq!(bare["responseStatus"], 200);
         assert_eq!(bare["capturedHeaders"], json!({}));
         assert_eq!(bare["capturedBody"], "");
+    }
+
+    #[test]
+    fn a_captured_stream_becomes_a_request_of_its_own_type() {
+        let socket = json!({ "kind": "ws", "method": "GET", "url": "https://chat.test/live?room=1", "reqBody": "",
+            "reqHeaders": { "host": "chat.test", "sec-websocket-key": "k", "sec-websocket-version": "13",
+                            "sec-websocket-protocol": "chat", "authorization": "Bearer t" } });
+        assert_eq!(request_kind_of(&socket), "wsConnections");
+        assert_eq!(
+            captured_to_request(&socket),
+            json!({ "name": "", "type": "websocket", "url": "wss://chat.test/live?room=1",
+                    "headers": { "authorization": "Bearer t" } })
+        );
+
+        let stream = json!({ "kind": "sse", "method": "GET", "url": "http://a.test/events", "reqBody": "",
+            "reqHeaders": { "accept": "text/event-stream" } });
+        assert_eq!(request_kind_of(&stream), "sseRequests");
+        let request = captured_to_request(&stream);
+        assert_eq!((request["type"].as_str(), request["url"].as_str()), (Some("sse"), Some("http://a.test/events")));
+        assert_eq!(request_kind_of(&json!({ "url": "http://a.test/" })), "requests");
     }
 }

@@ -149,10 +149,11 @@ fn filter_entries(entries: Vec<Value>, params: &Value) -> (Vec<Value>, usize) {
     (kept, matched)
 }
 
-/// Record every exchange the proxies report, whether or not a client is listening.
-pub fn start_capture_recording() -> ListenerId {
+/// Record every exchange the proxies report, and the messages of the streams among them, whether or not a
+/// client is listening.
+pub fn start_capture_recording() -> [ListenerId; 2] {
     store::remember_runtime();
-    bus().on("log.entry", record_capture)
+    [bus().on("log.entry", record_capture), bus().on("log.message", store::record_capture_message)]
 }
 
 /// Write pending capture history to disk now.
@@ -231,7 +232,7 @@ mod tests {
         let mut registry = CommandRegistry::new();
         register(&mut registry);
         let registry = Arc::new(registry);
-        let listener = start_capture_recording();
+        let listeners = start_capture_recording();
 
         for id in ["a", "b"] {
             bus().emit(
@@ -240,7 +241,7 @@ mod tests {
                          "resHeaders": { "Content-Type": "text/plain" }, "resBody": "aGk=", "reqBody": "" }),
             );
         }
-        bus().off(listener);
+        listeners.into_iter().for_each(|listener| bus().off(listener));
 
         let full = call(&registry, "capture.list", json!({ "workspaceId": "ws1" })).await.unwrap();
         assert_eq!(full["entries"].as_array().unwrap().len(), 2);

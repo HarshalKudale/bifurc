@@ -8,6 +8,7 @@
 //! from the stored entry (`capture.buildRequest`, `capture.buildMock`) and this screen saves what it built.
 
 mod cassettes;
+mod stream;
 
 use gpui_kit::component::{
     ActiveTheme as _, Disableable as _, Icon, IconName, Selectable as _, Sizable as _, StyledExt as _, WindowExt as _,
@@ -46,10 +47,14 @@ use crate::{
     model::{
         git::date_time_utc,
         http::{pretty_json, status_text},
+        kind::RequestKind,
         logs::{self, Found},
-        media::{self, BodyClass},
+        media::BodyClass,
         snippet::{RequestParts, SnippetKind, snippet},
-        traffic::{self, Exchange, Handler, RESPONSE_BODY_LIMIT, ResourceType, TrafficEntry, body_class, clock_utc},
+        traffic::{
+            self, Exchange, Handler, MAX_STREAM_MESSAGES, RESPONSE_BODY_LIMIT, ResourceType, StreamMessage,
+            TrafficEntry, body_class, clock_utc,
+        },
         vault::VaultState,
     },
 };
@@ -107,8 +112,8 @@ struct VaultFields {
 /// What happened on this screen that the window should act on.
 #[derive(Debug, Clone)]
 pub enum CaptureEvent {
-    /// An exchange was saved as a REST request with this id.
-    SavedRequest { id: String },
+    /// An exchange was saved as a request of this kind with this id.
+    SavedRequest { id: String, kind: RequestKind },
     /// An exchange was saved as a mock with this id.
     SavedMock { id: String },
 }
@@ -126,10 +131,25 @@ enum Section {
     Headers,
     Payload,
     Response,
+    /// A stream's messages, in place of its payload and response.
+    Messages,
     Logs,
 }
 
 const SECTIONS: [Section; 4] = [Section::Headers, Section::Payload, Section::Response, Section::Logs];
+const STREAM_SECTIONS: [Section; 3] = [Section::Headers, Section::Messages, Section::Logs];
+
+impl Section {
+    fn label(self) -> &'static str {
+        t(match self {
+            Section::Headers => "capture.tab.headers",
+            Section::Payload => "capture.tab.payload",
+            Section::Response => "capture.tab.response",
+            Section::Messages => "capture.tab.messages",
+            Section::Logs => "capture.tab.logs",
+        })
+    }
+}
 
 /// The dev servers' lines for the selected exchange, looked up when the Logs tab is opened.
 enum TraceLogs {
@@ -236,6 +256,8 @@ pub struct CaptureScreen {
     response_view: BodyView,
     request_body: Entity<EditorState>,
     response_body: Entity<EditorState>,
+    /// The selected stream's messages.
+    stream: Entity<stream::CapturedStream>,
     /// A save as request or mock is in flight.
     saving: bool,
     /// What the user chose, in the dialog before saving requests, for the credentials and cookies they carry.
@@ -267,11 +289,19 @@ impl CaptureScreen {
         let filter = cx.new(|cx| InputState::new(window, cx).placeholder(t("capture.filter.placeholder")));
         let request_body = read_only_editor(window, cx);
         let response_body = read_only_editor(window, cx);
+        let stream = cx.new(|cx| stream::CapturedStream::new(window, cx));
         let subscriptions = vec![
             cx.subscribe_in(&model, window, |this, _, event: &ModelEvent, window, cx| match event {
-                ModelEvent::Traffic(payload) if !this.paused => {
+                ModelEvent::Traffic(payload) => {
                     let active = this.model.read(cx).workspace_id().to_owned();
-                    let incoming = traffic::only_workspace(traffic::parse_event(payload), &active);
+                    let mut incoming = traffic::only_workspace(traffic::parse_event(payload), &active);
+                    // Paused, only the rows already listed change: a stream captured before runs until it closes.
+                    if this.paused {
+                        incoming.retain(|entry| this.entries.iter().any(|held| held.id == entry.id));
+                        if incoming.is_empty() {
+                            return;
+                        }
+                    }
                     // The selected exchange changed (its status landed, say): its detail is out of date.
                     let refresh =
                         this.selected.as_ref().filter(|id| incoming.iter().any(|entry| &entry.id == *id)).cloned();
@@ -282,6 +312,7 @@ impl CaptureScreen {
                     }
                     cx.notify();
                 }
+                ModelEvent::TrafficMessage(payload) => this.take_message(payload, cx),
                 ModelEvent::WorkspaceSwitched => {
                     this.selected = None;
                     this.checked.clear();
@@ -317,6 +348,7 @@ impl CaptureScreen {
             response_view: BodyView::Pretty,
             request_body,
             response_body,
+            stream,
             saving: false,
             secrets_to: SecretsTo::Vault,
             cookies_to_jar: true,
@@ -442,6 +474,28 @@ impl CaptureScreen {
         });
     }
 
+    /// One message of a captured stream: counted on its row, and shown when its stream is the one selected.
+    fn take_message(&mut self, payload: &Value, cx: &mut Context<Self>) {
+        let Some(id) = payload.get("logId").and_then(Value::as_str) else { return };
+        let Some(entry) = self.entries.iter_mut().find(|entry| entry.id == id) else { return };
+        entry.message_count = (entry.message_count + 1).min(MAX_STREAM_MESSAGES as u64);
+        if self.selected.as_deref() == Some(id)
+            && matches!(self.detail, Detail::Ready(_))
+            && let Some(message) = payload.get("message").and_then(StreamMessage::from_value)
+        {
+            self.stream.update(cx, |stream, cx| stream.push(message, cx));
+        }
+        cx.notify();
+    }
+
+    /// The tabs of the selected exchange: a stream shows its messages instead of a payload and a response.
+    fn sections(&self) -> &'static [Section] {
+        match &self.detail {
+            Detail::Ready(shown) if shown.exchange.kind.is_some() => &STREAM_SECTIONS,
+            _ => &SECTIONS,
+        }
+    }
+
     fn selected_entry(&self) -> Option<&TrafficEntry> {
         let id = self.selected.as_deref()?;
         self.entries.iter().find(|entry| entry.id == id)
@@ -500,6 +554,17 @@ impl CaptureScreen {
                 state.set_highlighter(response_syntax.language(), cx);
                 state.set_value(text, window, cx);
             });
+        }
+        let fresh = matches!(self.detail, Detail::Loading);
+        if exchange.kind.is_some() {
+            let (id, live) = self.selected_entry().map_or((String::new(), false), |entry| (entry.id.clone(), entry.live));
+            self.stream.update(cx, |stream, cx| stream.show(&id, &exchange, live, cx));
+            // A stream opens on its messages; its payload and response tabs do not exist.
+            if (fresh && self.section != Section::Logs) || matches!(self.section, Section::Payload | Section::Response) {
+                self.section = Section::Messages;
+            }
+        } else if self.section == Section::Messages {
+            self.section = Section::Headers;
         }
         self.detail = Detail::Ready(Box::new(Shown { exchange, request, response }));
         if self.section == Section::Logs && matches!(self.trace_logs, TraceLogs::Idle) {
@@ -964,8 +1029,14 @@ impl CaptureScreen {
                 let text = t_with("capture.import.kept", &[("names", &kept.join(", "))]);
                 window.push_notification(Notification::warning(text), cx);
             }
-            if let [id] = saved.as_slice() {
-                cx.emit(CaptureEvent::SavedRequest { id: id.clone() });
+            if let ([id], [capture_id]) = (saved.as_slice(), ids.as_slice()) {
+                // A captured stream was saved as a request of its own type.
+                let kind = match this.entries.iter().find(|entry| &entry.id == capture_id).and_then(|e| e.kind.as_deref()) {
+                    Some("ws") => RequestKind::WebSocket,
+                    Some("sse") => RequestKind::Sse,
+                    _ => RequestKind::Rest,
+                };
+                cx.emit(CaptureEvent::SavedRequest { id: id.clone(), kind });
             }
             this.checked.clear();
             cx.notify();
@@ -1167,7 +1238,7 @@ impl CaptureScreen {
                 cx.emit(if run.mock {
                     CaptureEvent::SavedMock { id: created }
                 } else {
-                    CaptureEvent::SavedRequest { id: created }
+                    CaptureEvent::SavedRequest { id: created, kind: RequestKind::Rest }
                 });
             }
             (folder, _, saved) => {
@@ -1225,7 +1296,8 @@ impl CaptureScreen {
 
     fn status_tag(status: Option<u16>) -> Tag {
         match status {
-            Some(code) if (200..400).contains(&code) => Tag::success().small().child(code.to_string()),
+            // 101 is a WebSocket that opened.
+            Some(code) if (100..400).contains(&code) => Tag::success().small().child(code.to_string()),
             Some(code) => Tag::danger().small().child(code.to_string()),
             None => Tag::secondary().small().child(t("capture.pending")),
         }
@@ -1447,6 +1519,14 @@ impl CaptureScreen {
                                             .child(
                                                 div().min_w_0().overflow_hidden().text_ellipsis().child(entry.name()),
                                             )
+                                            // Plain text, not a tag: every row must keep the measured row height.
+                                            .children(entry.live.then(|| {
+                                                div()
+                                                    .flex_none()
+                                                    .text_xs()
+                                                    .text_color(theme.success)
+                                                    .child(format!("● {}", t("capture.stream.live")))
+                                            }))
                                             .child(
                                                 div()
                                                     .min_w_0()
@@ -1463,6 +1543,9 @@ impl CaptureScreen {
                                         div()
                                             .w_16()
                                             .flex_none()
+                                            .whitespace_nowrap()
+                                            .overflow_hidden()
+                                            .text_ellipsis()
                                             .text_color(theme.muted_foreground)
                                             .child(entry.type_label()),
                                     )
@@ -1470,13 +1553,19 @@ impl CaptureScreen {
                                         div()
                                             .w_24()
                                             .flex_none()
+                                            .whitespace_nowrap()
+                                            .overflow_hidden()
+                                            .text_ellipsis()
                                             .text_color(theme.muted_foreground)
                                             .child(entry.via_label()),
                                     )
                                     .child(
-                                        div().w_20().flex_none().text_right().text_color(theme.muted_foreground).child(
-                                            entry.size.map(|size| media::size_label(size as usize)).unwrap_or_default(),
-                                        ),
+                                        div()
+                                            .w_20()
+                                            .flex_none()
+                                            .text_right()
+                                            .text_color(theme.muted_foreground)
+                                            .child(entry.size_label()),
                                     )
                                     .child(
                                         div().w_20().flex_none().text_right().text_color(theme.muted_foreground).child(
@@ -1779,11 +1868,13 @@ impl CaptureScreen {
     }
 
     fn render_sections(&self, shown: &Shown, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
-        let selected = SECTIONS.iter().position(|s| *s == self.section).unwrap_or(0);
+        let sections = self.sections();
+        let selected = sections.iter().position(|s| *s == self.section).unwrap_or(0);
         let content = match self.section {
             Section::Headers => self.render_headers(shown, cx),
             Section::Payload => self.render_payload(shown, cx),
             Section::Response => self.render_response(shown, cx),
+            Section::Messages => self.stream.clone().into_any_element(),
             Section::Logs => self.render_logs(cx),
         };
         v_flex()
@@ -1795,16 +1886,13 @@ impl CaptureScreen {
                         .small()
                         .selected_index(selected)
                         .on_click(cx.listener(|this, ix: &usize, _, cx| {
-                            this.section = SECTIONS[*ix];
+                            this.section = this.sections()[*ix];
                             if this.section == Section::Logs && matches!(this.trace_logs, TraceLogs::Idle) {
                                 this.load_logs(cx);
                             }
                             cx.notify();
                         }))
-                        .child(Tab::new().label(t("capture.tab.headers")))
-                        .child(Tab::new().label(t("capture.tab.payload")))
-                        .child(Tab::new().label(t("capture.tab.response")))
-                        .child(Tab::new().label(t("capture.tab.logs"))),
+                        .children(sections.iter().map(|section| Tab::new().label(section.label()))),
                 ),
             )
             .child(div().flex_1().min_h_0().child(content))

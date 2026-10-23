@@ -5,7 +5,7 @@ use tokio::io::AsyncWrite;
 
 use super::{
     handler::{match_proxy_rule, proxy_to_upstream, proxy_with_scripts},
-    response::{BufferedProxyResponse, Outcome, fetch_upstream_response, log_body, send_html},
+    response::{BufferedProxyResponse, LiveLog, Outcome, fetch_upstream_response, log_body, send_html},
 };
 use crate::{
     kernel::traffic::{Headers, RequestLogEntry, emit_log},
@@ -79,12 +79,13 @@ pub fn log_outcome(base: &RequestLogEntry, via: &str, target: Option<String>, ou
         // An injected delay came before the upstream call, which the outcome's own timing does not cover.
         entry.duration_ms = Some(now_ms() - base.ts);
     }
+    entry.kind = outcome.kind.map(str::to_string);
     mask_secrets(&mut entry);
     emit_log(&entry);
 }
 
 /// What a log entry holds never includes a vault secret's value, whatever the server echoed back.
-fn mask_secrets(entry: &mut RequestLogEntry) {
+pub(crate) fn mask_secrets(entry: &mut RequestLogEntry) {
     let Some(redactor) = crate::vault::Redactor::for_workspace(entry.workspace_id.as_deref().unwrap_or("")) else {
         return;
     };
@@ -226,7 +227,8 @@ pub async fn handle_proxy_routing<W: AsyncWrite + Unpin>(out: &mut W, ex: &Excha
         )
         .await
     } else {
-        proxy_to_upstream(out, ex.method, &target, ex.req_path, ex.headers, ex.body, Some(&ex.base.id)).await
+        let live = LiveLog { base: ex.base, via: "rule", target: Some(target.clone()) };
+        proxy_to_upstream(out, ex.method, &target, ex.req_path, ex.headers, ex.body, Some(&live)).await
     };
     if let Some(outcome) = outcome {
         log_outcome(ex.base, "rule", Some(target), outcome);

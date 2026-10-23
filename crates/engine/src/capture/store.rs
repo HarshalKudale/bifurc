@@ -131,6 +131,12 @@ fn entries_of<'a>(store: &'a mut Store, ws_id: &str) -> &'a mut Vec<Value> {
         match loaded {
             Some(Value::Array(mut entries)) => {
                 evict(&mut entries, limit);
+                // No stream outlives the engine that relayed it: one still open when it stopped is over.
+                for entry in &mut entries {
+                    if let Some(entry) = entry.as_object_mut() {
+                        entry.remove("live");
+                    }
+                }
                 entries
             }
             _ => Vec::new(),
@@ -179,6 +185,9 @@ fn schedule_write(store: &mut Store, ws_id: &str) {
     });
 }
 
+/// The messages a captured stream keeps; older ones are dropped from the front.
+pub const MAX_STREAM_MESSAGES: usize = 500;
+
 /// Pause or resume recording for a workspace. Entries that pass while paused are dropped, not queued.
 pub fn set_capture_paused(ws_id: &str, paused: bool) {
     with_store(|store| {
@@ -195,24 +204,58 @@ pub fn is_capture_paused(ws_id: &str) -> bool {
 }
 
 /// Record one exchange (the JSON of a `RequestLogEntry`). An entry with no workspace is not attributable, so
-/// it is not kept.
+/// it is not kept. An entry already kept (a stream logged when it opened) is updated where it is, keeping its
+/// pin and its messages; that also happens while paused, which only stops new exchanges.
 pub fn record_capture(entry: &Value) {
     let Some(ws_id) = entry.get("workspaceId").and_then(Value::as_str).filter(|id| !id.is_empty()) else { return };
     let id = entry.get("id");
     with_store(|store| {
-        if store.paused.contains(ws_id) {
-            return;
-        }
+        let paused = store.paused.contains(ws_id);
         let limit = limit_of(store);
         let entries = entries_of(store, ws_id);
-        let pinned = entries.iter().any(|existing| existing.get("id") == id && is_pinned(existing));
-        entries.retain(|existing| existing.get("id") != id);
         let mut entry = entry.clone();
-        if pinned {
-            entry["pinned"] = Value::Bool(true);
+        match entries.iter().position(|existing| existing.get("id") == id) {
+            Some(at) => {
+                if is_pinned(&entries[at]) {
+                    entry["pinned"] = Value::Bool(true);
+                }
+                if entry.get("messages").is_none()
+                    && let Some(messages) = entries[at].get("messages")
+                {
+                    entry["messages"] = messages.clone();
+                }
+                entries[at] = entry;
+            }
+            None if paused => return,
+            None => {
+                entries.insert(0, entry);
+                evict(entries, limit);
+            }
         }
-        entries.insert(0, entry);
-        evict(entries, limit);
+        schedule_write(store, ws_id);
+    });
+}
+
+/// Append one message to the captured stream it belongs to (a `log.message` payload). A stream that is not
+/// kept (it opened while paused, or was removed) records nothing.
+pub fn record_capture_message(payload: &Value) {
+    let (Some(ws_id), Some(id)) =
+        (payload.get("workspaceId").and_then(Value::as_str), payload.get("logId").and_then(Value::as_str))
+    else {
+        return;
+    };
+    with_store(|store| {
+        let entries = entries_of(store, ws_id);
+        let Some(entry) = entries.iter_mut().find(|e| e.get("id").and_then(Value::as_str) == Some(id)) else {
+            return;
+        };
+        if !entry["messages"].is_array() {
+            entry["messages"] = Value::Array(Vec::new());
+        }
+        if let Some(messages) = entry["messages"].as_array_mut() {
+            messages.push(payload.get("message").cloned().unwrap_or(Value::Null));
+            crate::kernel::streams::trim_log(messages, MAX_STREAM_MESSAGES);
+        }
         schedule_write(store, ws_id);
     });
 }
@@ -321,13 +364,38 @@ mod tests {
     }
 
     #[test]
+    fn a_stream_keeps_its_messages_and_updates_through_a_pause() {
+        let _root = scratch_data_root();
+        reset_capture();
+        let message = |id: &str, n: u64| json!({ "logId": id, "workspaceId": "ws1", "message": { "data": n } });
+        record_capture(&json!({ "id": "s", "ts": 1, "workspaceId": "ws1", "kind": "ws", "live": true }));
+        for n in 0..(MAX_STREAM_MESSAGES as u64 + 2) {
+            record_capture_message(&message("s", n));
+        }
+        record_capture_message(&message("gone", 0));
+        set_capture_paused("ws1", true);
+        record_capture(&entry("ws1", "new"));
+        record_capture(&json!({ "id": "s", "ts": 1, "workspaceId": "ws1", "kind": "ws" }));
+        set_capture_paused("ws1", false);
+
+        assert_eq!(ids("ws1"), ["s"]);
+        let stream = get_capture("ws1", "s").unwrap();
+        assert!(stream.get("live").is_none());
+        let messages = stream["messages"].as_array().unwrap();
+        assert_eq!(messages.len(), MAX_STREAM_MESSAGES);
+        assert_eq!(messages[0]["data"], 2);
+        reset_capture();
+    }
+
+    #[test]
     fn newest_first_deduped_and_capped() {
         let _root = scratch_data_root();
         reset_capture();
         record_capture(&entry("ws1", "a"));
         record_capture(&entry("ws1", "b"));
         record_capture(&entry("ws1", "a"));
-        assert_eq!(ids("ws1"), ["a", "b"]);
+        // Logged again (a stream that closed), an entry is updated where it is.
+        assert_eq!(ids("ws1"), ["b", "a"]);
         for i in 0..250 {
             record_capture(&entry("ws1", &format!("e{i}")));
         }
@@ -449,13 +517,15 @@ mod tests {
         let root = scratch_data_root();
         reset_capture();
         record_capture(&entry("ws 1/é", "a"));
-        record_capture(&entry("ws 1/é", "b"));
+        record_capture(&json!({ "id": "b", "ts": 1, "workspaceId": "ws 1/é", "kind": "ws", "live": true }));
         flush_capture();
         let file = root.dir.path().join(".capture").join("ws%201%2F%C3%A9.json");
         assert!(file.exists(), "{}", file.display());
 
         reset_capture();
         assert_eq!(ids("ws 1/é"), ["b", "a"]);
+        // A stream that was open when the engine stopped is read back as ended.
+        assert!(get_capture("ws 1/é", "b").unwrap().get("live").is_none());
         reset_capture();
     }
 

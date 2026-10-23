@@ -38,7 +38,7 @@ impl Global for ModelHandle {}
 /// follows every write with the git state, and says `configChanged: false` when `entity.changed` already
 /// described the whole change; without that field (an older engine, or a pull, sync or import) it means
 /// "re-read the workspace".
-const EVENTS: [&str; 41] = [
+const EVENTS: [&str; 42] = [
     "event.request.stream",
     "event.flow.progress",
     "event.flow.finished",
@@ -78,6 +78,7 @@ const EVENTS: [&str; 41] = [
     "event.mcp.status",
     "event.mcp.message",
     "event.log.entry",
+    "event.log.message",
     "event.runner.progress",
     "event.runner.finished",
 ];
@@ -216,6 +217,8 @@ pub enum ModelEvent {
     McpMessage(Value),
     /// `event.log.entry`: proxied traffic, as a batch of entries.
     Traffic(Value),
+    /// `event.log.message`: one message of a captured WebSocket or event stream.
+    TrafficMessage(Value),
     /// `event.runner.progress`: one request of a folder run has finished.
     RunnerProgress(Value),
     /// `event.runner.finished`: a folder run ended, with its report.
@@ -701,6 +704,7 @@ impl AppModel {
                 "event.mcp.status" => cx.emit(ModelEvent::McpStatus(event.payload)),
                 "event.mcp.message" => cx.emit(ModelEvent::McpMessage(event.payload)),
                 "event.log.entry" => cx.emit(ModelEvent::Traffic(event.payload)),
+                "event.log.message" => cx.emit(ModelEvent::TrafficMessage(event.payload)),
                 "event.runner.progress" => cx.emit(ModelEvent::RunnerProgress(event.payload)),
                 "event.runner.finished" => cx.emit(ModelEvent::RunnerFinished(event.payload)),
                 "event.flow.progress" => cx.emit(ModelEvent::FlowProgress(event.payload)),
