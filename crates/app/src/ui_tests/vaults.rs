@@ -85,17 +85,114 @@ fn removing_a_secret_asks_first(cx: &mut gpui_kit::TestAppContext) {
     assert_eq!(ui.fake.sent("vault.deleteSecret"), [json!({"workspaceId": "w1", "id": "vt1", "name": "DB_PASS"})]);
 }
 
+/// Types `values` into the fields of the step on screen, from the one with focus, Tab moving on.
+fn fill(ui: &mut crate::test_support::Ui, values: &[&str]) {
+    for (ix, value) in values.iter().enumerate() {
+        if ix > 0 {
+            ui.press("tab");
+        }
+        ui.press("ctrl-a");
+        ui.input(value);
+    }
+}
+
 #[gpui_kit::test]
-fn a_new_vault_needs_the_passphrase_twice(cx: &mut gpui_kit::TestAppContext) {
+fn a_local_vault_is_made_in_two_steps_and_needs_the_passphrase_twice(cx: &mut gpui_kit::TestAppContext) {
     let mut ui = open_populated(cx);
     ui.show(Screen::Vaults);
     ui.click("new-vault");
+    assert!(ui.has("provider-local") && ui.has("provider-aws") && ui.has("provider-bitwarden"));
+    ui.click("provider-local");
+    ui.click("vault-setup-next");
     ui.fake.forget_calls();
-    ui.answer_prompt(&["team", "one", "two"]);
+    fill(&mut ui, &["team", "correct horse", "another horse"]);
+    ui.click("vault-setup-next");
     assert!(ui.fake.sent("vault.create").is_empty(), "differing passphrases create nothing");
+    ui.click("vault-setup-back");
+    ui.click("vault-setup-next");
+    fill(&mut ui, &["team", "correct horse", "correct horse"]);
+    ui.click("vault-setup-next");
+    assert_eq!(
+        ui.fake.sent("vault.create"),
+        [json!({"workspaceId": "w1", "name": "team", "passphrase": "correct horse"})]
+    );
+}
+
+#[gpui_kit::test]
+fn a_linked_vault_is_made_with_its_source_which_can_be_pulled_before(cx: &mut gpui_kit::TestAppContext) {
+    let mut ui = open_populated(cx);
+    ui.show(Screen::Vaults);
     ui.click("new-vault");
-    ui.answer_prompt(&["team", "same", "same"]);
-    assert_eq!(ui.fake.sent("vault.create"), [json!({"workspaceId": "w1", "name": "team", "passphrase": "same"})]);
+    ui.click("provider-aws");
+    ui.click("vault-setup-next");
+    fill(&mut ui, &["team", "prod/app", "eu-west-1"]);
+    ui.click("vault-setup-next");
+    ui.fake.forget_calls();
+    ui.click("check-source");
+    let settings = json!({"secretId": "prod/app", "region": "eu-west-1"});
+    assert_eq!(ui.fake.sent("vault.test"), [json!({"workspaceId": "w1", "provider": "aws", "settings": settings})]);
+    ui.click("vault-setup-next");
+    assert_eq!(
+        ui.fake.sent("vault.create"),
+        [json!({"workspaceId": "w1", "name": "team", "provider": "aws", "settings": settings, "credential": ""})]
+    );
+}
+
+#[gpui_kit::test]
+fn a_linked_vaults_secrets_are_not_edited_here(cx: &mut gpui_kit::TestAppContext) {
+    let mut ui = open_populated(cx);
+    ui.fake.reply("vault.list", json!([
+        {"id": "vt3", "name": "Team", "provider": "aws", "providerLabel": "AWS Secrets Manager", "state": "unsealed",
+         "secrets": ["STRIPE"], "path": "vaults/vt3.json", "approved": true, "settings": {"secretId": "prod/app"}},
+    ]));
+    ui.fake.emit("event.vault.changed", json!({"workspaceId": "w1", "id": "vt3"}));
+    ui.show(Screen::Vaults);
+    assert!(ui.has("copy-STRIPE"));
+    assert!(!ui.has("add-secret") && !ui.has("replace-STRIPE") && !ui.has("remove-STRIPE"));
+}
+
+#[gpui_kit::test]
+fn a_linked_vault_unseals_without_a_passphrase(cx: &mut gpui_kit::TestAppContext) {
+    let mut ui = open_populated(cx);
+    ui.show(Screen::Vaults);
+    ui.click("vault-vt3");
+    assert!(!ui.has("change-passphrase") && ui.has("check-vault"));
+    ui.fake.forget_calls();
+    ui.click("unseal");
+    assert_eq!(ui.fake.sent("vault.unseal"), [json!({"workspaceId": "w1", "id": "vt3"})]);
+}
+
+#[gpui_kit::test]
+fn a_vault_a_sync_changed_is_reviewed_and_approved_before_use(cx: &mut gpui_kit::TestAppContext) {
+    let mut ui = open_populated(cx);
+    ui.show(Screen::Vaults);
+    ui.click("vault-vt4");
+    assert!(ui.has("setup-vault"));
+    assert!(!ui.has("unseal"));
+    ui.click("setup-vault");
+    ui.click("vault-setup-next");
+    ui.fake.forget_calls();
+    ui.click("vault-setup-next");
+    assert_eq!(
+        ui.fake.sent("vault.configure"),
+        [json!({"workspaceId": "w1", "id": "vt4", "settings": {"secretId": "prod/db", "region": "us-east-1"}})]
+    );
+}
+
+#[gpui_kit::test]
+fn a_vault_moved_off_the_repository_says_so_until_acknowledged(cx: &mut gpui_kit::TestAppContext) {
+    let mut ui = open_populated(cx);
+    ui.fake.reply("vault.list", json!([
+        {"id": "vt2", "name": "Locked", "provider": "local", "state": "sealed", "secrets": [], "path": null,
+         "approved": true, "movedAt": 5},
+    ]));
+    ui.fake.emit("event.vault.changed", json!({"workspaceId": "w1", "id": "vt2"}));
+    ui.show(Screen::Vaults);
+    assert!(ui.has("notification"), "the app says it once");
+    assert!(ui.has("vault-moved-ok"));
+    ui.fake.forget_calls();
+    ui.click("vault-moved-ok");
+    assert_eq!(ui.fake.sent("vault.acknowledge"), [json!({"workspaceId": "w1", "id": "vt2"})]);
 }
 
 #[gpui_kit::test]

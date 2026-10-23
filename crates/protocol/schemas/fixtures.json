@@ -1824,12 +1824,27 @@
    "extra": true
   }
  },
+ "vault.acknowledge": {
+  "valid": {
+   "workspaceId": "x",
+   "id": "x"
+  },
+  "invalid": {}
+ },
  "vault.changePassphrase": {
   "valid": {
    "workspaceId": "x",
    "id": "x",
    "passphrase": "x",
    "newPassphrase": "x"
+  },
+  "invalid": {}
+ },
+ "vault.configure": {
+  "valid": {
+   "workspaceId": "x",
+   "id": "x",
+   "credential": "x"
   },
   "invalid": {}
  },
@@ -1862,6 +1877,12 @@
   },
   "invalid": {}
  },
+ "vault.providers": {
+  "valid": {},
+  "invalid": {
+   "extra": true
+  }
+ },
  "vault.rename": {
   "valid": {
    "workspaceId": "x",
@@ -1892,6 +1913,15 @@
    "value": "x"
   },
   "invalid": {}
+ },
+ "vault.test": {
+  "valid": {
+   "workspaceId": "x",
+   "id": "x"
+  },
+  "invalid": {
+   "id": 1
+  }
  },
  "vault.unseal": {
   "valid": {

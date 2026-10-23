@@ -28,6 +28,7 @@ pub fn scratch_data_root() -> ScratchRoot {
     // Jars are cached in memory by workspace id, and every scratch store reuses `ws1`.
     crate::cookies::forget_all();
     crate::mail::forget_all();
+    crate::vault::forget_all();
     let mut settings = load_settings();
     settings.set("workspaces", json!([{ "id": "ws1", "name": "Workspace 1", "activeEnvironmentId": null }]));
     settings.set("activeWorkspaceId", json!("ws1"));

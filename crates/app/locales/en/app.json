@@ -38,5 +38,6 @@
   "engine.no_longer_exists": "It no longer exists.",
   "bootstrap.starting": "Starting the Bifurc engine…",
   "bootstrap.failed_title": "Couldn't start the engine",
-  "bootstrap.retry": "Try again"
+  "bootstrap.retry": "Try again",
+  "vault.moved_notice": "Vaults are no longer synced. {names} is now kept on this device only; see Vaults for what that means."
 }

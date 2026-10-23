@@ -38,5 +38,6 @@
   "engine.no_longer_exists": "Es existiert nicht mehr.",
   "bootstrap.starting": "Bifurc-Engine wird gestartet…",
   "bootstrap.failed_title": "Die Engine konnte nicht gestartet werden",
-  "bootstrap.retry": "Erneut versuchen"
+  "bootstrap.retry": "Erneut versuchen",
+  "vault.moved_notice": "Tresore werden nicht mehr synchronisiert. {names} liegt jetzt nur noch auf diesem Gerät; was das bedeutet, steht unter Tresore."
 }

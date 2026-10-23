@@ -845,6 +845,16 @@ impl AppModel {
                 && this.workspace_id() == workspace_id
             {
                 let vaults = VaultInfo::list_from_value(&value);
+                // Told once a session (and again after a pull brings one), until the Vaults screen acknowledges it.
+                let newly_moved: Vec<&str> = vaults
+                    .iter()
+                    .filter(|v| v.moved && !this.vaults.iter().any(|old| old.id == v.id && old.moved))
+                    .map(|v| v.name.as_str())
+                    .collect();
+                if !newly_moved.is_empty() {
+                    let names = newly_moved.join(", ");
+                    this.notice(t_with("app.vault.moved_notice", &[("names", &names)]), cx);
+                }
                 if vaults != this.vaults {
                     this.vaults = vaults;
                     cx.notify();

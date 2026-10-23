@@ -130,7 +130,20 @@ pub fn populated(fake: &FakeEngine) {
         {"commitHash": "bbb222", "ts": 2, "action": "update", "entity": "mocks", "entityName": "Users mock", "message": "Edit mock", "actor": "me", "changedFields": []},
     ]}));
     fake.reply("vault.list", json!([
-        {"id": "vt1", "name": "Prod", "state": "unsealed", "secrets": ["API_KEY", "DB_PASS"], "path": "vaults/prod.json"},
-        {"id": "vt2", "name": "Locked", "state": "sealed", "secrets": [], "path": "vaults/locked.json"},
+        {"id": "vt1", "name": "Prod", "provider": "local", "state": "unsealed", "secrets": ["API_KEY", "DB_PASS"], "path": null, "approved": true},
+        {"id": "vt2", "name": "Locked", "provider": "local", "state": "sealed", "secrets": [], "path": null, "approved": true},
+        {"id": "vt3", "name": "Team", "provider": "aws", "providerLabel": "AWS Secrets Manager", "state": "sealed",
+         "secrets": ["STRIPE"], "path": "vaults/vt3.json", "approved": true, "settings": {"secretId": "prod/app", "region": "eu-west-1"}, "hasCredential": false},
+        {"id": "vt4", "name": "Pulled", "provider": "aws", "providerLabel": "AWS Secrets Manager", "state": "sealed",
+         "secrets": ["DB"], "path": "vaults/vt4.json", "approved": false, "settings": {"secretId": "prod/db", "region": "us-east-1"}, "hasCredential": false},
     ]));
+    fake.reply("vault.providers", json!([
+        {"id": "local", "label": "This device", "installed": true, "fields": [], "credential": null},
+        {"id": "aws", "label": "AWS Secrets Manager", "program": "aws", "installed": true, "installUrl": "https://aws",
+         "fields": [{"key": "secretId", "required": true}, {"key": "region", "required": false},
+                    {"key": "profile", "required": false}], "credential": null},
+        {"id": "bitwarden", "label": "Bitwarden Secrets Manager", "program": "bws", "installed": false, "installUrl": "https://bw",
+         "fields": [{"key": "serverUrl", "required": false}], "credential": {"env": "BWS_ACCESS_TOKEN", "required": true}},
+    ]));
+    fake.reply("vault.test", json!({"names": ["STRIPE", "DB_URL"]}));
 }

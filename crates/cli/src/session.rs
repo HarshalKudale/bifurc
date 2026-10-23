@@ -171,6 +171,11 @@ impl<S: Read + Write> Session<S> {
         if let Some(name) = session {
             payload["session"] = json!(name);
         }
+        // A person at a terminal, not an agent's pipe: the engine lets only a person decide where a linked
+        // vault's values are read from.
+        if crate::prompt::interactive() {
+            payload["clientInfo"] = json!({ "terminal": "yes" });
+        }
         self.by = Some(session.map_or_else(|| "cli".to_string(), |name| format!("session:{name}")));
         self.call("hello", payload)
     }

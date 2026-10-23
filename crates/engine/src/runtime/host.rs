@@ -156,6 +156,7 @@ async fn bootstrap_workspaces(mut settings: AppSettings) -> Result<AppSettings> 
             notice(&format!("workspace \"{id}\": could not prepare its git repository: {err}"));
             crate::analytics::failed("workspace_repo_init");
         }
+        crate::vault::move_off_repository(id);
         crate::gitops::start_auto_sync(id);
     }
     if !workspace_dir_exists(&settings.active_workspace_id()) {

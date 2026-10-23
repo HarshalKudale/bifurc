@@ -660,7 +660,8 @@ impl CaptureScreen {
             this.secrets_to = SecretsTo::Vault;
             this.cookies_to_jar = true;
             // An unsealed vault needs no passphrase, so it is offered first; with none, a new one.
-            let vaults = this.model.read(cx).vaults();
+            // Only a local vault takes values; a linked one's are its provider's.
+            let vaults: Vec<_> = this.model.read(cx).vaults().iter().filter(|vault| vault.is_local()).collect();
             let first = vaults.iter().find(|vault| vault.state == VaultState::Unsealed).or(vaults.first());
             this.import_vault = first.map(|vault| vault.id.clone());
             cx.notify();
@@ -694,7 +695,8 @@ impl CaptureScreen {
                     let screen = screen.read(cx);
                     (screen.secrets_to, screen.cookies_to_jar, screen.import_vault.clone())
                 };
-                let vaults = screen.read(cx).model.read(cx).vaults().to_vec();
+                let vaults: Vec<_> =
+                    screen.read(cx).model.read(cx).vaults().iter().filter(|vault| vault.is_local()).cloned().collect();
                 let picked = picked.and_then(|id| vaults.iter().find(|vault| vault.id == id).cloned());
                 let row = |label: String, detail: String| {
                     v_flex()

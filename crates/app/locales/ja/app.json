@@ -38,5 +38,6 @@
   "engine.no_longer_exists": "既に存在しません。",
   "bootstrap.starting": "Bifurc エンジンを起動しています…",
   "bootstrap.failed_title": "エンジンを起動できませんでした",
-  "bootstrap.retry": "再試行"
+  "bootstrap.retry": "再試行",
+  "vault.moved_notice": "ボールトは同期されなくなりました。{names} はこのデバイスにのみ保管されます。詳しくは「ボールト」をご覧ください。"
 }

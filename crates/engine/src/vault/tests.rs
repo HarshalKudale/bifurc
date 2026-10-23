@@ -50,8 +50,12 @@ async fn a_vault_resolves_in_text_but_its_values_never_reach_a_client() {
     let listed = engine.call("vault.list", json!({ "workspaceId": ws })).await;
     assert_eq!(listed[0]["secrets"], json!(["STRIPE"]));
     assert!(!listed.to_string().contains("sk_live_123456"));
+    // On this device only, outside the workspace's repository, and sealed there.
+    assert_eq!(listed[0]["provider"], "local");
+    assert_eq!(listed[0]["path"], Value::Null);
+    assert!(!crate::workspace::fs::entity_dir(ws, "vaults").join(format!("{id}.json")).exists());
     let on_disk =
-        std::fs::read_to_string(crate::workspace::fs::entity_dir(ws, "vaults").join(format!("{id}.json"))).unwrap();
+        std::fs::read_to_string(device_dir(ws).join(format!("{id}.json"))).unwrap();
     assert!(!on_disk.contains("sk_live_123456"));
 
     let env = load_merged_environment(ws);
@@ -204,4 +208,186 @@ async fn a_request_is_sent_with_the_secret_but_echoed_and_returned_without_it() 
     let body = STANDARD.decode(out["response"]["body"].as_str().unwrap()).unwrap();
     assert_eq!(String::from_utf8(body).unwrap(), "you sent {{keys.TOKEN}}");
     assert_eq!(out["response"]["headers"]["x-echo"], "{{keys.TOKEN}}");
+}
+
+fn device_dir(ws: &str) -> std::path::PathBuf {
+    crate::workspace::paths::data_dir().join("vaults").join(ws)
+}
+
+#[tokio::test]
+async fn a_vault_kept_in_the_repository_moves_to_this_device_and_says_so() {
+    let root = scratch_data_root();
+    let (ws, engine) = (root.ws_id, Engine::new());
+    // What an older version wrote: a sealed vault in the workspace's repository.
+    let (mut old, key) = store::VaultFile::create("old1".into(), "legacy", PASS, 0).unwrap();
+    old.set_secret(&key, "TOKEN", "t0ken-value").unwrap();
+    let repo_file = crate::workspace::fs::entity_dir(ws, "vaults").join("old1.json");
+    std::fs::create_dir_all(repo_file.parent().unwrap()).unwrap();
+    std::fs::write(&repo_file, serde_json::to_string(&old).unwrap()).unwrap();
+
+    let listed = engine.call("vault.list", json!({ "workspaceId": ws })).await;
+    assert!(!repo_file.exists(), "no longer in the repository");
+    assert!(device_dir(ws).join("old1.json").exists());
+    assert_eq!(listed[0]["provider"], "local");
+    assert!(listed[0]["movedAt"].is_i64(), "the user is told");
+
+    engine.call("vault.unseal", json!({ "workspaceId": ws, "id": "old1", "passphrase": PASS })).await;
+    let env = load_merged_environment(ws);
+    assert_eq!(resolve_vars("{{legacy.TOKEN}}", env.as_ref()), "t0ken-value");
+    let seen = engine.call("vault.acknowledge", json!({ "workspaceId": ws, "id": "old1" })).await;
+    assert_eq!(seen["movedAt"], Value::Null);
+
+    // Brought back by a pull from an older version: this device's copy stays, the file goes again.
+    std::fs::write(&repo_file, serde_json::to_string(&old).unwrap()).unwrap();
+    engine.call("vault.list", json!({ "workspaceId": ws })).await;
+    assert!(!repo_file.exists());
+    let kept: Value = serde_json::from_str(&std::fs::read_to_string(device_dir(ws).join("old1.json")).unwrap()).unwrap();
+    assert!(kept.get("movedAt").is_none(), "already acknowledged here");
+}
+
+
+/// A linked vault on the fake `op`, pulling the item `item`.
+async fn linked(engine: &Engine, ws: &str, item: &str) -> String {
+    let created = engine
+        .call(
+            "vault.create",
+            json!({
+                "workspaceId": ws, "name": "team", "provider": "1password",
+                "settings": { "item": item, "account": "acme" }, "credential": "ops_token_for_this_device",
+            }),
+        )
+        .await;
+    created["id"].as_str().unwrap().to_string()
+}
+
+#[tokio::test]
+async fn a_linked_vault_pulls_every_secret_of_its_source_and_edits_none() {
+    let root = scratch_data_root();
+    let (ws, engine) = (root.ws_id, Engine::new());
+    providers::tests::fake_op(root.dir.path());
+    let id = linked(&engine, ws, "Stripe").await;
+    let listed = engine.call("vault.list", json!({ "workspaceId": ws })).await;
+    assert_eq!((listed[0]["state"].as_str(), listed[0]["approved"].as_bool()), (Some("sealed"), Some(true)));
+    assert_eq!(listed[0]["secrets"], json!([]), "nothing pulled yet");
+    assert_eq!(listed[0]["path"], format!("vaults/{id}.json"));
+
+    // The synced file names the source, never a value or the token.
+    let synced =
+        std::fs::read_to_string(crate::workspace::fs::entity_dir(ws, "vaults").join(format!("{id}.json"))).unwrap();
+    assert!(synced.contains("\"item\": \"Stripe\""));
+    assert!(!synced.contains("ops_token_for_this_device") && !synced.contains("value-for"));
+
+    let tested = engine.call("vault.test", json!({ "workspaceId": ws, "id": id })).await;
+    assert_eq!(tested, json!({ "names": ["api_key"] }));
+
+    let unsealed = engine.call("vault.unseal", json!({ "workspaceId": ws, "id": id })).await;
+    assert_eq!(unsealed["secrets"], json!(["api_key"]));
+    let env = load_merged_environment(ws);
+    assert_eq!(resolve_vars("{{team.api_key}}", env.as_ref()), "value-for-Stripe");
+    assert!(!engine.call("vault.list", json!({ "workspaceId": ws })).await.to_string().contains("value-for"));
+
+    // Sealed again, it still shows what it held when this device last pulled it.
+    engine.call("vault.seal", json!({ "workspaceId": ws, "id": id })).await;
+    let listed = engine.call("vault.list", json!({ "workspaceId": ws })).await;
+    assert_eq!(listed[0]["secrets"], json!(["api_key"]));
+
+    // Its secrets are changed in the provider, not here.
+    let set = json!({ "workspaceId": ws, "id": id, "name": "X", "value": "abcdefgh" });
+    assert!(engine.try_as(None, "vault.setSecret", set).await.is_err());
+    let remove = json!({ "workspaceId": ws, "id": id, "name": "api_key" });
+    assert!(engine.try_as(None, "vault.deleteSecret", remove).await.is_err());
+
+    // A source it cannot read unseals nothing.
+    let missing = linked_named(&engine, ws, "other", "missing-item").await;
+    let failed = engine.try_as(None, "vault.unseal", json!({ "workspaceId": ws, "id": missing })).await.unwrap_err();
+    assert!(failed.message.contains("no such item"), "{}", failed.message);
+}
+
+async fn linked_named(engine: &Engine, ws: &str, name: &str, item: &str) -> String {
+    let created = engine
+        .call(
+            "vault.create",
+            json!({ "workspaceId": ws, "name": name, "provider": "1password", "settings": { "item": item } }),
+        )
+        .await;
+    created["id"].as_str().unwrap().to_string()
+}
+
+#[tokio::test]
+async fn a_synced_change_of_source_needs_approval_on_this_device() {
+    let root = scratch_data_root();
+    let (ws, engine) = (root.ws_id, Engine::new());
+    providers::tests::fake_op(root.dir.path());
+    let id = linked(&engine, ws, "Stripe").await;
+
+    // A teammate points the vault at another item, and the change arrives by a pull.
+    let file = crate::workspace::fs::entity_dir(ws, "vaults").join(format!("{id}.json"));
+    let changed = std::fs::read_to_string(&file).unwrap().replace("\"Stripe\"", "\"Bank\"");
+    std::fs::write(&file, changed).unwrap();
+
+    let listed = engine.call("vault.list", json!({ "workspaceId": ws })).await;
+    assert_eq!(listed[0]["approved"], false);
+    let refused = engine.try_as(None, "vault.unseal", json!({ "workspaceId": ws, "id": id })).await.unwrap_err();
+    assert_eq!(refused.details.unwrap()["reason"], "vault_not_approved");
+
+    let approved = engine.call("vault.configure", json!({ "workspaceId": ws, "id": id })).await;
+    assert_eq!(approved["approved"], true);
+    assert_eq!(approved["settings"]["item"], "Bank");
+    engine.call("vault.unseal", json!({ "workspaceId": ws, "id": id })).await;
+    let env = load_merged_environment(ws);
+    assert_eq!(resolve_vars("{{team.api_key}}", env.as_ref()), "value-for-Bank");
+}
+
+#[tokio::test]
+async fn a_linked_vault_checks_its_provider_and_settings() {
+    let root = scratch_data_root();
+    let (ws, engine) = (root.ws_id, Engine::new());
+    for (payload, why) in [
+        (json!({ "provider": "nope" }), "unknown provider"),
+        (json!({ "provider": "azure" }), "Azure needs its key vault's name"),
+        (json!({ "provider": "1password", "settings": { "item": "--help" } }), "read as an option"),
+        (json!({ "provider": "bitwarden" }), "Bitwarden needs a token"),
+    ] {
+        let mut payload = payload;
+        payload["workspaceId"] = json!(ws);
+        payload["name"] = json!("v");
+        assert!(engine.try_as(None, "vault.create", payload).await.is_err(), "{why}");
+    }
+    let providers = engine.call("vault.providers", json!({})).await;
+    assert_eq!(providers[0]["id"], "local");
+    assert!(providers.as_array().unwrap().iter().any(|p| p["id"] == "aws" && p["installed"].is_boolean()));
+}
+
+#[tokio::test]
+async fn only_a_person_decides_where_a_linked_vault_pulls_from() {
+    let root = scratch_data_root();
+    let (ws, engine) = (root.ws_id, Engine::new());
+    providers::tests::fake_op(root.dir.path());
+    let at_terminal = |id: &str| {
+        Some(SessionIdentity {
+            session_id: id.into(),
+            client_name: Some("cli".into()),
+            client_info: Some(json!({ "terminal": "yes" })),
+            ..Default::default()
+        })
+    };
+    let create = json!({ "workspaceId": ws, "name": "team", "provider": "1password", "settings": { "item": "Stripe" } });
+
+    // An agent: the command line through a pipe, or MCP (which connects the same way).
+    let refused = engine.try_as(session("agent", "cli"), "vault.create", create.clone()).await.unwrap_err();
+    assert_eq!(refused.details.unwrap()["reason"], "vault_needs_person");
+    let created = engine.try_as(at_terminal("person"), "vault.create", create).await.unwrap();
+    let id = created["id"].as_str().unwrap().to_string();
+
+    let vault = json!({ "workspaceId": ws, "id": id });
+    for action in ["vault.unseal", "vault.configure", "vault.test"] {
+        assert!(engine.try_as(session("agent", "cli"), action, vault.clone()).await.is_err(), "{action}");
+    }
+    engine.try_as(session("app", "desktop-ui"), "vault.unseal", vault.clone()).await.unwrap();
+    // Once a person unsealed it, its secrets are used like a local vault's.
+    let read = engine.try_as(session("agent", "cli"), "vault.secrets", vault).await.unwrap();
+    assert_eq!(read["secrets"]["api_key"], "value-for-Stripe");
+    // A local vault keeps its own gate, the passphrase.
+    let local = json!({ "workspaceId": ws, "name": "mine", "passphrase": PASS });
+    assert!(engine.try_as(session("agent", "cli"), "vault.create", local).await.is_ok());
 }

@@ -12,7 +12,7 @@ of a key: `"stage.terms.title"` in `onboarding.json` is `t("onboarding.stage.ter
 | area | source it belongs to |
 | --- | --- |
 | `app` | `app_model.rs`, `engine.rs`, `commands.rs`, `bootstrap.rs`, `theme.rs`, `panels/` |
-| `onboarding`, `workspace_setup`, `settings`, `workspace`, `vaults`, `capture`, `audit`, `mappings`, `proxy_rules`, `environments`, `services`, `healthbar`, `licenses` | `screens/<same name>.rs` |
+| `onboarding`, `workspace_setup`, `settings`, `workspace`, `vaults`, `vault_setup`, `capture`, `audit`, `mappings`, `proxy_rules`, `environments`, `services`, `healthbar`, `licenses` | `screens/<same name>.rs` |
 | `requests`, `mocks`, `flows` | `screens/requests/`, `screens/mocks/`, `screens/flows/` (+ `model/flow.rs` for flows) |
 | `shell` | `shell/` |
 | `components` | `components/` |

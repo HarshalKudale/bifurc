@@ -751,8 +751,8 @@ pub fn verbs() -> Vec<Verb> {
             operand("vault", "id", Take::Vault, "The vault's name."),
             operand("name", "name", Take::Text, "The new name."),
         ]),
-        verb(&["vault", "unset"], "vault.deleteSecret", Effect::Deletes, "Remove one secret from a vault.")
-            .details("The vault has to be unsealed.")
+        verb(&["vault", "unset"], "vault.deleteSecret", Effect::Deletes, "Remove one secret from a local vault.")
+            .details("A linked vault's secrets are removed in its provider; the next pull leaves them out.")
             .args(vec![
                 operand("vault", "id", Take::Vault, "The vault's name."),
                 operand("secret", "name", Take::Text, "The secret's name."),
@@ -760,6 +760,19 @@ pub fn verbs() -> Vec<Verb> {
         verb(&["vault", "delete"], "vault.delete", Effect::Deletes, "Delete a vault and every secret in it.")
             .confirm()
             .args(vec![operand("vault", "id", Take::Vault, "The vault's name.")]),
+        verb(&["vault", "providers"], "vault.providers", Effect::Reads, "The secret managers a vault can be linked to.")
+            .scope(Scope::Engine),
+        verb(&["vault", "test"], "vault.test", Effect::Runs, "Pull a linked vault's source once and name what it holds.")
+            .details("Prints the names of the secrets it would pull, never a value. Needs a person at a terminal.")
+            .args(vec![operand("vault", "id", Take::Vault, "The vault's name.")]),
+        verb(
+            &["vault", "approve"],
+            "vault.configure",
+            Effect::Changes,
+            "Accept on this device where a linked vault pulls its secrets from.",
+        )
+        .details("Needed once on each device, and again when a sync changed its provider settings.")
+        .args(vec![operand("vault", "id", Take::Vault, "The vault's name.")]),
         verb(&["update", "skip"], "update.skip", Effect::Changes, "Stop being told about one version of Bifurc.")
             .scope(Scope::Engine)
             .args(vec![operand("version", "version", Take::Text, "The version to skip, e.g. 0.7.0.")]),

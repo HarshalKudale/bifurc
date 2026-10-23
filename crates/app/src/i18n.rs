@@ -49,6 +49,7 @@ macro_rules! language {
                 ("settings", include_str!(concat!("../locales/", $code, "/settings.json"))),
                 ("shell", include_str!(concat!("../locales/", $code, "/shell.json"))),
                 ("types", include_str!(concat!("../locales/", $code, "/types.json"))),
+                ("vault_setup", include_str!(concat!("../locales/", $code, "/vault_setup.json"))),
                 ("vaults", include_str!(concat!("../locales/", $code, "/vaults.json"))),
                 ("workspace", include_str!(concat!("../locales/", $code, "/workspace.json"))),
                 ("workspace_setup", include_str!(concat!("../locales/", $code, "/workspace_setup.json"))),
