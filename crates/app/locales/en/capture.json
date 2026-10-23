@@ -39,6 +39,8 @@
   "selected": "{count} selected",
   "save_checked_requests": "Save as requests",
   "save_checked_mocks": "Save as mocks",
+  "check_mock_tooltip": "A mock answered this, so it is saved already.",
+  "check_other_kind_tooltip": "Tick rows that save the same way: ones that can become mocks, or webhooks and streams, which only become requests.",
   "clear_selection": "Clear selection",
   "empty.no_traffic.title": "No traffic captured",
   "empty.no_traffic.paused": "Capture is paused. Nothing is being recorded until you resume.",

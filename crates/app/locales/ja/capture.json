@@ -39,6 +39,8 @@
   "selected": "{count} 件選択中",
   "save_checked_requests": "リクエストとして保存",
   "save_checked_mocks": "モックとして保存",
+  "check_mock_tooltip": "モックが応答したため、すでに保存されています。",
+  "check_other_kind_tooltip": "同じ方法で保存される行を選んでください: モックにできる行か、リクエストにしかできない Webhook とストリームの行です。",
   "clear_selection": "選択を解除",
   "empty.no_traffic.title": "キャプチャされたトラフィックはありません",
   "empty.no_traffic.paused": "キャプチャは一時停止中です。再開するまで何も記録されません。",
