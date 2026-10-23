@@ -4,12 +4,7 @@
 
 use std::{rc::Rc, time::Duration};
 
-use gpui_kit::component::{
-    ActiveTheme as _, Sizable as _,
-    StyledExt as _,
-    button::Button,
-    h_flex, v_flex,
-};
+use gpui_kit::component::{ActiveTheme as _, Sizable as _, StyledExt as _, button::Button, h_flex, v_flex};
 use gpui_kit::{
     Animation, AnimationExt as _, App, ClipboardItem, Context, InteractiveElement as _, IntoElement,
     ParentElement as _, Render, Styled as _, Window, div, pulsating_between,
@@ -49,18 +44,11 @@ impl Render for CaptureOverlay {
             .items_center()
             .justify_center()
             .gap_5()
-            .child(
-                div()
-                    .flex_none()
-                    .size_16()
-                    .rounded_full()
-                    .bg(theme.primary)
-                    .with_animation(
-                        "capture-pulse",
-                        Animation::new(Duration::from_millis(1400)).repeat().with_easing(pulsating_between(0.15, 1.0)),
-                        |dot, delta| dot.opacity(delta),
-                    ),
-            )
+            .child(div().flex_none().size_16().rounded_full().bg(theme.primary).with_animation(
+                "capture-pulse",
+                Animation::new(Duration::from_millis(1400)).repeat().with_easing(pulsating_between(0.15, 1.0)),
+                |dot, delta| dot.opacity(delta),
+            ))
             .child(div().text_xl().font_medium().child(title))
             .child(div().max_w_96().text_center().text_sm().text_color(theme.muted_foreground).child(hint))
             .children(self.url.clone().map(|url| {

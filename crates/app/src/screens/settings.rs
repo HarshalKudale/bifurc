@@ -813,22 +813,18 @@ impl SettingsScreen {
                     } else {
                         t("settings.capture.missing")
                     };
-                    h_flex()
-                        .w_full()
-                        .gap_2()
-                        .child(div().flex_1().min_w_0().child(status))
-                        .child(
-                            Button::new("install-cloudflared")
-                                .with_size(options.size())
-                                .label(if state.installed {
-                                    t("settings.capture.reinstall")
-                                } else {
-                                    t("settings.capture.install")
-                                })
-                                .loading(state.installing)
-                                .disabled(!state.supported || state.installing)
-                                .on_click(move |_, _, cx| install.update(cx, |tunnel, cx| tunnel.install(cx))),
-                        )
+                    h_flex().w_full().gap_2().child(div().flex_1().min_w_0().child(status)).child(
+                        Button::new("install-cloudflared")
+                            .with_size(options.size())
+                            .label(if state.installed {
+                                t("settings.capture.reinstall")
+                            } else {
+                                t("settings.capture.install")
+                            })
+                            .loading(state.installing)
+                            .disabled(!state.supported || state.installing)
+                            .on_click(move |_, _, cx| install.update(cx, |tunnel, cx| tunnel.install(cx))),
+                    )
                 })
                 .keywords(["cloudflared", "tunnel", "webhook", "capture"]),
             ),

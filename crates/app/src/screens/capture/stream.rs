@@ -66,7 +66,10 @@ impl CapturedStream {
         let (tag, outline) = match (&message.close, &message.event) {
             (Some(code), _) => (t_with("capture.stream.close", &[("code", code)]), false),
             (None, Some(event)) => (event.clone(), event == "message"),
-            (None, None) => (t(if message.sent { "capture.stream.sent" } else { "capture.stream.received" }).to_owned(), message.sent),
+            (None, None) => (
+                t(if message.sent { "capture.stream.sent" } else { "capture.stream.received" }).to_owned(),
+                message.sent,
+            ),
         };
         let note = match (&message.event_id, message.binary) {
             (Some(id), _) => Some(t_with("session.sse.event_id", &[("id", id)])),
@@ -109,7 +112,11 @@ impl Render for CapturedStream {
             })
             .collect();
         let count = self.messages.len();
-        let state = if self.live { Tag::success().child(t("capture.stream.open")) } else { Tag::secondary().child(t("capture.stream.closed")) };
+        let state = if self.live {
+            Tag::success().child(t("capture.stream.open"))
+        } else {
+            Tag::secondary().child(t("capture.stream.closed"))
+        };
         let protocol = Tag::secondary().outline().child(if self.kind == "ws" { "WebSocket" } else { "SSE" });
         log_frame(
             LogFrame {

@@ -703,7 +703,8 @@ impl NodeEditor {
                 "body" if mails => "flows.mail.body_hint",
                 _ => "flows.editor.value_hint",
             };
-            let hint = argument.map(argument_hint).filter(|hint| !hint.is_empty()).unwrap_or_else(|| t(fallback).to_owned());
+            let hint =
+                argument.map(argument_hint).filter(|hint| !hint.is_empty()).unwrap_or_else(|| t(fallback).to_owned());
             let field = cx.new(|cx| InputState::new(window, cx).placeholder(hint).default_value(pair.value));
             subscriptions.push(cx.subscribe(&field, |this: &mut Self, _, event: &InputEvent, cx| {
                 if matches!(event, InputEvent::Change) {
