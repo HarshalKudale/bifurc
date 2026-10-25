@@ -8,7 +8,7 @@ use tokio::{
     net::TcpStream,
 };
 
-use super::response::{Outcome, collect_response_headers, forward_streaming, log_body, send_html};
+use super::response::{LiveLog, Outcome, collect_response_headers, forward_streaming, log_body, send_html};
 use crate::{
     kernel::traffic::Headers,
     scripting::{execute_request_script, execute_response_script},
@@ -62,7 +62,7 @@ fn split_target(target: &str) -> (String, Option<u16>) {
     }
 }
 
-fn http_url(target: &str, path: &str) -> String {
+pub(super) fn http_url(target: &str, path: &str) -> String {
     let (hostname, port) = split_target(target);
     let path = if path.is_empty() { "/" } else { path };
     match port {
@@ -79,9 +79,9 @@ pub async fn proxy_to_upstream<W: AsyncWrite + Unpin>(
     path: &str,
     headers: &Headers,
     body: &[u8],
-    log_id: Option<&str>,
+    live: Option<&LiveLog<'_>>,
 ) -> Option<Outcome> {
-    forward_streaming(out, method, &http_url(target, path), target, headers, body, log_id).await
+    forward_streaming(out, method, &http_url(target, path), target, headers, body, live).await
 }
 
 /// A request after a rule's request script, ready to send.
@@ -220,6 +220,7 @@ pub async fn proxy_with_scripts<W: AsyncWrite + Unpin>(
         res_headers: final_headers,
         res_body: log_body(&final_body),
         req_headers: shown,
+        kind: None,
     })
 }
 

@@ -217,6 +217,10 @@ fn interaction(entry: &Value) -> Value {
 }
 
 fn on_entry(entry: &Value) {
+    // A stream is recorded once, when it ends; a WebSocket is not one answer a cassette can replay.
+    if entry.get("live").and_then(Value::as_bool) == Some(true) || str_of(entry, "kind") == "ws" {
+        return;
+    }
     let mut guard = RECORDING.lock();
     let Some(rec) = guard.as_mut() else { return };
     if !wanted(entry, &rec.workspace_id, &rec.hosts) {

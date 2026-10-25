@@ -44,6 +44,12 @@ pub struct RequestLogEntry {
     /// base64, at most the first 512 KiB of the body
     pub res_body: String,
     pub res_status: Option<u16>,
+    /// `ws` | `sse`: a stream, whose messages arrive as `log.message` events while it is open.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub kind: Option<String>,
+    /// The stream is still open; its entry is logged again when it closes.
+    #[serde(default, skip_serializing_if = "std::ops::Not::not")]
+    pub live: bool,
 }
 
 /// How much of a response body a log entry keeps.
@@ -58,6 +64,18 @@ pub fn emit_log(entry: &RequestLogEntry) {
 pub fn emit_log_chunk(log_id: &str, chunk: &[u8], done: bool) {
     let chunk = base64::engine::general_purpose::STANDARD.encode(chunk);
     bus().emit("log.chunk", json!({ "logId": log_id, "chunk": chunk, "done": done }));
+}
+
+/// Report one message of a captured stream (bus event `log.message`). `message` holds `direction` (`sent` is
+/// client to server) and `data`; the id, the time and the masking of vault secrets are added here.
+pub fn emit_log_message(entry: &RequestLogEntry, seq: u64, mut message: Value) {
+    let ws_id = entry.workspace_id.as_deref().unwrap_or("");
+    if let Some(data) = message.get("data").and_then(Value::as_str) {
+        message["data"] = json!(crate::vault::redact_text(ws_id, data.to_string()));
+    }
+    message["id"] = json!(format!("{}-{seq}", entry.id));
+    message["ts"] = json!(crate::utils::id::now_ms());
+    bus().emit("log.message", json!({ "logId": entry.id, "workspaceId": ws_id, "message": message }));
 }
 
 /// Report a listener failure (bus event `server.error`).

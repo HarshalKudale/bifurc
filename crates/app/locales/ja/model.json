@@ -93,6 +93,8 @@
   "traffic.type.font": "Font",
   "traffic.type.img": "Img",
   "traffic.type.media": "Media",
+  "traffic.type.stream": "ストリーム",
+  "traffic.messages": "{count} 件",
   "traffic.type.other": "その他",
   "traffic.mapping": "マッピング",
   "traffic.proxy": "プロキシ",

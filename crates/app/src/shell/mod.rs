@@ -245,6 +245,7 @@ impl Shell {
             | ModelEvent::McpStatus(_)
             | ModelEvent::McpMessage(_)
             | ModelEvent::Traffic(_)
+            | ModelEvent::TrafficMessage(_)
             | ModelEvent::RunnerProgress(_)
             | ModelEvent::RunnerFinished(_)
             | ModelEvent::FlowProgress(_)
@@ -552,8 +553,8 @@ impl Shell {
         // The new entity is in the engine but not yet in this window's snapshot, which the tree is built from.
         self.model.update(cx, |model, cx| model.refresh(cx));
         match event {
-            CaptureEvent::SavedRequest { id } => {
-                self.open_request(&NodeRef::Request { kind: RequestKind::Rest, id: id.clone() }, window, cx)
+            CaptureEvent::SavedRequest { id, kind } => {
+                self.open_request(&NodeRef::Request { kind: *kind, id: id.clone() }, window, cx)
             }
             CaptureEvent::SavedMock { id } => self.open_mock(id, window, cx),
         }

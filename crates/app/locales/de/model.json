@@ -93,6 +93,8 @@
   "traffic.type.font": "Schrift",
   "traffic.type.img": "Bild",
   "traffic.type.media": "Medien",
+  "traffic.type.stream": "Stream",
+  "traffic.messages": "{count} Nachr.",
   "traffic.type.other": "Sonstige",
   "traffic.mapping": "Zuordnung",
   "traffic.proxy": "Proxy",

@@ -33,6 +33,12 @@ pub fn to_log_entry_event(payload: &Value) -> Value {
     if e.get("pinned").and_then(Value::as_bool) == Some(true) {
         out.insert("pinned".into(), json!(true));
     }
+    if let Some(kind) = e.get("kind").and_then(Value::as_str) {
+        out.insert("kind".into(), json!(kind));
+        out.insert("live".into(), json!(e.get("live").and_then(Value::as_bool) == Some(true)));
+        let count = e.get("messages").and_then(Value::as_array).map_or(0, Vec::len);
+        out.insert("messageCount".into(), json!(count));
+    }
     if let Some(origin) = e.get("origin").and_then(Value::as_str)
         && matches!(origin, "forward" | "reverse" | "server" | "webhook")
     {

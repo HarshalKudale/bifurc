@@ -33,7 +33,7 @@ use crate::{
     mocks::write_response,
     protocol::{EngineError, Result},
     proxy::{
-        finished_entry, forward_streaming, log_body, log_outcome,
+        LiveLog, finished_entry, forward_streaming, log_body, log_outcome,
         wire::{Duplicates, parse_header_lines, read_body, read_head},
     },
     utils::{
@@ -130,9 +130,9 @@ async fn handle(listening: Arc<Listening>, bound: SocketAddr, mut socket: TcpStr
         let mut forwarded = headers;
         forwarded.shift_remove("host");
         let url = forward_url(forward, &target);
+        let live = LiveLog { base: &base, via: "proxy", target: tag.clone() };
         if let Some(outcome) =
-            forward_streaming(&mut socket, &head.method, &url, forward.as_str(), &forwarded, &body, Some(&base.id))
-                .await
+            forward_streaming(&mut socket, &head.method, &url, forward.as_str(), &forwarded, &body, Some(&live)).await
         {
             // forward_streaming's own 502 (nothing answered) has no headers; an upstream's 502 always has some.
             let via = if outcome.status == 502 && outcome.res_headers.is_empty() { "error" } else { "proxy" };

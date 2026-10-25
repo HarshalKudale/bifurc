@@ -15,9 +15,10 @@ use tokio_rustls::TlsAcceptor;
 use super::{
     handler::tcp_tunnel,
     listener::{ConnectionHandler, ListenerCore},
-    response::{passthrough_to_upstream, passthrough_to_upstream_https, send_html},
+    response::{LiveLog, passthrough_to_upstream, passthrough_to_upstream_https, send_html},
     routing::{Exchange, error_entry, handle_proxy_routing, log_outcome},
     tls_intercept::intercept_tls,
+    websocket::{is_websocket_upgrade, relay_proxied},
     wire::{Duplicates, Prefixed, RequestHead, parse_header_lines, read_body, read_head},
 };
 use crate::{
@@ -162,8 +163,9 @@ async fn serve<S: AsyncRead + AsyncWrite + Unpin + Send + 'static>(shared: Arc<S
         let snapshot = shared.snapshot();
         if snapshot.tls_enabled && is_ca_loaded() {
             let client = Prefixed::new(leftover, socket);
-            if let Some((mut tls, request, body)) = intercept_tls(client, &host).await {
-                dispatch_https(&shared, &mut tls, &request, &body, &host, port).await;
+            if let Some((mut tunnelled, request, body)) = intercept_tls(client, &host).await {
+                let secure = tunnelled.is_tls();
+                dispatch_tunnelled(&shared, &mut tunnelled, &request, &body, &host, port, secure).await;
             }
         } else if !crate::faults::tunnel(&mut socket, &host, port).await {
             tcp_tunnel(socket, &host, port, &leftover, Some("HTTP/1.1 200 Connection Established\r\n\r\n")).await;
@@ -255,11 +257,15 @@ async fn dispatch<W: AsyncRead + AsyncWrite + Unpin>(shared: &Shared, out: &mut 
             base: &base,
             t0,
         };
+        if is_websocket_upgrade(&head.header_lines) {
+            return relay_proxied(out, &exchange, &host).await;
+        }
         if handle_proxy_routing(out, &exchange).await {
             return;
         }
+        let live = LiveLog { base: &base, via: "proxy", target: Some(host.clone()) };
         let outcome =
-            passthrough_to_upstream(out, &head.method, raw_target, &req_path, &forwarded, body, Some(&base.id)).await;
+            passthrough_to_upstream(out, &head.method, raw_target, &req_path, &forwarded, body, Some(&live)).await;
         if let Some(outcome) = outcome {
             log_outcome(&base, "proxy", Some(host), outcome);
         }
@@ -280,6 +286,7 @@ async fn dispatch<W: AsyncRead + AsyncWrite + Unpin>(shared: &Shared, out: &mut 
 }
 
 /// A request read from an intercepted TLS connection, whose target is a path on `hostname:port`.
+#[cfg(test)]
 pub(super) async fn dispatch_https<W: AsyncRead + AsyncWrite + Unpin>(
     shared: &Shared,
     out: &mut W,
@@ -288,14 +295,29 @@ pub(super) async fn dispatch_https<W: AsyncRead + AsyncWrite + Unpin>(
     hostname: &str,
     port: u16,
 ) {
+    dispatch_tunnelled(shared, out, head, body, hostname, port, true).await;
+}
+
+/// A request read from an answered CONNECT, whose target is a path on `hostname:port`: decrypted when the
+/// client spoke TLS (`secure`), as it came otherwise.
+pub(super) async fn dispatch_tunnelled<W: AsyncRead + AsyncWrite + Unpin>(
+    shared: &Shared,
+    out: &mut W,
+    head: &RequestHead,
+    body: &[u8],
+    hostname: &str,
+    port: u16,
+    secure: bool,
+) {
     let snapshot = shared.snapshot();
     let routing = &snapshot.routing;
     let t0 = now_ms();
     let id = mk_id();
     let headers = request_headers(head);
     let req_path = if head.target.is_empty() { "/".to_string() } else { head.target.clone() };
-    let port_suffix = if port == 443 { String::new() } else { format!(":{port}") };
-    let url = format!("https://{hostname}{port_suffix}{req_path}");
+    let (scheme, default_port) = if secure { ("https", 443) } else { ("http", 80) };
+    let port_suffix = if port == default_port { String::new() } else { format!(":{port}") };
+    let url = format!("{scheme}://{hostname}{port_suffix}{req_path}");
     let (mut base, req_body_b64) =
         base_entry(id, t0, head, url.clone(), hostname.to_string(), headers.clone(), body, &routing.workspace_id);
     let forwarded = forwarded_headers(&headers, &base.id);
@@ -315,12 +337,19 @@ pub(super) async fn dispatch_https<W: AsyncRead + AsyncWrite + Unpin>(
         base: &base,
         t0,
     };
+    if is_websocket_upgrade(&head.header_lines) {
+        return relay_proxied(out, &exchange, hostname).await;
+    }
     if handle_proxy_routing(out, &exchange).await {
         return;
     }
-    let outcome =
-        passthrough_to_upstream_https(out, &head.method, hostname, port, &req_path, &forwarded, body, Some(&base.id))
-            .await;
+    let live = LiveLog { base: &base, via: "proxy", target: Some(hostname.to_string()) };
+    let outcome = if secure {
+        passthrough_to_upstream_https(out, &head.method, hostname, port, &req_path, &forwarded, body, Some(&live))
+            .await
+    } else {
+        passthrough_to_upstream(out, &head.method, &url, &req_path, &forwarded, body, Some(&live)).await
+    };
     if let Some(outcome) = outcome {
         log_outcome(&base, "proxy", Some(hostname.to_string()), outcome);
     }
