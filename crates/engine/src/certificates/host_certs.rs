@@ -116,6 +116,8 @@ fn build_server_config(ca: &LoadedCa, hostname: &str) -> Result<rustls::ServerCo
     params.key_usages = vec![KeyUsagePurpose::DigitalSignature, KeyUsagePurpose::KeyEncipherment];
     params.extended_key_usages = vec![ExtendedKeyUsagePurpose::ServerAuth, ExtendedKeyUsagePurpose::ClientAuth];
     params.serial_number = Some(mkcert_serial());
+    // Lets the verifier pick the signing CA by key, not only by name.
+    params.use_authority_key_identifier_extension = true;
     let now = time::OffsetDateTime::now_utc();
     params.not_before = now;
     params.not_after = now + time::Duration::days(HOST_VALIDITY_DAYS);

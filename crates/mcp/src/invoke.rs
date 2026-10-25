@@ -596,7 +596,7 @@ mod tests {
             ),
             (
                 "services",
-                with(json!({"verb": "define", "name": "api", "cmd": "npm run dev", "port": 3000, "cwd": ".", "vault": "dev", "env": {"A": "b"}, "log_file": "app.log"})),
+                with(json!({"verb": "define", "name": "api", "cmd": "npm run dev", "port": 3000, "cwd": ".", "vault": "dev", "env": {"A": "b"}, "log_file": "app.log", "mapping": "api"})),
             ),
             ("services", with(json!({"verb": "up", "all": true, "wait": true, "timeout": "30s"}))),
             ("logs", with(json!({"name": "api", "errors": true, "since": "2m", "grep": "x", "last": 20}))),

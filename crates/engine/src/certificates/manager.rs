@@ -114,16 +114,21 @@ pub fn generate_ca_key() -> Result<KeyPair, String> {
     KeyPair::generate_for(&rcgen::PKCS_ECDSA_P256_SHA256).map_err(|e| e.to_string())
 }
 
-/// The serial mkcert picks: the ASCII digits of a number between 50000 and 99999.
+/// A random 128-bit serial, positive. Issuer + serial must be unique per certificate, and a small range
+/// made two machines' (or two generations') certificates collide.
 pub fn mkcert_serial() -> SerialNumber {
-    let n: u32 = rand::rng().random_range(50000..145000);
-    SerialNumber::from_slice(n.to_string().as_bytes())
+    let mut bytes: [u8; 16] = rand::rng().random();
+    bytes[0] = (bytes[0] & 0x7f) | 0x01;
+    SerialNumber::from_slice(&bytes)
 }
 
-/// The subject mkcert gives a CA, attributes in its order.
+/// The subject of a CA, attributes in mkcert's order. The common name carries a random suffix so each
+/// generated CA has its own name: with one fixed name, macOS builds chains against a stale CA of the same
+/// name left in the keychain and rejects the new certificates.
 fn ca_subject() -> DistinguishedName {
+    let suffix: u32 = rand::rng().random();
     let mut dn = DistinguishedName::new();
-    dn.push(DnType::CommonName, "Bifurc CA");
+    dn.push(DnType::CommonName, format!("Bifurc CA {suffix:08x}"));
     dn.push(DnType::CountryName, "US");
     dn.push(DnType::StateOrProvinceName, "Development");
     dn.push(DnType::LocalityName, "Local");
@@ -136,7 +141,7 @@ pub fn build_ca(key_pair: &KeyPair) -> Result<(String, String), String> {
     let mut params = CertificateParams::default();
     params.distinguished_name = ca_subject();
     params.is_ca = IsCa::Ca(BasicConstraints::Unconstrained);
-    params.key_usages = vec![KeyUsagePurpose::KeyCertSign];
+    params.key_usages = vec![KeyUsagePurpose::KeyCertSign, KeyUsagePurpose::CrlSign];
     params.serial_number = Some(mkcert_serial());
     let now = time::OffsetDateTime::now_utc();
     params.not_before = now;
@@ -184,6 +189,18 @@ pub fn get_cert_status(data_dir: &Path) -> (bool, Option<String>) {
     match std::fs::read_to_string(&cert_path) {
         Ok(pem) => (true, fingerprint_of(&pem)),
         Err(_) => (true, None),
+    }
+}
+
+#[cfg(test)]
+mod uniqueness_tests {
+    use super::*;
+
+    #[test]
+    fn every_generated_ca_is_different() {
+        let (a, b) = (build_ca(&generate_ca_key().unwrap()).unwrap().0, build_ca(&generate_ca_key().unwrap()).unwrap().0);
+        assert_ne!(a, b);
+        assert_ne!(identify_cert(&a).unwrap().subject, identify_cert(&b).unwrap().subject);
     }
 }
 

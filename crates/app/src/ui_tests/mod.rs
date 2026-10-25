@@ -17,6 +17,7 @@ mod requests;
 mod services;
 mod settings;
 mod shell;
+mod terminal;
 mod vaults;
 mod workspace;
 
