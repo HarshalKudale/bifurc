@@ -182,10 +182,13 @@ fn a_vault_a_sync_changed_is_reviewed_and_approved_before_use(cx: &mut gpui_kit:
 #[gpui_kit::test]
 fn a_vault_moved_off_the_repository_says_so_until_acknowledged(cx: &mut gpui_kit::TestAppContext) {
     let mut ui = open_populated(cx);
-    ui.fake.reply("vault.list", json!([
-        {"id": "vt2", "name": "Locked", "provider": "local", "state": "sealed", "secrets": [], "path": null,
-         "approved": true, "movedAt": 5},
-    ]));
+    ui.fake.reply(
+        "vault.list",
+        json!([
+            {"id": "vt2", "name": "Locked", "provider": "local", "state": "sealed", "secrets": [], "path": null,
+             "approved": true, "movedAt": 5},
+        ]),
+    );
     ui.fake.emit("event.vault.changed", json!({"workspaceId": "w1", "id": "vt2"}));
     ui.show(Screen::Vaults);
     assert!(ui.has("notification"), "the app says it once");

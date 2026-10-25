@@ -130,6 +130,14 @@ pub enum Handler {
     Webhook,
 }
 
+/// What a captured exchange can be saved as; ticked rows all save the same way.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Saves {
+    Nothing,
+    Request,
+    RequestOrMock,
+}
+
 impl Handler {
     pub const ALL: [Handler; 4] = [Handler::Mapping, Handler::Proxy, Handler::Mock, Handler::Webhook];
 
@@ -183,6 +191,17 @@ impl TrafficEntry {
             _ if origin == Some("server") => Handler::Mock,
             _ if self.is_local() => Handler::Mapping,
             _ => Handler::Proxy,
+        }
+    }
+
+    /// What it can be saved as. A mock answered it already, so it is saved already; a webhook listener took it to
+    /// become a request, and a WebSocket or SSE stream is a request only.
+    pub fn saves(&self) -> Saves {
+        match self.handler() {
+            Handler::Mock => Saves::Nothing,
+            Handler::Webhook => Saves::Request,
+            _ if self.kind.is_some() => Saves::Request,
+            _ => Saves::RequestOrMock,
         }
     }
 
@@ -443,7 +462,6 @@ pub fn push_message(messages: &mut Vec<StreamMessage>, message: StreamMessage) {
 }
 
 impl Exchange {
-
     /// The URL's query as name/value pairs, as written (not decoded).
     pub fn query(&self) -> Vec<(String, String)> {
         split_query(&self.url).1
@@ -665,12 +683,14 @@ mod tests {
 
     #[test]
     fn a_stream_is_its_own_type_and_keeps_its_message_count_through_updates() {
-        let socket = json!({ "id": "s", "timestamp": 1, "url": "http://x/ws", "kind": "ws", "live": true, "messageCount": 0 });
+        let socket =
+            json!({ "id": "s", "timestamp": 1, "url": "http://x/ws", "kind": "ws", "live": true, "messageCount": 0 });
         let mut entries = parse_event(&socket);
         assert_eq!((entries[0].resource_type(), entries[0].type_label().as_str()), (ResourceType::Stream, "ws"));
         assert!(entries[0].live);
         entries[0].message_count = 3;
-        let closed = json!({ "id": "s", "timestamp": 1, "url": "http://x/ws", "kind": "ws", "live": false, "messageCount": 0 });
+        let closed =
+            json!({ "id": "s", "timestamp": 1, "url": "http://x/ws", "kind": "ws", "live": false, "messageCount": 0 });
         merge_live(&mut entries, parse_event(&closed), 10);
         assert_eq!((entries.len(), entries[0].live, entries[0].message_count), (1, false, 3));
     }
@@ -699,6 +719,19 @@ mod tests {
         assert_eq!(handler(json!({ "id": "a", "via": "rule" })), Handler::Proxy);
         assert_eq!(handler(json!({ "id": "a", "origin": "reverse", "via": "error" })), Handler::Mapping);
         assert_eq!(handler(json!({ "id": "a", "origin": "forward", "via": "error" })), Handler::Proxy);
+    }
+
+    #[test]
+    fn a_mock_answer_saves_as_nothing_a_webhook_or_stream_as_a_request_only() {
+        let saves = |value: Value| TrafficEntry::from_value(&value).unwrap().saves();
+        assert_eq!(saves(json!({ "id": "a", "via": "mock" })), Saves::Nothing);
+        assert_eq!(saves(json!({ "id": "a", "origin": "server" })), Saves::Nothing);
+        assert_eq!(saves(json!({ "id": "a", "via": "mock", "kind": "ws" })), Saves::Nothing);
+        assert_eq!(saves(json!({ "id": "a", "origin": "webhook" })), Saves::Request);
+        assert_eq!(saves(json!({ "id": "a", "via": "proxy", "kind": "ws" })), Saves::Request);
+        assert_eq!(saves(json!({ "id": "a", "via": "mapping", "kind": "sse" })), Saves::Request);
+        assert_eq!(saves(json!({ "id": "a", "via": "proxy" })), Saves::RequestOrMock);
+        assert_eq!(saves(json!({ "id": "a", "via": "mapping" })), Saves::RequestOrMock);
     }
 
     /// Every `via` and `origin` the engine writes into a capture entry (see the report of this change).

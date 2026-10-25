@@ -357,9 +357,12 @@ impl VaultSetup {
         Stepper::new("vault-setup-steps")
             .small()
             .selected_index(current)
-            .items(steps.iter().enumerate().map(|(index, step)| {
-                StepperItem::new().disabled(index > current || self.busy).child(step.label())
-            }))
+            .items(
+                steps
+                    .iter()
+                    .enumerate()
+                    .map(|(index, step)| StepperItem::new().disabled(index > current || self.busy).child(step.label())),
+            )
             .on_click(cx.listener(move |this, index: &usize, _, cx| {
                 if *index < current && !this.busy {
                     this.step = targets[*index];
@@ -381,7 +384,8 @@ impl VaultSetup {
             } else {
                 t_with("vault_setup.storage.linked_description", &[("program", &provider.program)])
             };
-            let label = if provider.is_local() { t("vault_setup.storage.local").to_owned() } else { provider.label.clone() };
+            let label =
+                if provider.is_local() { t("vault_setup.storage.local").to_owned() } else { provider.label.clone() };
             ListItem::new(gpui_kit::ElementId::Name(format!("provider-{}", provider.id).into()))
                 .selected(self.provider.as_deref() == Some(provider.id.as_str()))
                 .px_2()
@@ -408,8 +412,10 @@ impl VaultSetup {
             .child(div().text_sm().text_color(theme.muted_foreground).child(t("vault_setup.storage.intro")))
             .child(v_flex().gap_1().children(rows))
             .when_some(missing, |this, provider| {
-                let text =
-                    t_with("vault_setup.storage.missing", &[("provider", &provider.label), ("program", &provider.program)]);
+                let text = t_with(
+                    "vault_setup.storage.missing",
+                    &[("provider", &provider.label), ("program", &provider.program)],
+                );
                 this.child(
                     v_flex().gap_1().child(Alert::warning("provider-missing", text)).child(
                         Link::new("provider-install")
@@ -443,11 +449,16 @@ impl VaultSetup {
                         .description(t("vault_setup.field.passphrase_help"))
                         .child(Input::new(&self.passphrase).py_1p5().mask_toggle()),
                 )
-                .child(Field::new().label(t("vault_setup.field.repeat")).child(Input::new(&self.repeat).py_1p5().mask_toggle()));
+                .child(
+                    Field::new()
+                        .label(t("vault_setup.field.repeat"))
+                        .child(Input::new(&self.repeat).py_1p5().mask_toggle()),
+                );
         } else {
             for (key, input) in &self.fields {
                 let required = provider.fields.iter().any(|f| f.key == *key && f.required);
-                form = form.child(Field::new().label(field_label(key)).required(required).child(Input::new(input).py_1p5()));
+                form = form
+                    .child(Field::new().label(field_label(key)).required(required).child(Input::new(input).py_1p5()));
             }
             if provider.takes_credential {
                 let kept = matches!(&self.purpose, Purpose::Setup(vault) if vault.has_credential);
@@ -501,15 +512,11 @@ impl VaultSetup {
                 v_flex()
                     .gap_1()
                     .child(div().text_sm().child(t_with("vault_setup.check.found", &[("count", &names.len())])))
-                    .child(
-                        v_flex()
-                            .id("vault-setup-found")
-                            .max_h(rems(14.))
-                            .overflow_y_scroll()
-                            .children(names.iter().map(|name| {
-                                div().text_sm().font_family(theme.mono_font_family.clone()).child(name.clone())
-                            })),
-                    )
+                    .child(v_flex().id("vault-setup-found").max_h(rems(14.)).overflow_y_scroll().children(
+                        names.iter().map(|name| {
+                            div().text_sm().font_family(theme.mono_font_family.clone()).child(name.clone())
+                        }),
+                    ))
                     .into_any_element()
             }
         });

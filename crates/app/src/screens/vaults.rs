@@ -349,7 +349,14 @@ impl VaultsScreen {
                     .flex_1()
                     .min_w_0()
                     .child(div().text_sm().font_family(theme.mono_font_family.clone()).child(name.to_owned()))
-                    .child(div().text_xs().text_color(theme.muted_foreground).overflow_hidden().text_ellipsis().child(usage)),
+                    .child(
+                        div()
+                            .text_xs()
+                            .text_color(theme.muted_foreground)
+                            .overflow_hidden()
+                            .text_ellipsis()
+                            .child(usage),
+                    ),
             )
             .child(
                 Button::new(gpui_kit::ElementId::Name(format!("copy-{name}").into()))
@@ -411,8 +418,11 @@ impl VaultsScreen {
                 .px_4()
                 .py_2()
                 .child(
-                    Alert::warning("vault-unapproved", t_with("vaults.unapproved_body", &[("provider", &vault.provider_label)]))
-                        .title(t("vaults.unapproved_title")),
+                    Alert::warning(
+                        "vault-unapproved",
+                        t_with("vaults.unapproved_body", &[("provider", &vault.provider_label)]),
+                    )
+                    .title(t("vaults.unapproved_title")),
                 )
                 .into_any_element()
         })
@@ -445,7 +455,9 @@ impl VaultsScreen {
                 .primary()
                 .small()
                 .label(t("vaults.setup_button"))
-                .on_click(cx.listener(move |this, _, window, cx| this.open_setup(Purpose::Setup(setup.clone()), window, cx)))
+                .on_click(
+                    cx.listener(move |this, _, window, cx| this.open_setup(Purpose::Setup(setup.clone()), window, cx)),
+                )
                 .into_any_element()
         } else if sealed {
             Button::new("unseal")
@@ -500,13 +512,9 @@ impl VaultsScreen {
                         .on_click(cx.listener(|this, _, _, cx| this.check(cx))),
                 )
                 .child(
-                    Button::new("vault-settings")
-                        .ghost()
-                        .small()
-                        .label(t("vaults.settings"))
-                        .on_click(cx.listener(move |this, _, window, cx| {
-                            this.open_setup(Purpose::Setup(settings.clone()), window, cx)
-                        })),
+                    Button::new("vault-settings").ghost().small().label(t("vaults.settings")).on_click(cx.listener(
+                        move |this, _, window, cx| this.open_setup(Purpose::Setup(settings.clone()), window, cx),
+                    )),
                 )
             });
 

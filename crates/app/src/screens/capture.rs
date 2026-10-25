@@ -39,7 +39,7 @@ use crate::{
     components::{
         Syntax,
         binary::{BinaryBody, save_to_file, suggested_file_name},
-                master_detail::list_over_detail,
+        master_detail::list_over_detail,
         page,
     },
     engine::{call, call_in, describe, failure, fetch_artifact},
@@ -52,7 +52,7 @@ use crate::{
         media::BodyClass,
         snippet::{RequestParts, SnippetKind, snippet},
         traffic::{
-            self, Exchange, Handler, MAX_STREAM_MESSAGES, RESPONSE_BODY_LIMIT, ResourceType, StreamMessage,
+            self, Exchange, Handler, MAX_STREAM_MESSAGES, RESPONSE_BODY_LIMIT, ResourceType, Saves, StreamMessage,
             TrafficEntry, body_class, clock_utc,
         },
         vault::VaultState,
@@ -557,10 +557,12 @@ impl CaptureScreen {
         }
         let fresh = matches!(self.detail, Detail::Loading);
         if exchange.kind.is_some() {
-            let (id, live) = self.selected_entry().map_or((String::new(), false), |entry| (entry.id.clone(), entry.live));
+            let (id, live) =
+                self.selected_entry().map_or((String::new(), false), |entry| (entry.id.clone(), entry.live));
             self.stream.update(cx, |stream, cx| stream.show(&id, &exchange, live, cx));
             // A stream opens on its messages; its payload and response tabs do not exist.
-            if (fresh && self.section != Section::Logs) || matches!(self.section, Section::Payload | Section::Response) {
+            if (fresh && self.section != Section::Logs) || matches!(self.section, Section::Payload | Section::Response)
+            {
                 self.section = Section::Messages;
             }
         } else if self.section == Section::Messages {
@@ -1031,11 +1033,12 @@ impl CaptureScreen {
             }
             if let ([id], [capture_id]) = (saved.as_slice(), ids.as_slice()) {
                 // A captured stream was saved as a request of its own type.
-                let kind = match this.entries.iter().find(|entry| &entry.id == capture_id).and_then(|e| e.kind.as_deref()) {
-                    Some("ws") => RequestKind::WebSocket,
-                    Some("sse") => RequestKind::Sse,
-                    _ => RequestKind::Rest,
-                };
+                let kind =
+                    match this.entries.iter().find(|entry| &entry.id == capture_id).and_then(|e| e.kind.as_deref()) {
+                        Some("ws") => RequestKind::WebSocket,
+                        Some("sse") => RequestKind::Sse,
+                        _ => RequestKind::Rest,
+                    };
                 cx.emit(CaptureEvent::SavedRequest { id: id.clone(), kind });
             }
             this.checked.clear();
@@ -1050,6 +1053,9 @@ impl CaptureScreen {
             return;
         }
         let Some(entry) = self.selected_entry() else { return };
+        if !matches!((entry.saves(), mock), (Saves::RequestOrMock, _) | (Saves::Request, false)) {
+            return;
+        }
         if !mock {
             return self.import_requests(vec![entry.id.clone()], false, window, cx);
         }
@@ -1064,6 +1070,17 @@ impl CaptureScreen {
         self.saving = true;
         cx.notify();
         self.save_next(run, window, cx);
+    }
+
+    /// How the ticked rows save; every ticked row saves the same way.
+    fn ticked_saves(&self) -> Option<Saves> {
+        self.entries.iter().find(|entry| self.checked.contains(&entry.id)).map(TrafficEntry::saves)
+    }
+
+    /// The row can be ticked: it saves as something, and as the rows ticked already do.
+    fn tickable(&self, entry: &TrafficEntry, ticked: Option<Saves>) -> bool {
+        let saves = entry.saves();
+        saves != Saves::Nothing && ticked.is_none_or(|ticked| ticked == saves)
     }
 
     /// The ticked exchanges, oldest first, with the names they are saved under.
@@ -1111,6 +1128,10 @@ impl CaptureScreen {
             return;
         }
         let pending = self.checked_exchanges();
+        match (self.ticked_saves(), mock) {
+            (Some(Saves::RequestOrMock), _) | (Some(Saves::Request), false) => {}
+            _ => return,
+        }
         if !mock {
             return self.import_requests(pending.into_iter().map(|(id, _)| id).collect(), false, window, cx);
         }
@@ -1307,6 +1328,7 @@ impl CaptureScreen {
     fn render_toolbar(&self, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
         let theme = cx.theme().clone();
         let ticked = self.checked.len();
+        let ticked_saves = self.ticked_saves();
         let selected_tab = self
             .type_filter
             .map_or(0, |kind| ResourceType::ALL.iter().position(|candidate| *candidate == kind).map_or(0, |ix| ix + 1));
@@ -1398,14 +1420,14 @@ impl CaptureScreen {
                         Button::new("capture-save-checked-requests")
                             .small()
                             .label(t("capture.save_checked_requests"))
-                            .disabled(self.saving)
+                            .disabled(self.saving || ticked_saves.is_none_or(|saves| saves == Saves::Nothing))
                             .on_click(cx.listener(|this, _, window, cx| this.save_checked(false, window, cx))),
                     )
                     .child(
                         Button::new("capture-save-checked-mocks")
                             .small()
                             .label(t("capture.save_checked_mocks"))
-                            .disabled(self.saving)
+                            .disabled(self.saving || ticked_saves != Some(Saves::RequestOrMock))
                             .on_click(cx.listener(|this, _, window, cx| this.save_checked(true, window, cx))),
                     )
                     .child(
@@ -1438,7 +1460,16 @@ impl CaptureScreen {
         // Positions in `entries`, so the rows in view can be read in place instead of copied.
         let visible: Vec<usize> =
             self.entries.iter().enumerate().filter(|(_, entry)| self.shows(entry, &needle)).map(|(ix, _)| ix).collect();
-        let visible_ids: Vec<String> = visible.iter().map(|ix| self.entries[*ix].id.clone()).collect();
+        // Ticking all takes the rows in view that save as the ticked ones do, or as the first one that saves.
+        let ticked_saves = self
+            .ticked_saves()
+            .or_else(|| visible.iter().map(|ix| self.entries[*ix].saves()).find(|saves| *saves != Saves::Nothing));
+        let visible_ids: Vec<String> = visible
+            .iter()
+            .map(|ix| &self.entries[*ix])
+            .filter(|entry| self.tickable(entry, ticked_saves))
+            .map(|entry| entry.id.clone())
+            .collect();
         let all_checked = !visible_ids.is_empty() && visible_ids.iter().all(|id| self.checked.contains(id));
         if self.entries.is_empty() {
             return page::empty(
@@ -1461,6 +1492,14 @@ impl CaptureScreen {
                     .filter_map(|ix| this.entries.get(*visible.get(ix)?))
                     .map(|entry| {
                         let id = entry.id.clone();
+                        let checked = this.checked.contains(&entry.id);
+                        let untickable = match entry.saves() {
+                            Saves::Nothing => Some(t("capture.check_mock_tooltip")),
+                            _ if !checked && !this.tickable(entry, this.ticked_saves()) => {
+                                Some(t("capture.check_other_kind_tooltip"))
+                            }
+                            _ => None,
+                        };
                         ListItem::new(gpui_kit::ElementId::Name(format!("capture-{}", entry.id).into()))
                             .selected(this.selected.as_deref() == Some(entry.id.as_str()))
                             .w_full()
@@ -1482,7 +1521,9 @@ impl CaptureScreen {
                                                     format!("capture-check-{}", entry.id).into(),
                                                 ))
                                                 .small()
-                                                .checked(this.checked.contains(&entry.id))
+                                                .checked(checked)
+                                                .disabled(untickable.is_some())
+                                                .when_some(untickable, |checkbox, tip| checkbox.tooltip(tip))
                                                 .on_change(
                                                     cx.listener(move |this, checked: &bool, _, cx| {
                                                         if *checked {
@@ -1605,20 +1646,24 @@ impl CaptureScreen {
                     .text_color(theme.muted_foreground)
                     .border_b_1()
                     .border_color(theme.border)
-                    .child(div().flex_none().child(
-                        Checkbox::new("capture-check-all").small().checked(all_checked).on_change(cx.listener(
-                            move |this, checked: &bool, _, cx| {
-                                for id in &visible_ids {
-                                    if *checked {
-                                        this.checked.insert(id.clone());
-                                    } else {
-                                        this.checked.remove(id);
+                    .child(
+                        div().flex_none().child(
+                            Checkbox::new("capture-check-all")
+                                .small()
+                                .checked(all_checked)
+                                .disabled(visible_ids.is_empty())
+                                .on_change(cx.listener(move |this, checked: &bool, _, cx| {
+                                    for id in &visible_ids {
+                                        if *checked {
+                                            this.checked.insert(id.clone());
+                                        } else {
+                                            this.checked.remove(id);
+                                        }
                                     }
-                                }
-                                cx.notify();
-                            },
-                        )),
-                    ))
+                                    cx.notify();
+                                })),
+                        ),
+                    )
                     .child(div().flex_1().child(t("capture.field.name")))
                     .child(div().w_16().flex_none().child(t("capture.field.method")))
                     .child(div().w_20().flex_none().child(t("capture.field.status")))
@@ -1948,20 +1993,20 @@ impl CaptureScreen {
                                 }
                             }))
                     })
-                    .child(
+                    .children((entry.saves() != Saves::Nothing).then(|| {
                         Button::new("capture-save-request")
                             .small()
                             .label(t("capture.save_as_request"))
                             .disabled(self.saving)
-                            .on_click(cx.listener(|this, _, window, cx| this.save_as(false, window, cx))),
-                    )
-                    .child(
+                            .on_click(cx.listener(|this, _, window, cx| this.save_as(false, window, cx)))
+                    }))
+                    .children((entry.saves() == Saves::RequestOrMock).then(|| {
                         Button::new("capture-save-mock")
                             .small()
                             .label(t("capture.save_as_mock"))
                             .disabled(self.saving)
-                            .on_click(cx.listener(|this, _, window, cx| this.save_as(true, window, cx))),
-                    )
+                            .on_click(cx.listener(|this, _, window, cx| this.save_as(true, window, cx)))
+                    }))
                     .child(
                         Button::new("capture-copy-curl")
                             .ghost()
