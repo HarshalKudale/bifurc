@@ -1239,10 +1239,12 @@ impl AppModel {
 
     pub fn set_active_workspace(&mut self, id: &str, cx: &mut Context<Self>) {
         let client = self.engine.client.clone();
-        call(&client, cx, "workspace.setActive", json!({ "id": id }), |this, outcome, cx| match outcome {
-            Ok(_) => this.refresh(cx),
-            Err(error) => cx
-                .emit(ModelEvent::Notice(t_with("app.model.switch_workspace_failed", &[("error", &describe(&error))]))),
+        call(&client, cx, "workspace.setActive", json!({ "id": id }), |this, outcome, cx| {
+            if let Err(error) = outcome {
+                cx.emit(ModelEvent::Notice(t_with("app.model.switch_workspace_failed", &[("error", &describe(&error))])));
+            }
+            // Also after a failure: a workspace just made is in the config, and the screen waiting on it must see it.
+            this.refresh(cx);
         });
     }
 
