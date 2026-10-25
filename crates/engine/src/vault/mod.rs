@@ -155,9 +155,8 @@ fn verify(ws_id: &str, vault: &VaultFile, passphrase: &str) -> Result<crypto::Ke
 }
 
 fn check_name_free(ws_id: &str, name: &str, except_id: Option<&str>) -> Result<()> {
-    let taken = store::list(ws_id)
-        .into_iter()
-        .any(|v| v.name().eq_ignore_ascii_case(name) && Some(v.id()) != except_id);
+    let taken =
+        store::list(ws_id).into_iter().any(|v| v.name().eq_ignore_ascii_case(name) && Some(v.id()) != except_id);
     if taken {
         Err(EngineError::conflict(format!("A vault named \"{name}\" already exists."))
             .keyed("vault.name_taken", json!({ "name": name })))
@@ -195,8 +194,8 @@ fn require_cli_session(ctx: &CommandContext) -> Result<()> {
 /// engine have no session and are its own.
 fn require_person(ctx: &CommandContext) -> Result<()> {
     let Some(session) = &ctx.session else { return Ok(()) };
-    let at_terminal = session.client_info.as_ref().and_then(|info| info.get("terminal")).and_then(Value::as_str)
-        == Some("yes");
+    let at_terminal =
+        session.client_info.as_ref().and_then(|info| info.get("terminal")).and_then(Value::as_str) == Some("yes");
     match session.client_name.as_deref() {
         Some("desktop-ui") => Ok(()),
         Some("cli") if at_terminal => Ok(()),
@@ -517,12 +516,14 @@ pub fn register(registry: &mut CommandRegistry) {
             return Ok(summary(&ws_id, &vault));
         }
         match vault {
-            Vault::Local(local) => blocking(move || {
-                let key = verify(&ws_id, &local, &passphrase)?;
-                state::unseal(&ws_id, &id, &local.name, Some(key.clone()), local.read_all(&key));
-                Ok(summary(&ws_id, &Vault::Local(local)))
-            })
-            .await,
+            Vault::Local(local) => {
+                blocking(move || {
+                    let key = verify(&ws_id, &local, &passphrase)?;
+                    state::unseal(&ws_id, &id, &local.name, Some(key.clone()), local.read_all(&key));
+                    Ok(summary(&ws_id, &Vault::Local(local)))
+                })
+                .await
+            }
             Vault::Linked(mut linked) => {
                 require_person(&ctx)?;
                 let values = pull_linked(&ws_id, &linked).await?;
@@ -653,10 +654,8 @@ pub fn register(registry: &mut CommandRegistry) {
         let id = str_of(&params, "id").to_string();
         blocking(move || {
             let vault = store::get(&ws_id, &id)?;
-            let secrets: serde_json::Map<String, Value> = ready_values(&ws_id, &vault)?
-                .into_iter()
-                .map(|(name, value)| (name, json!(value.as_str())))
-                .collect();
+            let secrets: serde_json::Map<String, Value> =
+                ready_values(&ws_id, &vault)?.into_iter().map(|(name, value)| (name, json!(value.as_str()))).collect();
             Ok(json!({ "id": vault.id(), "name": vault.name(), "secrets": secrets }))
         })
         .await

@@ -390,23 +390,23 @@ impl Shell {
         };
         let app_model = self.model.clone();
         let agent_badges = self.render_agent_badges(cx);
-        let running = self.terminal.read(cx).counts().1;
-        let terminal_label = if running == 0 {
-            t("shell.chrome.terminal").to_owned()
+        let running = self.logs.read(cx).counts().1;
+        let logs_label = if running == 0 {
+            t("shell.chrome.logs").to_owned()
         } else {
-            t_with("shell.chrome.terminal_running", &[("count", &running)])
+            t_with("shell.chrome.logs_running", &[("count", &running)])
         };
 
-        let terminal_button = Button::new("terminal-toggle")
+        let logs_button = Button::new("logs-toggle")
             .ghost()
             .xsmall()
-            .icon(IconName::SquareTerminal)
-            .label(terminal_label)
-            .selected(self.terminal_open)
-            .tooltip(t("shell.chrome.terminal_tooltip"))
-            .on_click(cx.listener(|this, _, _, cx| this.toggle_terminal(cx)));
+            .icon(IconName::FileText)
+            .label(logs_label)
+            .selected(self.logs_open)
+            .tooltip(t("shell.chrome.logs_tooltip"))
+            .on_click(cx.listener(|this, _, _, cx| this.toggle_logs(cx)));
 
-        StatusBar::new().left(h_flex().gap_3().child(self.render_git_status(cx)).child(terminal_button)).right(
+        StatusBar::new().left(h_flex().gap_3().child(self.render_git_status(cx)).child(logs_button)).right(
             h_flex()
                 .gap_3()
                 .when(!status.is_empty(), |this| this.child(div().text_color(theme.muted_foreground).child(status)))

@@ -34,8 +34,6 @@ use crate::{
     },
 };
 
-mod terminal;
-
 const DIR: &str = "devservices";
 /// Lines kept per service, and the longest one kept whole.
 const RING: usize = 5000;
@@ -498,7 +496,6 @@ async fn kill_tree(pid: u32) {
 }
 
 pub fn register(registry: &mut CommandRegistry) {
-    terminal::register(registry);
     registry.register("devservice.define", |params, _| async move {
         let dir = dir_of(&params)?;
         let name = str_of(&params, "name");

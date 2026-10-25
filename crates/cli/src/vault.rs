@@ -460,7 +460,14 @@ mod tests {
     #[test]
     fn a_linked_vault_is_created_with_the_settings_of_its_source() {
         let argv = [
-            "vault", "create", "team", "--provider", "aws", "--setting", "secretId=prod/app", "--setting",
+            "vault",
+            "create",
+            "team",
+            "--provider",
+            "aws",
+            "--setting",
+            "secretId=prod/app",
+            "--setting",
             "region=eu-west-1",
         ];
         let mut answers = engine("sealed");
@@ -508,7 +515,10 @@ mod tests {
         let argv = ["vault", "run", "nope"];
         let command = ["npm".to_string()];
         let (out, calls) = with_engine(&argv, engine("unsealed"), |c| run(c, &command).map(|code| code.to_string()));
-        assert_eq!(out.unwrap_err(), CliError::not_found("no vault named \"nope\" (known: api_keys, db, team, pulled)"));
+        assert_eq!(
+            out.unwrap_err(),
+            CliError::not_found("no vault named \"nope\" (known: api_keys, db, team, pulled)")
+        );
         assert!(payloads(&calls, "vault.secrets").is_empty());
 
         let argv = ["vault", "run", "keys"];

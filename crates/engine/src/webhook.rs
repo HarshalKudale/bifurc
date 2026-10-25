@@ -214,8 +214,7 @@ fn start_listener(
         }
     });
     let id = mk_id();
-    let started =
-        Running { id: id.clone(), port: bound.port(), name, forward, workspace_id, owner, hits, task };
+    let started = Running { id: id.clone(), port: bound.port(), name, forward, workspace_id, owner, hits, task };
     RUNNING.lock().push(started);
     announce();
     Ok((id, bound.port()))

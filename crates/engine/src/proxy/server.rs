@@ -345,8 +345,7 @@ pub(super) async fn dispatch_tunnelled<W: AsyncRead + AsyncWrite + Unpin>(
     }
     let live = LiveLog { base: &base, via: "proxy", target: Some(hostname.to_string()) };
     let outcome = if secure {
-        passthrough_to_upstream_https(out, &head.method, hostname, port, &req_path, &forwarded, body, Some(&live))
-            .await
+        passthrough_to_upstream_https(out, &head.method, hostname, port, &req_path, &forwarded, body, Some(&live)).await
     } else {
         passthrough_to_upstream(out, &head.method, &url, &req_path, &forwarded, body, Some(&live)).await
     };

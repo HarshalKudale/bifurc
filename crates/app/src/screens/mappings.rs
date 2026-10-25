@@ -203,6 +203,7 @@ impl MappingsScreen {
         } else {
             format!("{scheme}://{}:{port}", mapping.domain)
         };
+        let open_url = url.clone();
         let key = |part: &str| gpui_kit::ElementId::Name(format!("mapping-{part}-{}", mapping.id).into());
 
         h_flex()
@@ -292,6 +293,15 @@ impl MappingsScreen {
                 if deleted { label.line_through() } else { label }
             })
             .child(div().w_24().flex_none().text_xs().text_color(theme.muted_foreground).child(state_label))
+            .child(div().w_12().flex_none().children((!deleted && locked.is_none()).then(|| {
+                Button::new(key("open"))
+                    .icon(IconName::ExternalLink)
+                    .ghost()
+                    .small()
+                    .tooltip(t("mappings.button.open_tooltip"))
+                    .disabled(!mapping.enabled)
+                    .on_click(move |_, _, cx| cx.open_url(&open_url))
+            })))
             .child(div().w_8().flex_none().children((!deleted && locked.is_none()).then(|| {
                 Button::new(key("actions")).icon(IconName::Ellipsis).ghost().small().dropdown_menu(move |menu, _, _| {
                     let (edit_view, delete_view) = (this.clone(), this.clone());
@@ -437,6 +447,7 @@ impl Render for MappingsScreen {
                         .child(div().flex_1().child(t("mappings.column.target")))
                         .child(div().w_48().flex_none().child(t("mappings.column.label")))
                         .child(div().w_24().flex_none().child(t("mappings.column.status")))
+                        .child(div().w_12().flex_none().child(t("mappings.column.open")))
                         .child(div().w_8().flex_none()),
                 )
                 .child(v_flex().id("mapping-rows").flex_1().min_h_0().overflow_y_scroll().children(rows))

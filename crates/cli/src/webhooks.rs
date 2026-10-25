@@ -84,8 +84,8 @@ fn listen(ctx: &mut Context, out: &mut dyn Write) -> Result<String> {
     if let Some(folder_id) = folder_id {
         entity["folderId"] = json!(folder_id);
     }
-    let made = ctx
-        .request("entity.create", json!({ "kind": "webhookRequests", "workspaceId": workspace, "entity": entity }))?;
+    let made =
+        ctx.request("entity.create", json!({ "kind": "webhookRequests", "workspaceId": workspace, "entity": entity }))?;
     let saved = created(&made);
     Ok(ctx.print(&saved, || format!("Saved webhook request \"{}\"", js_template(saved.get("name")))))
 }
@@ -306,9 +306,12 @@ mod tests {
         let argv = ["webhooks", "listen", "--name", "Stripe in", "--url", "http://localhost:3000/hook"];
         let (out, calls, printed) = go(&argv, capturing(got), vec![]);
         assert_eq!(out.unwrap(), "Saved webhook request \"Stripe in\"");
-        assert_eq!(printed, "listening https://calm-fox.trycloudflare.com (Ctrl+C to stop)
+        assert_eq!(
+            printed,
+            "listening https://calm-fox.trycloudflare.com (Ctrl+C to stop)
 POST received
-");
+"
+        );
         assert_eq!(payloads(&calls, "webhook.capture.start"), [json!({"workspaceId": "w1"})]);
         assert_eq!(payloads(&calls, "webhook.capture.wait")[0]["captureId"], "c1");
         assert_eq!(
@@ -321,7 +324,8 @@ POST received
 
     #[test]
     fn listen_saves_nothing_when_the_capture_ends_empty() {
-        let (out, calls, _) = go(&["webhooks", "listen"], capturing(json!({"captured": false, "reason": "expired"})), vec![]);
+        let (out, calls, _) =
+            go(&["webhooks", "listen"], capturing(json!({"captured": false, "reason": "expired"})), vec![]);
         assert_eq!(out.unwrap_err().line(), "bifurc: no webhook arrived (capture expired)");
         assert!(payloads(&calls, "entity.create").is_empty());
     }

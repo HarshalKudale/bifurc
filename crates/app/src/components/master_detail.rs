@@ -28,7 +28,7 @@ pub fn master_detail(list: Option<impl IntoElement>, detail: impl IntoElement, c
         .items_stretch()
         .bg(theme.background)
         .children(list.map(|list| {
-            div().w_64().flex_none().h_full().border_r_1().border_color(theme.border).bg(theme.sidebar).child(list)
+            div().w_64().flex_none().h_full().border_r_1().border_color(theme.border).bg(theme.group_box).child(list)
         }))
         .child(div().flex_1().min_w_0().child(detail))
 }

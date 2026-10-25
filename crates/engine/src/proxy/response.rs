@@ -14,12 +14,10 @@ use serde_json::json;
 
 use super::routing::{finished_entry, mask_secrets};
 use crate::{
-    kernel::traffic::{
-        Headers, MAX_LOGGED_BODY_BYTES, RequestLogEntry, emit_log, emit_log_chunk, emit_log_message,
-    },
+    kernel::traffic::{Headers, MAX_LOGGED_BODY_BYTES, RequestLogEntry, emit_log, emit_log_chunk, emit_log_message},
     mocks::UpstreamResponse,
-    sse::parser::Parser,
     scripting::execute_response_script,
+    sse::parser::Parser,
     utils::{
         decompress::{decompress_body, strip_content_encoding},
         http::{ClientOptions, client as http_client, is_hop_by_hop, root_message},

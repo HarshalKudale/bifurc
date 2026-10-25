@@ -73,7 +73,12 @@ pub fn register(registry: &mut CommandRegistry) {
 
         init_workspace_dir(&id, &name)?;
         // Without git the workspace is plain files: no history, no audit log, no sync.
-        let git_tracked = check_git_installed().await && init_workspace_repo(&id).await.is_ok();
+        // Bounded: the workspace is already saved, and a git that never answers must not hold the caller's reply.
+        // A repository left half made is finished by the next start.
+        let git_tracked = check_git_installed().await
+            && tokio::time::timeout(std::time::Duration::from_secs(30), init_workspace_repo(&id))
+                .await
+                .is_ok_and(|made| made.is_ok());
         if first {
             notify_config_changed();
         }

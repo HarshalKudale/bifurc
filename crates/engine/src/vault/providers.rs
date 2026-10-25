@@ -289,7 +289,11 @@ fn from_object(value: &Value) -> Option<Vec<(String, String)>> {
 }
 
 /// Reads one name each, at once.
-async fn each(run: &Run<'_>, names: Vec<String>, args_for: impl Fn(&str) -> Vec<String>) -> std::result::Result<Vec<(String, String)>, String> {
+async fn each(
+    run: &Run<'_>,
+    names: Vec<String>,
+    args_for: impl Fn(&str) -> Vec<String>,
+) -> std::result::Result<Vec<(String, String)>, String> {
     let read = futures::future::join_all(names.iter().map(|name| run.call(args_for(name)))).await;
     names.into_iter().zip(read).map(|(name, value)| value.map(|v| (name, one_line(&v)))).collect()
 }
@@ -301,7 +305,11 @@ async fn pull_raw(run: &Run<'_>) -> std::result::Result<Vec<(String, String)>, S
         "1password" => {
             let item = setting(s, "item").unwrap_or_default();
             let found = run
-                .json(with(args(&["item", "get", item, "--format", "json"]), s, &[("vault", "--vault"), ("account", "--account")]))
+                .json(with(
+                    args(&["item", "get", item, "--format", "json"]),
+                    s,
+                    &[("vault", "--vault"), ("account", "--account")],
+                ))
                 .await?;
             Ok(found["fields"]
                 .as_array()
@@ -315,7 +323,16 @@ async fn pull_raw(run: &Run<'_>) -> std::result::Result<Vec<(String, String)>, S
         // secret named after it.
         "aws" => {
             let id = setting(s, "secretId").unwrap_or_default();
-            let base = args(&["secretsmanager", "get-secret-value", "--secret-id", id, "--query", "SecretString", "--output", "text"]);
+            let base = args(&[
+                "secretsmanager",
+                "get-secret-value",
+                "--secret-id",
+                id,
+                "--query",
+                "SecretString",
+                "--output",
+                "text",
+            ]);
             let text = one_line(&run.call(with(base, s, &[("region", "--region"), ("profile", "--profile")])).await?);
             let parsed = serde_json::from_str::<Value>(&text).ok();
             Ok(match parsed.as_ref().and_then(from_object) {
@@ -326,25 +343,48 @@ async fn pull_raw(run: &Run<'_>) -> std::result::Result<Vec<(String, String)>, S
         // Every secret of the key vault.
         "azure" => {
             let vault = setting(s, "vaultName").unwrap_or_default();
-            let listed =
-                run.call(args(&["keyvault", "secret", "list", "--vault-name", vault, "--query", "[].name", "-o", "tsv"])).await?;
-            let names: Vec<String> = listed.lines().map(str::trim).filter(|n| !n.is_empty()).map(str::to_string).collect();
+            let listed = run
+                .call(args(&["keyvault", "secret", "list", "--vault-name", vault, "--query", "[].name", "-o", "tsv"]))
+                .await?;
+            let names: Vec<String> =
+                listed.lines().map(str::trim).filter(|n| !n.is_empty()).map(str::to_string).collect();
             each(run, names, |name| {
-                args(&["keyvault", "secret", "show", "--vault-name", vault, "--name", name, "--query", "value", "-o", "tsv"])
+                args(&[
+                    "keyvault",
+                    "secret",
+                    "show",
+                    "--vault-name",
+                    vault,
+                    "--name",
+                    name,
+                    "--query",
+                    "value",
+                    "-o",
+                    "tsv",
+                ])
             })
             .await
         }
         // Every secret of the project (or those the filter keeps), at its latest version.
         "gcp" => {
-            let listed =
-                run.call(with(args(&["secrets", "list", "--format=value(name)"]), s, &[("project", "--project"), ("filter", "--filter")])).await?;
+            let listed = run
+                .call(with(
+                    args(&["secrets", "list", "--format=value(name)"]),
+                    s,
+                    &[("project", "--project"), ("filter", "--filter")],
+                ))
+                .await?;
             let names: Vec<String> = listed
                 .lines()
                 .map(|line| line.trim().rsplit('/').next().unwrap_or_default().to_string())
                 .filter(|n| !n.is_empty())
                 .collect();
             each(run, names, |name| {
-                with(args(&["secrets", "versions", "access", "latest", &format!("--secret={name}")]), s, &[("project", "--project")])
+                with(
+                    args(&["secrets", "versions", "access", "latest", &format!("--secret={name}")]),
+                    s,
+                    &[("project", "--project")],
+                )
             })
             .await
         }
@@ -374,7 +414,11 @@ async fn pull_raw(run: &Run<'_>) -> std::result::Result<Vec<(String, String)>, S
         "doppler" => {
             let base = args(&["secrets", "download", "--no-file", "--format", "json"]);
             let found = run.json(with(base, s, &[("project", "--project"), ("config", "--config")])).await?;
-            Ok(from_object(&found).unwrap_or_default().into_iter().filter(|(k, _)| !k.starts_with("DOPPLER_")).collect())
+            Ok(from_object(&found)
+                .unwrap_or_default()
+                .into_iter()
+                .filter(|(k, _)| !k.starts_with("DOPPLER_"))
+                .collect())
         }
         other => Err(format!("\"{other}\" is not a vault provider")),
     }

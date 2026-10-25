@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 /// Every event that travels on the wire. A bus event is named without the `event.` prefix.
-pub const EVENT_NAMES: [&str; 47] = [
+pub const EVENT_NAMES: [&str; 45] = [
     "event.request.stream",
     "event.flow.progress",
     "event.flow.finished",
@@ -48,8 +48,6 @@ pub const EVENT_NAMES: [&str; 47] = [
     "event.mail.changed",
     "event.devservice.changed",
     "event.devservice.output",
-    "event.terminal.changed",
-    "event.terminal.output",
     "event.webhook.changed",
     "event.claims.changed",
 ];

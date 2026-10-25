@@ -154,7 +154,8 @@ pub(crate) async fn install() -> Result<Value> {
         bytes.to_vec()
     };
     let target = installed_path();
-    write_program(&target, &program).map_err(|error| EngineError::engine(format!("cannot install cloudflared: {error}")))?;
+    write_program(&target, &program)
+        .map_err(|error| EngineError::engine(format!("cannot install cloudflared: {error}")))?;
     Ok(status())
 }
 
@@ -176,10 +177,8 @@ fn write_program(target: &Path, program: &[u8]) -> std::io::Result<()> {
 /// The address in a line of cloudflared's log, if the line announces the quick tunnel.
 fn url_in(line: &str) -> Option<String> {
     line.match_indices("https://").find_map(|(at, _)| {
-        let host: String = line[at + 8..]
-            .chars()
-            .take_while(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '.')
-            .collect();
+        let host: String =
+            line[at + 8..].chars().take_while(|c| c.is_ascii_alphanumeric() || *c == '-' || *c == '.').collect();
         (host.ends_with(".trycloudflare.com") && host != "api.trycloudflare.com").then(|| format!("https://{host}"))
     })
 }
@@ -205,7 +204,8 @@ pub async fn open(port: u16) -> Result<Tunnel> {
         .kill_on_drop(true);
     #[cfg(windows)]
     command.creation_flags(0x0800_0000);
-    let mut child = command.spawn().map_err(|error| EngineError::engine(format!("cannot start cloudflared: {error}")))?;
+    let mut child =
+        command.spawn().map_err(|error| EngineError::engine(format!("cannot start cloudflared: {error}")))?;
     let stderr = child.stderr.take().ok_or_else(|| EngineError::engine("cloudflared gave no output"))?;
     let mut lines = BufReader::new(stderr).lines();
     let announced = tokio::time::timeout(OPEN_TIMEOUT, async {
@@ -243,7 +243,10 @@ mod tests {
         assert_eq!(url_in(boxed).as_deref(), Some("https://calm-river-fox-1234.trycloudflare.com"));
         assert_eq!(url_in("INF Requesting new quick Tunnel on https://api.trycloudflare.com..."), None);
         assert_eq!(url_in("INF Registered tunnel connection connIndex=0"), None);
-        assert_eq!(url_in("see https://example.com and https://a-b.trycloudflare.com/x").as_deref(), Some("https://a-b.trycloudflare.com"));
+        assert_eq!(
+            url_in("see https://example.com and https://a-b.trycloudflare.com/x").as_deref(),
+            Some("https://a-b.trycloudflare.com")
+        );
     }
 
     #[test]

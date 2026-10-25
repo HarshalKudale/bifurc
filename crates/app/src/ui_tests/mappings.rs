@@ -23,6 +23,8 @@ fn mappings_are_listed_and_only_a_usable_one_has_a_switch(cx: &mut gpui_kit::Tes
     assert!(!ui.has("mapping-enabled-m2"), "a deleted one does not");
     assert!(!ui.has("mapping-enabled-m3"), "nor does one a newer Bifurc saved");
     assert!(ui.has("mapping-revert-delete-m2") && ui.has("mapping-confirm-delete-m2"));
+    assert!(ui.has("mapping-open-m1"), "an ordinary mapping has its open button");
+    assert!(!ui.has("mapping-open-m2") && !ui.has("mapping-open-m3"), "a deleted or locked one has none");
 }
 
 #[gpui_kit::test]

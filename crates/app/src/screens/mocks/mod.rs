@@ -718,6 +718,7 @@ impl MocksScreen {
                 title: t(CURL_TAB_TITLE).into(),
                 dirty: false,
                 can_duplicate: false,
+                ..Default::default()
             });
         }
         let editor = tab.editor.read(cx);
@@ -727,6 +728,7 @@ impl MocksScreen {
             title: editor.title(cx),
             dirty: editor.is_dirty(cx),
             can_duplicate: matches!(tab.key, TabKey::Saved(_)),
+            ..Default::default()
         })
     }
 
@@ -1041,6 +1043,8 @@ impl MocksScreen {
             scroll: self.tab_scroll.clone(),
             describe: Self::describe_tab,
             on_action: Self::tab_action,
+            active_background: cx.theme().tab_active,
+            bar_background: cx.theme().tab_bar,
         };
         let prefix = h_flex().flex_none().px_1().child(
             Button::new("toggle-mock-tree")

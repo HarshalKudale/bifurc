@@ -1462,5 +1462,8 @@ async fn a_mail_node_waits_for_a_mail_of_this_run_and_hands_on_its_code() {
     );
     let report = run("nothing").await;
     assert_eq!(report["status"], "failed");
-    assert!(str_of(&report, "error").contains("No matching mail for nobody@flow-mail.test arrived within 100ms"), "{report}");
+    assert!(
+        str_of(&report, "error").contains("No matching mail for nobody@flow-mail.test arrived within 100ms"),
+        "{report}"
+    );
 }

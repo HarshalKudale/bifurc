@@ -342,7 +342,10 @@ async fn a_websocket_to_a_mapped_domain_reaches_its_target() {
     assert_eq!(reply, Message::text("PING"));
 
     let open = entries.wait(|e| e["url"] == "http://chat.example/socket").await;
-    assert_eq!((open["via"].as_str(), open["kind"].as_str(), open["live"].as_bool()), (Some("mapping"), Some("ws"), Some(true)));
+    assert_eq!(
+        (open["via"].as_str(), open["kind"].as_str(), open["live"].as_bool()),
+        (Some("mapping"), Some("ws"), Some(true))
+    );
     assert_eq!(open["origin"], "reverse");
     messages.wait(|m| m["logId"] == open["id"] && m["message"]["data"] == "PING").await;
     socket.close(None).await.unwrap();

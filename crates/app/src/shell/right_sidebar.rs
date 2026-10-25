@@ -465,7 +465,7 @@ impl Render for RightSidebar {
         };
         v_flex()
             .size_full()
-            .bg(theme.sidebar)
+            .bg(theme.accordion)
             .text_color(theme.sidebar_foreground)
             // The strip is as tall as the top bar beside it, and its tabs fill it: the kit's tabs come in
             // fixed heights, none of them the bar's, so these are drawn here in the same colors.
