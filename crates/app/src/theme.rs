@@ -4,8 +4,10 @@
 //! embedded at build time and registered with the kit's [`ThemeRegistry`]; choosing one swaps the kit's
 //! global theme, which every component already reads.
 
-use gpui_kit::component::{Theme, ThemeMode, ThemeRegistry};
-use gpui_kit::{App, SharedString, px};
+use std::rc::Rc;
+
+use gpui_kit::component::{Theme, ThemeConfig, ThemeMode, ThemeRegistry, ThemeSet};
+use gpui_kit::{App, Global, SharedString, px};
 
 const BUNDLED: [&str; 21] = [
     include_str!("../themes/adventure.json"),
@@ -31,6 +33,14 @@ const BUNDLED: [&str; 21] = [
     include_str!("../themes/twilight.json"),
 ];
 
+/// The kit's "Default Dark" with readable status badges and a step of lightness per surface. The registry
+/// keeps the first theme of a name, so this cannot be registered over the kit's: it is installed in its place.
+const DEFAULT_DARK: &str = include_str!("../themes/default-dark.json");
+
+struct DefaultDark(Rc<ThemeConfig>);
+
+impl Global for DefaultDark {}
+
 /// The interface font sizes offered in settings, in pixels. The base font is the kit's zoom control: every
 /// rem-based size follows it.
 ///
@@ -46,6 +56,15 @@ pub fn init(cx: &mut App) {
         // and the remaining themes still load.
         let _ = ThemeRegistry::global_mut(cx).load_themes_from_str(source);
     }
+    let Some(config) = serde_json::from_str::<ThemeSet>(DEFAULT_DARK).ok().and_then(|set| set.themes.into_iter().next())
+    else {
+        return;
+    };
+    let config = Rc::new(config);
+    cx.set_global(DefaultDark(config.clone()));
+    Theme::global_mut(cx).dark_theme = config;
+    let mode = Theme::global(cx).mode;
+    Theme::change(mode, None, cx);
 }
 
 /// Every available theme as `(name, is_dark)`: the kit's defaults first, then light before dark, by name.
@@ -60,7 +79,8 @@ pub fn current(cx: &App) -> SharedString {
 
 /// Switches to the named theme. Returns `false` if there is no theme of that name.
 pub fn apply(name: &str, cx: &mut App) -> bool {
-    let Some(config) = ThemeRegistry::global(cx).themes().get(name).cloned() else { return false };
+    let own = cx.try_global::<DefaultDark>().map(|dark| dark.0.clone()).filter(|dark| dark.name == name);
+    let Some(config) = own.or_else(|| ThemeRegistry::global(cx).themes().get(name).cloned()) else { return false };
     let mode = config.mode;
     {
         let theme = Theme::global_mut(cx);
@@ -78,4 +98,35 @@ pub fn apply(name: &str, cx: &mut App) -> bool {
 pub fn set_font_size(size: f32, cx: &mut App) {
     // The base font anchors the rem scale, so it is the one value that is a pixel count by definition.
     Theme::update(cx, |theme| theme.font_size = px(size));
+}
+
+#[cfg(test)]
+mod tests {
+    use gpui_kit::TestAppContext;
+
+    use super::*;
+
+    #[gpui_kit::test]
+    fn default_dark_has_readable_badges_and_a_surface_per_region(cx: &mut TestAppContext) {
+        cx.update(|cx| {
+            gpui_kit::init(cx);
+            init(cx);
+            assert!(apply("Default Dark", cx));
+            let theme = Theme::global(cx);
+            assert_eq!(theme.theme_name().as_ref(), "Default Dark");
+            for (fill, text) in [
+                (theme.success, theme.success_foreground),
+                (theme.warning, theme.warning_foreground),
+                (theme.danger, theme.danger_foreground),
+            ] {
+                assert!(fill.l - text.l > 0.4, "badge text must contrast with its fill: {fill:?} {text:?}");
+            }
+            let surfaces = [theme.background, theme.sidebar, theme.group_box, theme.accordion, theme.status_bar, theme.tab_bar, theme.tab_bar_segmented];
+            for (i, a) in surfaces.iter().enumerate() {
+                for b in &surfaces[i + 1..] {
+                    assert_ne!(a, b, "two regions share a surface color");
+                }
+            }
+        });
+    }
 }

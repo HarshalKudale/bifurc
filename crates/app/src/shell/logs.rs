@@ -374,6 +374,8 @@ impl LogsDock {
             scroll: self.tab_scroll.clone(),
             describe: Self::describe_tab,
             on_action: Self::tab_action,
+            active_background: cx.theme().status_bar,
+            bar_background: cx.theme().tab_bar_segmented,
         };
         let hide = h_flex().flex_none().px_1().child(
             Button::new("logs-hide")
@@ -572,7 +574,7 @@ impl Render for LogsDock {
             .id("logs-dock")
             .test_support()
             .size_full()
-            .bg(theme.background)
+            .bg(theme.status_bar)
             .border_t_1()
             .border_color(theme.border)
             // Reading earlier output must not be undone by the next line arriving.

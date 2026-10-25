@@ -67,6 +67,11 @@ pub struct TabStrip<V> {
     pub scroll: VirtualListScrollHandle,
     pub describe: Describe<V>,
     pub on_action: Handler<V>,
+    /// The selected tab's fill: the surface the strip sits above, so the tab and its content read as one.
+    pub active_background: Hsla,
+    /// The bar behind the tabs. Each container that carries a strip gives it its own, so the strip does not
+    /// read as part of the container beside it.
+    pub bar_background: Hsla,
 }
 
 fn emit<V: 'static>(
@@ -84,6 +89,7 @@ fn render_tab<V: 'static>(
     tab: StripTab,
     ix: usize,
     active: bool,
+    active_background: Hsla,
     count: usize,
     on_action: Handler<V>,
     window: &Window,
@@ -109,7 +115,7 @@ fn render_tab<V: 'static>(
         .border_color(theme.border)
         .map(|this| {
             if active {
-                this.bg(theme.tab_active).text_color(theme.tab_active_foreground)
+                this.bg(active_background).text_color(theme.tab_active_foreground)
             } else {
                 this.text_color(theme.tab_foreground).hover(|this| this.text_color(theme.tab_active_foreground))
             }
@@ -165,7 +171,7 @@ pub fn tab_strip<V: Render>(
     cx: &mut Context<V>,
 ) -> AnyElement {
     let theme = cx.theme().clone();
-    let TabStrip { id, count, active, scroll, describe, on_action } = strip;
+    let TabStrip { id, count, active, scroll, describe, on_action, active_background, bar_background } = strip;
     // Only the width is read; the strip's height is the tabs'.
     let sizes = Rc::new(vec![size(TAB_WIDTH.to_pixels(window.rem_size()), px(0.)); count]);
     let view = cx.weak_entity();
@@ -177,7 +183,7 @@ pub fn tab_strip<V: Render>(
         range
             .filter_map(|ix| {
                 let tab = describe(this, ix, cx)?;
-                Some(render_tab(tab, ix, active == Some(ix), count, on_action, window, cx))
+                Some(render_tab(tab, ix, active == Some(ix), active_background, count, on_action, window, cx))
             })
             .collect::<Vec<_>>()
     })
@@ -186,7 +192,7 @@ pub fn tab_strip<V: Render>(
     h_flex()
         .flex_none()
         .w_full()
-        .bg(theme.tab_bar)
+        .bg(bar_background)
         .border_b_1()
         .border_color(theme.border)
         .child(prefix.into_any_element())

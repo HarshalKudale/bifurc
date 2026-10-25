@@ -970,6 +970,8 @@ impl RequestsScreen {
             scroll: self.tab_scroll.clone(),
             describe: Self::describe_tab,
             on_action: Self::tab_action,
+            active_background: cx.theme().tab_active,
+            bar_background: cx.theme().tab_bar,
         };
         let prefix = h_flex().flex_none().px_1().child(
             Button::new("toggle-folder-tree")
