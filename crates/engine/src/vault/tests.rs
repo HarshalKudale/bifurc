@@ -54,8 +54,7 @@ async fn a_vault_resolves_in_text_but_its_values_never_reach_a_client() {
     assert_eq!(listed[0]["provider"], "local");
     assert_eq!(listed[0]["path"], Value::Null);
     assert!(!crate::workspace::fs::entity_dir(ws, "vaults").join(format!("{id}.json")).exists());
-    let on_disk =
-        std::fs::read_to_string(device_dir(ws).join(format!("{id}.json"))).unwrap();
+    let on_disk = std::fs::read_to_string(device_dir(ws).join(format!("{id}.json"))).unwrap();
     assert!(!on_disk.contains("sk_live_123456"));
 
     let env = load_merged_environment(ws);
@@ -241,10 +240,10 @@ async fn a_vault_kept_in_the_repository_moves_to_this_device_and_says_so() {
     std::fs::write(&repo_file, serde_json::to_string(&old).unwrap()).unwrap();
     engine.call("vault.list", json!({ "workspaceId": ws })).await;
     assert!(!repo_file.exists());
-    let kept: Value = serde_json::from_str(&std::fs::read_to_string(device_dir(ws).join("old1.json")).unwrap()).unwrap();
+    let kept: Value =
+        serde_json::from_str(&std::fs::read_to_string(device_dir(ws).join("old1.json")).unwrap()).unwrap();
     assert!(kept.get("movedAt").is_none(), "already acknowledged here");
 }
-
 
 /// A linked vault on the fake `op`, pulling the item `item`.
 async fn linked(engine: &Engine, ws: &str, item: &str) -> String {
@@ -371,7 +370,8 @@ async fn only_a_person_decides_where_a_linked_vault_pulls_from() {
             ..Default::default()
         })
     };
-    let create = json!({ "workspaceId": ws, "name": "team", "provider": "1password", "settings": { "item": "Stripe" } });
+    let create =
+        json!({ "workspaceId": ws, "name": "team", "provider": "1password", "settings": { "item": "Stripe" } });
 
     // An agent: the command line through a pipe, or MCP (which connects the same way).
     let refused = engine.try_as(session("agent", "cli"), "vault.create", create.clone()).await.unwrap_err();

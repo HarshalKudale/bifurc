@@ -54,7 +54,9 @@ pub(super) async fn secret(
         (None, Some(name)) => Err(EngineError::not_found(format!(
             "no secret \"{name}\" in vault \"{vault}\" (pick another with --secret)"
         ))),
-        (None, None) if secrets.is_empty() => Err(EngineError::not_found(format!("vault \"{vault}\" holds no secrets"))),
+        (None, None) if secrets.is_empty() => {
+            Err(EngineError::not_found(format!("vault \"{vault}\" holds no secrets")))
+        }
         (None, None) => {
             let names: Vec<&str> = secrets.iter().map(|(key, _)| key.as_str()).collect();
             Err(EngineError::bad_request(format!(
@@ -271,7 +273,10 @@ mod tests {
             "secretName": "MY_SECRET", "signatureHeader": "X-Hub-Signature-256", "headers": { "Content-Type": "text/plain" } });
         call(&registry, "webhook.send", json!({ "workspaceId": root.ws_id, "request": request })).await.unwrap();
         let (head, body) = got.await.unwrap();
-        assert_eq!(header(&head, "x-hub-signature-256"), format!("sha256={}", signing::hmac_hex(b"mine-secret", &body)));
+        assert_eq!(
+            header(&head, "x-hub-signature-256"),
+            format!("sha256={}", signing::hmac_hex(b"mine-secret", &body))
+        );
         assert_eq!(header(&head, "content-type"), "text/plain");
 
         let (port, got) = catcher().await;
@@ -290,7 +295,10 @@ mod tests {
         assert_eq!(asked.code, ErrorCode::BadRequest);
         assert!(asked.message.contains("A_SECRET") && asked.message.contains("B_SECRET"), "{}", asked.message);
         assert_eq!(secret(ws, Some("hooks"), None, Some("B_SECRET")).await.unwrap().as_deref(), Some("second-secret"));
-        assert_eq!(secret(ws, Some("hooks"), Some("A_SECRET"), Some("B_SECRET")).await.unwrap().as_deref(), Some("first-secret"));
+        assert_eq!(
+            secret(ws, Some("hooks"), Some("A_SECRET"), Some("B_SECRET")).await.unwrap().as_deref(),
+            Some("first-secret")
+        );
         assert_eq!(secret(ws, None, None, None).await.unwrap(), None);
         assert_eq!(secret(ws, None, Some("A_SECRET"), None).await.unwrap_err().code, ErrorCode::BadRequest);
         assert_eq!(secret(ws, Some("hooks"), Some("NOPE"), None).await.unwrap_err().code, ErrorCode::NotFound);

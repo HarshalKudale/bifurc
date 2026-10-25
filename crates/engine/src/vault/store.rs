@@ -398,7 +398,16 @@ impl VaultFile {
         let kdf = Kdf::new();
         let key = kdf.derive(passphrase)?;
         let check = seal(&key, &aad(&id, "check"), CHECK_TEXT)?;
-        let vault = Self { id, name: name.to_string(), version: 1, created_at: now, kdf, check, secrets: Vec::new(), moved_at: None };
+        let vault = Self {
+            id,
+            name: name.to_string(),
+            version: 1,
+            created_at: now,
+            kdf,
+            check,
+            secrets: Vec::new(),
+            moved_at: None,
+        };
         Ok((vault, key))
     }
 

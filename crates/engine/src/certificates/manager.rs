@@ -198,7 +198,8 @@ mod uniqueness_tests {
 
     #[test]
     fn every_generated_ca_is_different() {
-        let (a, b) = (build_ca(&generate_ca_key().unwrap()).unwrap().0, build_ca(&generate_ca_key().unwrap()).unwrap().0);
+        let (a, b) =
+            (build_ca(&generate_ca_key().unwrap()).unwrap().0, build_ca(&generate_ca_key().unwrap()).unwrap().0);
         assert_ne!(a, b);
         assert_ne!(identify_cert(&a).unwrap().subject, identify_cert(&b).unwrap().subject);
     }

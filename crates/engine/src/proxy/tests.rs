@@ -714,7 +714,10 @@ async fn a_websocket_through_the_proxy_is_relayed_and_its_messages_logged() {
 
     assert_eq!(echo(&mut socket, "hello").await, "HELLO");
     let open = entries.wait(|e| e["url"] == url.as_str() && e["live"] == true).await;
-    assert_eq!((open["kind"].as_str(), open["status"].as_u64(), open["via"].as_str()), (Some("ws"), Some(101), Some("proxy")));
+    assert_eq!(
+        (open["kind"].as_str(), open["status"].as_u64(), open["via"].as_str()),
+        (Some("ws"), Some(101), Some("proxy"))
+    );
     let sent = messages.wait(|m| m["message"]["direction"] == "sent").await;
     assert_eq!((sent["logId"].as_str(), sent["message"]["data"].as_str()), (open["id"].as_str(), Some("hello")));
     let received = messages.wait(|m| m["message"]["direction"] == "received").await;
@@ -778,7 +781,10 @@ async fn an_event_stream_is_logged_live_with_its_events_before_it_ends() {
     let reading = tokio::spawn(async move { through(proxy_port, &request).await });
 
     let open = entries.wait(|e| e["url"] == url.as_str()).await;
-    assert_eq!((open["kind"].as_str(), open["live"].as_bool(), open["status"].as_u64()), (Some("sse"), Some(true), Some(200)));
+    assert_eq!(
+        (open["kind"].as_str(), open["live"].as_bool(), open["status"].as_u64()),
+        (Some("sse"), Some(true), Some(200))
+    );
     let event = messages.wait(|m| m["logId"] == open["id"]).await;
     assert_eq!(event["message"]["data"], "{\"n\":1}");
     assert_eq!((event["message"]["event"].as_str(), event["message"]["eventId"].as_str()), (Some("tick"), Some("7")));

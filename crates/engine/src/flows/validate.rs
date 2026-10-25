@@ -440,7 +440,8 @@ pub fn check(ws_id: &str, flow: &Flow) -> Vec<Problem> {
                     check_path(&mut report, node, &node.path);
                 }
             }
-            NodeKind::Delay | NodeKind::Or | NodeKind::Display | NodeKind::Data | NodeKind::Sample | NodeKind::Mail => {}
+            NodeKind::Delay | NodeKind::Or | NodeKind::Display | NodeKind::Data | NodeKind::Sample | NodeKind::Mail => {
+            }
         }
         let runs = node.kind == NodeKind::Start || started.contains(node.id.as_str());
         if !runs && !node.kind.is_constant() {

@@ -34,7 +34,8 @@ pub fn is_websocket_upgrade(header_lines: &[String]) -> bool {
 
 /// Handshake headers each side gets from the relay itself, never copied across. Extensions are dropped: the
 /// relay speaks plain frames to both sides, so neither negotiates compression it would not get.
-const OWN_HEADERS: [&str; 4] = ["sec-websocket-key", "sec-websocket-version", "sec-websocket-extensions", "sec-websocket-accept"];
+const OWN_HEADERS: [&str; 4] =
+    ["sec-websocket-key", "sec-websocket-version", "sec-websocket-extensions", "sec-websocket-accept"];
 
 const RULE_WITHOUT_TARGET: &str = "<h1>502 Bad Gateway</h1><p>Proxy rule matched but the target is not configured.</p>";
 
@@ -89,8 +90,12 @@ async fn relay_websocket<S: AsyncRead + AsyncWrite + Unpin>(
         return;
     };
     let Ok(mut request) = url.into_client_request() else {
-        send_html(&mut client, 502, &format!("<h1>502 Bad Gateway</h1><p>Not a WebSocket URL: <code>{url}</code>.</p>"))
-            .await;
+        send_html(
+            &mut client,
+            502,
+            &format!("<h1>502 Bad Gateway</h1><p>Not a WebSocket URL: <code>{url}</code>.</p>"),
+        )
+        .await;
         emit_log(&error_entry(live.base, 502, elapsed()));
         return;
     };
@@ -126,8 +131,12 @@ async fn relay_websocket<S: AsyncRead + AsyncWrite + Unpin>(
             return;
         }
         Err(_) => {
-            send_html(&mut client, 502, &format!("<h1>502 Bad Gateway</h1><p>Could not connect to <code>{url}</code>.</p>"))
-                .await;
+            send_html(
+                &mut client,
+                502,
+                &format!("<h1>502 Bad Gateway</h1><p>Could not connect to <code>{url}</code>.</p>"),
+            )
+            .await;
             emit_log(&error_entry(live.base, 502, elapsed()));
             return;
         }

@@ -561,9 +561,13 @@ mod tests {
     #[test]
     fn a_mail_goes_to_the_active_workspace_and_outlives_the_engine() {
         let root = crate::testing::scratch_data_root();
-        receive("a@b", &["kept@smtp-four.test".into()], b"Subject: Kept 4242
+        receive(
+            "a@b",
+            &["kept@smtp-four.test".into()],
+            b"Subject: Kept 4242
 
-x");
+x",
+        );
         let mut settings = crate::workspace::settings::load_settings();
         settings.set("activeWorkspaceId", json!("ws2"));
         crate::workspace::settings::save_settings(&settings).unwrap();

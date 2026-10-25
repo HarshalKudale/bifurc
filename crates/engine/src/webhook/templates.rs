@@ -153,7 +153,9 @@ fn expand(text: &str, now: u64, names: &mut HashMap<String, String>) -> String {
 fn value_of(token: &str, now: u64, names: &mut HashMap<String, String>) -> Option<String> {
     let mut parts = token.split(':');
     let (kind, len, name) = (parts.next()?, parts.next().and_then(|n| n.parse().ok()), parts.next());
-    if len.is_none() && let Some(known) = names.get(kind) {
+    if len.is_none()
+        && let Some(known) = names.get(kind)
+    {
         return Some(known.clone());
     }
     if let Some(known) = name.and_then(|name| names.get(name)) {
