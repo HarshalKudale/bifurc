@@ -718,6 +718,7 @@ impl MocksScreen {
                 title: t(CURL_TAB_TITLE).into(),
                 dirty: false,
                 can_duplicate: false,
+                ..Default::default()
             });
         }
         let editor = tab.editor.read(cx);
@@ -727,6 +728,7 @@ impl MocksScreen {
             title: editor.title(cx),
             dirty: editor.is_dirty(cx),
             can_duplicate: matches!(tab.key, TabKey::Saved(_)),
+            ..Default::default()
         })
     }
 

@@ -17,6 +17,8 @@
   "column.target": "ターゲット",
   "column.label": "ラベル",
   "column.status": "状態",
+  "column.open": "開く",
+  "button.open_tooltip": "ブラウザーで開く",
   "state.new": "新規",
   "state.modified": "変更あり",
   "state.deleted": "削除済み",

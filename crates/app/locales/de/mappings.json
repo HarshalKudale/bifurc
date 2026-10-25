@@ -17,6 +17,8 @@
   "column.target": "Ziel",
   "column.label": "Bezeichnung",
   "column.status": "Status",
+  "column.open": "Öffnen",
+  "button.open_tooltip": "Im Browser öffnen",
   "state.new": "Neu",
   "state.modified": "Geändert",
   "state.deleted": "Gelöscht",

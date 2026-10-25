@@ -17,7 +17,7 @@ use gpui_kit::component::{
 };
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    AnyElement, App, ClickEvent, Context, ElementId, InteractiveElement as _, IntoElement, MouseButton,
+    AnyElement, App, ClickEvent, Context, ElementId, Hsla, InteractiveElement as _, IntoElement, MouseButton,
     ParentElement as _, Rems, Render, SharedString, StatefulInteractiveElement as _, Styled as _, TestSupportExt as _,
     WeakEntity, Window, div, px, rems, size,
 };
@@ -28,16 +28,21 @@ use crate::i18n::t;
 const TAB_WIDTH: Rems = rems(11.);
 
 /// What one tab shows.
+#[derive(Default)]
 pub struct StripTab {
     /// Identifies the tab for as long as it is open, whatever its position.
     pub id: SharedString,
     /// A few characters before the title: a method, a type.
     pub badge: SharedString,
+    /// A coloured dot before the title, for a tab that shows how something is doing.
+    pub dot: Option<Hsla>,
     pub title: SharedString,
     /// It holds changes that are not saved.
     pub dirty: bool,
     /// What it shows can be copied into a new entity.
     pub can_duplicate: bool,
+    /// The user cannot close it from the strip: no close button, no menu.
+    pub fixed: bool,
 }
 
 /// What the user asked for. Positions are the ones the strip was drawn with.
@@ -88,8 +93,8 @@ fn render_tab<V: 'static>(
     let view = cx.weak_entity();
     let (menu_view, middle_view) = (view.clone(), view.clone());
     let close = emit(&view, on_action, TabAction::Close(ix));
-    let can_duplicate = tab.can_duplicate;
-    h_flex()
+    let (can_duplicate, fixed) = (tab.can_duplicate, tab.fixed);
+    let tab_element = h_flex()
         .id(ElementId::Name(format!("tab-{}", tab.id).into()))
         .test_support()
         .flex_none()
@@ -98,6 +103,7 @@ fn render_tab<V: 'static>(
         .gap_1p5()
         .pl_2()
         .pr_1()
+        .when(fixed, |this| this.pr_2())
         .text_sm()
         .border_r_1()
         .border_color(theme.border)
@@ -109,9 +115,10 @@ fn render_tab<V: 'static>(
             }
         })
         .child(div().flex_none().text_xs().text_color(theme.muted_foreground).child(tab.badge))
+        .children(tab.dot.map(|color| div().flex_none().size_2().rounded_full().bg(color)))
         .child(div().flex_1().min_w_0().overflow_hidden().whitespace_nowrap().text_ellipsis().child(tab.title))
         .children(tab.dirty.then(|| div().flex_none().text_xs().child("●")))
-        .child(
+        .children((!fixed).then(|| {
             Button::new("close-tab")
                 .icon(IconName::Close)
                 .ghost()
@@ -121,9 +128,13 @@ fn render_tab<V: 'static>(
                     // The tab under the button would otherwise take the click as a selection.
                     cx.stop_propagation();
                     close(event, window, cx);
-                }),
-        )
-        .on_click(emit(&view, on_action, TabAction::Select(ix)))
+                })
+        }))
+        .on_click(emit(&view, on_action, TabAction::Select(ix)));
+    if fixed {
+        return tab_element.into_any_element();
+    }
+    tab_element
         .on_mouse_down(MouseButton::Middle, move |_, window, cx| {
             middle_view.update(cx, |this, cx| on_action(this, TabAction::Close(ix), window, cx)).ok();
         })

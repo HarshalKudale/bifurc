@@ -8,6 +8,7 @@ mod environments;
 mod faults_policy;
 mod fixtures;
 mod flows;
+mod logs;
 mod mail;
 mod mappings;
 mod mocks;
@@ -17,7 +18,6 @@ mod requests;
 mod services;
 mod settings;
 mod shell;
-mod terminal;
 mod vaults;
 mod workspace;
 

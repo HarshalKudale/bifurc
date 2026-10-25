@@ -7,10 +7,10 @@
 
 mod agents;
 mod chrome;
+mod logs;
 mod nav;
 mod palette;
 mod right_sidebar;
-mod terminal;
 mod types_tab;
 
 use gpui_kit::component::{
@@ -27,9 +27,9 @@ use gpui_kit::{
     ParentElement as _, Render, SharedString, Styled as _, Subscription, Window, div, px,
 };
 
+use self::logs::{DockEvent, LogsDock};
 pub use self::nav::Screen;
 use self::right_sidebar::RightSidebar;
-use self::terminal::{DockEvent, TerminalDock};
 use crate::{
     app_model::{AppModel, Load, ModelEvent, SyncScope},
     commands::ShellHandle,
@@ -106,8 +106,8 @@ pub struct Shell {
     right: Entity<RightSidebar>,
     right_open: bool,
     /// The dock under the screens, with a tab for each program whose output is followed.
-    terminal: Entity<TerminalDock>,
-    terminal_open: bool,
+    logs: Entity<LogsDock>,
+    logs_open: bool,
     palette: Entity<CommandState>,
     finder: Entity<CommandState>,
     focus_handle: FocusHandle,
@@ -132,7 +132,7 @@ impl Shell {
         let audit = cx.new(|cx| AuditScreen::new(model.clone(), window, cx));
         let onboarding = cx.new(|cx| Onboarding::new(model.clone(), window, cx));
         let right = cx.new(|cx| RightSidebar::new(model.clone(), window, cx));
-        let terminal = cx.new(|cx| TerminalDock::new(model.clone(), window, cx));
+        let logs = cx.new(|cx| LogsDock::new(model.clone(), window, cx));
         let palette = cx.new(|cx| CommandState::new(window, cx));
         let finder = cx.new(|cx| CommandState::new(window, cx));
 
@@ -147,9 +147,9 @@ impl Shell {
             cx.observe_in(&flows, window, |this, _, window, cx| this.sync_right_sidebar(window, cx)),
             // These screens give the footer a line that changes as they work.
             cx.observe(&services, |_, _, cx| cx.notify()),
-            cx.observe(&terminal, |_, _, cx| cx.notify()),
+            cx.observe(&logs, |_, _, cx| cx.notify()),
             cx.subscribe_in(&services, window, Self::on_services_event),
-            cx.subscribe_in(&terminal, window, Self::on_dock_event),
+            cx.subscribe_in(&logs, window, Self::on_dock_event),
             cx.observe(&healthbar, |_, _, cx| cx.notify()),
             cx.observe(&capture, |_, _, cx| cx.notify()),
             cx.observe(&mail, |_, _, cx| cx.notify()),
@@ -186,8 +186,8 @@ impl Shell {
             onboarding,
             right,
             right_open: false,
-            terminal,
-            terminal_open: false,
+            logs,
+            logs_open: false,
             palette,
             finder,
             focus_handle,
@@ -271,8 +271,6 @@ impl Shell {
             | ModelEvent::CookiesChanged
             | ModelEvent::DevServiceChanged(_)
             | ModelEvent::DevServiceOutput(_)
-            | ModelEvent::TerminalChanged(_)
-            | ModelEvent::TerminalOutput(_)
             | ModelEvent::MailChanged(_)
             | ModelEvent::ClaimsChanged
             | ModelEvent::ResponseReceived(_)
@@ -375,8 +373,8 @@ impl Shell {
         self.sync_right_sidebar(window, cx);
     }
 
-    pub fn toggle_terminal(&mut self, cx: &mut Context<Self>) {
-        self.terminal_open = !self.terminal_open;
+    pub fn toggle_logs(&mut self, cx: &mut Context<Self>) {
+        self.logs_open = !self.logs_open;
         cx.notify();
     }
 
@@ -389,14 +387,14 @@ impl Shell {
         cx: &mut Context<Self>,
     ) {
         let ServicesEvent::ShowOutput { name, status, fresh } = event;
-        self.terminal_open = true;
-        self.terminal.update(cx, |dock, cx| dock.show_dev(name, *status, *fresh, cx));
+        self.logs_open = true;
+        self.logs.update(cx, |dock, cx| dock.show_dev(name, *status, *fresh, cx));
         cx.notify();
     }
 
-    fn on_dock_event(&mut self, _: &Entity<TerminalDock>, event: &DockEvent, _: &mut Window, cx: &mut Context<Self>) {
+    fn on_dock_event(&mut self, _: &Entity<LogsDock>, event: &DockEvent, _: &mut Window, cx: &mut Context<Self>) {
         match event {
-            DockEvent::Hide => self.toggle_terminal(cx),
+            DockEvent::Hide => self.toggle_logs(cx),
         }
     }
 
@@ -685,10 +683,10 @@ impl Render for Shell {
                             )
                             .child(
                                 resizable_panel()
-                                    .visible(self.terminal_open)
+                                    .visible(self.logs_open)
                                     .size(px(280.))
                                     .size_range(px(120.)..px(720.))
-                                    .child(self.terminal.clone()),
+                                    .child(self.logs.clone()),
                             ),
                     ),
                 ),

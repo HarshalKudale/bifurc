@@ -39,14 +39,12 @@ pub enum RunStatus {
 }
 
 impl RunStatus {
-    /// Reads the `state` and `exitCode` of a dev server (`running`, `stopped`, `crashed`) or of a terminal
-    /// (`running`, `exited`).
+    /// Reads the `state` and `exitCode` of a dev server (`running`, `stopped`, `crashed`).
     pub fn of(value: &Value) -> Self {
         let code = value.get("exitCode").and_then(Value::as_i64);
         match value.get("state").and_then(Value::as_str) {
             Some("running") => Self::Running,
             Some("crashed") => Self::Crashed(code),
-            Some("exited") if code != Some(0) => Self::Crashed(code),
             _ => Self::Stopped,
         }
     }
@@ -109,6 +107,90 @@ pub fn visible(lines: &[LogLine], errors_only: bool, needle: &str) -> Vec<Shown>
     }
     kept.retain(|line| needle.is_empty() || line.text.to_lowercase().contains(needle));
     kept
+}
+
+/// What a stretch of a log line is, for colouring it.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum Token {
+    Error,
+    Warn,
+    Info,
+    Debug,
+    Method,
+    Url,
+    Time,
+    Number,
+    Quoted,
+}
+
+/// The kind a word has: a level (`ERROR`, `Warning`), an HTTP method, or an error type (`TypeError`).
+fn word_token(word: &str) -> Option<Token> {
+    Some(match word {
+        "ERROR" | "Error" | "ERR" | "FATAL" | "Fatal" | "PANIC" | "Panic" | "CRITICAL" | "Critical" | "Traceback" => {
+            Token::Error
+        }
+        "WARN" | "Warn" | "WARNING" | "Warning" => Token::Warn,
+        "INFO" | "Info" => Token::Info,
+        "DEBUG" | "Debug" | "TRACE" | "Trace" => Token::Debug,
+        "GET" | "POST" | "PUT" | "PATCH" | "DELETE" | "HEAD" | "OPTIONS" => Token::Method,
+        _ if word.ends_with("Error") || word.ends_with("Exception") => Token::Error,
+        _ => return None,
+    })
+}
+
+fn is_word_char(c: char) -> bool {
+    c.is_alphanumeric() || c == '_'
+}
+
+/// The coloured stretches of a line, in order and apart: URLs, quoted text, times, numbers, levels and
+/// HTTP methods. Everything else is plain.
+pub fn tokens(text: &str) -> Vec<(std::ops::Range<usize>, Token)> {
+    let mut found = Vec::new();
+    let mut at = 0;
+    while at < text.len() {
+        let rest = &text[at..];
+        let Some(c) = rest.chars().next() else { break };
+        let boundary = !text[..at].chars().next_back().is_some_and(is_word_char);
+        let len = if rest.starts_with("http://") || rest.starts_with("https://") {
+            let len = rest.find(|c: char| c.is_whitespace() || "\"'<>)],".contains(c)).unwrap_or(rest.len());
+            // Punctuation that ends a sentence is not part of the address.
+            let url = rest[..len].trim_end_matches(['.', ':', ';', '!', '?']);
+            found.push((at..at + url.len(), Token::Url));
+            len
+        } else if c == '"' || (c == '\'' && boundary) {
+            match rest[1..].find(c) {
+                Some(end) => {
+                    found.push((at..at + end + 2, Token::Quoted));
+                    end + 2
+                }
+                None => 1,
+            }
+        } else if c.is_ascii_digit() && boundary {
+            let run = rest.find(|c: char| !(c.is_ascii_digit() || ":.-+T".contains(c))).unwrap_or(rest.len());
+            let number = rest[..run].trim_end_matches(|c: char| ".:-+T".contains(c));
+            let unit = rest[number.len()..].chars().take_while(|c| c.is_ascii_alphabetic() || *c == '%').count();
+            let end = number.len() + unit;
+            if unit <= 2 && !rest[end..].chars().next().is_some_and(is_word_char) && !number.is_empty() {
+                let time = number.contains(':') || (number.contains('-') && number.len() >= 8);
+                let zulu = unit == 0 || &rest[number.len()..end] == "Z";
+                found.push((at..at + end, if time && zulu { Token::Time } else { Token::Number }));
+                end
+            } else {
+                // A hex id or the like: one plain word.
+                rest.find(|c: char| !is_word_char(c)).unwrap_or(rest.len())
+            }
+        } else if c.is_alphabetic() {
+            let len = rest.find(|c: char| !is_word_char(c)).unwrap_or(rest.len());
+            if let Some(token) = word_token(&rest[..len]) {
+                found.push((at..at + len, token));
+            }
+            len
+        } else {
+            c.len_utf8()
+        };
+        at += len.max(1);
+    }
+    found
 }
 
 /// The path of a URL without its query.
@@ -194,6 +276,31 @@ mod tests {
         shown.iter().map(Shown::copied).collect()
     }
 
+    fn coloured(text: &str) -> Vec<(&str, Token)> {
+        tokens(text).into_iter().map(|(range, token)| (&text[range], token)).collect()
+    }
+
+    #[test]
+    fn a_line_is_coloured_by_its_level_urls_quotes_times_and_numbers() {
+        assert_eq!(
+            coloured(
+                "2026-10-25T13:46:11.123Z ERROR GET http://localhost:3000/a?b=1 failed in 12ms: \"boom\" (id 3a7f)"
+            ),
+            [
+                ("2026-10-25T13:46:11.123Z", Token::Time),
+                ("ERROR", Token::Error),
+                ("GET", Token::Method),
+                ("http://localhost:3000/a?b=1", Token::Url),
+                ("12ms", Token::Number),
+                ("\"boom\"", Token::Quoted),
+            ]
+        );
+        assert_eq!(coloured("warn: TypeError on port 8080"), [("TypeError", Token::Error), ("8080", Token::Number)]);
+        assert_eq!(coloured("it's fine, don't panic"), []);
+        assert_eq!(coloured("open https://x.dev/a?b=1."), [("https://x.dev/a?b=1", Token::Url)]);
+        assert_eq!(coloured("[12:00:01] Info ready"), [("12:00:01", Token::Time), ("Info", Token::Info)]);
+    }
+
     #[test]
     fn errors_keep_warn_and_error_lines_with_their_stack_and_collapse_repeats() {
         let all = lines(&[
@@ -244,8 +351,6 @@ mod tests {
         let of = |value: Value| RunStatus::of(&value);
         assert_eq!(of(json!({"state": "running"})), RunStatus::Running);
         assert_eq!(of(json!({"state": "crashed", "exitCode": 2})), RunStatus::Crashed(Some(2)));
-        assert_eq!(of(json!({"state": "exited", "exitCode": 0})), RunStatus::Stopped);
-        assert_eq!(of(json!({"state": "exited", "exitCode": 1})), RunStatus::Crashed(Some(1)));
         assert_eq!(of(json!({"name": "api"})), RunStatus::Stopped);
     }
 

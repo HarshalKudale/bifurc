@@ -639,6 +639,7 @@ impl RequestsScreen {
                 title: session.title(cx),
                 dirty: session.is_dirty(cx),
                 can_duplicate: matches!(tab.key, TabKey::Saved { .. }),
+                ..Default::default()
             },
             TabContent::Runner(runner) => StripTab {
                 id: id.into(),
@@ -646,6 +647,7 @@ impl RequestsScreen {
                 title: runner.read(cx).title(cx),
                 dirty: false,
                 can_duplicate: false,
+                ..Default::default()
             },
             TabContent::Curl(_) => StripTab {
                 id: id.into(),
@@ -653,6 +655,7 @@ impl RequestsScreen {
                 title: t(CURL_TAB_TITLE).into(),
                 dirty: false,
                 can_duplicate: false,
+                ..Default::default()
             },
         })
     }

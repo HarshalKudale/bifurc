@@ -34,7 +34,7 @@ use crate::{
 
 /// What the screen asks the window for.
 pub enum ServicesEvent {
-    /// Show the output of dev server `name` in the terminal dock. `fresh` is for a server just started: what the
+    /// Show the output of dev server `name` in the logs dock. `fresh` is for a server just started: what the
     /// dock holds of it is of the run before.
     ShowOutput { name: String, status: RunStatus, fresh: bool },
 }
@@ -295,7 +295,7 @@ impl ServicesScreen {
         cx.notify();
     }
 
-    /// Shows the output of `name` in the terminal dock.
+    /// Shows the output of `name` in the logs dock.
     fn show_output(&mut self, name: String, fresh: bool, cx: &mut Context<Self>) {
         let Some(service) = self.dev.iter().find(|service| service.name == name) else { return };
         let status = service.run_status();
@@ -723,7 +723,7 @@ fn section_heading(title: &'static str) -> impl IntoElement {
 }
 
 impl ServicesScreen {
-    /// The dev servers; clicking a row shows its output in the terminal dock.
+    /// The dev servers; clicking a row shows its output in the logs dock.
     fn render_dev(&self, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
         let theme = cx.theme().clone();
         let body = if let Some(error) = &self.dev_error {

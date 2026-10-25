@@ -1740,44 +1740,6 @@
   },
   "invalid": {}
  },
- "terminal.close": {
-  "valid": {
-   "id": "t1"
-  },
-  "invalid": {}
- },
- "terminal.input": {
-  "valid": {
-   "id": "t1",
-   "text": "ls"
-  },
-  "invalid": {
-   "id": "t1"
-  }
- },
- "terminal.list": {
-  "valid": {},
-  "invalid": {
-   "extra": true
-  }
- },
- "terminal.logs": {
-  "valid": {
-   "id": "t1",
-   "last": 50
-  },
-  "invalid": {}
- },
- "terminal.open": {
-  "valid": {
-   "cmd": "npm run dev",
-   "cwd": "/tmp",
-   "title": "web"
-  },
-  "invalid": {
-   "cmd": 1
-  }
- },
  "tls.certStatus": {
   "valid": {},
   "invalid": {
