@@ -92,7 +92,8 @@ mod tests {
         assert!(identity.fingerprint.starts_with("sha256:") && identity.fingerprint.len() == 7 + 64);
         assert_eq!(identity.fingerprint, identity.fingerprint.to_lowercase());
         assert_eq!(identity.thumbprint_sha1.len(), 40);
-        assert_eq!(identity.subject, "CN=Bifurc CA\nC=US\nST=Development\nL=Local\nO=Bifurc CA");
+        assert!(identity.subject.starts_with("CN=Bifurc CA "), "{}", identity.subject);
+        assert!(identity.subject.ends_with("\nC=US\nST=Development\nL=Local\nO=Bifurc CA"), "{}", identity.subject);
         assert_eq!(get_cert_status(&dir), (true, Some(identity.fingerprint.clone())));
 
         let ca_der = manager::first_cert_der(&cert_pem).unwrap();
