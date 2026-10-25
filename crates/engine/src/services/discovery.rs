@@ -1,6 +1,9 @@
 //! Finds the TCP ports this host is listening on: PowerShell on Windows, `lsof` (then `ss`) elsewhere.
 
-use std::{collections::HashMap, time::Duration};
+use std::{
+    collections::{HashMap, HashSet},
+    time::Duration,
+};
 
 use serde_json::{Value, json};
 
@@ -123,6 +126,50 @@ pub fn parse_process_names(raw: &str) -> Option<HashMap<u32, String>> {
     Some(names)
 }
 
+/// Every process on this host as `(pid, parent pid)`. Failures yield an empty list.
+pub async fn process_pairs() -> Vec<(u32, u32)> {
+    if cfg!(windows) {
+        let raw = powershell(
+            "Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId | ConvertTo-Json -Compress",
+        )
+        .await;
+        return raw.and_then(|raw| parse_process_pairs(&raw)).unwrap_or_default();
+    }
+    run("ps", &["-eo", "pid=,ppid="]).await.map(|raw| parse_ps_pairs(&raw)).unwrap_or_default()
+}
+
+/// Parse `Get-CimInstance Win32_Process | Select-Object ProcessId,ParentProcessId | ConvertTo-Json`.
+pub fn parse_process_pairs(raw: &str) -> Option<Vec<(u32, u32)>> {
+    let id = |item: &Value, key: &str| item.get(key).and_then(Value::as_u64).map(|n| n as u32);
+    Some(
+        as_items(raw)?.iter().filter_map(|item| Some((id(item, "ProcessId")?, id(item, "ParentProcessId")?))).collect(),
+    )
+}
+
+/// Parse `ps -eo pid=,ppid=`.
+pub fn parse_ps_pairs(raw: &str) -> Vec<(u32, u32)> {
+    raw.lines()
+        .filter_map(|line| {
+            let mut fields = line.split_whitespace();
+            Some((fields.next()?.parse().ok()?, fields.next()?.parse().ok()?))
+        })
+        .collect()
+}
+
+/// `root` and every process it started, directly or not.
+pub fn descendants(pairs: &[(u32, u32)], root: u32) -> HashSet<u32> {
+    let mut found = HashSet::from([root]);
+    loop {
+        let before = found.len();
+        let children: Vec<u32> =
+            pairs.iter().filter(|(_, parent)| found.contains(parent)).map(|(pid, _)| *pid).collect();
+        found.extend(children);
+        if found.len() == before {
+            return found;
+        }
+    }
+}
+
 async fn discover_unix() -> Vec<ServiceInfo> {
     if let Some(raw) = run("lsof", &["-iTCP", "-sTCP:LISTEN", "-n", "-P"]).await {
         return parse_lsof_output(&raw);
@@ -196,6 +243,24 @@ pub fn parse_ss_output(raw: &str) -> Vec<ServiceInfo> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn a_process_and_everything_it_started_is_found_from_the_parent_pairs() {
+        let pairs = [(10, 1), (11, 10), (12, 11), (13, 1), (14, 13)];
+        assert_eq!(descendants(&pairs, 10), HashSet::from([10, 11, 12]));
+        assert_eq!(descendants(&pairs, 99), HashSet::from([99]));
+        assert_eq!(
+            parse_ps_pairs(
+                "  10     1
+  11    10
+bad line
+"
+            ),
+            [(10, 1), (11, 10)]
+        );
+        let raw = r#"[{"ProcessId":4,"ParentProcessId":0},{"ProcessId":7,"ParentProcessId":4}]"#;
+        assert_eq!(parse_process_pairs(raw), Some(vec![(4, 0), (7, 4)]));
+    }
 
     #[test]
     fn windows_connections_filter_addresses_and_dedupe_ports() {

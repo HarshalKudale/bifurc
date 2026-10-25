@@ -38,7 +38,7 @@ impl Global for ModelHandle {}
 /// follows every write with the git state, and says `configChanged: false` when `entity.changed` already
 /// described the whole change; without that field (an older engine, or a pull, sync or import) it means
 /// "re-read the workspace".
-const EVENTS: [&str; 42] = [
+const EVENTS: [&str; 44] = [
     "event.request.stream",
     "event.flow.progress",
     "event.flow.finished",
@@ -59,6 +59,8 @@ const EVENTS: [&str; 42] = [
     "event.faults.changed",
     "event.devservice.changed",
     "event.devservice.output",
+    "event.terminal.changed",
+    "event.terminal.output",
     "event.mail.changed",
     "event.claims.changed",
     "event.cassette.changed",
@@ -253,6 +255,10 @@ pub enum ModelEvent {
     DevServiceChanged(Value),
     /// `event.devservice.output`: new lines a dev server printed, in order and complete.
     DevServiceOutput(Value),
+    /// `event.terminal.changed`: a terminal was opened, ended or closed (`terminal` is null once closed).
+    TerminalChanged(Value),
+    /// `event.terminal.output`: new lines a terminal printed, in order and complete.
+    TerminalOutput(Value),
     /// `event.mail.changed`: the mail sink received a mail (`received`) or was emptied (`cleared`).
     MailChanged(Value),
     /// `event.claims.changed`: someone claimed, released or took over an entity; the model already holds the new list.
@@ -666,6 +672,8 @@ impl AppModel {
                 "event.cookies.changed" => cx.emit(ModelEvent::CookiesChanged),
                 "event.devservice.changed" => cx.emit(ModelEvent::DevServiceChanged(event.payload)),
                 "event.devservice.output" => cx.emit(ModelEvent::DevServiceOutput(event.payload)),
+                "event.terminal.changed" => cx.emit(ModelEvent::TerminalChanged(event.payload)),
+                "event.terminal.output" => cx.emit(ModelEvent::TerminalOutput(event.payload)),
                 "event.mail.changed" => cx.emit(ModelEvent::MailChanged(event.payload)),
                 "event.claims.changed" => self.apply_claims(&event.payload, cx),
                 "event.faults.changed" => {

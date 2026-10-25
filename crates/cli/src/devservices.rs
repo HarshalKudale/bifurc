@@ -52,7 +52,7 @@ fn targets(ctx: &Context, rows: &[Value], all_by_default: bool) -> Result<Vec<Va
 }
 
 fn define(ctx: &mut Context) -> Result<String> {
-    ctx.accept(&["cmd", "port", "cwd", "vault", "env", "log-file"], 1)?;
+    ctx.accept(&["cmd", "port", "cwd", "vault", "env", "log-file", "mapping"], 1)?;
     let args = ctx.args;
     let name = need(args.positional(2), "service name")?;
     let cmd = need(args.flag("cmd"), "--cmd <command>")?;
@@ -78,6 +78,9 @@ fn define(ctx: &mut Context) -> Result<String> {
     }
     if let Some(vault) = args.flag("vault") {
         payload["vault"] = json!(vault);
+    }
+    if let Some(mapping) = args.flag("mapping") {
+        payload["mapping"] = json!(mapping);
     }
     if !args.flags("env").is_empty() {
         let mut env = Map::new();
@@ -293,7 +296,7 @@ fn show(ctx: &mut Context) -> Result<String> {
     }
     Ok(ctx.print(&service, || {
         let mut lines = vec![format!("{}  {}", js_template(service.get("name")), js_template(service.get("cmd")))];
-        for key in ["port", "cwd", "logFile", "vault"] {
+        for key in ["port", "cwd", "logFile", "vault", "mapping"] {
             if !service[key].is_null() {
                 lines.push(format!("{key}: {}", js_template(service.get(key))));
             }

@@ -4964,6 +4964,9 @@
     },
     "logFile": {
      "type": "string"
+    },
+    "mapping": {
+     "type": "string"
     }
    },
    "required": [
@@ -5114,6 +5117,70 @@
    },
    "required": [
     "port"
+   ],
+   "additionalProperties": false
+  },
+  "terminal.open": {
+   "type": "object",
+   "properties": {
+    "cmd": {
+     "type": "string"
+    },
+    "cwd": {
+     "type": "string"
+    },
+    "title": {
+     "type": "string"
+    }
+   },
+   "additionalProperties": false
+  },
+  "terminal.list": {
+   "type": "object",
+   "properties": {},
+   "additionalProperties": false
+  },
+  "terminal.logs": {
+   "type": "object",
+   "properties": {
+    "id": {
+     "type": "string"
+    },
+    "last": {
+     "type": "integer",
+     "minimum": 0
+    }
+   },
+   "required": [
+    "id"
+   ],
+   "additionalProperties": false
+  },
+  "terminal.input": {
+   "type": "object",
+   "properties": {
+    "id": {
+     "type": "string"
+    },
+    "text": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "id",
+    "text"
+   ],
+   "additionalProperties": false
+  },
+  "terminal.close": {
+   "type": "object",
+   "properties": {
+    "id": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "id"
    ],
    "additionalProperties": false
   },

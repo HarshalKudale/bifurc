@@ -17,9 +17,9 @@ use tokio::{
     sync::oneshot,
 };
 
-use super::discovery::discover_services;
+use super::discovery::{descendants, discover_services, process_pairs};
 use crate::{
-    kernel::{CommandRegistry, bus},
+    kernel::{CommandContext, CommandRegistry, bus},
     mcp::client::shell_command,
     protocol::{EngineError, Result},
     utils::{
@@ -33,6 +33,8 @@ use crate::{
         git_store::{CommitMutation, commit_mutation},
     },
 };
+
+mod terminal;
 
 const DIR: &str = "devservices";
 /// Lines kept per service, and the longest one kept whole.
@@ -57,9 +59,28 @@ struct Run {
     /// Lines pushed since the flusher last announced them.
     outbox: Vec<Value>,
     stop: Option<oneshot::Sender<()>>,
+    /// The port the process tree opened, once found for a service that has a mapping.
+    bound: Option<u16>,
 }
 
 type Shared = Arc<Mutex<Run>>;
+
+impl Run {
+    fn new(pid: u32, stop: oneshot::Sender<()>) -> Self {
+        Self {
+            pid,
+            started: now_ms(),
+            ended: 0,
+            stopping: false,
+            running: true,
+            code: 0,
+            lines: VecDeque::new(),
+            outbox: Vec::new(),
+            stop: Some(stop),
+            bound: None,
+        }
+    }
+}
 
 /// The latest run of each service, by workspace and name.
 static RUNS: LazyLock<Mutex<HashMap<(String, String), Shared>>> = LazyLock::new(Default::default);
@@ -91,7 +112,53 @@ fn run_of(params: &Value) -> Option<Shared> {
     lock(&RUNS).get(&(str_of(params, "workspaceId").to_string(), str_of(params, "name").to_string())).cloned()
 }
 
-fn push(run: &Shared, stream: &'static str, mut text: String) {
+/// What follows an escape character, taken out of `chars`: a sequence for the terminal, not for a reader.
+fn skip_escape(chars: &mut std::iter::Peekable<std::str::Chars>) {
+    match chars.next() {
+        // Colours and cursor moves end at a byte from `@` to `~`.
+        Some('[') => {
+            for c in chars.by_ref() {
+                if ('\u{40}'..='\u{7e}').contains(&c) {
+                    break;
+                }
+            }
+        }
+        // A title, a link or other text for the terminal ends at BEL or at an escape and a backslash.
+        Some(']' | 'P' | 'X' | '^' | '_') => {
+            while let Some(c) = chars.next() {
+                if c == '\u{7}' || (c == '\u{1b}' && chars.next_if_eq(&'\\').is_some()) {
+                    break;
+                }
+            }
+        }
+        // Choosing a character set is an escape, a middle byte and the choice.
+        Some('\u{20}'..='\u{2f}') => {
+            while chars.next_if(|c| ('\u{20}'..='\u{2f}').contains(c)).is_some() {}
+            chars.next();
+        }
+        _ => {}
+    }
+}
+
+/// `text` as a person reads it: without colour or cursor sequences or other control characters, and with a line
+/// a carriage return overwrote (a progress bar) down to its last state.
+fn readable(text: &str) -> String {
+    let mut out = String::with_capacity(text.len());
+    let mut chars = text.chars().peekable();
+    while let Some(c) = chars.next() {
+        match c {
+            '\u{1b}' => skip_escape(&mut chars),
+            '\r' if chars.peek().is_some() => out.clear(),
+            '\t' => out.push(c),
+            c if c.is_control() => {}
+            c => out.push(c),
+        }
+    }
+    out
+}
+
+fn push(run: &Shared, stream: &'static str, text: String) {
+    let mut text = readable(&text);
     text.truncate(text.char_indices().nth(LINE_CHARS).map_or(text.len(), |(i, _)| i));
     let mut run = lock(run);
     if run.lines.len() == RING {
@@ -107,9 +174,9 @@ fn announce(workspace: &str, name: &str, service: Value) {
     bus().emit("devservice.changed", json!({ "workspaceId": workspace, "name": name, "service": service }));
 }
 
-/// Announce the run's new lines at most every 250 ms, in push order, until it ends and one more tick has passed
-/// (the log tail may still push once after the run stops).
-fn flush(workspace: String, name: String, run: Shared) {
+/// Announce the run's new lines as `event` (with `scope` merged in) at most every 250 ms, in push order, until it
+/// ends and one more tick has passed (the log tail may still push once after the run stops).
+fn flush(event: &'static str, scope: Value, run: Shared) {
     tokio::spawn(async move {
         loop {
             tokio::time::sleep(Duration::from_millis(250)).await;
@@ -119,7 +186,9 @@ fn flush(workspace: String, name: String, run: Shared) {
             }
             let lines = std::mem::take(&mut lock(&run).outbox);
             if !lines.is_empty() {
-                bus().emit("devservice.output", json!({ "workspaceId": workspace, "name": name, "lines": lines }));
+                let mut payload = scope.clone();
+                payload["lines"] = json!(lines);
+                bus().emit(event, payload);
             }
             if ended {
                 break;
@@ -218,7 +287,7 @@ async fn describe(def: &Value, run: Option<Shared>) -> Value {
                 "crashed"
             };
             let extra = json!({ "pid": run.pid, "startedAt": run.started, "endedAt": (!run.running).then_some(run.ended),
-                                "exitCode": (!run.running).then_some(run.code) });
+                                "exitCode": (!run.running).then_some(run.code), "mappedPort": run.bound });
             (state, extra)
         }
     };
@@ -258,7 +327,67 @@ async fn commit(params: &Value, action: &str, name: &str) {
     .await;
 }
 
-async fn start(params: &Value) -> Result<Value> {
+/// `<label>` or `<label>.localhost`, as a mapping names its domain.
+fn mapping_domain(mapping: &str) -> String {
+    let domain = mapping.trim().to_lowercase();
+    if domain.ends_with(".localhost") { domain } else { format!("{domain}.localhost") }
+}
+
+/// Point the mapping `domain` of the workspace at `localhost:port`, making the mapping when there is none.
+async fn point_mapping(registry: &Arc<CommandRegistry>, workspace: &str, domain: &str, port: u16) -> Result<()> {
+    let ctx = CommandContext::internal(registry.clone());
+    let target = format!("localhost:{port}");
+    let listed = registry.invoke("entity.list", json!({ "workspaceId": workspace, "kind": "mappings" }), ctx.clone());
+    let found = listed.await?["entities"]
+        .as_array()
+        .and_then(|all| all.iter().find(|m| str_of(m, "domain").trim().eq_ignore_ascii_case(domain)).cloned());
+    match found {
+        Some(mut mapping) => {
+            if mapping["target"] != json!(target) {
+                mapping["target"] = json!(target);
+                registry.invoke("entity.update", json!({ "kind": "mappings", "entity": mapping }), ctx).await?;
+            }
+        }
+        None => {
+            let entity = json!({ "domain": domain, "target": target, "enabled": true });
+            let made = json!({ "kind": "mappings", "workspaceId": workspace, "entity": entity });
+            registry.invoke("entity.create", made, ctx).await?;
+        }
+    }
+    Ok(())
+}
+
+/// How long after the start the process tree is looked at for the port it opens.
+const BIND_WINDOW: Duration = Duration::from_secs(180);
+
+/// Wait for the processes of `run` to listen on a port (the one the definition names when it is among them, else
+/// the lowest) and point the service's mapping at it. Ends with the run.
+fn bind_mapping(registry: Arc<CommandRegistry>, workspace: String, name: String, def: Value, run: Shared) {
+    let Some(domain) = def["mapping"].as_str().filter(|m| !m.is_empty()).map(mapping_domain) else { return };
+    tokio::spawn(async move {
+        let began = std::time::Instant::now();
+        while lock(&run).running && began.elapsed() < BIND_WINDOW {
+            tokio::time::sleep(Duration::from_millis(1500)).await;
+            let pid = lock(&run).pid;
+            let tree = descendants(&process_pairs().await, pid);
+            let mut ports: Vec<u16> =
+                discover_services().await.into_iter().filter(|s| tree.contains(&s.pid)).map(|s| s.port).collect();
+            ports.sort_unstable();
+            let declared = def["port"].as_u64().and_then(|p| u16::try_from(p).ok());
+            let Some(port) = declared.filter(|p| ports.contains(p)).or(ports.first().copied()) else { continue };
+            let note = match point_mapping(&registry, &workspace, &domain, port).await {
+                Ok(()) => format!("[bifurc] {domain} now points at localhost:{port}"),
+                Err(error) => format!("[bifurc] could not point {domain} at localhost:{port}: {}", error.message),
+            };
+            lock(&run).bound = Some(port);
+            push(&run, "stdout", note);
+            announce(&workspace, &name, describe(&def, Some(run)).await);
+            return;
+        }
+    });
+}
+
+async fn start(params: &Value, registry: &Arc<CommandRegistry>) -> Result<Value> {
     let def = definition(params)?;
     if let Some(run) = run_of(params)
         && lock(&run).running
@@ -297,17 +426,7 @@ async fn start(params: &Value) -> Result<Value> {
     let mut child =
         wrap.spawn().map_err(|e| EngineError::upstream(format!("Cannot start \"{}\": {e}", str_of(&def, "cmd"))))?;
     let (stop, stopped) = oneshot::channel();
-    let run: Shared = Arc::new(Mutex::new(Run {
-        pid: child.id().unwrap_or(0),
-        started: now_ms(),
-        ended: 0,
-        stopping: false,
-        running: true,
-        code: 0,
-        lines: VecDeque::new(),
-        outbox: Vec::new(),
-        stop: Some(stop),
-    }));
+    let run: Shared = Arc::new(Mutex::new(Run::new(child.id().unwrap_or(0), stop)));
     let readers: Vec<_> = [
         child.stdout().take().map(|s| pump(s, "stdout", run.clone())),
         child.stderr().take().map(|s| pump(s, "stderr", run.clone())),
@@ -320,7 +439,8 @@ async fn start(params: &Value) -> Result<Value> {
         tail(path.to_string(), run.clone());
     }
     let (workspace, name) = (str_of(params, "workspaceId").to_string(), str_of(params, "name").to_string());
-    flush(workspace.clone(), name.clone(), run.clone());
+    flush("devservice.output", json!({ "workspaceId": workspace, "name": name }), run.clone());
+    bind_mapping(registry.clone(), workspace.clone(), name.clone(), def.clone(), run.clone());
     let watched = run.clone();
     let exited = def.clone();
     tokio::spawn(async move {
@@ -378,6 +498,7 @@ async fn kill_tree(pid: u32) {
 }
 
 pub fn register(registry: &mut CommandRegistry) {
+    terminal::register(registry);
     registry.register("devservice.define", |params, _| async move {
         let dir = dir_of(&params)?;
         let name = str_of(&params, "name");
@@ -394,6 +515,16 @@ pub fn register(registry: &mut CommandRegistry) {
             if !params[key].is_null() {
                 def[key] = params[key].clone();
             }
+        }
+        if let Some(mapping) = params["mapping"].as_str().filter(|m| !m.trim().is_empty()) {
+            let domain = mapping_domain(mapping);
+            let label = |part: &str| !part.is_empty() && part.chars().all(|c| c.is_ascii_alphanumeric() || c == '-');
+            if !domain.trim_end_matches(".localhost").split('.').all(label) {
+                return Err(EngineError::bad_request(format!(
+                    "\"{mapping}\" is not a mapping name (letters, digits and -, such as api or api.localhost)."
+                )));
+            }
+            def["mapping"] = json!(domain);
         }
         let file = dir.join(format!("{name}.json"));
         let existed = file.exists();
@@ -424,8 +555,8 @@ pub fn register(registry: &mut CommandRegistry) {
         Ok(json!({ "removed": name }))
     });
 
-    registry.register("devservice.up", |params, _| async move {
-        let service = start(&params).await?;
+    registry.register("devservice.up", |params, ctx| async move {
+        let service = start(&params, &ctx.registry).await?;
         announce(str_of(&params, "workspaceId"), str_of(&params, "name"), service.clone());
         Ok(json!({ "service": service }))
     });
@@ -540,6 +671,8 @@ mod tests {
         assert_eq!(logs["lines"][0]["stream"], "stdout");
         let missing = call(&registry, "devservice.up", json!({"workspaceId": ws, "name": "nope"})).await;
         assert!(missing.is_err());
+        let bad = json!({"workspaceId": ws, "name": "bad", "cmd": "x", "mapping": "my app"});
+        assert!(call(&registry, "devservice.define", bad).await.is_err());
         call(&registry, "devservice.remove", json!({"workspaceId": ws, "name": "api"})).await.unwrap();
         let listed = call(&registry, "devservice.list", json!({"workspaceId": ws})).await.unwrap();
         assert!(listed["services"].as_array().unwrap().is_empty());
@@ -667,6 +800,99 @@ mod tests {
         assert!(batches[0]["lines"][0]["ts"].is_i64());
     }
 
+    #[test]
+    fn output_is_what_a_person_reads_without_the_terminal_sequences() {
+        assert_eq!(readable("\u{1b}[1mbold\u{1b}[0m and \u{1b}[38;5;196mred\u{1b}[39m"), "bold and red");
+        assert_eq!(
+            readable("\u{1b}]0;a title\u{7}ready \u{1b}]8;;http://x\u{1b}\\link\u{1b}]8;;\u{1b}\\"),
+            "ready link"
+        );
+        assert_eq!(readable("\u{1b}[2K\u{1b}[1Gcompiled\u{1b}(B ok\u{7}"), "compiled ok");
+        assert_eq!(readable("10%\r55%\r100%"), "100%");
+        assert_eq!(readable("tab\tand ünïcode — kept"), "tab\tand ünïcode — kept");
+        assert_eq!(readable("cut\u{1b}"), "cut");
+    }
+
+    #[tokio::test]
+    async fn colours_a_program_prints_do_not_reach_the_log() {
+        let _root = scratch_data_root();
+        let mut registry = CommandRegistry::new();
+        register(&mut registry);
+        let registry = Arc::new(registry);
+        let cmd = if cfg!(windows) {
+            "powershell -NoProfile -Command \"Write-Output ([char]27 + '[1;32mready' + [char]27 + '[0m on 3000')\""
+        } else {
+            "printf '\\033[1;32mready\\033[0m on 3000\\n'"
+        };
+        let named = json!({"workspaceId": "ws1", "name": "tint"});
+        call(&registry, "devservice.define", json!({"workspaceId": "ws1", "name": "tint", "cmd": cmd})).await.unwrap();
+        call(&registry, "devservice.up", named.clone()).await.unwrap();
+        let mut text = Value::Null;
+        for _ in 0..200 {
+            text = call(&registry, "devservice.logs", named.clone()).await.unwrap()["lines"][0]["text"].clone();
+            if !text.is_null() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(50)).await;
+        }
+        assert_eq!(text, "ready on 3000");
+    }
+
+    #[tokio::test]
+    async fn a_mapping_is_made_when_missing_then_pointed_at_the_new_port() {
+        let _root = scratch_data_root();
+        let mut registry = CommandRegistry::new();
+        crate::workspace::entities::register(&mut registry);
+        let registry = Arc::new(registry);
+        let mappings = || async {
+            let ctx = CommandContext::internal(registry.clone());
+            let listed = registry.invoke("entity.list", json!({"workspaceId": "ws1", "kind": "mappings"}), ctx).await;
+            listed.unwrap()["entities"].as_array().unwrap().clone()
+        };
+        point_mapping(&registry, "ws1", "api.localhost", 3000).await.unwrap();
+        let made = mappings().await;
+        assert_eq!((made.len(), made[0]["target"].clone()), (1, json!("localhost:3000")));
+        point_mapping(&registry, "ws1", "API.localhost", 3001).await.unwrap();
+        let moved = mappings().await;
+        let second = (moved.len(), moved[0]["target"].clone(), moved[0]["id"].clone());
+        assert_eq!(second, (1, json!("localhost:3001"), made[0]["id"].clone()));
+        assert_eq!(mapping_domain(" Api "), "api.localhost");
+        assert_eq!(mapping_domain("api.localhost"), "api.localhost");
+    }
+
+    #[cfg(windows)]
+    #[tokio::test]
+    async fn a_service_with_a_mapping_has_it_pointed_at_the_port_its_process_opens() {
+        let _root = scratch_data_root();
+        let mut registry = CommandRegistry::new();
+        register(&mut registry);
+        crate::workspace::entities::register(&mut registry);
+        let registry = Arc::new(registry);
+        let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
+        let script =
+            format!("$l=[Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback,{port});$l.Start();Start-Sleep 40");
+        let cmd = format!("powershell -NoProfile -Command \"{script}\"");
+        let id = json!({"workspaceId": "ws1", "name": "bound"});
+        let define = json!({"workspaceId": "ws1", "name": "bound", "cmd": cmd, "mapping": "bound"});
+        let defined = call(&registry, "devservice.define", define).await.unwrap();
+        assert_eq!(defined["service"]["mapping"], "bound.localhost");
+        call(&registry, "devservice.up", id.clone()).await.unwrap();
+        let mut mapped = Value::Null;
+        for _ in 0..200 {
+            let listed = call(&registry, "devservice.list", json!({"workspaceId": "ws1"})).await.unwrap();
+            mapped = listed["services"][0]["mappedPort"].clone();
+            if !mapped.is_null() {
+                break;
+            }
+            tokio::time::sleep(Duration::from_millis(100)).await;
+        }
+        call(&registry, "devservice.down", id).await.unwrap();
+        assert_eq!(mapped, json!(port));
+        let listed = call(&registry, "entity.list", json!({"workspaceId": "ws1", "kind": "mappings"})).await.unwrap();
+        assert_eq!(listed["entities"][0]["domain"], "bound.localhost");
+        assert_eq!(listed["entities"][0]["target"], json!(format!("localhost:{port}")));
+    }
+
     fn lines(texts: &[(i64, &str)]) -> Vec<Line> {
         texts.iter().map(|(ts, text)| Line { ts: *ts, stream: "stdout", text: text.to_string() }).collect()
     }
@@ -697,6 +923,7 @@ mod tests {
             lines: VecDeque::new(),
             outbox: Vec::new(),
             stop: None,
+            bound: None,
         }));
         tail(file.display().to_string(), run.clone());
         tokio::time::sleep(Duration::from_millis(300)).await;

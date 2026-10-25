@@ -6,7 +6,7 @@
 //!   the engine connection.
 
 use gpui_kit::component::{
-    ActiveTheme as _, Disableable as _, Icon, IconName, Side, Sizable as _, StyledExt as _, TitleBar,
+    ActiveTheme as _, Disableable as _, Icon, IconName, Selectable as _, Side, Sizable as _, StyledExt as _, TitleBar,
     button::{Button, ButtonVariants as _},
     h_flex,
     input::Input,
@@ -390,8 +390,23 @@ impl Shell {
         };
         let app_model = self.model.clone();
         let agent_badges = self.render_agent_badges(cx);
+        let running = self.terminal.read(cx).counts().1;
+        let terminal_label = if running == 0 {
+            t("shell.chrome.terminal").to_owned()
+        } else {
+            t_with("shell.chrome.terminal_running", &[("count", &running)])
+        };
 
-        StatusBar::new().left(self.render_git_status(cx)).right(
+        let terminal_button = Button::new("terminal-toggle")
+            .ghost()
+            .xsmall()
+            .icon(IconName::SquareTerminal)
+            .label(terminal_label)
+            .selected(self.terminal_open)
+            .tooltip(t("shell.chrome.terminal_tooltip"))
+            .on_click(cx.listener(|this, _, _, cx| this.toggle_terminal(cx)));
+
+        StatusBar::new().left(h_flex().gap_3().child(self.render_git_status(cx)).child(terminal_button)).right(
             h_flex()
                 .gap_3()
                 .when(!status.is_empty(), |this| this.child(div().text_color(theme.muted_foreground).child(status)))

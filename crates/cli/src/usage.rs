@@ -690,11 +690,15 @@ is kept in memory, last 5000 lines. Read it with: bifurc logs <service> [--error
 
   list                                   Local processes listening on a port (any process, not only these)
   define <name> --cmd <command> [--port <n>] [--cwd <dir>] [--vault <vault>] [--env KEY=VALUE]... [--log-file <path>]
+                [--mapping <name>]
                                          Save a service; --cwd is stored as an absolute path. Do not put secrets
                                          in --env (it is a workspace file): use --vault, whose secrets are
                                          injected like `vault run` (sealed and no terminal: exit 6)
                                          --log-file: a file the service writes; the engine follows it into the same
                                          output (stream file) while the service runs
+                                         --mapping: a .localhost name (`api` is api.localhost); once the service
+                                         runs, the engine finds the port its processes open and points that
+                                         mapping at it, making the mapping when there is none
   up [<name>|--all] [--wait] [--timeout 30s]   Start (default: all); --wait blocks until the port listens, exit 4 on
                                          timeout with the last lines of output
   down <name>|--all                      Stop the whole process tree

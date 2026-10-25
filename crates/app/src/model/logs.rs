@@ -29,6 +29,29 @@ impl LogLine {
     }
 }
 
+/// How a program's latest run is going.
+#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+pub enum RunStatus {
+    Running,
+    Stopped,
+    /// Ended with an exit code other than 0 (`None` when the code is not known).
+    Crashed(Option<i64>),
+}
+
+impl RunStatus {
+    /// Reads the `state` and `exitCode` of a dev server (`running`, `stopped`, `crashed`) or of a terminal
+    /// (`running`, `exited`).
+    pub fn of(value: &Value) -> Self {
+        let code = value.get("exitCode").and_then(Value::as_i64);
+        match value.get("state").and_then(Value::as_str) {
+            Some("running") => Self::Running,
+            Some("crashed") => Self::Crashed(code),
+            Some("exited") if code != Some(0) => Self::Crashed(code),
+            _ => Self::Stopped,
+        }
+    }
+}
+
 /// How many lines the panel keeps: the engine's own ring.
 pub const KEPT: usize = 5000;
 
@@ -214,6 +237,16 @@ mod tests {
         let mut buffer = lines(&["old"]);
         append(&mut buffer, (0..KEPT).map(|n| LogLine { ts: 0, stderr: false, text: n.to_string() }).collect());
         assert_eq!((buffer.len(), buffer[0].text.as_str()), (KEPT, "0"));
+    }
+
+    #[test]
+    fn a_run_is_running_stopped_or_ended_with_a_code() {
+        let of = |value: Value| RunStatus::of(&value);
+        assert_eq!(of(json!({"state": "running"})), RunStatus::Running);
+        assert_eq!(of(json!({"state": "crashed", "exitCode": 2})), RunStatus::Crashed(Some(2)));
+        assert_eq!(of(json!({"state": "exited", "exitCode": 0})), RunStatus::Stopped);
+        assert_eq!(of(json!({"state": "exited", "exitCode": 1})), RunStatus::Crashed(Some(1)));
+        assert_eq!(of(json!({"name": "api"})), RunStatus::Stopped);
     }
 
     #[test]
