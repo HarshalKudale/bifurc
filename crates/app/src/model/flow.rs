@@ -892,7 +892,11 @@ mod tests {
         let written = serde_json::to_value(doc.node(&mail).unwrap()).unwrap();
         assert_eq!(
             (&written["type"], &written["arguments"], &written["timeoutMs"]),
-            (&json!("mail"), &json!(["to", "from", "subject", "body"].map(|name| json!({ "name": name, "value": "" }))), &json!(30_000))
+            (
+                &json!("mail"),
+                &json!(["to", "from", "subject", "body"].map(|name| json!({ "name": name, "value": "" }))),
+                &json!(30_000)
+            )
         );
         doc.remove_node(&mail);
 

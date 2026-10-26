@@ -32,7 +32,7 @@ use crate::{
     },
     protocol::{EngineError, Result},
     proxy::{
-        fetch_upstream_response, finished_entry, forward_streaming, log_body, log_outcome,
+        LiveLog, fetch_upstream_response, finished_entry, forward_streaming, log_body, log_outcome,
         wire::{Duplicates, parse_header_lines, read_body, read_head},
     },
     utils::{
@@ -266,8 +266,9 @@ async fn handle(served: Arc<Served>, bound: SocketAddr, mut socket: TcpStream) {
         let mut forwarded = headers;
         forwarded.shift_remove("host");
         let url = format!("{}{target}", origin.trim_end_matches('/'));
+        let live = LiveLog { base: &base, via: "proxy", target: Some(origin.clone()) };
         if let Some(outcome) =
-            forward_streaming(&mut socket, &head.method, &url, origin, &forwarded, &body, Some(&base.id)).await
+            forward_streaming(&mut socket, &head.method, &url, origin, &forwarded, &body, Some(&live)).await
         {
             log_outcome(&base, "proxy", Some(origin.clone()), outcome);
         }

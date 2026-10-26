@@ -110,6 +110,10 @@ pub fn short_label(content_type: &str) -> String {
     if kind.contains("javascript") || kind.contains("ecmascript") {
         return "js".to_owned();
     }
+    // Not "stream": that names the WebSocket and event-stream rows.
+    if kind == "application/octet-stream" {
+        return "binary".to_owned();
+    }
     let (family, subtype) = kind.split_once('/').unwrap_or(("", &kind));
     match family {
         "font" | "audio" | "video" => family.to_owned(),
@@ -167,6 +171,7 @@ mod tests {
         assert_eq!(short_label("font/woff2"), "font");
         assert_eq!(short_label("application/javascript"), "js");
         assert_eq!(short_label(""), "");
+        assert_eq!(short_label("application/octet-stream"), "binary");
     }
 
     #[test]

@@ -74,8 +74,15 @@ fn end(id: &str, grace: bool) -> Option<Arc<Capture>> {
 async fn begin(workspace_id: &str, use_tunnel: bool) -> Result<Value> {
     let id = mk_id();
     let slot = Arc::new(Slot::default());
-    let (listener_id, port) =
-        start_listener(workspace_id.to_string(), 0, Some(format!("capture-{id}")), None, None, None, Some(slot.clone()))?;
+    let (listener_id, port) = start_listener(
+        workspace_id.to_string(),
+        0,
+        Some(format!("capture-{id}")),
+        None,
+        None,
+        None,
+        Some(slot.clone()),
+    )?;
     let (url, tunnel) = if use_tunnel {
         match tunnel::open(port).await {
             Ok(tunnel) => (tunnel.url.clone(), Some(tunnel)),
@@ -187,9 +194,10 @@ fn cancel(id: &str) -> Value {
 }
 
 pub fn register(registry: &mut CommandRegistry) {
-    registry.register("webhook.capture.start", |params, _| async move {
-        begin(str_of(&params, "workspaceId"), true).await
-    });
+    registry.register(
+        "webhook.capture.start",
+        |params, _| async move { begin(str_of(&params, "workspaceId"), true).await },
+    );
     registry.register("webhook.capture.wait", |params, _| async move {
         wait(str_of(&params, "captureId"), params["timeoutMs"].as_u64().unwrap_or(30_000)).await
     });
@@ -226,7 +234,8 @@ mod tests {
     #[tokio::test]
     async fn the_first_request_is_captured_with_its_payload_headers_and_signature_header() {
         let started = begin("ws1", false).await.unwrap();
-        let (id, url) = (started["captureId"].as_str().unwrap().to_string(), started["url"].as_str().unwrap().to_string());
+        let (id, url) =
+            (started["captureId"].as_str().unwrap().to_string(), started["url"].as_str().unwrap().to_string());
         let waiting = tokio::spawn({
             let id = id.clone();
             async move { wait(&id, 5_000).await.unwrap() }
@@ -252,7 +261,10 @@ mod tests {
         assert!(got["payload"].as_str().unwrap().contains('\n'), "laid out for reading");
         assert_eq!(got["signatureHeader"].as_str().unwrap().to_lowercase(), "x-hub-signature-256");
         let names: Vec<String> = got["headers"].as_object().unwrap().keys().map(|k| k.to_lowercase()).collect();
-        assert!(names.contains(&"x-github-event".to_string()) && names.contains(&"content-type".to_string()), "{names:?}");
+        assert!(
+            names.contains(&"x-github-event".to_string()) && names.contains(&"content-type".to_string()),
+            "{names:?}"
+        );
         for dropped in ["host", "content-length", "cf-connecting-ip", "x-forwarded-for", "x-hub-signature-256"] {
             assert!(!names.contains(&dropped.to_string()), "{dropped} is not kept: {names:?}");
         }
@@ -263,7 +275,8 @@ mod tests {
     #[tokio::test]
     async fn only_the_first_request_counts_and_a_wait_with_nothing_yet_says_so() {
         let started = begin("ws1", false).await.unwrap();
-        let (id, url) = (started["captureId"].as_str().unwrap().to_string(), started["url"].as_str().unwrap().to_string());
+        let (id, url) =
+            (started["captureId"].as_str().unwrap().to_string(), started["url"].as_str().unwrap().to_string());
         assert_eq!(wait(&id, 50).await.unwrap(), json!({ "captured": false, "reason": "waiting" }));
         post(&url, &[], "first").await;
         post(&url, &[], "second").await;
@@ -274,7 +287,8 @@ mod tests {
     #[tokio::test]
     async fn cancelling_ends_a_wait_and_closes_the_listener() {
         let started = begin("ws1", false).await.unwrap();
-        let (id, url) = (started["captureId"].as_str().unwrap().to_string(), started["url"].as_str().unwrap().to_string());
+        let (id, url) =
+            (started["captureId"].as_str().unwrap().to_string(), started["url"].as_str().unwrap().to_string());
         let waiting = tokio::spawn({
             let id = id.clone();
             async move { wait(&id, 30_000).await }
@@ -294,7 +308,8 @@ mod tests {
         let installed = tunnel::install().await.unwrap();
         assert_eq!(installed["installed"], true, "{installed}");
         let started = begin("ws1", true).await.unwrap();
-        let (id, url) = (started["captureId"].as_str().unwrap().to_string(), started["url"].as_str().unwrap().to_string());
+        let (id, url) =
+            (started["captureId"].as_str().unwrap().to_string(), started["url"].as_str().unwrap().to_string());
         assert!(url.starts_with("https://") && url.ends_with(".trycloudflare.com"), "{url}");
         let _ = rustls::crypto::ring::default_provider().install_default();
         let client = reqwest::Client::builder().timeout(Duration::from_secs(15)).build().unwrap();

@@ -1,9 +1,11 @@
-//! What the engine knows about vaults only while it runs: which vaults it holds a key for. Nothing here is
-//! written to disk, and a restart forgets all of it.
+//! What the engine knows about vaults only while it runs: which vaults are unsealed, and their values. Nothing
+//! here is written to disk, and a restart forgets all of it.
 //!
-//! A vault is **sealed** (no key in memory: its secrets cannot be read) or **unsealed** (the key is
-//! held until the vault is sealed or the engine stops; its secrets resolve in `{{vault.secret}}` and the
-//! command line can launch a program with them as environment variables).
+//! A vault is **sealed** (nothing in memory: its secrets cannot be read) or **unsealed** (its values are
+//! held until the vault is sealed or the engine stops; they resolve in `{{vault.secret}}` and the command line
+//! can launch a program with them as environment variables). A local vault's values are opened with its key,
+//! which is held too so that secrets can be added; a linked vault's are read from its provider once, when it
+//! is unsealed.
 
 use std::{
     collections::HashMap,
@@ -13,12 +15,21 @@ use std::{
 use serde_json::json;
 use zeroize::Zeroizing;
 
-use super::{crypto::Key, store};
+use super::crypto::Key;
 use crate::kernel::bus::bus;
+
+pub type Values = Vec<(String, Zeroizing<String>)>;
+
+struct Open {
+    name: String,
+    /// A local vault's key; `None` for a linked one.
+    key: Option<Key>,
+    values: Values,
+}
 
 #[derive(Default)]
 struct State {
-    keys: HashMap<(String, String), Key>,
+    open: HashMap<(String, String), Open>,
 }
 
 static STATE: LazyLock<Mutex<State>> = LazyLock::new(Mutex::default);
@@ -31,19 +42,48 @@ fn changed(ws_id: &str, vault_id: &str) {
     bus().emit("vault.changed", json!({ "workspaceId": ws_id, "id": vault_id }));
 }
 
+fn slot(ws_id: &str, vault_id: &str) -> (String, String) {
+    (ws_id.to_string(), vault_id.to_string())
+}
+
+pub fn is_unsealed(ws_id: &str, vault_id: &str) -> bool {
+    state().open.contains_key(&slot(ws_id, vault_id))
+}
+
+/// A local vault's key, while it is unsealed.
 pub fn key_of(ws_id: &str, vault_id: &str) -> Option<Key> {
-    state().keys.get(&(ws_id.to_string(), vault_id.to_string())).cloned()
+    state().open.get(&slot(ws_id, vault_id)).and_then(|open| open.key.clone())
 }
 
-pub fn set_key(ws_id: &str, vault_id: &str, key: Key) {
-    state().keys.insert((ws_id.to_string(), vault_id.to_string()), key);
+/// The values of an unsealed vault.
+pub fn values_of(ws_id: &str, vault_id: &str) -> Option<Values> {
+    state().open.get(&slot(ws_id, vault_id)).map(|open| open.values.clone())
+}
+
+/// Unseals a vault with these values (and, for a local one, its key).
+pub fn unseal(ws_id: &str, vault_id: &str, name: &str, key: Option<Key>, values: Values) {
+    state().open.insert(slot(ws_id, vault_id), Open { name: name.to_string(), key, values });
     changed(ws_id, vault_id);
 }
 
-/// Forget a vault's key. Its secrets can be read again only after the passphrase is given.
+/// Replaces the values of an unsealed vault, after one of them changed; a sealed vault stays sealed.
+pub fn update(ws_id: &str, vault_id: &str, name: &str, values: impl FnOnce(&mut Values)) {
+    if let Some(open) = state().open.get_mut(&slot(ws_id, vault_id)) {
+        open.name = name.to_string();
+        values(&mut open.values);
+    }
+}
+
+/// Forget a vault's values. Its secrets can be read again only after it is unsealed again.
 pub fn seal(ws_id: &str, vault_id: &str) {
-    state().keys.remove(&(ws_id.to_string(), vault_id.to_string()));
+    state().open.remove(&slot(ws_id, vault_id));
     changed(ws_id, vault_id);
+}
+
+/// Every test's data root starts with nothing unsealed.
+#[cfg(test)]
+pub fn forget_all() {
+    state().open.clear();
 }
 
 /// A vault was deleted: nothing of it may stay in memory.
@@ -56,9 +96,11 @@ pub fn resolve_reference(ws_id: &str, vault_name: &str, secret_name: &str) -> Op
     if ws_id.is_empty() {
         return None;
     }
-    let vault = store::find_by_name(ws_id, vault_name)?;
-    let key = key_of(ws_id, &vault.id)?;
-    vault.read_secret(&key, secret_name)
+    // By the vault's file, not the name it had when unsealed: a sync may have renamed or removed it since.
+    let vault = super::store::find_by_name(ws_id, vault_name)?;
+    let state = state();
+    let open = state.open.get(&slot(ws_id, vault.id()))?;
+    open.values.iter().find(|(name, _)| name == secret_name).map(|(_, value)| value.clone())
 }
 
 /// `{{vault.secret}}` references in `text`, as written, without repeats. `{{random.*}}` is not one.
@@ -187,19 +229,11 @@ pub struct Redactor {
 impl Redactor {
     /// `None` when no vault of the workspace is ready, which is the usual case and costs nothing.
     pub fn for_workspace(ws_id: &str) -> Option<Self> {
-        // Nothing is ready: answer from memory, without reading a file.
-        if !state().keys.keys().any(|(ws, _)| ws == ws_id) {
-            return None;
-        }
-        let ready: Vec<(store::VaultFile, Key)> = store::list(ws_id)
-            .into_iter()
-            .filter_map(|vault| key_of(ws_id, &vault.id).map(|key| (vault, key)))
-            .collect();
         let mut secrets = Vec::new();
-        for (vault, key) in &ready {
-            for (name, value) in vault.read_all(key) {
+        for (_, open) in state().open.iter().filter(|((ws, _), _)| ws == ws_id) {
+            for (name, value) in &open.values {
                 if value.len() >= MIN_SECRET_LEN {
-                    let reference = format!("{{{{{}.{}}}}}", vault.name, name);
+                    let reference = format!("{{{{{}.{}}}}}", open.name, name);
                     for variant in encodings(&value) {
                         secrets.push((variant, reference.clone()));
                     }
@@ -325,12 +359,19 @@ mod tests {
     }
 
     #[test]
-    fn a_key_is_held_until_the_vault_is_sealed() {
+    fn values_are_held_until_the_vault_is_sealed() {
+        // Holds the store's turn: another test's scratch root clears what is unsealed.
+        let _root = crate::testing::scratch_data_root();
         let (ws, vault) = ("ws-state-test", "vault-state-test");
-        let (_, key) = store::VaultFile::create(vault.into(), "k", "long enough pass", 0).unwrap();
-        set_key(ws, vault, key);
+        let (_, key) = super::super::store::VaultFile::create(vault.into(), "k", "long enough pass", 0).unwrap();
+        unseal(ws, vault, "keys", Some(key), vec![("A".into(), Zeroizing::new("value-a".into()))]);
         assert!(key_of(ws, vault).is_some());
+        update(ws, vault, "keys", |values| values.push(("B".into(), Zeroizing::new("value-b".into()))));
+        assert_eq!(values_of(ws, vault).unwrap().len(), 2);
         seal(ws, vault);
         assert!(key_of(ws, vault).is_none());
+        assert!(values_of(ws, vault).is_none());
+        update(ws, vault, "keys", |values| values.clear());
+        assert!(!is_unsealed(ws, vault), "an update does not unseal");
     }
 }

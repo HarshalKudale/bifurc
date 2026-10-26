@@ -10,6 +10,7 @@ mod server;
 #[cfg(test)]
 mod tests;
 pub(crate) mod tls_intercept;
+pub(crate) mod websocket;
 pub(crate) mod wire;
 
 use std::sync::Arc;
@@ -17,7 +18,7 @@ use std::sync::Arc;
 use crate::{kernel::CommandRegistry, runtime::instances::Listener};
 
 pub(crate) use handler::proxy_to_upstream;
-pub(crate) use response::{fetch_upstream_response, forward_streaming, log_body, send_html};
+pub(crate) use response::{LiveLog, fetch_upstream_response, forward_streaming, log_body, send_html};
 pub(crate) use routing::{error_entry, finished_entry, log_outcome};
 
 pub fn register(registry: &mut CommandRegistry) {

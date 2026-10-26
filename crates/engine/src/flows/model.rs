@@ -238,7 +238,9 @@ impl Node {
                 fixed(&[(PORT_OUT, "Next")])
             }
             NodeKind::Data => fixed(&[(PORT_OUT, "Value")]),
-            NodeKind::Request | NodeKind::Mcp | NodeKind::Mail => fixed(&[(PORT_SUCCESS, "Success"), (PORT_ERROR, "Error")]),
+            NodeKind::Request | NodeKind::Mcp | NodeKind::Mail => {
+                fixed(&[(PORT_SUCCESS, "Success"), (PORT_ERROR, "Error")])
+            }
             NodeKind::Validate => fixed(&[(PORT_PASS, "Pass"), (PORT_ERROR, "Fail")]),
             NodeKind::Evaluate => fixed(&[(PORT_OUT, "Result"), (PORT_ERROR, "Error")]),
             NodeKind::If => fixed(&[(PORT_TRUE, "True"), (PORT_FALSE, "False")]),

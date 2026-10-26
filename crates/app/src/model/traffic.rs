@@ -46,6 +46,12 @@ pub struct TrafficEntry {
     pub pinned: bool,
     /// The mock that answered it (`via` is `mock`), when the engine says which.
     pub mock_id: Option<String>,
+    /// `ws` or `sse` for a stream, whose messages the engine captured as they passed.
+    pub kind: Option<String>,
+    /// The stream is still open.
+    pub live: bool,
+    /// The stream's messages the engine holds.
+    pub message_count: u64,
 }
 
 /// What a response is, for the type filter of the list: the groups of a browser's Network tab, told apart by
@@ -53,6 +59,8 @@ pub struct TrafficEntry {
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum ResourceType {
     Fetch,
+    /// A WebSocket or an event stream.
+    Stream,
     Doc,
     Css,
     Js,
@@ -63,12 +71,13 @@ pub enum ResourceType {
 }
 
 impl ResourceType {
-    pub const ALL: [Self; 8] =
-        [Self::Fetch, Self::Doc, Self::Css, Self::Js, Self::Font, Self::Img, Self::Media, Self::Other];
+    pub const ALL: [Self; 9] =
+        [Self::Fetch, Self::Stream, Self::Doc, Self::Css, Self::Js, Self::Font, Self::Img, Self::Media, Self::Other];
 
     pub fn label(self) -> &'static str {
         t(match self {
             Self::Fetch => "model.traffic.type.fetch",
+            Self::Stream => "model.traffic.type.stream",
             Self::Doc => "model.traffic.type.doc",
             Self::Css => "model.traffic.type.css",
             Self::Js => "model.traffic.type.js",
@@ -99,9 +108,10 @@ impl ResourceType {
             || kind == "application/x-www-form-urlencoded"
             || kind == "application/graphql"
             || kind == "application/x-ndjson"
-            || kind == "text/event-stream"
         {
             Self::Fetch
+        } else if kind == "text/event-stream" {
+            Self::Stream
         } else {
             Self::Other
         }
@@ -118,6 +128,14 @@ pub enum Handler {
     Mock,
     /// Received by a webhook listener.
     Webhook,
+}
+
+/// What a captured exchange can be saved as; ticked rows all save the same way.
+#[derive(Clone, Copy, Debug, PartialEq, Eq)]
+pub enum Saves {
+    Nothing,
+    Request,
+    RequestOrMock,
 }
 
 impl Handler {
@@ -176,7 +194,21 @@ impl TrafficEntry {
         }
     }
 
+    /// What it can be saved as. A mock answered it already, so it is saved already; a webhook listener took it to
+    /// become a request, and a WebSocket or SSE stream is a request only.
+    pub fn saves(&self) -> Saves {
+        match self.handler() {
+            Handler::Mock => Saves::Nothing,
+            Handler::Webhook => Saves::Request,
+            _ if self.kind.is_some() => Saves::Request,
+            _ => Saves::RequestOrMock,
+        }
+    }
+
     pub fn resource_type(&self) -> ResourceType {
+        if self.kind.is_some() {
+            return ResourceType::Stream;
+        }
         ResourceType::of(&self.content_type)
     }
 
@@ -199,6 +231,9 @@ impl TrafficEntry {
             target: text("target").filter(|target| !target.is_empty()),
             pinned: value.get("pinned").and_then(Value::as_bool).unwrap_or(false),
             mock_id: text("mockId"),
+            kind: text("kind"),
+            live: value.get("live").and_then(Value::as_bool).unwrap_or(false),
+            message_count: value.get("messageCount").and_then(Value::as_u64).unwrap_or(0),
         })
     }
 
@@ -242,7 +277,19 @@ impl TrafficEntry {
     }
 
     pub fn type_label(&self) -> String {
-        media::short_label(&self.content_type)
+        match self.kind.as_deref() {
+            Some("ws") => "ws".to_owned(),
+            Some("sse") => "sse".to_owned(),
+            _ => media::short_label(&self.content_type),
+        }
+    }
+
+    /// What the size column shows: a stream's message count, else the body's size.
+    pub fn size_label(&self) -> String {
+        if self.kind.is_some() {
+            return t_with("model.traffic.messages", &[("count", &self.message_count)]);
+        }
+        self.size.map(|size| media::size_label(size as usize)).unwrap_or_default()
     }
 
     pub fn matches(&self, needle: &str) -> bool {
@@ -328,6 +375,48 @@ pub struct Exchange {
     pub response_body: Vec<u8>,
     /// The `x-bifurc-trace` value the proxy forwarded, when tracing was on.
     pub trace_id: Option<String>,
+    /// `ws` or `sse` for a stream.
+    pub kind: Option<String>,
+    /// A stream's messages, oldest first.
+    pub messages: Vec<StreamMessage>,
+}
+
+/// The messages a captured stream shows; the engine keeps as many.
+pub const MAX_STREAM_MESSAGES: usize = 500;
+
+/// One message of a captured WebSocket or event stream.
+#[derive(Debug, Clone, PartialEq)]
+pub struct StreamMessage {
+    pub id: String,
+    pub ts: u64,
+    /// The client sent it; the server did otherwise.
+    pub sent: bool,
+    /// Text as it passed; a binary message is base64.
+    pub data: String,
+    pub binary: bool,
+    /// An event stream's event name.
+    pub event: Option<String>,
+    /// An event stream's last `id:`.
+    pub event_id: Option<String>,
+    /// A WebSocket close and its code.
+    pub close: Option<u64>,
+}
+
+impl StreamMessage {
+    /// Reads one message of a captured entry, or the `message` of an `event.log.message` payload.
+    pub fn from_value(value: &Value) -> Option<Self> {
+        let text = |key: &str| value.get(key).and_then(Value::as_str).map(str::to_owned);
+        Some(Self {
+            id: text("id")?,
+            ts: value.get("ts").and_then(Value::as_u64).unwrap_or(0),
+            sent: value.get("direction").and_then(Value::as_str) == Some("sent"),
+            data: text("data").unwrap_or_default(),
+            binary: value.get("binary").and_then(Value::as_bool).unwrap_or(false),
+            event: text("event"),
+            event_id: text("eventId"),
+            close: value.get("close").and_then(Value::as_u64),
+        })
+    }
 }
 
 impl Exchange {
@@ -352,9 +441,27 @@ impl Exchange {
             request_body: body("reqBody"),
             response_body: body("resBody"),
             trace_id: text("traceId").filter(|id| !id.is_empty()),
+            kind: text("kind"),
+            messages: value
+                .get("messages")
+                .and_then(Value::as_array)
+                .map(|messages| messages.iter().filter_map(StreamMessage::from_value).collect())
+                .unwrap_or_default(),
         })
     }
+}
 
+/// Adds a message that arrived live; one already held (the fetch raced the event) is not added twice.
+pub fn push_message(messages: &mut Vec<StreamMessage>, message: StreamMessage) {
+    if messages.iter().any(|held| held.id == message.id) {
+        return;
+    }
+    messages.push(message);
+    let excess = messages.len().saturating_sub(MAX_STREAM_MESSAGES);
+    messages.drain(..excess);
+}
+
+impl Exchange {
     /// The URL's query as name/value pairs, as written (not decoded).
     pub fn query(&self) -> Vec<(String, String)> {
         split_query(&self.url).1
@@ -398,6 +505,8 @@ pub fn merge_live(entries: &mut Vec<TrafficEntry>, incoming: Vec<TrafficEntry>, 
     for mut entry in incoming {
         if let Some(position) = entries.iter().position(|e| e.id == entry.id) {
             entry.pinned |= entries[position].pinned;
+            // A stream's entry is logged without its messages; the count kept here came from `log.message`.
+            entry.message_count = entry.message_count.max(entries[position].message_count);
             entries[position] = entry;
         } else {
             entries.insert(0, entry);
@@ -569,6 +678,35 @@ mod tests {
         assert_eq!(of("video/mp4"), ResourceType::Media);
         assert_eq!(of("application/pdf"), ResourceType::Other);
         assert_eq!(of(""), ResourceType::Other);
+        assert_eq!(of("text/event-stream"), ResourceType::Stream);
+    }
+
+    #[test]
+    fn a_stream_is_its_own_type_and_keeps_its_message_count_through_updates() {
+        let socket =
+            json!({ "id": "s", "timestamp": 1, "url": "http://x/ws", "kind": "ws", "live": true, "messageCount": 0 });
+        let mut entries = parse_event(&socket);
+        assert_eq!((entries[0].resource_type(), entries[0].type_label().as_str()), (ResourceType::Stream, "ws"));
+        assert!(entries[0].live);
+        entries[0].message_count = 3;
+        let closed =
+            json!({ "id": "s", "timestamp": 1, "url": "http://x/ws", "kind": "ws", "live": false, "messageCount": 0 });
+        merge_live(&mut entries, parse_event(&closed), 10);
+        assert_eq!((entries.len(), entries[0].live, entries[0].message_count), (1, false, 3));
+    }
+
+    #[test]
+    fn a_live_message_is_added_once() {
+        let mut exchange = Exchange::from_value(&json!({ "url": "http://x/ws", "kind": "ws", "messages": [
+            { "id": "s-1", "ts": 1, "direction": "sent", "data": "hi" },
+        ] }))
+        .unwrap();
+        let echo = StreamMessage::from_value(&json!({ "id": "s-2", "direction": "received", "data": "HI" })).unwrap();
+        let held = exchange.messages[0].clone();
+        push_message(&mut exchange.messages, held);
+        push_message(&mut exchange.messages, echo);
+        let seen: Vec<(bool, &str)> = exchange.messages.iter().map(|m| (m.sent, m.data.as_str())).collect();
+        assert_eq!(seen, [(true, "hi"), (false, "HI")]);
     }
 
     #[test]
@@ -581,6 +719,19 @@ mod tests {
         assert_eq!(handler(json!({ "id": "a", "via": "rule" })), Handler::Proxy);
         assert_eq!(handler(json!({ "id": "a", "origin": "reverse", "via": "error" })), Handler::Mapping);
         assert_eq!(handler(json!({ "id": "a", "origin": "forward", "via": "error" })), Handler::Proxy);
+    }
+
+    #[test]
+    fn a_mock_answer_saves_as_nothing_a_webhook_or_stream_as_a_request_only() {
+        let saves = |value: Value| TrafficEntry::from_value(&value).unwrap().saves();
+        assert_eq!(saves(json!({ "id": "a", "via": "mock" })), Saves::Nothing);
+        assert_eq!(saves(json!({ "id": "a", "origin": "server" })), Saves::Nothing);
+        assert_eq!(saves(json!({ "id": "a", "via": "mock", "kind": "ws" })), Saves::Nothing);
+        assert_eq!(saves(json!({ "id": "a", "origin": "webhook" })), Saves::Request);
+        assert_eq!(saves(json!({ "id": "a", "via": "proxy", "kind": "ws" })), Saves::Request);
+        assert_eq!(saves(json!({ "id": "a", "via": "mapping", "kind": "sse" })), Saves::Request);
+        assert_eq!(saves(json!({ "id": "a", "via": "proxy" })), Saves::RequestOrMock);
+        assert_eq!(saves(json!({ "id": "a", "via": "mapping" })), Saves::RequestOrMock);
     }
 
     /// Every `via` and `origin` the engine writes into a capture entry (see the report of this change).

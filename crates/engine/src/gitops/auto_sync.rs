@@ -38,6 +38,8 @@ pub async fn pull_and_announce(ws_id: &str) -> Value {
         notify_config_changed();
         invalidate_cache(ws_id);
         emit_entity_status(ws_id);
+        // A vault file from a teammate on an older version: kept here, and taken out of the repository again.
+        crate::vault::move_off_repository(ws_id);
     }
     result
 }

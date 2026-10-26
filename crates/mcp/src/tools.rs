@@ -1360,7 +1360,7 @@ pub fn catalog() -> Vec<Tool> {
             name: "services",
             words: &["services"],
             summary: "Dev servers the engine runs in the background: define, up, down, restart, remove, ps, show..",
-            details: "`verb` first, then the service `name` (up and down also take `all`). define saves {cmd, port, cwd, vault, env};                 up starts it (`wait` blocks until its port listens, timeout is an error); ps lists state, port, pid, uptime                 and health, with the last error lines of a crashed one. Read output with the logs tool. snippet <stack> prints a middleware that logs the trace id.",
+            details: "`verb` first, then the service `name` (up and down also take `all`). define saves {cmd, port, cwd, vault, env, mapping};                 up starts it (`wait` blocks until its port listens, timeout is an error); ps lists state, port, pid, uptime                 and health, with the last error lines of a crashed one. Read output with the logs tool. snippet <stack> prints a middleware that logs the trace id.",
             effect: Effect::Runs,
             upfront: false,
             scoped: true,
@@ -1378,6 +1378,7 @@ pub fn catalog() -> Vec<Tool> {
                 text("cwd", "cwd", "define: the directory to run in."),
                 text("vault", "vault", "define: a vault whose secrets become environment variables."),
                 text("log_file", "log-file", "define: a file the service writes; tailed into its output."),
+                text("mapping", "mapping", "define: a .localhost name the engine points at the port the service opens."),
                 Param {
                     name: "env",
                     about: "define: environment variables (not for secrets: use vault).",

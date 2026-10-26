@@ -23,9 +23,10 @@ use crate::{
         merge_mock_with_upstream, resolve_mock_only_response, serve_mock, serve_resolved_response,
     },
     proxy::{
-        error_entry,
+        LiveLog, error_entry,
         listener::{ConnectionHandler, ListenerCore},
         log_body, log_outcome, proxy_to_upstream, send_html,
+        websocket::{is_websocket_upgrade, relay_mapped},
         wire::{Duplicates, parse_header_lines, read_body, read_head},
     },
     runtime::instances::Listener,
@@ -135,9 +136,11 @@ async fn serve<S: AsyncRead + AsyncWrite + Unpin>(shared: Arc<Shared>, mut socke
     let mut headers = parse_header_lines(&head.header_lines, Duplicates::Joined);
     strip_cache_headers(&mut headers);
     let host_header = crate::proxy::wire::raw_header(&head.header_lines, "host").unwrap_or_default().to_lowercase();
-    route(&shared, &mut socket, &head.method, &head.target, &host_header, headers, &body).await;
+    let upgrade = is_websocket_upgrade(&head.header_lines);
+    route(&shared, &mut socket, &head.method, &head.target, &host_header, headers, &body, upgrade).await;
 }
 
+#[allow(clippy::too_many_arguments)] // the edge's per-request state, passed through as is
 async fn route<W: AsyncRead + AsyncWrite + Unpin>(
     shared: &Shared,
     out: &mut W,
@@ -146,6 +149,7 @@ async fn route<W: AsyncRead + AsyncWrite + Unpin>(
     host_header: &str,
     headers: crate::kernel::traffic::Headers,
     body: &[u8],
+    upgrade: bool,
 ) {
     let t0 = now_ms();
     let host = hostname_of(host_header);
@@ -195,6 +199,13 @@ async fn route<W: AsyncRead + AsyncWrite + Unpin>(
     if mapping.is_none() && !is_localhost_domain {
         send_html(out, 200, &build_home_page(&cfg, scheme, current_port)).await;
         return;
+    }
+    // A WebSocket goes to the mapping's target; mocks do not answer one.
+    if upgrade && let Some(mapping) = mapping {
+        let target = mapping.target.as_deref().unwrap_or("");
+        let via = if is_localhost_domain { "rfc6761" } else { "mapping" };
+        let live = LiveLog { base: &base, via, target: Some(target.to_string()) };
+        return relay_mapped(out, target, req_path, &forwarded, live).await;
     }
 
     // Mocks written for a name's `http://` address keep applying once the name is served over HTTPS.
@@ -288,7 +299,8 @@ async fn route<W: AsyncRead + AsyncWrite + Unpin>(
         Some(mapping) => {
             let target = mapping.target.as_deref().unwrap_or("");
             let via = if is_localhost_domain { "rfc6761" } else { "mapping" };
-            let outcome = proxy_to_upstream(out, method, target, req_path, &forwarded, body, Some(&base.id)).await;
+            let live = LiveLog { base: &base, via, target: Some(target.to_string()) };
+            let outcome = proxy_to_upstream(out, method, target, req_path, &forwarded, body, Some(&live)).await;
             if let Some(outcome) = outcome {
                 log_outcome(&base, via, Some(target.to_string()), outcome);
             }

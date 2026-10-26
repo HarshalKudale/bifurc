@@ -10,10 +10,14 @@ use reqwest::{
 };
 use tokio::io::{AsyncWrite, AsyncWriteExt};
 
+use serde_json::json;
+
+use super::routing::{finished_entry, mask_secrets};
 use crate::{
-    kernel::traffic::{Headers, MAX_LOGGED_BODY_BYTES, emit_log_chunk},
+    kernel::traffic::{Headers, MAX_LOGGED_BODY_BYTES, RequestLogEntry, emit_log, emit_log_chunk, emit_log_message},
     mocks::UpstreamResponse,
     scripting::execute_response_script,
+    sse::parser::Parser,
     utils::{
         decompress::{decompress_body, strip_content_encoding},
         http::{ClientOptions, client as http_client, is_hop_by_hop, root_message},
@@ -36,12 +40,40 @@ pub struct Outcome {
     /// The request headers as the rule's script left them, secrets still written as `{{vault.secret}}`, when
     /// they differ from what the client sent. This is what the log shows.
     pub req_headers: Option<Headers>,
+    /// `sse` when the answer was an event stream, which was logged as live while it was open.
+    pub kind: Option<&'static str>,
 }
 
 impl Outcome {
     /// The outcome of an exchange that failed before an answer.
     pub fn bad_gateway(duration_ms: i64) -> Self {
-        Self { status: 502, duration_ms, res_headers: Headers::new(), res_body: String::new(), req_headers: None }
+        Self {
+            status: 502,
+            duration_ms,
+            res_headers: Headers::new(),
+            res_body: String::new(),
+            req_headers: None,
+            kind: None,
+        }
+    }
+}
+
+/// The exchange a forwarded answer belongs to and who handled it, so a stream can be logged while it is open.
+pub struct LiveLog<'a> {
+    pub base: &'a RequestLogEntry,
+    pub via: &'a str,
+    pub target: Option<String>,
+}
+
+impl LiveLog<'_> {
+    /// The entry of a stream that has just opened: logged now, and again with its outcome when it ends.
+    pub fn open_entry(&self, kind: &str, status: u16, duration_ms: i64, res_headers: Headers) -> RequestLogEntry {
+        let mut entry =
+            finished_entry(self.base, status, self.via, self.target.clone(), duration_ms, res_headers, String::new());
+        entry.kind = Some(kind.to_string());
+        entry.live = true;
+        mask_secrets(&mut entry);
+        entry
     }
 }
 
@@ -158,13 +190,15 @@ fn status_line(res: &Response) -> String {
 }
 
 /// Stream an upstream response to `out` as it arrives, and log it when it ends. `None` when the caller or the
-/// upstream went away mid-response (nothing is logged for an exchange that did not finish).
+/// upstream went away mid-response (nothing is logged for an exchange that did not finish), except for an event
+/// stream: that is logged as soon as it opens, its events as they pass, and it ends when either side leaves.
 pub async fn handle_proxy_response<W: AsyncWrite + Unpin>(
     mut res: Response,
     out: &mut W,
     t0: Instant,
-    log_id: Option<&str>,
+    live: Option<&LiveLog<'_>>,
 ) -> Option<Outcome> {
+    let log_id = live.map(|live| live.base.id.as_str());
     let status = res.status().as_u16();
     let (res_headers, lines) = collect_response_headers(res.headers());
     let mut head = status_line(&res).into_bytes();
@@ -176,12 +210,17 @@ pub async fn handle_proxy_response<W: AsyncWrite + Unpin>(
     }
     head.extend_from_slice(b"connection: close\r\n\r\n");
 
-    let streaming = log_id.is_some()
-        && (res_headers.get("content-type").is_some_and(|v| v.contains("text/event-stream"))
-            || res_headers.get("transfer-encoding").is_some_and(|v| v.contains("chunked")));
+    let sse = res_headers.get("content-type").is_some_and(|v| v.contains("text/event-stream"));
+    let streaming =
+        log_id.is_some() && (sse || res_headers.get("transfer-encoding").is_some_and(|v| v.contains("chunked")));
     out.write_all(&head).await.ok()?;
     out.flush().await.ok()?;
 
+    let mut events = live.filter(|_| sse).map(|live| {
+        let entry = live.open_entry("sse", status, elapsed_ms(t0), res_headers.clone());
+        emit_log(&entry);
+        (entry, Parser::new(), 0u64)
+    });
     let mut full: Vec<u8> = Vec::new();
     loop {
         match res.chunk().await {
@@ -190,12 +229,29 @@ pub async fn handle_proxy_response<W: AsyncWrite + Unpin>(
                 if let Some(id) = log_id.filter(|_| streaming) {
                     emit_log_chunk(id, &chunk, false);
                 }
-                out.write_all(&chunk).await.ok()?;
-                out.flush().await.ok()?;
+                if let Some((entry, parser, seq)) = events.as_mut() {
+                    for event in parser.feed(&chunk) {
+                        *seq += 1;
+                        let message = json!({
+                            "direction": "received", "data": event.data, "event": event.event, "eventId": event.id
+                        });
+                        emit_log_message(entry, *seq, message);
+                    }
+                }
+                if out.write_all(&chunk).await.is_err() || out.flush().await.is_err() {
+                    // A browser closing an event stream is how it normally ends.
+                    if events.is_some() {
+                        break;
+                    }
+                    return None;
+                }
             }
             Ok(None) => break,
             Err(_) => {
                 let _ = out.shutdown().await;
+                if events.is_some() {
+                    break;
+                }
                 return None;
             }
         }
@@ -213,6 +269,7 @@ pub async fn handle_proxy_response<W: AsyncWrite + Unpin>(
         res_headers: logged_headers,
         res_body: log_body(&decompressed),
         req_headers: None,
+        kind: events.map(|_| "sse"),
     })
 }
 
@@ -225,11 +282,11 @@ pub async fn forward_streaming<W: AsyncWrite + Unpin>(
     label: &str,
     headers: &Headers,
     body: &[u8],
-    log_id: Option<&str>,
+    live: Option<&LiveLog<'_>>,
 ) -> Option<Outcome> {
     let t0 = Instant::now();
     match send_request(method, url, headers, body).await {
-        Ok(res) => handle_proxy_response(res, out, t0, log_id).await,
+        Ok(res) => handle_proxy_response(res, out, t0, live).await,
         Err(_) => {
             send_html(out, 502, &format!("<h1>502 Bad Gateway</h1><p>Could not connect to <code>{label}</code>.</p>"))
                 .await;
@@ -246,7 +303,7 @@ pub async fn passthrough_to_upstream<W: AsyncWrite + Unpin>(
     path: &str,
     headers: &Headers,
     body: &[u8],
-    log_id: Option<&str>,
+    live: Option<&LiveLog<'_>>,
 ) -> Option<Outcome> {
     let t0 = Instant::now();
     let full_url = if raw_target.starts_with("http") {
@@ -264,7 +321,7 @@ pub async fn passthrough_to_upstream<W: AsyncWrite + Unpin>(
     };
     let path = if path.is_empty() { "/" } else { path };
     let label = format!("{hostname}:{port}");
-    forward_streaming(out, method, &format!("http://{hostname}:{port}{path}"), &label, headers, body, log_id).await
+    forward_streaming(out, method, &format!("http://{hostname}:{port}{path}"), &label, headers, body, live).await
 }
 
 /// Forward a request of an intercepted TLS connection to the real `hostname:port` over HTTPS.
@@ -277,11 +334,11 @@ pub async fn passthrough_to_upstream_https<W: AsyncWrite + Unpin>(
     path: &str,
     headers: &Headers,
     body: &[u8],
-    log_id: Option<&str>,
+    live: Option<&LiveLog<'_>>,
 ) -> Option<Outcome> {
     let path = if path.is_empty() { "/" } else { path };
     let label = format!("{hostname}:{port}");
-    forward_streaming(out, method, &format!("https://{hostname}:{port}{path}"), &label, headers, body, log_id).await
+    forward_streaming(out, method, &format!("https://{hostname}:{port}{path}"), &label, headers, body, live).await
 }
 
 /// Fetch the whole answer of a rule's target, running the rule's request script before and its response

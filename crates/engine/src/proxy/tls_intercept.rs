@@ -1,13 +1,18 @@
 //! TLS interception of a CONNECT: answer it, present a certificate for the requested host signed by the
 //! engine's CA, and read the decrypted request.
 
-use std::sync::Arc;
+use std::{
+    io,
+    pin::Pin,
+    sync::Arc,
+    task::{Context, Poll},
+};
 
 use rustls::ServerConfig;
-use tokio::io::{AsyncRead, AsyncWrite, AsyncWriteExt};
+use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt, ReadBuf};
 use tokio_rustls::{TlsAcceptor, server::TlsStream};
 
-use super::wire::{RequestHead, read_body, read_head};
+use super::wire::{Prefixed, RequestHead, read_body, read_head};
 use crate::certificates::host_server_config;
 
 /// Terminate TLS on `client` (a connection that just sent `CONNECT hostname:port`) and read the one request
@@ -16,7 +21,7 @@ use crate::certificates::host_server_config;
 pub async fn intercept_tls<S: AsyncRead + AsyncWrite + Unpin>(
     mut client: S,
     hostname: &str,
-) -> Option<(TlsStream<S>, RequestHead, Vec<u8>)> {
+) -> Option<(Tunnelled<S>, RequestHead, Vec<u8>)> {
     match host_server_config(hostname) {
         Ok(config) => intercept_tls_with(client, config).await,
         Err(_) => {
@@ -27,17 +32,72 @@ pub async fn intercept_tls<S: AsyncRead + AsyncWrite + Unpin>(
     }
 }
 
-/// [`intercept_tls`] with the certificate configuration already chosen.
+/// [`intercept_tls`] with the certificate configuration already chosen. A client that speaks plain HTTP in the
+/// tunnel (a browser sends `ws://` sockets and `http://` pages through CONNECT too) is read as it is.
 pub async fn intercept_tls_with<S: AsyncRead + AsyncWrite + Unpin>(
     mut client: S,
     config: Arc<ServerConfig>,
-) -> Option<(TlsStream<S>, RequestHead, Vec<u8>)> {
+) -> Option<(Tunnelled<S>, RequestHead, Vec<u8>)> {
     client.write_all(b"HTTP/1.1 200 Connection Established\r\n\r\n").await.ok()?;
     client.flush().await.ok()?;
-    let mut tls = TlsAcceptor::from(config).accept(client).await.ok()?;
-    let (head, leftover) = read_head(&mut tls).await?;
-    let body = read_body(&mut tls, leftover, &head.header_lines).await.ok()?;
-    Some((tls, head, body))
+    let mut first = [0u8; 1];
+    client.read_exact(&mut first).await.ok()?;
+    let client = Prefixed::new(first.to_vec(), client);
+    let mut tunnelled = if first[0] == TLS_HANDSHAKE {
+        Tunnelled::Tls(Box::new(TlsAcceptor::from(config).accept(client).await.ok()?))
+    } else {
+        Tunnelled::Plain(client)
+    };
+    let (head, leftover) = read_head(&mut tunnelled).await?;
+    let body = read_body(&mut tunnelled, leftover, &head.header_lines).await.ok()?;
+    Some((tunnelled, head, body))
+}
+
+/// The first byte of a TLS handshake record.
+const TLS_HANDSHAKE: u8 = 0x16;
+
+/// What a client speaks inside an answered CONNECT: TLS, decrypted here, or plain HTTP.
+pub enum Tunnelled<S> {
+    Tls(Box<TlsStream<Prefixed<S>>>),
+    Plain(Prefixed<S>),
+}
+
+impl<S> Tunnelled<S> {
+    pub fn is_tls(&self) -> bool {
+        matches!(self, Tunnelled::Tls(_))
+    }
+}
+
+impl<S: AsyncRead + AsyncWrite + Unpin> AsyncRead for Tunnelled<S> {
+    fn poll_read(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &mut ReadBuf<'_>) -> Poll<io::Result<()>> {
+        match self.get_mut() {
+            Tunnelled::Tls(tls) => Pin::new(tls.as_mut()).poll_read(cx, buf),
+            Tunnelled::Plain(plain) => Pin::new(plain).poll_read(cx, buf),
+        }
+    }
+}
+
+impl<S: AsyncRead + AsyncWrite + Unpin> AsyncWrite for Tunnelled<S> {
+    fn poll_write(self: Pin<&mut Self>, cx: &mut Context<'_>, buf: &[u8]) -> Poll<io::Result<usize>> {
+        match self.get_mut() {
+            Tunnelled::Tls(tls) => Pin::new(tls.as_mut()).poll_write(cx, buf),
+            Tunnelled::Plain(plain) => Pin::new(plain).poll_write(cx, buf),
+        }
+    }
+
+    fn poll_flush(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        match self.get_mut() {
+            Tunnelled::Tls(tls) => Pin::new(tls.as_mut()).poll_flush(cx),
+            Tunnelled::Plain(plain) => Pin::new(plain).poll_flush(cx),
+        }
+    }
+
+    fn poll_shutdown(self: Pin<&mut Self>, cx: &mut Context<'_>) -> Poll<io::Result<()>> {
+        match self.get_mut() {
+            Tunnelled::Tls(tls) => Pin::new(tls.as_mut()).poll_shutdown(cx),
+            Tunnelled::Plain(plain) => Pin::new(plain).poll_shutdown(cx),
+        }
+    }
 }
 
 #[cfg(test)]

@@ -38,7 +38,7 @@ impl Global for ModelHandle {}
 /// follows every write with the git state, and says `configChanged: false` when `entity.changed` already
 /// described the whole change; without that field (an older engine, or a pull, sync or import) it means
 /// "re-read the workspace".
-const EVENTS: [&str; 41] = [
+const EVENTS: [&str; 42] = [
     "event.request.stream",
     "event.flow.progress",
     "event.flow.finished",
@@ -78,6 +78,7 @@ const EVENTS: [&str; 41] = [
     "event.mcp.status",
     "event.mcp.message",
     "event.log.entry",
+    "event.log.message",
     "event.runner.progress",
     "event.runner.finished",
 ];
@@ -216,6 +217,8 @@ pub enum ModelEvent {
     McpMessage(Value),
     /// `event.log.entry`: proxied traffic, as a batch of entries.
     Traffic(Value),
+    /// `event.log.message`: one message of a captured WebSocket or event stream.
+    TrafficMessage(Value),
     /// `event.runner.progress`: one request of a folder run has finished.
     RunnerProgress(Value),
     /// `event.runner.finished`: a folder run ended, with its report.
@@ -701,6 +704,7 @@ impl AppModel {
                 "event.mcp.status" => cx.emit(ModelEvent::McpStatus(event.payload)),
                 "event.mcp.message" => cx.emit(ModelEvent::McpMessage(event.payload)),
                 "event.log.entry" => cx.emit(ModelEvent::Traffic(event.payload)),
+                "event.log.message" => cx.emit(ModelEvent::TrafficMessage(event.payload)),
                 "event.runner.progress" => cx.emit(ModelEvent::RunnerProgress(event.payload)),
                 "event.runner.finished" => cx.emit(ModelEvent::RunnerFinished(event.payload)),
                 "event.flow.progress" => cx.emit(ModelEvent::FlowProgress(event.payload)),
@@ -845,6 +849,16 @@ impl AppModel {
                 && this.workspace_id() == workspace_id
             {
                 let vaults = VaultInfo::list_from_value(&value);
+                // Told once a session (and again after a pull brings one), until the Vaults screen acknowledges it.
+                let newly_moved: Vec<&str> = vaults
+                    .iter()
+                    .filter(|v| v.moved && !this.vaults.iter().any(|old| old.id == v.id && old.moved))
+                    .map(|v| v.name.as_str())
+                    .collect();
+                if !newly_moved.is_empty() {
+                    let names = newly_moved.join(", ");
+                    this.notice(t_with("app.vault.moved_notice", &[("names", &names)]), cx);
+                }
                 if vaults != this.vaults {
                     this.vaults = vaults;
                     cx.notify();
@@ -1225,10 +1239,12 @@ impl AppModel {
 
     pub fn set_active_workspace(&mut self, id: &str, cx: &mut Context<Self>) {
         let client = self.engine.client.clone();
-        call(&client, cx, "workspace.setActive", json!({ "id": id }), |this, outcome, cx| match outcome {
-            Ok(_) => this.refresh(cx),
-            Err(error) => cx
-                .emit(ModelEvent::Notice(t_with("app.model.switch_workspace_failed", &[("error", &describe(&error))]))),
+        call(&client, cx, "workspace.setActive", json!({ "id": id }), |this, outcome, cx| {
+            if let Err(error) = outcome {
+                cx.emit(ModelEvent::Notice(t_with("app.model.switch_workspace_failed", &[("error", &describe(&error))])));
+            }
+            // Also after a failure: a workspace just made is in the config, and the screen waiting on it must see it.
+            this.refresh(cx);
         });
     }
 

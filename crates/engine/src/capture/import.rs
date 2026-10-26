@@ -11,7 +11,7 @@ use serde_json::{Map, Value, json};
 
 use super::{
     captured_to_request,
-    entities::{b64_to_text, header_of},
+    entities::{b64_to_text, header_of, request_kind_of},
     get_capture,
 };
 use crate::{
@@ -473,7 +473,7 @@ fn build_flow(name: &str, entries: &[Value], request_ids: &[String], wires: &[Wi
         nodes.push(json!({
             "id": id, "type": "request", "name": name_of(str_of(entry, "url")),
             "x": 60.0 + NODE_STEP * (at + 1) as f64, "y": 120.0,
-            "requestKind": "requests", "requestId": request_id,
+            "requestKind": request_kind_of(entry), "requestId": request_id,
             "failOnStatus": status.is_none_or(|status| (200..300).contains(&status)),
         }));
         edge(&previous.0, previous.1, &id, &mut edges);
@@ -675,7 +675,7 @@ pub fn register(registry: &mut CommandRegistry) {
             if let Some(folder_id) = &folder_id {
                 request["folderId"] = json!(folder_id);
             }
-            let payload = json!({ "kind": "requests", "workspaceId": ws_id, "entity": request });
+            let payload = json!({ "kind": request_kind_of(entry), "workspaceId": ws_id, "entity": request });
             request_ids.push(str_of(&invoke(&ctx, "entity.create", payload).await?, "id").to_string());
         }
         let flow_id = if flow {

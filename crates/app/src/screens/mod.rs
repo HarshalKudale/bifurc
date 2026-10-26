@@ -15,6 +15,7 @@ pub mod proxy_rules;
 pub mod requests;
 pub mod services;
 pub mod settings;
+pub mod vault_setup;
 pub mod vaults;
 pub mod workspace;
 pub mod workspace_setup;

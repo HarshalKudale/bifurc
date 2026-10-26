@@ -127,6 +127,15 @@ fn unseal(secret: &str) -> Option<String> {
     None
 }
 
+/// A token sealed as an account's is, for another file of this device only (a vault provider's token).
+pub(crate) fn seal_secret(token: &str) -> Option<String> {
+    seal(token)
+}
+
+pub(crate) fn unseal_secret(sealed: &str) -> Option<String> {
+    unseal(sealed)
+}
+
 fn load_file() -> Value {
     read_json(&accounts_path()).filter(Value::is_object).unwrap_or_else(|| json!({ "accounts": [] }))
 }

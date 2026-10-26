@@ -29,7 +29,9 @@ use gpui_kit::{
 use serde_json::{Map, Value, json};
 
 use super::{
-    Carry, LoadState, SaveMode, SessionEvent, capture_overlay::CaptureOverlay, engine_folder,
+    Carry, LoadState, SaveMode, SessionEvent,
+    capture_overlay::CaptureOverlay,
+    engine_folder,
     exchange::{Exchange, HistorySource, Replay},
     graphql::SchemaPanel,
     wsdl::WsdlPanel,
@@ -1008,7 +1010,9 @@ impl ProtocolSession {
                 .ok()
                 .and_then(|listed| {
                     listed.get("fixtures").and_then(Value::as_array).map(|rows| {
-                        rows.iter().filter_map(|row| row.get("name").and_then(Value::as_str).map(str::to_owned)).collect()
+                        rows.iter()
+                            .filter_map(|row| row.get("name").and_then(Value::as_str).map(str::to_owned))
+                            .collect()
                     })
                 })
                 .unwrap_or_default();
@@ -1111,11 +1115,19 @@ impl ProtocolSession {
         let payload = json!({ "workspaceId": self.workspace_id });
         let cancel_client = client.clone();
         call_in(&client, window, cx, "webhook.capture.start", payload, move |this, outcome, window, cx| {
-            let started = outcome.as_ref().ok().and_then(|started| started.get("captureId")?.as_str().map(str::to_owned));
+            let started =
+                outcome.as_ref().ok().and_then(|started| started.get("captureId")?.as_str().map(str::to_owned));
             // Cancelled while it was starting: the engine's answer is of no use, and it is told to drop it.
             if this.capture_attempt != attempt || this.capture_id.is_none() {
                 if let Some(id) = started {
-                    call_in(&cancel_client, window, cx, "webhook.capture.cancel", json!({ "captureId": id }), |_, _, _, _| {});
+                    call_in(
+                        &cancel_client,
+                        window,
+                        cx,
+                        "webhook.capture.cancel",
+                        json!({ "captureId": id }),
+                        |_, _, _, _| {},
+                    );
                 }
                 return;
             }
@@ -1864,12 +1876,7 @@ impl Render for ProtocolSession {
                 Control::Text(editor) if spec.key == "payload" && self.webhook.is_some() => v_flex()
                     .size_full()
                     .child(self.sample_row())
-                    .child(
-                        div()
-                            .flex_1()
-                            .min_h_0()
-                            .child(Editor::new(editor.state()).bordered(false).h_full()),
-                    )
+                    .child(div().flex_1().min_h_0().child(Editor::new(editor.state()).bordered(false).h_full()))
                     .into_any_element(),
                 Control::Text(editor) => Editor::new(editor.state()).bordered(false).h_full().into_any_element(),
                 Control::Pairs(table) => table.clone().into_any_element(),
@@ -1919,7 +1926,11 @@ impl Render for ProtocolSession {
                 Button::new("webhook-capture")
                     .outline()
                     .label(t("session.capture.button"))
-                    .tooltip(if ready { t("session.capture.button_tooltip") } else { t("session.capture.install_first") })
+                    .tooltip(if ready {
+                        t("session.capture.button_tooltip")
+                    } else {
+                        t("session.capture.install_first")
+                    })
                     .disabled(!ready || self.capture_id.is_some())
                     .on_click(cx.listener(|this, _, window, cx| this.capture(window, cx))),
             );

@@ -241,83 +241,26 @@ fn a_sealed_vault_asks_for_its_passphrase_before_the_service_starts(cx: &mut gpu
     assert_eq!(ui.fake.sent("devservice.up"), [json!({"workspaceId": "w1", "name": "db"})]);
 }
 
-fn output(workspace: &str, name: &str, lines: &[(&str, &str)]) -> serde_json::Value {
-    let lines: Vec<_> = lines.iter().map(|(stream, text)| json!({"ts": 5, "stream": stream, "text": text})).collect();
-    json!({"workspaceId": workspace, "name": name, "lines": lines})
-}
-
-/// The screen with `api` selected and these lines already in its log.
-fn open_with_log(cx: &mut gpui_kit::TestAppContext, lines: &[(&str, &str)]) -> crate::test_support::Ui {
+#[gpui_kit::test]
+fn a_mapping_is_part_of_the_definition_and_shows_in_the_row(cx: &mut gpui_kit::TestAppContext) {
     let mut ui = open_populated(cx);
-    ui.fake.reply("devservice.logs", output("w1", "api", lines));
+    ui.fake.reply(
+        "devservice.list",
+        json!({"services": [
+            {"name": "web", "cmd": "npm run dev", "mapping": "web.localhost", "state": "running", "mappedPort": 5173},
+        ]}),
+    );
     ui.show(Screen::Services);
-    assert!(!ui.has("dev-logs"));
+    assert!(ui.has("dev-mapping-web"));
+    ui.click("dev-edit-web");
     ui.fake.forget_calls();
-    ui.click("dev-row-api");
-    ui
-}
-
-#[gpui_kit::test]
-fn selecting_a_dev_server_loads_its_last_lines_and_selecting_it_again_closes_them(cx: &mut gpui_kit::TestAppContext) {
-    let mut ui = open_with_log(cx, &[("stdout", "ready"), ("stderr", "Error: boom")]);
-    assert_eq!(ui.fake.sent("devservice.logs"), [json!({"workspaceId": "w1", "name": "api", "last": 1000})]);
-    assert!(ui.has("dev-logs") && ui.has(("dev-log", 0usize)) && ui.has(("dev-log", 1usize)));
-    assert!(!ui.has(("dev-log", 2usize)));
-    ui.click("dev-row-api");
-    assert!(!ui.has("dev-logs"));
-}
-
-#[gpui_kit::test]
-fn a_server_without_output_says_so(cx: &mut gpui_kit::TestAppContext) {
-    let mut ui = open_with_log(cx, &[]);
-    assert!(ui.has("dev-logs") && ui.has("empty-state") && !ui.has(("dev-log", 0usize)));
-}
-
-#[gpui_kit::test]
-fn output_events_of_the_shown_server_are_appended_and_others_are_ignored(cx: &mut gpui_kit::TestAppContext) {
-    let mut ui = open_with_log(cx, &[("stdout", "ready")]);
-    ui.fake.emit("event.devservice.output", output("w1", "db", &[("stdout", "not ours")]));
-    ui.fake.emit("event.devservice.output", output("w2", "api", &[("stdout", "other workspace")]));
-    ui.settle();
-    assert!(!ui.has(("dev-log", 1usize)));
-    ui.fake.emit("event.devservice.output", output("w1", "api", &[("stdout", "GET /"), ("stderr", "WARN slow")]));
-    ui.settle();
-    assert!(ui.has(("dev-log", 2usize)) && !ui.has(("dev-log", 3usize)));
-}
-
-#[gpui_kit::test]
-fn the_search_and_errors_only_narrow_the_lines_shown(cx: &mut gpui_kit::TestAppContext) {
-    let lines = [("stdout", "ready"), ("stdout", "GET /users"), ("stderr", "Error: boom"), ("stdout", "GET /orders")];
-    let mut ui = open_with_log(cx, &lines);
-    assert!(ui.has(("dev-log", 3usize)));
-    ui.click("dev-log-search");
-    ui.input("GET");
-    assert!(ui.has(("dev-log", 1usize)) && !ui.has(("dev-log", 2usize)));
-    ui.click("dev-log-errors");
-    assert!(ui.has("empty-state") && !ui.has(("dev-log", 0usize)), "no error line has GET");
-    ui.press("ctrl-a");
-    ui.input("boom");
-    assert!(ui.has(("dev-log", 0usize)) && !ui.has(("dev-log", 1usize)));
-}
-
-#[gpui_kit::test]
-fn clearing_the_view_empties_it_without_asking_the_engine_and_new_output_still_arrives(
-    cx: &mut gpui_kit::TestAppContext,
-) {
-    let mut ui = open_with_log(cx, &[("stdout", "ready")]);
+    ui.answer_prompt(&["npm run dev", "", "", "", "", "site"]);
+    assert_eq!(
+        ui.fake.sent("devservice.define"),
+        [json!({"workspaceId": "w1", "name": "web", "cmd": "npm run dev", "mapping": "site"})]
+    );
+    ui.click("dev-edit-web");
     ui.fake.forget_calls();
-    ui.click("dev-log-clear");
-    assert!(!ui.has(("dev-log", 0usize)));
-    assert!(ui.fake.calls().is_empty());
-    ui.fake.emit("event.devservice.output", output("w1", "api", &[("stdout", "again")]));
-    ui.settle();
-    assert!(ui.has(("dev-log", 0usize)) && !ui.has(("dev-log", 1usize)));
-}
-
-#[gpui_kit::test]
-fn removing_the_shown_server_closes_its_output(cx: &mut gpui_kit::TestAppContext) {
-    let mut ui = open_with_log(cx, &[("stdout", "ready")]);
-    ui.fake.emit("event.devservice.changed", json!({"workspaceId": "w1", "name": "api", "service": null}));
-    ui.settle();
-    assert!(!ui.has("dev-logs"));
+    ui.answer_prompt(&["npm run dev", "", "", "", "", "no good"]);
+    assert!(ui.fake.sent("devservice.define").is_empty());
 }

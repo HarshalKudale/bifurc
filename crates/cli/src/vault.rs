@@ -84,6 +84,17 @@ fn new_passphrase(args: &ParsedArgs, vault: &str) -> Result<String> {
     Ok(first)
 }
 
+/// `KEY=value` options, as `(KEY, value)`.
+fn pairs(given: &[String], what: &str) -> Result<Vec<(String, Value)>> {
+    given
+        .iter()
+        .map(|pair| match pair.split_once('=') {
+            Some((key, value)) if !key.trim().is_empty() => Ok((key.trim().to_string(), json!(value.trim()))),
+            _ => Err(CliError::usage(format!("--{what} takes KEY=value, not \"{pair}\""))),
+        })
+        .collect()
+}
+
 /// The workspace and the vault the command's first operand names, as `vault.list` describes it.
 fn named(ctx: &mut Context) -> Result<(String, Value)> {
     let name = need(ctx.args.positional(2), "vault name")?;
@@ -93,13 +104,29 @@ fn named(ctx: &mut Context) -> Result<(String, Value)> {
     Ok((workspace, vault))
 }
 
-/// Unseal the vault if it is sealed, asking for the passphrase until it is right. An unsealed vault is left
-/// as it is and nothing is asked. Returns whether it was sealed.
+/// Whether the vault reads its values from a secret manager rather than keeping them on this device.
+fn is_linked(vault: &Value) -> bool {
+    vault["provider"].as_str().is_some_and(|provider| provider != "local")
+}
+
+/// Unseal the vault if it is sealed, asking for the passphrase until it is right; a linked vault reads its
+/// values from its provider and asks for nothing. An unsealed vault is left as it is. Returns whether it was
+/// sealed.
 fn unseal(ctx: &mut Context, workspace: &str, vault: &Value) -> Result<bool> {
     if vault["state"] != "sealed" {
         return Ok(false);
     }
     let name = vault["name"].as_str().unwrap_or_default();
+    if is_linked(vault) {
+        if vault["approved"] == false {
+            return Err(CliError::needs_human(format!(
+                "vault \"{name}\" changed where its values come from since this device approved it — review it \
+                 (bifurc vault list --json), then: bifurc vault approve {name}"
+            )));
+        }
+        ctx.request("vault.unseal", json!({ "workspaceId": workspace, "id": vault["id"] }))?;
+        return Ok(true);
+    }
     let mut attempt = 0;
     loop {
         let pass = passphrase(ctx.args, name, attempt)?;
@@ -129,19 +156,61 @@ pub fn vaults(ctx: &mut Context, sub: Option<&str>) -> Result<String> {
                 .flatten()
                 .map(|v| {
                     let names = v["secrets"].as_array().into_iter().flatten().filter_map(Value::as_str);
-                    with_field(v, "secretNames", json!(names.collect::<Vec<_>>().join(", ")))
+                    let v = with_field(v, "secretNames", json!(names.collect::<Vec<_>>().join(", ")));
+                    let state = if v["approved"] == false { json!("needs approval") } else { v["state"].clone() };
+                    with_field(&v, "state", state)
                 })
                 .collect();
-            Ok(ctx.print(&listed, || table(&rows, &["name", "state", "secretNames"])))
+            Ok(ctx.print(&listed, || table(&rows, &["name", "provider", "state", "secretNames"])))
         }
+        // A local vault (the default) asks for a passphrase; a linked one takes the settings that name its source
+        // in the provider and, from stdin, a token for this device.
         "create" => {
-            ctx.accept(&["passphrase-stdin"], 1)?;
+            ctx.accept(&["passphrase-stdin", "provider", "setting", "credential-stdin"], 1)?;
             let name = need(ctx.args.positional(2), "vault name")?;
             let workspace = workspace_id(ctx)?;
-            let passphrase = new_passphrase(ctx.args, &name)?;
-            let created = ctx
-                .request("vault.create", json!({ "workspaceId": workspace, "name": name, "passphrase": passphrase }))?;
-            Ok(ctx.print(&created, || format!("Created vault {name}. It is unsealed until the engine restarts.")))
+            let provider = ctx.args.flag("provider").unwrap_or("local").to_string();
+            if provider == "local" {
+                let passphrase = new_passphrase(ctx.args, &name)?;
+                let created = ctx.request(
+                    "vault.create",
+                    json!({ "workspaceId": workspace, "name": name, "passphrase": passphrase }),
+                )?;
+                return Ok(ctx.print(&created, || {
+                    format!("Created vault {name} on this device. It is unsealed until the engine restarts.")
+                }));
+            }
+            let settings = pairs(ctx.args.flags("setting"), "setting")?;
+            let mut payload = json!({
+                "workspaceId": workspace, "name": name, "provider": provider,
+                "settings": settings.into_iter().collect::<serde_json::Map<_, _>>(),
+            });
+            if ctx.args.has("credential-stdin") {
+                payload["credential"] = json!(prompt::stdin_line()?);
+            }
+            let created = ctx.request("vault.create", payload)?;
+            Ok(ctx.print(&created, || {
+                format!("Linked vault {name} to {provider}. Its secrets are pulled when it is first unsealed.")
+            }))
+        }
+        // A linked vault's provider settings and this device's token; approves the vault on this device.
+        "setup" => {
+            ctx.accept(&["setting", "credential-stdin", "clear-credential"], 1)?;
+            let (workspace, vault) = named(ctx)?;
+            let mut payload = json!({ "workspaceId": workspace, "id": vault["id"] });
+            if ctx.args.has("setting") {
+                // The settings given replace the vault's: those not named again are dropped.
+                let settings = pairs(ctx.args.flags("setting"), "setting")?;
+                payload["settings"] = Value::Object(settings.into_iter().collect());
+            }
+            if ctx.args.has("credential-stdin") {
+                payload["credential"] = json!(prompt::stdin_line()?);
+            } else if ctx.args.has("clear-credential") {
+                payload["credential"] = json!("");
+            }
+            let set = ctx.request("vault.configure", payload)?;
+            let name = vault["name"].as_str().unwrap_or_default();
+            Ok(ctx.print(&set, || format!("Set up vault {name} on this device")))
         }
         // The value is typed hidden (or piped with --value-stdin) and goes straight to the engine.
         "set" => {
@@ -321,8 +390,10 @@ mod tests {
 
     fn listed(state: &str) -> Value {
         json!([
-            {"id": "a1", "name": "api_keys", "state": state, "secrets": ["TOKEN", "DB_URL"]},
-            {"id": "b2", "name": "db", "state": "sealed", "secrets": []},
+            {"id": "a1", "name": "api_keys", "provider": "local", "state": state, "secrets": ["TOKEN", "DB_URL"]},
+            {"id": "b2", "name": "db", "provider": "local", "state": "sealed", "secrets": []},
+            {"id": "c3", "name": "team", "provider": "aws", "state": "sealed", "approved": true, "secrets": ["STRIPE"]},
+            {"id": "d4", "name": "pulled", "provider": "1password", "state": "sealed", "approved": false, "secrets": []},
         ])
     }
 
@@ -341,7 +412,7 @@ mod tests {
         let list = listed("unsealed");
         assert_eq!(find_vault(&list, "API_KEYS").unwrap()["id"], "a1");
         let err = find_vault(&list, "nope").unwrap_err().to_string();
-        assert_eq!(err, "no vault named \"nope\" (known: api_keys, db)");
+        assert_eq!(err, "no vault named \"nope\" (known: api_keys, db, team, pulled)");
         assert!(find_vault(&json!([]), "x").unwrap_err().to_string().contains("no vaults"));
     }
 
@@ -365,8 +436,54 @@ mod tests {
         let (out, _) = with_engine(&argv, engine("unsealed"), |c| vaults(c, sub(&argv)));
         assert_eq!(
             out.unwrap(),
-            "NAME      STATE     SECRETNAMES\napi_keys  unsealed  TOKEN, DB_URL\ndb        sealed"
+            "NAME      PROVIDER   STATE           SECRETNAMES\napi_keys  local      unsealed        TOKEN, DB_URL\n\
+             db        local      sealed\nteam      aws        sealed          STRIPE\n\
+             pulled    1password  needs approval"
         );
+    }
+
+    #[test]
+    fn a_linked_vault_unseals_without_a_passphrase_once_approved_here() {
+        let argv = ["vault", "unseal", "team"];
+        let (out, calls) = with_engine(&argv, engine("sealed"), |c| vaults(c, sub(&argv)));
+        assert!(out.unwrap().starts_with("Unsealed vault team"));
+        assert_eq!(payloads(&calls, "vault.unseal"), [json!({"workspaceId": "w1", "id": "c3"})]);
+
+        let argv = ["vault", "unseal", "pulled"];
+        let (out, calls) = with_engine(&argv, engine("sealed"), |c| vaults(c, sub(&argv)));
+        let err = out.unwrap_err();
+        assert_eq!(err.code(), 6);
+        assert!(err.to_string().contains("bifurc vault approve pulled"), "{err}");
+        assert!(payloads(&calls, "vault.unseal").is_empty());
+    }
+
+    #[test]
+    fn a_linked_vault_is_created_with_the_settings_of_its_source() {
+        let argv = [
+            "vault",
+            "create",
+            "team",
+            "--provider",
+            "aws",
+            "--setting",
+            "secretId=prod/app",
+            "--setting",
+            "region=eu-west-1",
+        ];
+        let mut answers = engine("sealed");
+        answers.push(("vault.create", Ok(json!({"id": "c3", "name": "team"}))));
+        let (out, calls) = with_engine(&argv, answers, |c| vaults(c, sub(&argv)));
+        assert!(out.unwrap().starts_with("Linked vault team to aws"));
+        assert_eq!(
+            payloads(&calls, "vault.create"),
+            [json!({
+                "workspaceId": "w1", "name": "team", "provider": "aws",
+                "settings": {"secretId": "prod/app", "region": "eu-west-1"},
+            })]
+        );
+        let argv = ["vault", "create", "team", "--provider", "aws", "--setting", "region"];
+        let (out, _) = with_engine(&argv, engine("sealed"), |c| vaults(c, sub(&argv)));
+        assert_eq!(out.unwrap_err(), CliError::usage("--setting takes KEY=value, not \"region\""));
     }
 
     #[test]
@@ -398,7 +515,10 @@ mod tests {
         let argv = ["vault", "run", "nope"];
         let command = ["npm".to_string()];
         let (out, calls) = with_engine(&argv, engine("unsealed"), |c| run(c, &command).map(|code| code.to_string()));
-        assert_eq!(out.unwrap_err(), CliError::not_found("no vault named \"nope\" (known: api_keys, db)"));
+        assert_eq!(
+            out.unwrap_err(),
+            CliError::not_found("no vault named \"nope\" (known: api_keys, db, team, pulled)")
+        );
         assert!(payloads(&calls, "vault.secrets").is_empty());
 
         let argv = ["vault", "run", "keys"];

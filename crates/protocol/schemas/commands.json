@@ -4406,12 +4406,20 @@
     },
     "passphrase": {
      "type": "string"
+    },
+    "provider": {
+     "type": "string"
+    },
+    "settings": {
+     "type": "object"
+    },
+    "credential": {
+     "type": "string"
     }
    },
    "required": [
     "workspaceId",
-    "name",
-    "passphrase"
+    "name"
    ]
   },
   "vault.rename": {
@@ -4463,8 +4471,7 @@
    },
    "required": [
     "workspaceId",
-    "id",
-    "passphrase"
+    "id"
    ]
   },
   "vault.seal": {
@@ -4548,6 +4555,69 @@
    ]
   },
   "vault.secrets": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "id": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "workspaceId",
+    "id"
+   ]
+  },
+  "vault.providers": {
+   "type": "object",
+   "properties": {},
+   "required": [],
+   "additionalProperties": false
+  },
+  "vault.test": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "id": {
+     "type": "string"
+    },
+    "provider": {
+     "type": "string"
+    },
+    "settings": {
+     "type": "object"
+    },
+    "credential": {
+     "type": "string"
+    }
+   },
+   "required": []
+  },
+  "vault.configure": {
+   "type": "object",
+   "properties": {
+    "workspaceId": {
+     "type": "string"
+    },
+    "id": {
+     "type": "string"
+    },
+    "settings": {
+     "type": "object"
+    },
+    "credential": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "workspaceId",
+    "id"
+   ]
+  },
+  "vault.acknowledge": {
    "type": "object",
    "properties": {
     "workspaceId": {
@@ -4893,6 +4963,9 @@
      }
     },
     "logFile": {
+     "type": "string"
+    },
+    "mapping": {
      "type": "string"
     }
    },

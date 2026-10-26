@@ -577,7 +577,7 @@ impl<S: FolderTreeSource> Render for FolderTree<S> {
         };
         v_flex()
             .size_full()
-            .bg(cx.theme().sidebar)
+            .bg(cx.theme().group_box)
             .child(self.render_header(cx))
             .child(div().flex_1().min_h_0().child(body))
             .children(top_level)

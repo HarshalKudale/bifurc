@@ -6,19 +6,17 @@
 //! and offers to map the ones that have none or to stop what holds a port.
 
 use gpui_kit::component::{
-    ActiveTheme as _, Disableable as _, Icon, IconName, Sizable as _, StyledExt as _,
+    ActiveTheme as _, Icon, IconName, Sizable as _, StyledExt as _,
     button::{Button, ButtonVariants as _},
-    checkbox::Checkbox,
     h_flex,
     input::{Input, InputEvent, InputState},
     tag::Tag,
     v_flex,
 };
-use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
-    AppContext as _, ClipboardItem, Context, ElementId, Entity, InteractiveElement as _, IntoElement,
-    ParentElement as _, Render, ScrollWheelEvent, StatefulInteractiveElement as _, Styled as _, Subscription,
-    TestSupportExt as _, UniformListScrollHandle, Window, div, px, uniform_list,
+    AppContext as _, Context, ElementId, Entity, EventEmitter, InteractiveElement as _, IntoElement,
+    ParentElement as _, Render, StatefulInteractiveElement as _, Styled as _, Subscription, TestSupportExt as _,
+    UniformListScrollHandle, Window, div, uniform_list,
 };
 use serde_json::{Value, json};
 use std::ops::Range;
@@ -31,15 +29,15 @@ use crate::{
     },
     engine::{call, call_in, describe, failure},
     i18n::{t, t_with},
-    model::{
-        logs::{self, LogLine, Shown},
-        traffic::clock_utc,
-        vault::VaultState,
-    },
+    model::{logs::RunStatus, vault::VaultState},
 };
 
-/// How many lines of a dev server's output are read when it is selected.
-const FIRST_LINES: u32 = 1000;
+/// What the screen asks the window for.
+pub enum ServicesEvent {
+    /// Show the output of dev server `name` in the logs dock. `fresh` is for a server just started: what the
+    /// dock holds of it is of the run before.
+    ShowOutput { name: String, status: RunStatus, fresh: bool },
+}
 
 #[derive(Debug, Clone, PartialEq)]
 struct Service {
@@ -92,6 +90,10 @@ struct DevServer {
     cwd: String,
     vault: String,
     log_file: String,
+    /// The `.localhost` name the engine points at the port the server opens.
+    mapping: String,
+    /// The port the engine found the server's processes on, once it pointed the mapping there.
+    mapped_port: Option<u16>,
     /// Kept so an edit can send it back: `devservice.define` drops every key it is not given.
     env: Option<Value>,
     state: DevState,
@@ -107,6 +109,8 @@ impl DevServer {
             cwd: text("cwd"),
             vault: text("vault"),
             log_file: text("logFile"),
+            mapping: text("mapping"),
+            mapped_port: value.get("mappedPort").and_then(Value::as_u64).and_then(|port| u16::try_from(port).ok()),
             env: value.get("env").filter(|env| !env.is_null()).cloned(),
             state: match value.get("state").and_then(Value::as_str) {
                 Some("running") => {
@@ -122,6 +126,14 @@ impl DevServer {
         matches!(self.state, DevState::Running { .. })
     }
 
+    fn run_status(&self) -> RunStatus {
+        match self.state {
+            DevState::Running { .. } => RunStatus::Running,
+            DevState::Stopped => RunStatus::Stopped,
+            DevState::Crashed(code) => RunStatus::Crashed(code),
+        }
+    }
+
     /// Started, but nothing answers on its port yet.
     fn starting(&self) -> bool {
         self.port.is_some() && self.state == (DevState::Running { listening: false })
@@ -130,7 +142,7 @@ impl DevServer {
 
 /// The `devservice.define` payload for what the dialog collected. `Err` is the key of what is wrong with it.
 fn dev_definition(workspace: &str, name: &str, fields: &[String], env: Option<&Value>) -> Result<Value, &'static str> {
-    let [cmd, port, cwd, vault, log_file] = fields else { return Err("services.dev.invalid.name") };
+    let [cmd, port, cwd, vault, log_file, mapping] = fields else { return Err("services.dev.invalid.name") };
     if name.is_empty() || !name.chars().all(|c| c.is_ascii_alphanumeric() || c == '-' || c == '_') {
         return Err("services.dev.invalid.name");
     }
@@ -139,7 +151,11 @@ fn dev_definition(workspace: &str, name: &str, fields: &[String], env: Option<&V
         let port: u16 = port.parse().ok().filter(|port| *port > 0).ok_or("services.dev.invalid.port")?;
         definition["port"] = json!(port);
     }
-    for (key, value) in [("cwd", cwd), ("vault", vault), ("logFile", log_file)] {
+    let label = |part: &str| !part.is_empty() && part.chars().all(|c| c.is_ascii_alphanumeric() || c == '-');
+    if !mapping.is_empty() && !mapping.trim_end_matches(".localhost").split('.').all(label) {
+        return Err("services.dev.invalid.mapping");
+    }
+    for (key, value) in [("cwd", cwd), ("vault", vault), ("logFile", log_file), ("mapping", mapping)] {
         if !value.is_empty() {
             definition[key] = json!(value);
         }
@@ -166,43 +182,26 @@ pub struct ServicesScreen {
     dev_error: Option<String>,
     filter: Entity<InputState>,
     scroll: UniformListScrollHandle,
-    /// The dev server whose output is shown below the list.
-    selected: Option<String>,
-    log: Vec<LogLine>,
-    /// The first read of `selected`'s output has come back; output that arrives before it is in that read.
-    log_loaded: bool,
-    /// `log` as the panel shows it, worked out when the lines or the toolbar change rather than on each frame.
-    shown: Vec<Shown>,
-    log_search: Entity<InputState>,
-    errors_only: bool,
-    follow: bool,
-    log_scroll: UniformListScrollHandle,
     _subscriptions: Vec<Subscription>,
 }
+
+impl EventEmitter<ServicesEvent> for ServicesScreen {}
 
 impl ServicesScreen {
     pub fn new(model: Entity<AppModel>, window: &mut Window, cx: &mut Context<Self>) -> Self {
         let filter = cx.new(|cx| InputState::new(window, cx).placeholder(t("services.filter.placeholder")));
-        let log_search = cx.new(|cx| InputState::new(window, cx).placeholder(t("services.logs.search_placeholder")));
         let subscriptions = vec![
             cx.observe(&model, |_, _, cx| cx.notify()),
             cx.subscribe(&model, |this, _, event: &ModelEvent, cx| match event {
                 ModelEvent::WorkspaceSwitched => {
                     this.dev.clear();
-                    this.selected = None;
                     this.dev_loaded = false;
                     this.refresh_dev(cx);
                 }
                 // The screen is built before the workspace is known; the first snapshot is when it can load.
                 ModelEvent::ConfigChanged if !this.dev_loaded => this.refresh_dev(cx),
                 ModelEvent::DevServiceChanged(payload) => this.apply_dev_change(payload, cx),
-                ModelEvent::DevServiceOutput(payload) => this.apply_output(payload, cx),
                 _ => {}
-            }),
-            cx.subscribe(&log_search, |this, _, event: &InputEvent, cx| {
-                if matches!(event, InputEvent::Change) {
-                    this.reload_shown(cx);
-                }
             }),
             cx.subscribe(&filter, |_, _, event: &InputEvent, cx| {
                 if matches!(event, InputEvent::Change) {
@@ -219,14 +218,6 @@ impl ServicesScreen {
             dev_error: None,
             filter,
             scroll: UniformListScrollHandle::new(),
-            selected: None,
-            log: Vec::new(),
-            log_loaded: false,
-            shown: Vec::new(),
-            log_search,
-            errors_only: false,
-            follow: true,
-            log_scroll: UniformListScrollHandle::new(),
             _subscriptions: subscriptions,
         };
         this.refresh(cx);
@@ -297,58 +288,18 @@ impl ServicesScreen {
         }
         let Some(name) = payload.get("name").and_then(Value::as_str) else { return };
         self.dev.retain(|service| service.name != name);
-        match payload.get("service").and_then(DevServer::from_value) {
-            Some(service) => {
-                self.dev.push(service);
-                self.dev.sort_by(|a, b| a.name.cmp(&b.name));
-            }
-            None if self.selected.as_deref() == Some(name) => self.selected = None,
-            None => {}
+        if let Some(service) = payload.get("service").and_then(DevServer::from_value) {
+            self.dev.push(service);
+            self.dev.sort_by(|a, b| a.name.cmp(&b.name));
         }
         cx.notify();
     }
 
-    /// Opens the output of `name` below the list, or closes it when it is already open.
-    fn select_dev(&mut self, name: String, cx: &mut Context<Self>) {
-        if self.selected.as_deref() == Some(name.as_str()) {
-            self.selected = None;
-            return cx.notify();
-        }
-        self.selected = Some(name.clone());
-        self.log.clear();
-        self.log_loaded = false;
-        self.follow = true;
-        self.reload_shown(cx);
-        let payload = json!({ "workspaceId": self.workspace(cx), "name": name, "last": FIRST_LINES });
-        let client = self.model.read(cx).client().clone();
-        call(&client, cx, "devservice.logs", payload, move |this, outcome, cx| {
-            // The answer for a server that is no longer the one shown.
-            if this.selected.as_deref() != Some(name.as_str()) {
-                return;
-            }
-            match failure(&outcome) {
-                Some(message) => this.report_dev(&name, message, cx),
-                None => this.log = outcome.ok().map(|result| LogLine::list(&result)).unwrap_or_default(),
-            }
-            this.log_loaded = true;
-            this.reload_shown(cx);
-        });
-    }
-
-    /// `event.devservice.output`: new lines of one service. Other workspaces' and other services' are not kept.
-    fn apply_output(&mut self, payload: &Value, cx: &mut Context<Self>) {
-        let ours = payload.get("workspaceId").and_then(Value::as_str) == Some(self.model.read(cx).workspace_id());
-        let shown = self.selected.is_some() && payload.get("name").and_then(Value::as_str) == self.selected.as_deref();
-        if ours && shown && self.log_loaded {
-            logs::append(&mut self.log, LogLine::list(payload));
-            self.reload_shown(cx);
-        }
-    }
-
-    fn reload_shown(&mut self, cx: &mut Context<Self>) {
-        let needle = self.log_search.read(cx).value().trim().to_lowercase();
-        self.shown = logs::visible(&self.log, self.errors_only, &needle);
-        cx.notify();
+    /// Shows the output of `name` in the logs dock.
+    fn show_output(&mut self, name: String, fresh: bool, cx: &mut Context<Self>) {
+        let Some(service) = self.dev.iter().find(|service| service.name == name) else { return };
+        let status = service.run_status();
+        cx.emit(ServicesEvent::ShowOutput { name, status, fresh });
     }
 
     /// Starts `name`. A service with a vault starts with its secrets, which the engine reads itself once the
@@ -392,8 +343,12 @@ impl ServicesScreen {
         let client = self.model.read(cx).client().clone();
         call(&client, cx, "devservice.up", payload, move |this, outcome, cx| {
             if let Some(message) = failure(&outcome) {
-                this.report_dev(&name, message, cx);
+                return this.report_dev(&name, message, cx);
             }
+            // The answer is the server as started; the list may not have heard of it yet.
+            let started = outcome.ok().and_then(|result| result.get("service").and_then(DevServer::from_value));
+            let status = started.map_or(RunStatus::Running, |service| service.run_status());
+            cx.emit(ServicesEvent::ShowOutput { name, status, fresh: true });
         });
     }
 
@@ -454,6 +409,7 @@ impl ServicesScreen {
             PromptField::new(t("services.dev.field.cwd"), t("services.dev.field.cwd_placeholder")).optional(),
             PromptField::new(t("services.dev.field.vault"), t("services.dev.field.vault_placeholder")).optional(),
             PromptField::new(t("services.dev.field.log_file"), t("services.dev.field.log_file_placeholder")).optional(),
+            PromptField::new(t("services.dev.field.mapping"), t("services.dev.field.mapping_placeholder")).optional(),
         ];
         let mut initial = match &editing {
             Some(service) => vec![
@@ -462,8 +418,9 @@ impl ServicesScreen {
                 service.cwd.clone(),
                 service.vault.clone(),
                 service.log_file.clone(),
+                service.mapping.clone(),
             ],
-            None => vec![String::new(); 5],
+            None => vec![String::new(); 6],
         };
         if editing.is_none() {
             fields.insert(0, PromptField::new(t("services.dev.field.name"), t("services.dev.field.name_placeholder")));
@@ -766,7 +723,7 @@ fn section_heading(title: &'static str) -> impl IntoElement {
 }
 
 impl ServicesScreen {
-    /// The dev servers; selecting a row opens its output below this list.
+    /// The dev servers; clicking a row shows its output in the logs dock.
     fn render_dev(&self, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
         let theme = cx.theme().clone();
         let body = if let Some(error) = &self.dev_error {
@@ -844,8 +801,7 @@ impl ServicesScreen {
             .id(key("row"))
             .test_support()
             .cursor_pointer()
-            .when(self.selected.as_deref() == Some(service.name.as_str()), |this| this.bg(theme.muted))
-            .on_click(cx.listener(move |this, _, _, cx| this.select_dev(open.clone(), cx)))
+            .on_click(cx.listener(move |this, _, _, cx| this.show_output(open.clone(), false, cx)))
             .w_full()
             .gap_3()
             .px_4()
@@ -869,13 +825,28 @@ impl ServicesScreen {
                     .w_20()
                     .flex_none()
                     .font_family(theme.mono_font_family.clone())
-                    .child(service.port.map(|port| port.to_string()).unwrap_or_default()),
+                    .child(service.port.or(service.mapped_port).map(|port| port.to_string()).unwrap_or_default()),
+            )
+            .child(
+                div()
+                    .id(key("mapping"))
+                    .test_support()
+                    .w_48()
+                    .flex_none()
+                    .overflow_hidden()
+                    .text_ellipsis()
+                    .text_color(theme.muted_foreground)
+                    .font_family(theme.mono_font_family.clone())
+                    .child(service.mapping.clone()),
             )
             .child(div().w_32().flex_none().child(tag))
             .child(
                 h_flex()
+                    .id(key("actions"))
                     .flex_none()
                     .gap_1()
+                    // The buttons act on their own; a click on one is not a click on the row behind it.
+                    .on_click(|_, _, cx| cx.stop_propagation())
                     .child(power)
                     .child(Button::new(key("edit")).small().label(t("services.dev.button.edit")).on_click(
                         cx.listener(move |this, _, window, cx| this.prompt_dev(Some(edited.clone()), None, window, cx)),
@@ -891,156 +862,6 @@ impl ServicesScreen {
                             ),
                     ),
             )
-            .into_any_element()
-    }
-}
-
-impl ServicesScreen {
-    /// The output of dev server `name`: a toolbar, then the lines. Scrolling up stops it following the end.
-    fn render_logs(&self, name: &str, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
-        let theme = cx.theme().clone();
-        let copied = self.shown.iter().map(Shown::copied).collect::<Vec<_>>().join("\n");
-        let toolbar = h_flex()
-            .flex_none()
-            .gap_3()
-            .px_4()
-            .py_2()
-            .border_b_1()
-            .border_color(theme.border)
-            .child(div().text_sm().font_medium().child(t_with("services.logs.title", &[("name", &name)])))
-            .child(
-                div()
-                    .text_xs()
-                    .text_color(theme.muted_foreground)
-                    .child(t_with("services.logs.count", &[("shown", &self.shown.len()), ("total", &self.log.len())])),
-            )
-            .child(div().flex_1())
-            .child(div().id("dev-log-search").test_support().w_56().child(
-                Input::new(&self.log_search).small().prefix(Icon::new(IconName::Search).small()).cleanable(true),
-            ))
-            .child(
-                Checkbox::new("dev-log-errors")
-                    .small()
-                    .label(t("services.logs.errors_only"))
-                    .tooltip(t("services.logs.errors_only_tooltip"))
-                    .checked(self.errors_only)
-                    .on_change(cx.listener(|this, checked: &bool, _, cx| {
-                        this.errors_only = *checked;
-                        this.reload_shown(cx);
-                    })),
-            )
-            .child(
-                Checkbox::new("dev-log-follow")
-                    .small()
-                    .label(t("services.logs.follow"))
-                    .checked(self.follow)
-                    .on_change(cx.listener(|this, checked: &bool, _, cx| {
-                        this.follow = *checked;
-                        cx.notify();
-                    })),
-            )
-            .child(
-                Button::new("dev-log-copy")
-                    .ghost()
-                    .small()
-                    .icon(IconName::Copy)
-                    .label(t("services.logs.copy"))
-                    .disabled(self.shown.is_empty())
-                    .on_click(move |_, _, cx| cx.write_to_clipboard(ClipboardItem::new_string(copied.clone()))),
-            )
-            .child(
-                Button::new("dev-log-clear")
-                    .ghost()
-                    .small()
-                    .label(t("services.logs.clear"))
-                    .disabled(self.log.is_empty())
-                    .tooltip(t("services.logs.clear_tooltip"))
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.log.clear();
-                        this.reload_shown(cx);
-                    })),
-            )
-            .child(
-                Button::new("dev-log-close")
-                    .ghost()
-                    .small()
-                    .icon(IconName::Close)
-                    .tooltip(t("services.logs.close"))
-                    .on_click(cx.listener(|this, _, _, cx| {
-                        this.selected = None;
-                        cx.notify();
-                    })),
-            );
-        let body = if !self.log_loaded {
-            div().into_any_element()
-        } else if self.log.is_empty() {
-            page::empty(t("services.logs.empty.title"), t("services.logs.empty.description"))
-        } else if self.shown.is_empty() {
-            page::empty(t("services.logs.no_matches.title"), t("services.logs.no_matches.description"))
-        } else {
-            if self.follow {
-                self.log_scroll.scroll_to_bottom();
-            }
-            uniform_list(
-                "dev-log-lines",
-                self.shown.len(),
-                cx.processor(|this, range: Range<usize>, _, cx| {
-                    let theme = cx.theme().clone();
-                    range
-                        .filter_map(|ix| Some((ix, this.shown.get(ix)?)))
-                        .map(|(ix, line)| {
-                            h_flex()
-                                .id(("dev-log", ix))
-                                .test_support()
-                                .w_full()
-                                .gap_3()
-                                .px_4()
-                                .text_xs()
-                                .font_family(theme.mono_font_family.clone())
-                                .child(div().flex_none().text_color(theme.muted_foreground).child(clock_utc(line.ts)))
-                                .child(
-                                    div()
-                                        .flex_1()
-                                        .min_w_0()
-                                        .overflow_hidden()
-                                        .whitespace_nowrap()
-                                        .text_ellipsis()
-                                        .text_color(if line.stderr { theme.danger } else { theme.foreground })
-                                        .child(line.text.clone()),
-                                )
-                                .when(line.count > 1, |this| {
-                                    this.child(
-                                        div()
-                                            .flex_none()
-                                            .text_color(theme.muted_foreground)
-                                            .child(format!("\u{d7}{}", line.count)),
-                                    )
-                                })
-                                .into_any_element()
-                        })
-                        .collect::<Vec<_>>()
-                }),
-            )
-            .track_scroll(&self.log_scroll)
-            .size_full()
-            .into_any_element()
-        };
-        v_flex()
-            .id("dev-logs")
-            .test_support()
-            .flex_none()
-            .h_72()
-            .border_t_1()
-            .border_color(theme.border)
-            // Reading earlier output must not be undone by the next line arriving.
-            .on_scroll_wheel(cx.listener(|this, event: &ScrollWheelEvent, window, cx| {
-                if this.follow && event.delta.pixel_delta(window.line_height()).y > px(0.) {
-                    this.follow = false;
-                    cx.notify();
-                }
-            }))
-            .child(toolbar)
-            .child(div().flex_1().min_h_0().child(body))
             .into_any_element()
     }
 }
@@ -1086,7 +907,6 @@ impl Render for ServicesScreen {
         let body = v_flex()
             .size_full()
             .child(self.render_dev(cx))
-            .when_some(self.selected.clone(), |this, name| this.child(self.render_logs(&name, cx)))
             .child(section_heading(t("services.listeners.title")))
             .child(div().flex_1().min_h_0().child(body));
         page::screen(header, body, cx)
@@ -1099,11 +919,14 @@ mod tests {
 
     #[test]
     fn a_dev_server_definition_needs_a_plain_name_and_a_real_port_and_keeps_its_env() {
-        let fields = |port: &str| ["npm run dev", port, "", "Prod", ""].map(str::to_owned);
+        let fields = |port: &str| ["npm run dev", port, "", "Prod", "", "web"].map(str::to_owned);
         let env = json!({ "A": "1" });
         let made = dev_definition("w1", "web-1", &fields("3000"), Some(&env)).unwrap();
         assert_eq!(made["port"], 3000);
         assert_eq!(made["vault"], "Prod");
+        assert_eq!(made["mapping"], "web");
+        let bad_mapping = ["npm run dev", "", "", "", "", "my app"].map(str::to_owned);
+        assert_eq!(dev_definition("w1", "web", &bad_mapping, None), Err("services.dev.invalid.mapping"));
         assert_eq!(made["env"], env);
         assert!(made.get("cwd").is_none());
         assert_eq!(dev_definition("w1", "web 1", &fields(""), None), Err("services.dev.invalid.name"));

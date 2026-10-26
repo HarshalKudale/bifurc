@@ -76,7 +76,7 @@ Groups (bifurc <group> --help shows the arguments and options of each verb)
   history       log | file | show | export                            The audit log and a file's commits
   export        formats | create                                      A workspace's items as a file
   import        check | run                                           A file of Postman, Insomnia, OpenAPI, …
-  vault         list | create | set | unset | unseal | seal | rename | passphrase | delete | run
+  vault         list | providers | create | set | unset | test | setup | approve | unseal | seal | rename | passphrase | delete | run
                                                                       Encrypted secrets
   account       list | login | repos | logout                         GitHub sign-in
   proxy         status | start | stop | restart                       The forward and the reverse proxy
@@ -465,15 +465,29 @@ The JSON of a flow
 
 const VAULT: &str = "Usage: bifurc vault <verb>
 
-Encrypted secrets, used as {{vault.SECRET}} (and the signing key of {{$jwt …}}, see `jwt`). A vault is sealed or
-unsealed. Unsealing takes its passphrase and lasts until the vault is sealed or the engine stops, whether it
-was unsealed here or in the desktop app.
-A command that needs a sealed vault asks for the passphrase and unseals it; an unsealed one is used as it is.
+Secrets, used as {{vault.SECRET}} (and the signing key of {{$jwt …}}, see `jwt`). No vault puts a value in the
+workspace's repository. A local vault keeps its values sealed with a passphrase on this device only, and is the
+only kind whose secrets are edited here. A linked vault pulls every secret of one source in a secret manager
+(1Password, AWS, Azure, Google, HashiCorp Vault, OpenBao, Bitwarden, Doppler) through that manager's own
+command line program; its secrets are changed in the manager, and only the source is synced.
+A vault is sealed or unsealed. Unsealing lasts until the vault is sealed or the engine stops, whether it was
+unsealed here or in the desktop app. A command that needs a sealed vault unseals it: a local one asks for the
+passphrase, a linked one pulls its source (which takes a person at a terminal, or the desktop app).
 
-  list                                   Vaults, whether each is sealed, and their secret names (never values)
-  create <name>                          Asks for a new passphrase (twice); the new vault is unsealed
-  set <vault> <SECRET>                   Asks for the value (hidden; or --value-stdin)
-  unseal <vault>                         Asks for the passphrase
+  list                                   Vaults, their provider, whether each is sealed, and their secret names
+  create <name>                          A local vault: asks for a new passphrase (twice); it is unsealed
+  create <name> --provider <id> [--setting KEY=value]... [--credential-stdin]
+                                         A linked vault and its source, e.g. --provider 1password --setting
+                                         item=Stripe, or --provider aws --setting secretId=prod/app. The token
+                                         from stdin stays on this device. Providers and their settings:
+                                         bifurc vault providers
+  set <vault> <SECRET>                   A local vault: asks for the value (hidden; or --value-stdin)
+  test <vault>                           A linked vault: pull its source once and name what it holds (no values)
+  setup <vault> [--setting KEY=value]... [--credential-stdin | --clear-credential]
+                                         A linked vault on this device: its source, this device's token
+  approve <vault>                        Accept a linked vault's source on this device: needed once per device,
+                                         and again after a sync changed it
+  unseal <vault>                         Asks for the passphrase of a local vault
   seal <vault>
   passphrase <vault>                     Asks for the passphrase and for a new one (twice)
   run <vault> -- <command…>              Run the command with the vault's secrets as environment variables,
@@ -676,11 +690,15 @@ is kept in memory, last 5000 lines. Read it with: bifurc logs <service> [--error
 
   list                                   Local processes listening on a port (any process, not only these)
   define <name> --cmd <command> [--port <n>] [--cwd <dir>] [--vault <vault>] [--env KEY=VALUE]... [--log-file <path>]
+                [--mapping <name>]
                                          Save a service; --cwd is stored as an absolute path. Do not put secrets
                                          in --env (it is a workspace file): use --vault, whose secrets are
                                          injected like `vault run` (sealed and no terminal: exit 6)
                                          --log-file: a file the service writes; the engine follows it into the same
                                          output (stream file) while the service runs
+                                         --mapping: a .localhost name (`api` is api.localhost); once the service
+                                         runs, the engine finds the port its processes open and points that
+                                         mapping at it, making the mapping when there is none
   up [<name>|--all] [--wait] [--timeout 30s]   Start (default: all); --wait blocks until the port listens, exit 4 on
                                          timeout with the last lines of output
   down <name>|--all                      Stop the whole process tree

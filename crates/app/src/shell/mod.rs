@@ -7,6 +7,7 @@
 
 mod agents;
 mod chrome;
+mod logs;
 mod nav;
 mod palette;
 mod right_sidebar;
@@ -18,7 +19,7 @@ use gpui_kit::component::{
     h_flex,
     input::InputState,
     notification::Notification,
-    resizable::{h_resizable, resizable_panel},
+    resizable::{h_resizable, resizable_panel, v_resizable},
     v_flex,
 };
 use gpui_kit::{
@@ -26,6 +27,7 @@ use gpui_kit::{
     ParentElement as _, Render, SharedString, Styled as _, Subscription, Window, div, px,
 };
 
+use self::logs::{DockEvent, LogsDock};
 pub use self::nav::Screen;
 use self::right_sidebar::RightSidebar;
 use crate::{
@@ -50,7 +52,7 @@ use crate::{
         onboarding::Onboarding,
         proxy_rules::ProxyRulesScreen,
         requests::RequestsScreen,
-        services::ServicesScreen,
+        services::{ServicesEvent, ServicesScreen},
         settings::SettingsScreen,
         vaults::VaultsScreen,
         workspace::WorkspaceScreen,
@@ -103,6 +105,9 @@ pub struct Shell {
     onboarding: Entity<Onboarding>,
     right: Entity<RightSidebar>,
     right_open: bool,
+    /// The dock under the screens, with a tab for each program whose output is followed.
+    logs: Entity<LogsDock>,
+    logs_open: bool,
     palette: Entity<CommandState>,
     finder: Entity<CommandState>,
     focus_handle: FocusHandle,
@@ -127,6 +132,7 @@ impl Shell {
         let audit = cx.new(|cx| AuditScreen::new(model.clone(), window, cx));
         let onboarding = cx.new(|cx| Onboarding::new(model.clone(), window, cx));
         let right = cx.new(|cx| RightSidebar::new(model.clone(), window, cx));
+        let logs = cx.new(|cx| LogsDock::new(model.clone(), window, cx));
         let palette = cx.new(|cx| CommandState::new(window, cx));
         let finder = cx.new(|cx| CommandState::new(window, cx));
 
@@ -141,6 +147,9 @@ impl Shell {
             cx.observe_in(&flows, window, |this, _, window, cx| this.sync_right_sidebar(window, cx)),
             // These screens give the footer a line that changes as they work.
             cx.observe(&services, |_, _, cx| cx.notify()),
+            cx.observe(&logs, |_, _, cx| cx.notify()),
+            cx.subscribe_in(&services, window, Self::on_services_event),
+            cx.subscribe_in(&logs, window, Self::on_dock_event),
             cx.observe(&healthbar, |_, _, cx| cx.notify()),
             cx.observe(&capture, |_, _, cx| cx.notify()),
             cx.observe(&mail, |_, _, cx| cx.notify()),
@@ -177,6 +186,8 @@ impl Shell {
             onboarding,
             right,
             right_open: false,
+            logs,
+            logs_open: false,
             palette,
             finder,
             focus_handle,
@@ -245,6 +256,7 @@ impl Shell {
             | ModelEvent::McpStatus(_)
             | ModelEvent::McpMessage(_)
             | ModelEvent::Traffic(_)
+            | ModelEvent::TrafficMessage(_)
             | ModelEvent::RunnerProgress(_)
             | ModelEvent::RunnerFinished(_)
             | ModelEvent::FlowProgress(_)
@@ -359,6 +371,31 @@ impl Shell {
         self.right_open = !self.right_open;
         // Opening it is what loads the history it shows.
         self.sync_right_sidebar(window, cx);
+    }
+
+    pub fn toggle_logs(&mut self, cx: &mut Context<Self>) {
+        self.logs_open = !self.logs_open;
+        cx.notify();
+    }
+
+    /// A dev server's output is wanted: its tab is opened in the dock, which is shown.
+    fn on_services_event(
+        &mut self,
+        _: &Entity<ServicesScreen>,
+        event: &ServicesEvent,
+        _: &mut Window,
+        cx: &mut Context<Self>,
+    ) {
+        let ServicesEvent::ShowOutput { name, status, fresh } = event;
+        self.logs_open = true;
+        self.logs.update(cx, |dock, cx| dock.show_dev(name, *status, *fresh, cx));
+        cx.notify();
+    }
+
+    fn on_dock_event(&mut self, _: &Entity<LogsDock>, event: &DockEvent, _: &mut Window, cx: &mut Context<Self>) {
+        match event {
+            DockEvent::Hide => self.toggle_logs(cx),
+        }
     }
 
     pub fn toggle_folder_tree(&mut self, cx: &mut Context<Self>) {
@@ -552,8 +589,8 @@ impl Shell {
         // The new entity is in the engine but not yet in this window's snapshot, which the tree is built from.
         self.model.update(cx, |model, cx| model.refresh(cx));
         match event {
-            CaptureEvent::SavedRequest { id } => {
-                self.open_request(&NodeRef::Request { kind: RequestKind::Rest, id: id.clone() }, window, cx)
+            CaptureEvent::SavedRequest { id, kind } => {
+                self.open_request(&NodeRef::Request { kind: *kind, id: id.clone() }, window, cx)
             }
             CaptureEvent::SavedMock { id } => self.open_mock(id, window, cx),
         }
@@ -632,13 +669,25 @@ impl Render for Shell {
                 h_flex().flex_1().min_h_0().items_stretch().child(self.render_sidebar(window, cx)).child(
                     // The right sidebar's width is a physical starting point the user resizes.
                     div().flex_1().min_w_0().child(
-                        h_resizable("shell-split").child(resizable_panel().child(center)).child(
-                            resizable_panel()
-                                .visible(self.right_open)
-                                .size(px(340.))
-                                .size_range(px(260.)..px(640.))
-                                .child(self.right.clone()),
-                        ),
+                        v_resizable("shell-dock")
+                            .child(
+                                resizable_panel().child(
+                                    h_resizable("shell-split").child(resizable_panel().child(center)).child(
+                                        resizable_panel()
+                                            .visible(self.right_open)
+                                            .size(px(340.))
+                                            .size_range(px(260.)..px(640.))
+                                            .child(self.right.clone()),
+                                    ),
+                                ),
+                            )
+                            .child(
+                                resizable_panel()
+                                    .visible(self.logs_open)
+                                    .size(px(280.))
+                                    .size_range(px(120.)..px(720.))
+                                    .child(self.logs.clone()),
+                            ),
                     ),
                 ),
             )

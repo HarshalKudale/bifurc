@@ -13,7 +13,9 @@ use crate::{kernel::SessionIdentity, utils::id::now_ms};
 pub const COMPANION_CLIENT: &str = "bifurc-extension";
 
 /// The `clientInfo` members kept, all strings. Anything else a client sends is dropped.
-const INFO_KEYS: [&str; 7] = ["browser", "browserVersion", "os", "arch", "extensionId", "userAgent", "language"];
+/// `terminal` is the command line's: `yes` when it runs at a terminal (see `vault::require_person`).
+const INFO_KEYS: [&str; 8] =
+    ["browser", "browserVersion", "os", "arch", "extensionId", "userAgent", "language", "terminal"];
 
 const MAX_INFO_CHARS: usize = 300;
 

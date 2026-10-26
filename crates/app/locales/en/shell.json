@@ -222,5 +222,32 @@
   "agents.stop_recording": "Stop recording",
   "agents.replaying": "Replaying {name}",
   "agents.replaying_unmatched": "Replaying {name}, {count} unmatched",
-  "agents.stop_replay": "Stop replay"
+  "agents.stop_replay": "Stop replay",
+
+  "chrome.logs": "Logs",
+  "chrome.logs_running": "Logs · {count} running",
+  "chrome.logs_tooltip": "Show or hide the logs of your dev servers",
+
+  "logs.search_placeholder": "Search the output",
+  "logs.hide": "Hide the logs dock",
+  "logs.stop": "Stop",
+  "logs.stop_tooltip": "Stop this dev server; its logs stay here",
+  "logs.close": "Close",
+  "logs.close_tooltip": "Close these logs (the dev server must be stopped)",
+  "logs.status_running": "Running",
+  "logs.status_stopped": "Stopped",
+  "logs.status_exited": "Exited ({code})",
+  "logs.count": "{shown} of {total} lines",
+  "logs.errors_only": "Errors only",
+  "logs.errors_only_tooltip": "Warnings and errors, with their stack traces; repeated lines are counted",
+  "logs.follow": "Follow",
+  "logs.copy": "Copy",
+  "logs.clear": "Clear view",
+  "logs.clear_tooltip": "Empty this view; the program's output is not touched",
+  "logs.no_output_title": "No output yet",
+  "logs.no_output_description": "Lines this program prints will appear here as they arrive.",
+  "logs.no_matches_title": "No matching lines",
+  "logs.no_matches_description": "No line has that text, or none is a warning or an error.",
+  "logs.empty_title": "No dev server logs yet",
+  "logs.empty_description": "Start a dev server and its output appears here."
 }

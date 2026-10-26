@@ -317,3 +317,38 @@ async fn a_fault_on_a_mapped_host_answers_before_the_upstream() {
     crate::faults::clear_for_tests(&id);
     edge.stop();
 }
+
+#[tokio::test]
+async fn a_websocket_to_a_mapped_domain_reaches_its_target() {
+    use futures::{SinkExt, StreamExt};
+    use tokio_tungstenite::tungstenite::{Message, client::IntoClientRequest};
+
+    use crate::proxy::websocket::test_support::{Collected, upper_echo};
+    let entries = Collected::on("log.entry");
+    let messages = Collected::on("log.message");
+    let target = upper_echo().await;
+    let cfg = json!({ "activeWorkspaceId": "ws1", "mocks": [], "proxyRules": [], "mappings": [
+        { "id": "a", "domain": "chat.example", "target": format!("127.0.0.1:{target}"), "enabled": true },
+    ] });
+    let _root = crate::testing::scratch_data_root();
+    let (edge, port) = edge_with(Some(cfg));
+
+    let mut request = format!("ws://127.0.0.1:{port}/socket").into_client_request().unwrap();
+    request.headers_mut().insert("host", "chat.example".parse().unwrap());
+    let stream = TcpStream::connect(("127.0.0.1", port)).await.unwrap();
+    let (mut socket, _) = tokio_tungstenite::client_async(request, stream).await.unwrap();
+    socket.send(Message::text("ping")).await.unwrap();
+    let reply = tokio::time::timeout(Duration::from_secs(10), socket.next()).await.unwrap().unwrap().unwrap();
+    assert_eq!(reply, Message::text("PING"));
+
+    let open = entries.wait(|e| e["url"] == "http://chat.example/socket").await;
+    assert_eq!(
+        (open["via"].as_str(), open["kind"].as_str(), open["live"].as_bool()),
+        (Some("mapping"), Some("ws"), Some(true))
+    );
+    assert_eq!(open["origin"], "reverse");
+    messages.wait(|m| m["logId"] == open["id"] && m["message"]["data"] == "PING").await;
+    socket.close(None).await.unwrap();
+    entries.wait(|e| e["id"] == open["id"] && e.get("live").is_none()).await;
+    edge.stop();
+}
