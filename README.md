@@ -106,8 +106,8 @@ cargo test --workspace    # and the UI crates, which need GPUI's build dependenc
 
 ## Licensing
 
-Bifurc is source-available under the [PolyForm Noncommercial License 1.0.0](LICENSE).
+Bifurc is free to use for personal, non-commercial purposes under the [PolyForm Noncommercial License 1.0.0](LICENSE).
 
-You may read, build, run, and modify the code for personal, non-commercial use. You may not resell it, repackage it, or use it to build commercial products or generate profit. The source is public so you can verify what the app does.
+You may not resell it, repackage it, or use it to build commercial products or generate profit.
 
 See [LICENSE](LICENSE) for the full terms. Questions: contact@bifurc.app.

@@ -6,9 +6,7 @@ Bifurc is maintained by [Harshal Kudale](https://github.com/HarshalKudale).
 
 You can support the project by:
 
-- starring the repository
 - opening issues with strong reproduction details
-- sending pull requests
 - sharing the tool with other developers
 
 ## Licensing questions

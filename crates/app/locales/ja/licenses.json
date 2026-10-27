@@ -1,9 +1,9 @@
 {
   "page.title": "ライセンス",
   "own.license.title": "ライセンス",
-  "own.license.description": "非商用目的であれば、無料で使用、閲覧、改変できます。再販、再パッケージ、商用製品の開発への利用はできません。アプリの動作を確認できるよう、ソースコードを公開しています。",
+  "own.license.description": "非商用目的であれば無料で使用できます。再販、再パッケージ、商用製品の開発への利用はできません。",
   "own.full_text.title": "全文",
-  "own.full_text.description": "ソースリポジトリ内: {url}",
+  "own.full_text.description": "{url} で確認できます",
   "assets.title": "同梱アセット",
   "assets.keywords": "asset,icon,theme,font,アセット,アイコン,テーマ,フォント",
   "libraries.title": "オープンソースライブラリ ({count})",
