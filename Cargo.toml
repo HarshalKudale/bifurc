@@ -28,7 +28,7 @@ default-members = [
 ]
 
 [workspace.package]
-version = "0.6.1"
+version = "0.6.2"
 edition = "2024"
 license = "LicenseRef-PolyForm-Noncommercial-1.0.0"
 authors = ["Harshal Kudale"]
