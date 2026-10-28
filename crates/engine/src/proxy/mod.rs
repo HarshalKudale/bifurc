@@ -1,6 +1,7 @@
 //! The forward proxy: HTTP proxying with mocks and rules, CONNECT tunnelling and TLS interception, and the
 //! commands that control the listeners.
 
+mod browser;
 mod commands;
 mod handler;
 pub(crate) mod listener;

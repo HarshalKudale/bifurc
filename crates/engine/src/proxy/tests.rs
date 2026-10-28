@@ -796,3 +796,112 @@ async fn an_event_stream_is_logged_live_with_its_events_before_it_ends() {
     assert_eq!(closed["kind"], "sse");
     proxy.stop();
 }
+
+fn browser_headers(pairs: &[(&str, &str)]) -> crate::kernel::traffic::Headers {
+    pairs.iter().map(|(k, v)| (k.to_string(), v.to_string())).collect()
+}
+
+async fn browser_decide(url: &str) -> browser::Decision {
+    let shared = server::Shared::default();
+    browser::decide(&shared, "GET", url, &browser_headers(&[("Accept", "*/*")]), Vec::new()).await.unwrap()
+}
+
+#[tokio::test]
+async fn the_browser_gets_a_mock_whole() {
+    let _root = scratch_data_root();
+    let logs = Logs::capture();
+    let url = "https://mocked.test/thing";
+    put("mocks", mock_entity("bm1", url, json!({})));
+    let browser::Decision::Respond { status, headers, body } = browser_decide(url).await else { panic!() };
+    assert_eq!(status, 201);
+    assert!(headers.contains(&("x-mock".to_string(), "yes".to_string())), "{headers:?}");
+    assert!(!headers.iter().any(|(name, _)| name == "connection"));
+    assert_eq!(body, b"mocked body");
+    assert_eq!(logs.find(url).await["via"], "mock");
+}
+
+#[tokio::test]
+async fn the_browser_streams_a_streaming_mock() {
+    let _root = scratch_data_root();
+    let url = "https://mocked.test/stream";
+    put(
+        "mocks",
+        mock_entity(
+            "bm2",
+            url,
+            json!({ "streamingMode": "chunked", "streamingChunkDelay": 0, "streamingChunkSeparator": "|",
+                    "responseBody": "a|b|c" }),
+        ),
+    );
+    let browser::Decision::Relay { status, mut body, .. } = browser_decide(url).await else { panic!() };
+    assert_eq!(status, 201);
+    let mut pieces = Vec::new();
+    while let Some(piece) = body.next().await.unwrap() {
+        pieces.push(String::from_utf8(piece).unwrap());
+    }
+    assert_eq!(pieces, ["a|", "b|", "c"]);
+}
+
+#[tokio::test]
+async fn the_browser_relays_a_rule_to_a_local_server_in_plaintext() {
+    let _root = scratch_data_root();
+    let logs = Logs::capture();
+    // No length: the answer runs until the target closes, so it is relayed as it arrives.
+    let answer = b"HTTP/1.1 200 OK\r\nx-local: 1\r\nconnection: close\r\n\r\nfrom local".to_vec();
+    let (target, seen) = canned_upstream(answer).await;
+    put(
+        "rules",
+        json!({
+            "id": "br1", "workspaceId": "ws1", "name": "r", "pattern": "^https://prod\\.test/", "useRegex": true,
+            "targetType": "external", "targetExternal": format!("127.0.0.1:{target}"),
+            "requestScript": "", "responseScript": "", "createdAt": 0,
+        }),
+    );
+    let url = "https://prod.test/api?q=1";
+    let browser::Decision::Relay { status, headers, body } = browser_decide(url).await else { panic!() };
+    assert_eq!(status, 200);
+    assert!(headers.contains(&("x-local".to_string(), "1".to_string())));
+    assert_eq!(body.read_to_end().await.unwrap(), b"from local");
+    let sent = seen.lock()[0].to_lowercase();
+    assert!(sent.starts_with("get /api?q=1 http/1.1") && sent.contains("host: prod.test\r\n"), "{sent}");
+    let entry = logs.find(url).await;
+    assert_eq!((entry["via"].as_str(), entry["host"].as_str()), (Some("rule"), Some("prod.test")));
+}
+
+#[tokio::test]
+async fn the_browser_gets_a_rule_answer_its_scripts_rewrote() {
+    let _root = scratch_data_root();
+    let (target, seen) = canned_upstream(http_ok("content-type: text/plain\r\n", "abc")).await;
+    put(
+        "rules",
+        json!({
+            "id": "br2", "workspaceId": "ws1", "name": "r", "pattern": "^https://prod\\.test/", "useRegex": true,
+            "targetType": "external", "targetExternal": format!("127.0.0.1:{target}"),
+            "requestScript": "bc.request.headers['x-added'] = 'req';",
+            "responseScript": "bc.response.body = bc.response.body.toUpperCase();",
+            "createdAt": 0,
+        }),
+    );
+    let browser::Decision::Respond { body, .. } = browser_decide("https://prod.test/x").await else { panic!() };
+    assert_eq!(body, b"ABC");
+    assert!(seen.lock()[0].to_lowercase().contains("x-added: req"));
+}
+
+#[tokio::test]
+async fn the_browser_sends_what_nothing_claims_itself() {
+    let _root = scratch_data_root();
+    let url = "https://elsewhere.test:8443/page";
+    let browser::Decision::Continue(base) = browser_decide(url).await else { panic!() };
+    assert_eq!((base.url.as_str(), base.host.as_str(), base.method.as_str()), (url, "elsewhere.test", "GET"));
+    assert_eq!(base.req_headers.get("host").map(String::as_str), Some("elsewhere.test:8443"));
+    assert_eq!(base.req_headers.get("accept").map(String::as_str), Some("*/*"));
+    assert!(base.status.is_none());
+}
+
+#[tokio::test]
+async fn the_browser_routes_only_web_urls() {
+    let shared = server::Shared::default();
+    assert!(
+        browser::decide(&shared, "GET", "chrome-extension://x/y", &browser_headers(&[]), Vec::new()).await.is_none()
+    );
+}
