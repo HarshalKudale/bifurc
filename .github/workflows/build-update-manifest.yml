@@ -19,14 +19,6 @@ on:
         description: "One line on what the release brings, shown where the app announces it"
         required: false
         type: string
-      min_direct_from:
-        description: "Oldest version that may update to this release in one step (default: any)"
-        required: false
-        type: string
-      minimum_supported:
-        description: "Oldest version still supported; older installs are told so (default: unchanged)"
-        required: false
-        type: string
       critical:
         description: "The release fixes a security problem"
         required: false
@@ -54,8 +46,6 @@ jobs:
         env:
           INPUT_TAG: ${{ inputs.tag }}
           INPUT_SUMMARY: ${{ inputs.summary }}
-          INPUT_MIN_DIRECT_FROM: ${{ inputs.min_direct_from }}
-          INPUT_MINIMUM_SUPPORTED: ${{ inputs.minimum_supported }}
           INPUT_CRITICAL: ${{ inputs.critical }}
           GH_TOKEN: ${{ github.token }}
         run: |
@@ -88,8 +78,6 @@ jobs:
 
           args=(--manifest "$manifest" --version "${tag#v}" --tag "$tag" --repo "$PUBLIC_REPO" --assets assets)
           [ -n "$INPUT_SUMMARY" ] && args+=(--summary "$INPUT_SUMMARY")
-          [ -n "$INPUT_MIN_DIRECT_FROM" ] && args+=(--min-direct-from "$INPUT_MIN_DIRECT_FROM")
-          [ -n "$INPUT_MINIMUM_SUPPORTED" ] && args+=(--minimum-supported "$INPUT_MINIMUM_SUPPORTED")
           [ "$INPUT_CRITICAL" = "true" ] && args+=(--critical)
           python3 .github/scripts/update_manifest.py release "${args[@]}"
 

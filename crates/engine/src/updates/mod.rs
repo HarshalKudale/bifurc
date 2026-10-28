@@ -3,11 +3,12 @@
 //! The engine reads the update manifest ([`manifest`]) once a day and keeps it in `update.json` in the data
 //! directory, so an interface has the answer as soon as it asks. What the manifest means depends on how this
 //! copy was installed ([`channel`]). Every Windows install but the portable zip is the Store's package (the
-//! Store, Microsoft's installer for it and winget all install it), so the Store updates them all and the
-//! action opens Bifurc's page there. A package manager updates its own installs. On macOS and Linux the
-//! action is `install`: `update.apply` runs `install.sh` from the website in a process of its own, which
-//! installs the new version over this one, then stops the engine and opens Bifurc again;
-//! `event.update.progress` follows it. Anything else is offered a download.
+//! Store, Microsoft's installer for it and winget all install it); its action is `install`: `update.apply`
+//! stops Bifurc, runs `winget upgrade` in a process of its own, opens Bifurc's Store page when winget could
+//! not do it, and opens Bifurc again. On macOS and Linux the action is `install` too: `update.apply` runs
+//! `install.sh` from the website in a process of its own, which installs the new version over this one, then
+//! stops the engine and opens Bifurc again; `event.update.progress` follows it. A package manager updates its
+//! own installs. Anything else is offered a download.
 //!
 //! `update.status` says what there is and what to do about it, and `event.update.changed` says when that
 //! changed. The request for the manifest carries the engine's version and nothing else.
@@ -45,6 +46,24 @@ const MANIFEST_URLS: [&str; 2] = [
 const STORE_PAGE_URL: &str = "ms-windows-store://pdp/?productid=9NCB4FDZZQPV";
 /// What `update.apply` runs: the same script a person pastes into a terminal.
 const INSTALL_SCRIPT_URL: &str = "https://bifurc.app/install.sh";
+/// Bifurc in winget, which installs it from the Store.
+const WINGET_ID: &str = "9NCB4FDZZQPV";
+/// Stops this engine (which closes the interfaces) first, since Windows replaces the Store's package only when
+/// nothing of it runs, then has winget update it, opens the Store page when winget could not, and opens Bifurc
+/// again either way.
+const WINGET_UPGRADE: &str = r#"
+Set-Content -LiteralPath $env:BIFURC_UPDATE_PROGRESS -Value ('{"state":"installing","version":"' + $env:BIFURC_VERSION + '"}')
+& "$env:BIFURC_APP_DIR\bin\bifurc.exe" engine stop --no-start *> $null
+Start-Sleep -Seconds 1
+$ok = $false
+try {
+  winget upgrade --id $env:BIFURC_WINGET_ID --exact --silent --accept-source-agreements --accept-package-agreements --disable-interactivity *> $env:BIFURC_UPDATE_LOG
+  $ok = $LASTEXITCODE -eq 0
+} catch { $_ | Out-File -LiteralPath $env:BIFURC_UPDATE_LOG }
+if (-not $ok) { Start-Process $env:BIFURC_STORE_PAGE }
+$package = Get-AppxPackage -Name HarshalKudale.Bifurc | Select-Object -First 1
+if ($package) { Start-Process "shell:AppsFolder\$($package.PackageFamilyName)!Bifurc" } else { Start-Process "$env:BIFURC_APP_DIR\bifurc-ui.exe" }
+"#;
 /// Runs the install script, and once it has installed the new version stops this engine (which closes the
 /// interfaces) and opens the interface again. A failed script leaves the running Bifurc as it was. The script
 /// is saved before it runs, not piped: a pipe's status is the shell's, which succeeds on a download that failed.
@@ -105,16 +124,13 @@ fn enabled() -> bool {
     !env_switched_off(std::env::var("BIFURC_UPDATE_CHECK").ok().as_deref()) && load_settings().update_check_enabled()
 }
 
-/// What a person does to get the update: open the Store, let Bifurc reinstall itself, run a package
-/// manager's command, or download a file.
+/// What a person does to get the update: let Bifurc install it itself (with winget or the install script),
+/// run a package manager's command, or download a file.
 fn action(channel: Channel, available: &Value) -> Value {
     if available.is_null() {
         return Value::Null;
     }
-    if matches!(channel, Channel::Store | Channel::Installer | Channel::Winget) {
-        return json!({ "kind": "store", "url": STORE_PAGE_URL });
-    }
-    if channel.script_settings().is_some() {
+    if channel.uses_winget() || channel.script_settings().is_some() {
         return json!({ "kind": "install" });
     }
     if let Some(command) = channel.update_command() {
@@ -146,7 +162,6 @@ fn status_from(
         "enabled": enabled,
         "checking": checking,
         "checkedAt": stored.get("checkedAt").cloned().unwrap_or(Value::Null),
-        "unsupported": manifest::unsupported(manifest, current),
         "action": action(channel, &available),
         "available": available,
     });
@@ -166,12 +181,45 @@ fn progress_path() -> PathBuf {
     data_dir().join(PROGRESS_FILE)
 }
 
-/// Reinstall Bifurc with `install.sh`, in a process of its own that outlives this engine, which it stops once
-/// the new version is in. What it does is read back from its progress file and announced as
-/// `event.update.progress`. The version comes from the manifest this engine stored, never from the caller.
+/// The process that installs the update: winget for the Store's package, `install.sh` for the rest.
+fn installer(channel: Channel) -> Option<std::process::Command> {
+    if channel.uses_winget() {
+        use base64::{Engine as _, engine::general_purpose::STANDARD};
+        let script: Vec<u8> = WINGET_UPGRADE.encode_utf16().flat_map(u16::to_le_bytes).collect();
+        let mut command = std::process::Command::new("powershell.exe");
+        command
+            .args(["-NoProfile", "-NonInteractive", "-ExecutionPolicy", "Bypass", "-EncodedCommand"])
+            .arg(STANDARD.encode(script))
+            .env("BIFURC_WINGET_ID", WINGET_ID)
+            .env("BIFURC_STORE_PAGE", STORE_PAGE_URL);
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            // A hidden console of its own, which winget needs, in a group of its own, so it outlives this engine.
+            const CREATE_NO_WINDOW: u32 = 0x0800_0000;
+            const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
+            command.creation_flags(CREATE_NO_WINDOW | CREATE_NEW_PROCESS_GROUP);
+        }
+        return Some(command);
+    }
+    let settings = channel.script_settings()?;
+    let mut command = std::process::Command::new("/bin/sh");
+    command.args(["-c", REINSTALL]).envs(settings.iter().copied()).env("BIFURC_INSTALL_SCRIPT", INSTALL_SCRIPT_URL);
+    // It outlives this engine, which it stops.
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
+    Some(command)
+}
+
+/// Install the update in a process of its own that outlives this engine, which it stops. What it does is read
+/// back from its progress file and announced as `event.update.progress`. The version comes from the manifest
+/// this engine stored, never from the caller.
 pub fn apply() -> Result<Value, EngineError> {
     let status = status();
-    let Some(settings) = channel::detect().script_settings() else {
+    let Some(mut command) = installer(channel::detect()) else {
         return Err(EngineError::bad_request("This install is not updated by Bifurc itself."));
     };
     if status["action"]["kind"] != "install" {
@@ -180,12 +228,8 @@ pub fn apply() -> Result<Value, EngineError> {
     let version = str_of(&status["available"], "version").to_string();
     let exe = std::env::current_exe().map_err(|e| EngineError::engine(e.to_string()))?;
     let app_dir = exe.parent().ok_or_else(|| EngineError::engine("The engine has no folder."))?;
-    let mut command = std::process::Command::new("/bin/sh");
     command
-        .args(["-c", REINSTALL])
-        .envs(settings.iter().copied())
         .env("BIFURC_VERSION", &version)
-        .env("BIFURC_INSTALL_SCRIPT", INSTALL_SCRIPT_URL)
         .env("BIFURC_APP_DIR", app_dir)
         .env("BIFURC_DATA_DIR", data_dir())
         .env("BIFURC_UPDATE_PROGRESS", progress_path())
@@ -193,12 +237,6 @@ pub fn apply() -> Result<Value, EngineError> {
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
-    // It outlives this engine, which it stops.
-    #[cfg(unix)]
-    {
-        use std::os::unix::process::CommandExt;
-        command.process_group(0);
-    }
     let _ = std::fs::remove_file(progress_path());
     command.spawn().map_err(|e| {
         EngineError::engine(format!("The update could not be started: {e}"))
@@ -365,7 +403,6 @@ mod tests {
             "checkedAt": 5,
             "skipped": skipped,
             "manifest": {
-                "minimumSupported": "0.4.0",
                 "channels": { "store": "0.6.0" },
                 "releases": [{
                     "version": "0.6.0",
@@ -381,11 +418,10 @@ mod tests {
     }
 
     #[test]
-    fn every_windows_install_but_the_zip_is_updated_from_the_store() {
+    fn every_windows_install_but_the_zip_is_updated_with_winget() {
         let stored = stored_with(None, false);
-        let store = json!({ "kind": "store", "url": STORE_PAGE_URL });
         for channel in [Channel::Store, Channel::Installer, Channel::Winget] {
-            assert_eq!(status_of(&stored, "0.5.0", channel)["action"], store, "{channel:?}");
+            assert_eq!(status_of(&stored, "0.5.0", channel)["action"], json!({ "kind": "install" }), "{channel:?}");
         }
         assert_eq!(status_of(&stored, "0.5.0", Channel::Portable)["action"]["kind"], "download");
     }
@@ -417,16 +453,11 @@ mod tests {
         assert_eq!(status["available"], Value::Null);
         assert_eq!(status["action"], Value::Null);
         assert_eq!(status["checkedAt"], Value::Null);
-        assert_eq!(status["unsupported"], false);
     }
 
     #[test]
     fn each_channel_is_told_its_own_way_to_update() {
         let stored = stored_with(None, false);
-        assert_eq!(
-            status_of(&stored, "0.5.0", Channel::Store)["action"],
-            json!({ "kind": "store", "url": STORE_PAGE_URL })
-        );
         assert_eq!(
             status_of(&stored, "0.5.0", Channel::Aur)["action"],
             json!({ "kind": "command", "command": "yay -Syu bifurc-bin" })
@@ -443,11 +474,6 @@ mod tests {
         assert_eq!(skipped(&stored_with(Some("0.6.0"), false)), true);
         assert_eq!(skipped(&stored_with(Some("0.5.5"), false)), false);
         assert_eq!(skipped(&stored_with(Some("0.6.0"), true)), false);
-    }
-
-    #[test]
-    fn an_old_version_is_reported_as_unsupported() {
-        assert_eq!(status_of(&stored_with(None, false), "0.3.0", Channel::Installer)["unsupported"], true);
     }
 
     /// Answers every request on a local port with `body`, and returns the address.

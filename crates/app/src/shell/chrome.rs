@@ -446,9 +446,10 @@ impl Shell {
                             .icon(IconName::ArrowUp)
                             .label(t("shell.chrome.update_available"))
                             .tooltip(t_with("shell.chrome.update_tooltip", &[("version", &version)]))
-                            .on_click(
-                                cx.listener(|this, _, window, cx| this.show_screen(Screen::Settings, window, cx)),
-                            ),
+                            .on_click(cx.listener(|this, _, window, cx| {
+                                this.settings.update(cx, |settings, cx| settings.show_about(cx));
+                                this.show_screen(Screen::Settings, window, cx)
+                            })),
                     )
                 }),
         )

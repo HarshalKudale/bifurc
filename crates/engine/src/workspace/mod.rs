@@ -14,6 +14,7 @@ pub mod entity_paths;
 pub mod fs;
 pub mod git_store;
 pub mod kinds;
+pub mod migrations;
 pub mod models;
 pub mod paths;
 pub mod policy;

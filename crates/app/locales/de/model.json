@@ -20,8 +20,6 @@
   "update.channel.portable": "Läuft aus einem entpackten Ordner. Ein neuerer ersetzt ihn.",
   "update.channel.installer": "Mit dem Installer installiert. Ein neuerer ersetzt es und behält die Arbeitsbereiche.",
   "update.channel.build": "Dies ist ein Build, keine Installation: Er wird nicht aktualisiert.",
-  "update.step_separator": ", dann ",
-  "update.steps": "Diese Version kann nicht in einem Schritt auf {version} aktualisiert werden. Zuerst {first} installieren, dann {rest}.",
   "trust.no_reason": "es ist ohne Angabe von Gründen fehlgeschlagen",
   "trust.run_in_terminal": "Dies in einem Terminal ausführen: {command}",
   "trust.no_store": "Es wurde kein System-Trust-Store gefunden. {file} von Hand zu den vertrauenswürdigen Stammzertifikaten hinzufügen.",
