@@ -905,3 +905,164 @@ async fn the_browser_routes_only_web_urls() {
         browser::decide(&shared, "GET", "chrome-extension://x/y", &browser_headers(&[]), Vec::new()).await.is_none()
     );
 }
+
+/// Calls a command as the companion session `session` would.
+fn browser_session(session: &str) -> impl Fn(&'static str, Value) -> futures::future::BoxFuture<'static, Value> {
+    let mut registry = crate::kernel::CommandRegistry::new();
+    register(&mut registry);
+    let registry = Arc::new(registry);
+    let identity = crate::kernel::SessionIdentity { session_id: session.to_string(), ..Default::default() };
+    let ctx = CommandContext { registry: registry.clone(), session: Some(identity) };
+    move |action, payload| {
+        let (registry, ctx) = (registry.clone(), ctx.clone());
+        Box::pin(async move { registry.invoke(action, payload, ctx).await.unwrap() })
+    }
+}
+
+#[tokio::test]
+async fn browser_decide_needs_a_running_proxy() {
+    let _root = scratch_data_root();
+    let mut registry = crate::kernel::CommandRegistry::new();
+    register(&mut registry);
+    let registry = Arc::new(registry);
+    let ctx = CommandContext::internal(registry.clone());
+    let payload = json!({ "method": "GET", "url": "https://a.test/", "headers": {} });
+    let error = registry.invoke("browser.decide", payload, ctx).await.unwrap_err();
+    assert_eq!(error.key(), Some("browser.proxy_off"));
+}
+
+#[tokio::test]
+async fn a_mirrored_event_stream_is_logged_like_a_proxied_one() {
+    use base64::Engine as _;
+    use websocket::test_support::Collected;
+    let _root = scratch_data_root();
+    let entries = Collected::on("log.entry");
+    let messages = Collected::on("log.message");
+    let proxy = start_proxy(free_port().await);
+    let call = browser_session("tab-session");
+
+    let url = "https://feed.test/events";
+    let decided =
+        call("browser.decide", json!({ "method": "GET", "url": url, "headers": { "Accept": "text/event-stream" } }))
+            .await;
+    assert_eq!(decided["action"], "continue");
+    let id = decided["id"].as_str().unwrap().to_string();
+    let headers = json!({ "content-type": "text/event-stream" });
+    call("browser.open", json!({ "id": id, "status": 200, "headers": headers, "kind": "sse" })).await;
+    let open = entries.wait(|e| e["url"] == url).await;
+    assert_eq!(
+        (open["kind"].as_str(), open["live"].as_bool(), open["via"].as_str(), open["origin"].as_str()),
+        (Some("sse"), Some(true), Some("proxy"), Some("forward"))
+    );
+    assert_eq!(open["id"], id.as_str());
+
+    let message = json!({ "direction": "received", "data": "{\"n\":1}", "event": "tick", "eventId": "7" });
+    call("browser.message", json!({ "id": id, "message": message })).await;
+    let event = messages.wait(|m| m["logId"] == id.as_str()).await;
+    assert_eq!(
+        (event["message"]["data"].as_str(), event["message"]["event"].as_str()),
+        (Some("{\"n\":1}"), Some("tick"))
+    );
+    assert_eq!(event["message"]["id"], format!("{id}-1"));
+
+    let body = base64::engine::general_purpose::STANDARD.encode("event: tick\ndata: {\"n\":1}\n\n");
+    call("browser.close", json!({ "id": id, "body": body })).await;
+    let closed = entries.wait(|e| e["url"] == url && e.get("live").is_none()).await;
+    assert_eq!((closed["kind"].as_str(), closed["status"].as_u64()), (Some("sse"), Some(200)));
+    assert_eq!(closed["resBody"], body);
+    proxy.stop();
+}
+
+#[tokio::test]
+async fn a_mirrored_body_is_capped_and_its_encoding_dropped() {
+    use base64::Engine as _;
+    let _root = scratch_data_root();
+    let logs = Logs::capture();
+    let proxy = start_proxy(free_port().await);
+    let call = browser_session("s");
+    let url = "https://big.test/blob";
+    let id = call("browser.decide", json!({ "method": "GET", "url": url, "headers": {} })).await["id"].clone();
+    let headers = json!({ "content-encoding": "gzip", "content-type": "text/plain" });
+    call("browser.open", json!({ "id": id, "status": 200, "headers": headers })).await;
+    let big = vec![b'x'; crate::kernel::traffic::MAX_LOGGED_BODY_BYTES + 10];
+    let body = base64::engine::general_purpose::STANDARD.encode(&big);
+    call("browser.close", json!({ "id": id, "body": body })).await;
+    let entry = logs.find(url).await;
+    let logged = base64::engine::general_purpose::STANDARD.decode(entry["resBody"].as_str().unwrap()).unwrap();
+    assert_eq!(logged.len(), crate::kernel::traffic::MAX_LOGGED_BODY_BYTES);
+    assert!(entry["resHeaders"].get("content-encoding").is_none());
+    proxy.stop();
+}
+
+#[tokio::test]
+async fn a_relayed_answer_is_read_until_done() {
+    use base64::Engine as _;
+    let _root = scratch_data_root();
+    let url = "https://mocked.test/stream";
+    put(
+        "mocks",
+        mock_entity(
+            "bm3",
+            url,
+            json!({ "streamingMode": "chunked", "streamingChunkDelay": 0, "streamingChunkSeparator": "|",
+                    "responseBody": "a|b|c" }),
+        ),
+    );
+    let proxy = start_proxy(free_port().await);
+    let call = browser_session("s");
+    let decided = call("browser.decide", json!({ "method": "GET", "url": url, "headers": {} })).await;
+    assert_eq!((decided["action"].as_str(), decided["status"].as_u64()), (Some("relay"), Some(201)));
+    let id = decided["id"].clone();
+    // Another session cannot read it.
+    assert_eq!(browser_session("other")("browser.read", json!({ "id": id })).await["done"], true);
+    let mut body = Vec::new();
+    loop {
+        let read = call("browser.read", json!({ "id": id })).await;
+        for chunk in read["chunks"].as_array().unwrap() {
+            body.extend(base64::engine::general_purpose::STANDARD.decode(chunk.as_str().unwrap()).unwrap());
+        }
+        if read["done"] == true {
+            assert!(read.get("error").is_none());
+            break;
+        }
+    }
+    assert_eq!(body, b"a|b|c");
+    proxy.stop();
+}
+
+#[tokio::test]
+async fn a_whole_mock_comes_back_in_the_decision() {
+    let _root = scratch_data_root();
+    put("mocks", mock_entity("bm4", "https://mocked.test/whole", json!({})));
+    let proxy = start_proxy(free_port().await);
+    let call = browser_session("s");
+    let decided =
+        call("browser.decide", json!({ "method": "GET", "url": "https://mocked.test/whole", "headers": {} })).await;
+    assert_eq!((decided["action"].as_str(), decided["status"].as_u64()), (Some("respond"), Some(201)));
+    assert_eq!(decided["body"], "bW9ja2VkIGJvZHk=");
+    assert!(decided["headers"].as_array().unwrap().contains(&json!(["x-mock", "yes"])));
+    proxy.stop();
+}
+
+#[tokio::test]
+async fn a_session_that_ends_closes_its_live_mirrors() {
+    use websocket::test_support::Collected;
+    let _root = scratch_data_root();
+    let entries = Collected::on("log.entry");
+    let proxy = start_proxy(free_port().await);
+    let call = browser_session("leaving");
+    let url = "https://feed.test/left-open";
+    let id = call("browser.decide", json!({ "method": "GET", "url": url, "headers": {} })).await["id"].clone();
+    call("browser.open", json!({ "id": id, "status": 200, "headers": {}, "kind": "sse" })).await;
+    entries.wait(|e| e["url"] == url && e["live"] == true).await;
+
+    browser::end_session("leaving");
+    let closed = entries.wait(|e| e["url"] == url && e.get("live").is_none()).await;
+    assert_eq!(closed["kind"], "sse");
+    // The stream is gone: a late close logs nothing more.
+    let before = entries.items.lock().len();
+    call("browser.close", json!({ "id": id })).await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert_eq!(entries.items.lock().len(), before);
+    proxy.stop();
+}

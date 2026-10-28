@@ -126,6 +126,76 @@
    "workspaceId": "ws1"
   }
  },
+ "browser.cancel": {
+  "valid": {
+   "id": "r1"
+  },
+  "invalid": {}
+ },
+ "browser.close": {
+  "valid": {
+   "id": "r1",
+   "body": ""
+  },
+  "invalid": {
+   "id": "r1",
+   "body": 1
+  }
+ },
+ "browser.decide": {
+  "valid": {
+   "method": "GET",
+   "url": "https://a.test/",
+   "headers": {
+    "accept": "*/*"
+   }
+  },
+  "invalid": {
+   "method": "GET",
+   "url": "https://a.test/",
+   "headers": {
+    "accept": 1
+   }
+  }
+ },
+ "browser.message": {
+  "valid": {
+   "id": "r1",
+   "message": {
+    "direction": "received",
+    "data": "x"
+   }
+  },
+  "invalid": {
+   "id": "r1",
+   "message": {
+    "direction": "up",
+    "data": "x"
+   }
+  }
+ },
+ "browser.open": {
+  "valid": {
+   "id": "r1",
+   "status": 200,
+   "headers": {},
+   "kind": "sse"
+  },
+  "invalid": {
+   "id": "r1",
+   "status": 200,
+   "headers": {},
+   "kind": "poll"
+  }
+ },
+ "browser.read": {
+  "valid": {
+   "id": "r1"
+  },
+  "invalid": {
+   "id": ""
+  }
+ },
  "capture.buildMock": {
   "valid": {
    "entry": {

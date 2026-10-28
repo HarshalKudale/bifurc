@@ -5270,6 +5270,161 @@
    "type": "object",
    "properties": {},
    "additionalProperties": false
+  },
+  "browser.decide": {
+   "type": "object",
+   "properties": {
+    "method": {
+     "type": "string",
+     "minLength": 1
+    },
+    "url": {
+     "type": "string",
+     "minLength": 1
+    },
+    "headers": {
+     "type": "object",
+     "propertyNames": {
+      "type": "string"
+     },
+     "additionalProperties": {
+      "type": "string"
+     }
+    },
+    "body": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "method",
+    "url",
+    "headers"
+   ],
+   "additionalProperties": false
+  },
+  "browser.read": {
+   "type": "object",
+   "properties": {
+    "id": {
+     "type": "string",
+     "minLength": 1
+    }
+   },
+   "required": [
+    "id"
+   ],
+   "additionalProperties": false
+  },
+  "browser.open": {
+   "type": "object",
+   "properties": {
+    "id": {
+     "type": "string",
+     "minLength": 1
+    },
+    "status": {
+     "type": "integer",
+     "minimum": 0,
+     "maximum": 999
+    },
+    "headers": {
+     "type": "object",
+     "propertyNames": {
+      "type": "string"
+     },
+     "additionalProperties": {
+      "type": "string"
+     }
+    },
+    "kind": {
+     "type": "string",
+     "enum": [
+      "sse",
+      "ws"
+     ]
+    }
+   },
+   "required": [
+    "id",
+    "status",
+    "headers"
+   ],
+   "additionalProperties": false
+  },
+  "browser.message": {
+   "type": "object",
+   "properties": {
+    "id": {
+     "type": "string",
+     "minLength": 1
+    },
+    "message": {
+     "type": "object",
+     "properties": {
+      "direction": {
+       "type": "string",
+       "enum": [
+        "sent",
+        "received"
+       ]
+      },
+      "data": {
+       "type": "string"
+      },
+      "event": {
+       "type": "string"
+      },
+      "eventId": {
+       "type": "string"
+      },
+      "binary": {
+       "type": "boolean"
+      },
+      "close": {
+       "type": "integer"
+      }
+     },
+     "required": [
+      "direction",
+      "data"
+     ],
+     "additionalProperties": false
+    }
+   },
+   "required": [
+    "id",
+    "message"
+   ],
+   "additionalProperties": false
+  },
+  "browser.close": {
+   "type": "object",
+   "properties": {
+    "id": {
+     "type": "string",
+     "minLength": 1
+    },
+    "body": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "id"
+   ],
+   "additionalProperties": false
+  },
+  "browser.cancel": {
+   "type": "object",
+   "properties": {
+    "id": {
+     "type": "string",
+     "minLength": 1
+    }
+   },
+   "required": [
+    "id"
+   ],
+   "additionalProperties": false
   }
  }
 }

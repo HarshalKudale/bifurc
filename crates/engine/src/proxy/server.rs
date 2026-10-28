@@ -72,6 +72,14 @@ impl Shared {
     }
 }
 
+/// The state of the proxy last started, for the browser companion's commands, which reach it without a socket.
+static RUNNING: Mutex<std::sync::Weak<Shared>> = Mutex::new(std::sync::Weak::new());
+
+/// The forward proxy that is serving, if one is.
+pub(super) fn running() -> Option<Arc<Shared>> {
+    RUNNING.lock().upgrade().filter(|shared| shared.core.is_running())
+}
+
 /// The forward proxy as a [`Listener`].
 pub struct ProxyServer {
     shared: Arc<Shared>,
@@ -97,6 +105,7 @@ impl Listener for ProxyServer {
         apply_settings(&load_settings());
         *self.shared.snapshot.lock() = Some(snapshot);
         *self.shared.active.lock() = true;
+        *RUNNING.lock() = Arc::downgrade(&self.shared);
         let shared = self.shared.clone();
         let handler: ConnectionHandler = Arc::new(move |socket| Box::pin(handle_connection(shared.clone(), socket)));
         self.shared.core.start(port, handler);

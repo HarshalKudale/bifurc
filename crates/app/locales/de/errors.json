@@ -361,5 +361,7 @@
   "policy.invalid": "The policy file is invalid: {reason}",
   "types.no_samples": "Noch keine JSON-Antwort für \"{name}\"; sende die Anfrage zuerst.",
   "vault.pull_failed": "Die Geheimnisse konnten nicht von {provider} abgerufen werden. {detail}",
-  "vault.setting_invalid": "Das ist keine Einstellung von {provider} für „{field}“."
+  "vault.setting_invalid": "Das ist keine Einstellung von {provider} für „{field}“.",
+  "browser.proxy_off": "der Forward-Proxy läuft nicht",
+  "browser.bad_url": "keine Webadresse"
 }

@@ -2,23 +2,44 @@
 //! and the engine routes it exactly as the proxy port routes one: faults, the cassette being replayed, mocks,
 //! then proxy rules. The answer tells the extension to hand the page a response, or to let the browser send
 //! the request itself.
+//!
+//! The `browser.*` commands carry that over the companion session. A relayed body is pulled with
+//! `browser.read`; a request the browser sent itself is reported back (`browser.open`, `browser.message`,
+//! `browser.close`) and logged as if the proxy had passed it through. Each stream belongs to the session that
+//! made it and goes when that session ends, when it is cancelled, or after an hour nobody asked about it.
 
-// The `browser.*` commands that call this come in the next chunk.
-#![cfg_attr(not(test), allow(dead_code))]
+use std::{
+    collections::HashMap,
+    sync::{Arc, LazyLock},
+    time::{Duration, Instant},
+};
 
-use tokio::io::{DuplexStream, duplex};
+use base64::Engine as _;
+use parking_lot::Mutex;
+use serde_json::{Value, json};
+use tokio::{
+    io::{DuplexStream, duplex},
+    sync::mpsc,
+};
 
 use super::{
-    routing::{Exchange, handle_proxy_routing},
-    server::{Shared, base_entry},
+    response::{LiveLog, log_body},
+    routing::{Exchange, finished_entry, handle_proxy_routing, mask_secrets},
+    server::{self, Shared, base_entry},
     wire::{ResponseBody, raw_header, read_head},
 };
 use crate::{
-    kernel::traffic::{Headers, RequestLogEntry, forwarded_headers},
+    kernel::{
+        CommandContext, CommandRegistry,
+        traffic::{Headers, RequestLogEntry, emit_log, emit_log_message, forwarded_headers},
+    },
+    protocol::EngineError,
     utils::{
         cache_policy::strip_cache_headers,
+        decompress::strip_content_encoding,
         http::is_hop_by_hop,
         id::{mk_id, now_ms},
+        replay::decode_base64_lenient,
     },
 };
 
@@ -115,4 +136,269 @@ pub(super) async fn decide(
         Ok(body) => Decision::Respond { status, headers, body },
         Err(_) => Decision::Failed,
     })
+}
+
+/// How long a stream nobody asked about is kept: the backstop for a tab that went away without a word.
+const IDLE_TTL: Duration = Duration::from_secs(60 * 60);
+/// How long `browser.read` waits for something to hand over before it answers with nothing.
+const READ_WAIT: Duration = Duration::from_secs(20);
+
+/// A piece of a relayed answer, in order.
+enum Piece {
+    Chunk(Vec<u8>),
+    /// The answer broke off.
+    Failed,
+}
+
+/// A request the browser sent itself, as far as the extension has reported it.
+struct Mirror {
+    base: RequestLogEntry,
+    /// The status and headers, once they arrived.
+    opened: Option<(u16, Headers)>,
+    /// `sse` or `ws` for a stream logged as live while it is open.
+    kind: Option<String>,
+    seq: u64,
+}
+
+enum Kind {
+    Relay(Arc<tokio::sync::Mutex<mpsc::Receiver<Piece>>>),
+    Mirror(Box<Mirror>),
+}
+
+struct Stream {
+    session: String,
+    touched: Instant,
+    kind: Kind,
+}
+
+static STREAMS: LazyLock<Mutex<HashMap<String, Stream>>> = LazyLock::new(Default::default);
+
+fn session_of(ctx: &CommandContext) -> String {
+    ctx.session.as_ref().map(|s| s.session_id.clone()).unwrap_or_default()
+}
+
+/// Takes every stream `gone` picks out of the table.
+fn remove_where(gone: impl Fn(&Stream) -> bool) -> Vec<Stream> {
+    let mut streams = STREAMS.lock();
+    let ids: Vec<String> = streams.iter().filter(|(_, s)| gone(s)).map(|(id, _)| id.clone()).collect();
+    ids.iter().filter_map(|id| streams.remove(id)).collect()
+}
+
+/// Puts a stream in the table, first ending the ones that went idle.
+fn insert(id: String, session: String, kind: Kind) {
+    remove_where(|s| s.touched.elapsed() > IDLE_TTL).into_iter().for_each(end);
+    STREAMS.lock().insert(id, Stream { session, touched: Instant::now(), kind });
+}
+
+/// Runs `f` on the session's stream `id` and marks it used; `None` when the session has no such stream.
+fn with_stream<T>(id: &str, session: &str, f: impl FnOnce(&mut Stream) -> T) -> Option<T> {
+    let mut streams = STREAMS.lock();
+    let stream = streams.get_mut(id).filter(|s| s.session == session)?;
+    stream.touched = Instant::now();
+    Some(f(stream))
+}
+
+fn take(id: &str, session: &str) -> Option<Stream> {
+    let mut streams = STREAMS.lock();
+    if streams.get(id).is_some_and(|s| s.session == session) { streams.remove(id) } else { None }
+}
+
+/// A stream that goes without its close. A relay's answer is dropped with it, which stops the routing; a
+/// mirror is logged as it stands, so an entry shown as live does not stay live.
+fn end(stream: Stream) {
+    if let Kind::Mirror(mirror) = stream.kind {
+        finish(*mirror, &[]);
+    }
+}
+
+/// Ends the streams of a session that has gone.
+pub(crate) fn end_session(session: &str) {
+    remove_where(|s| s.session == session).into_iter().for_each(end);
+}
+
+/// Logs a request the browser sent itself as the proxy logs one it passed through. The browser hands over the
+/// body decoded, so the log does not claim an encoding.
+fn finish(mirror: Mirror, body: &[u8]) {
+    let base = &mirror.base;
+    let duration = now_ms() - base.ts;
+    let mut entry = match mirror.opened {
+        Some((status, headers)) => {
+            let headers = strip_content_encoding(&headers);
+            let mut entry =
+                finished_entry(base, status, "proxy", Some(base.host.clone()), duration, headers, log_body(body));
+            entry.kind = mirror.kind;
+            entry
+        }
+        // It failed before an answer: no status, as with a dropped connection.
+        None => RequestLogEntry { via: "error".to_string(), duration_ms: Some(duration), ..base.clone() },
+    };
+    mask_secrets(&mut entry);
+    emit_log(&entry);
+}
+
+/// Feeds a relayed body into a channel, so a read that times out loses nothing. Stops when the reader goes.
+fn pump(mut body: ResponseBody<DuplexStream>) -> Arc<tokio::sync::Mutex<mpsc::Receiver<Piece>>> {
+    let (tx, rx) = mpsc::channel(8);
+    tokio::spawn(async move {
+        loop {
+            let next = tokio::select! {
+                _ = tx.closed() => return,
+                next = body.next() => next,
+            };
+            let piece = match next {
+                Ok(Some(chunk)) => Piece::Chunk(chunk),
+                Ok(None) => return,
+                Err(_) => Piece::Failed,
+            };
+            let failed = matches!(piece, Piece::Failed);
+            if tx.send(piece).await.is_err() || failed {
+                return;
+            }
+        }
+    });
+    Arc::new(tokio::sync::Mutex::new(rx))
+}
+
+fn base64(bytes: &[u8]) -> String {
+    base64::engine::general_purpose::STANDARD.encode(bytes)
+}
+
+fn headers_of(value: &Value) -> Headers {
+    value
+        .as_object()
+        .map(|map| map.iter().map(|(k, v)| (k.to_lowercase(), v.as_str().unwrap_or_default().to_string())).collect())
+        .unwrap_or_default()
+}
+
+fn str_param<'a>(params: &'a Value, name: &str) -> &'a str {
+    params.get(name).and_then(Value::as_str).unwrap_or_default()
+}
+
+async fn decide_command(params: Value, ctx: CommandContext) -> crate::protocol::Result<Value> {
+    let Some(shared) = server::running() else {
+        return Err(EngineError::engine("the forward proxy is not running").keyed("browser.proxy_off", json!({})));
+    };
+    let body = decode_base64_lenient(str_param(&params, "body"));
+    let headers = headers_of(&params["headers"]);
+    let decision = decide(&shared, str_param(&params, "method"), str_param(&params, "url"), &headers, body)
+        .await
+        .ok_or_else(|| EngineError::engine("not a web address").keyed("browser.bad_url", json!({})))?;
+    let session = session_of(&ctx);
+    Ok(match decision {
+        Decision::Continue(base) => {
+            let id = base.id.clone();
+            insert(
+                id.clone(),
+                session,
+                Kind::Mirror(Box::new(Mirror { base: *base, opened: None, kind: None, seq: 0 })),
+            );
+            json!({ "action": "continue", "id": id })
+        }
+        Decision::Respond { status, headers, body } => {
+            json!({ "action": "respond", "status": status, "headers": headers, "body": base64(&body) })
+        }
+        Decision::Relay { status, headers, body } => {
+            let id = mk_id();
+            insert(id.clone(), session, Kind::Relay(pump(body)));
+            json!({ "action": "relay", "id": id, "status": status, "headers": headers })
+        }
+        Decision::Failed => json!({ "action": "fail" }),
+    })
+}
+
+/// What has arrived of a relayed answer since the last read: waits up to [`READ_WAIT`] for the first piece,
+/// then takes whatever else is ready. `done` once the answer has ended (or there is no such stream).
+async fn read_command(params: Value, ctx: CommandContext) -> crate::protocol::Result<Value> {
+    let (id, session) = (str_param(&params, "id"), session_of(&ctx));
+    let pieces = with_stream(id, &session, |s| match &s.kind {
+        Kind::Relay(pieces) => Some(pieces.clone()),
+        Kind::Mirror(_) => None,
+    });
+    let Some(pieces) = pieces.flatten() else { return Ok(json!({ "chunks": [], "done": true })) };
+    let mut pieces = pieces.lock().await;
+    let Ok(mut next) = tokio::time::timeout(READ_WAIT, pieces.recv()).await else {
+        return Ok(json!({ "chunks": [], "done": false }));
+    };
+    let (mut chunks, mut done, mut failed) = (Vec::new(), false, false);
+    loop {
+        match next {
+            Some(Piece::Chunk(chunk)) => chunks.push(base64(&chunk)),
+            Some(Piece::Failed) => (done, failed) = (true, true),
+            None => done = true,
+        }
+        if done {
+            break;
+        }
+        match pieces.try_recv() {
+            Ok(piece) => next = Some(piece),
+            Err(mpsc::error::TryRecvError::Empty) => break,
+            Err(mpsc::error::TryRecvError::Disconnected) => next = None,
+        }
+    }
+    drop(pieces);
+    if done {
+        take(id, &session);
+    }
+    let mut out = json!({ "chunks": chunks, "done": done });
+    if failed {
+        out["error"] = json!("the answer broke off");
+    }
+    Ok(out)
+}
+
+/// The answer to a request the browser sent itself has arrived. An event stream or a WebSocket is logged now,
+/// as live, and again when it ends.
+fn open_command(params: &Value, ctx: &CommandContext) -> Value {
+    let status = params["status"].as_u64().unwrap_or(0) as u16;
+    let headers = headers_of(&params["headers"]);
+    let kind = params.get("kind").and_then(Value::as_str).map(str::to_string);
+    with_stream(str_param(params, "id"), &session_of(ctx), |s| {
+        let Kind::Mirror(mirror) = &mut s.kind else { return };
+        if mirror.opened.is_some() {
+            return;
+        }
+        if let Some(kind) = &kind {
+            let live = LiveLog { base: &mirror.base, via: "proxy", target: Some(mirror.base.host.clone()) };
+            emit_log(&live.open_entry(kind, status, now_ms() - mirror.base.ts, headers.clone()));
+        }
+        mirror.opened = Some((status, headers));
+        mirror.kind = kind;
+    });
+    json!({})
+}
+
+/// One event of a mirrored event stream, or one frame of a mirrored WebSocket.
+fn message_command(params: &Value, ctx: &CommandContext) -> Value {
+    with_stream(str_param(params, "id"), &session_of(ctx), |s| {
+        if let Kind::Mirror(mirror) = &mut s.kind {
+            mirror.seq += 1;
+            emit_log_message(&mirror.base, mirror.seq, params["message"].clone());
+        }
+    });
+    json!({})
+}
+
+/// A mirrored exchange ended, with the body the browser saw (the extension caps it).
+fn close_command(params: &Value, ctx: &CommandContext) -> Value {
+    if let Some(Stream { kind: Kind::Mirror(mirror), .. }) = take(str_param(params, "id"), &session_of(ctx)) {
+        finish(*mirror, &decode_base64_lenient(str_param(params, "body")));
+    }
+    json!({})
+}
+
+/// The page gave up on a request: a relayed answer is dropped (which stops the routing), a mirror is logged.
+fn cancel_command(params: &Value, ctx: &CommandContext) -> Value {
+    if let Some(stream) = take(str_param(params, "id"), &session_of(ctx)) {
+        end(stream);
+    }
+    json!({})
+}
+
+pub fn register(registry: &mut CommandRegistry) {
+    registry.register("browser.decide", decide_command);
+    registry.register("browser.read", read_command);
+    registry.register_sync("browser.open", |params, ctx| Ok(open_command(&params, ctx)));
+    registry.register_sync("browser.message", |params, ctx| Ok(message_command(&params, ctx)));
+    registry.register_sync("browser.close", |params, ctx| Ok(close_command(&params, ctx)));
+    registry.register_sync("browser.cancel", |params, ctx| Ok(cancel_command(&params, ctx)));
 }

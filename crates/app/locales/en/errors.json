@@ -361,5 +361,7 @@
   "policy.invalid": "The policy file is invalid: {reason}",
   "types.no_samples": "No JSON response for \"{name}\" yet; send the request first.",
   "vault.pull_failed": "Couldn't pull the secrets from {provider}. {detail}",
-  "vault.setting_invalid": "That is not a {provider} setting for \"{field}\"."
+  "vault.setting_invalid": "That is not a {provider} setting for \"{field}\".",
+  "browser.proxy_off": "the forward proxy is not running",
+  "browser.bad_url": "not a web address"
 }

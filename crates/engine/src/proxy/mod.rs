@@ -18,12 +18,14 @@ use std::sync::Arc;
 
 use crate::{kernel::CommandRegistry, runtime::instances::Listener};
 
+pub(crate) use browser::end_session as end_browser_session;
 pub(crate) use handler::proxy_to_upstream;
 pub(crate) use response::{LiveLog, fetch_upstream_response, forward_streaming, log_body, send_html};
 pub(crate) use routing::{error_entry, finished_entry, log_outcome};
 
 pub fn register(registry: &mut CommandRegistry) {
     commands::register(registry);
+    browser::register(registry);
     crate::mocks::register(registry);
 }
 
