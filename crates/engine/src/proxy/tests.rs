@@ -1118,3 +1118,21 @@ async fn a_websocket_no_rule_claims_is_the_browsers_own() {
     assert_eq!(decided["action"], "continue");
     proxy.stop();
 }
+
+#[tokio::test]
+async fn a_mirror_cancelled_before_its_answer_is_not_logged() {
+    let _root = scratch_data_root();
+    let logs = Logs::capture();
+    let proxy = start_proxy(free_port().await);
+    let call = browser_session("s");
+    let url = "https://site.test/app.js";
+    let id = call("browser.decide", json!({ "method": "GET", "url": url, "headers": {} })).await["id"].clone();
+    call("browser.cancel", json!({ "id": id })).await;
+    tokio::time::sleep(Duration::from_millis(100)).await;
+    assert!(!logs.entries.lock().iter().any(|e| e["url"] == url));
+    // It is gone: a late close logs nothing either.
+    call("browser.close", json!({ "id": id })).await;
+    tokio::time::sleep(Duration::from_millis(50)).await;
+    assert!(!logs.entries.lock().iter().any(|e| e["url"] == url));
+    proxy.stop();
+}
