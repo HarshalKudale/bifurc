@@ -250,6 +250,8 @@ const SCOPE_BY_COMMAND: &[(&str, Scope)] = &[
     ("browser.message", Scope::Write),
     ("browser.close", Scope::Write),
     ("browser.cancel", Scope::Write),
+    ("browser.wsSend", Scope::Write),
+    ("browser.wsClose", Scope::Write),
 ];
 
 pub fn required_scope_for(command: &str) -> Option<Scope> {

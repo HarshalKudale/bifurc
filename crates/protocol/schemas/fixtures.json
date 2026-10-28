@@ -196,6 +196,27 @@
    "id": ""
   }
  },
+ "browser.wsClose": {
+  "valid": {
+   "id": "r1",
+   "code": 1000,
+   "reason": "bye"
+  },
+  "invalid": {
+   "id": "r1",
+   "code": "x"
+  }
+ },
+ "browser.wsSend": {
+  "valid": {
+   "id": "r1",
+   "data": "hi"
+  },
+  "invalid": {
+   "id": "r1",
+   "data": 1
+  }
+ },
  "capture.buildMock": {
   "valid": {
    "entry": {

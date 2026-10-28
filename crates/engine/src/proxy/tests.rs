@@ -1066,3 +1066,55 @@ async fn a_session_that_ends_closes_its_live_mirrors() {
     assert_eq!(entries.items.lock().len(), before);
     proxy.stop();
 }
+
+#[tokio::test]
+async fn a_websocket_a_rule_claims_is_relayed_through_the_commands() {
+    use websocket::test_support::{Collected, upper_echo};
+    let _root = scratch_data_root();
+    let entries = Collected::on("log.entry");
+    let messages = Collected::on("log.message");
+    let target = upper_echo().await;
+    put(
+        "rules",
+        json!({
+            "id": "bws", "workspaceId": "ws1", "name": "r", "pattern": "^https://prod\\.test/", "useRegex": true,
+            "targetType": "external", "targetExternal": format!("127.0.0.1:{target}"),
+            "requestScript": "", "responseScript": "", "createdAt": 0,
+        }),
+    );
+    let proxy = start_proxy(free_port().await);
+    let call = browser_session("s");
+
+    let decided =
+        call("browser.decide", json!({ "method": "GET", "url": "wss://prod.test/feed", "headers": {} })).await;
+    assert_eq!(decided["action"], "socket", "{decided}");
+    let id = decided["id"].clone();
+    assert_eq!(call("browser.wsSend", json!({ "id": id, "data": "tick" })).await["sent"], true);
+    let read = call("browser.read", json!({ "id": id })).await;
+    assert_eq!(read["frames"], json!([{ "direction": "received", "data": "TICK" }]));
+
+    let open = entries.wait(|e| e["url"] == "https://prod.test/feed").await;
+    assert_eq!((open["kind"].as_str(), open["via"].as_str()), (Some("ws"), Some("rule")));
+    messages.wait(|m| m["logId"] == open["id"] && m["message"]["direction"] == "sent").await;
+
+    call("browser.wsClose", json!({ "id": id, "code": 1000 })).await;
+    loop {
+        let read = call("browser.read", json!({ "id": id })).await;
+        if read["done"] == true {
+            break;
+        }
+    }
+    entries.wait(|e| e["url"] == "https://prod.test/feed" && e.get("live").is_none()).await;
+    proxy.stop();
+}
+
+#[tokio::test]
+async fn a_websocket_no_rule_claims_is_the_browsers_own() {
+    let _root = scratch_data_root();
+    let proxy = start_proxy(free_port().await);
+    let call = browser_session("s");
+    let decided =
+        call("browser.decide", json!({ "method": "GET", "url": "wss://free.test/live", "headers": {} })).await;
+    assert_eq!(decided["action"], "continue");
+    proxy.stop();
+}

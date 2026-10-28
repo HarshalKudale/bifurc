@@ -7,6 +7,9 @@
 //! `browser.read`; a request the browser sent itself is reported back (`browser.open`, `browser.message`,
 //! `browser.close`) and logged as if the proxy had passed it through. Each stream belongs to the session that
 //! made it and goes when that session ends, when it is cancelled, or after an hour nobody asked about it.
+//!
+//! A WebSocket a proxy rule claims is relayed by the engine: frames from the page go out with
+//! `browser.wsSend`, and the target's come back through `browser.read`.
 
 use std::{
     collections::HashMap,
@@ -15,18 +18,28 @@ use std::{
 };
 
 use base64::Engine as _;
+use futures::{SinkExt, StreamExt, stream::SplitSink};
 use parking_lot::Mutex;
 use serde_json::{Value, json};
 use tokio::{
     io::{DuplexStream, duplex},
     sync::mpsc,
 };
+use tokio_tungstenite::{
+    WebSocketStream,
+    tungstenite::{
+        Message,
+        protocol::{CloseFrame, Role, frame::coding::CloseCode},
+    },
+};
 
 use super::{
+    handler::match_proxy_rule,
     response::{LiveLog, log_body},
     routing::{Exchange, finished_entry, handle_proxy_routing, mask_secrets},
     server::{self, Shared, base_entry},
-    wire::{ResponseBody, raw_header, read_head},
+    websocket::{logged, relay_proxied},
+    wire::{Prefixed, ResponseBody, raw_header, read_head},
 };
 use crate::{
     kernel::{
@@ -46,6 +59,9 @@ use crate::{
 /// The largest answer handed over whole; a bigger one, or one of unknown length, is relayed as it arrives.
 const MAX_WHOLE_BYTES: usize = 1024 * 1024;
 
+/// The engine's end of a WebSocket it relays for the page.
+type Socket = WebSocketStream<Prefixed<DuplexStream>>;
+
 /// What the extension does with a request it caught.
 pub(super) enum Decision {
     /// Nothing claimed it: the browser sends it. `base` is the log entry the extension's mirror completes.
@@ -54,11 +70,13 @@ pub(super) enum Decision {
     Respond { status: u16, headers: Vec<(String, String)>, body: Vec<u8> },
     /// An answer whose body is still arriving: a streaming mock, a rule's target streaming or sending a lot.
     Relay { status: u16, headers: Vec<(String, String)>, body: ResponseBody<DuplexStream> },
+    /// A WebSocket a rule claimed, open to the rule's target.
+    Socket { headers: Vec<(String, String)>, socket: Box<Socket> },
     /// Claimed but never answered (a dropped or reset fault, an upstream that broke off): a network error.
     Failed,
 }
 
-/// Route a request the extension caught. `None` when `url` is not an `http(s)` URL.
+/// Route a request the extension caught. `None` when `url` is not an `http(s)` or `ws(s)` URL.
 pub(super) async fn decide(
     shared: &Shared,
     method: &str,
@@ -67,9 +85,13 @@ pub(super) async fn decide(
     body: Vec<u8>,
 ) -> Option<Decision> {
     let parsed = url::Url::parse(url).ok()?;
-    if !matches!(parsed.scheme(), "http" | "https") {
-        return None;
-    }
+    // Rules are written against the `http(s)` URL a WebSocket's upgrade request has.
+    let (scheme, socket) = match parsed.scheme() {
+        scheme @ ("http" | "https") => (scheme, false),
+        "ws" => ("http", true),
+        "wss" => ("https", true),
+        _ => return None,
+    };
     let hostname = parsed.host_str()?.to_string();
     // `port()` is `None` for the scheme's default, which neither the URL nor `Host` spells out.
     let host = match parsed.port() {
@@ -77,17 +99,22 @@ pub(super) async fn decide(
         None => hostname.clone(),
     };
     let req_path = format!("{}{}", parsed.path(), parsed.query().map(|q| format!("?{q}")).unwrap_or_default());
-    let url = format!("{}://{host}{req_path}", parsed.scheme());
+    let url = format!("{scheme}://{host}{req_path}");
     // The page never sees `Host`; a rule's target gets the production host, as with TLS interception.
     let mut headers: Headers =
         headers.iter().filter(|(name, _)| !is_hop_by_hop(name)).map(|(n, v)| (n.to_lowercase(), v.clone())).collect();
     strip_cache_headers(&mut headers);
     headers.entry("host".to_string()).or_insert(host);
+    if socket {
+        // The relay answers this upgrade as the page's browser would have had it answered.
+        let key = tokio_tungstenite::tungstenite::handshake::client::generate_key();
+        headers.insert("sec-websocket-key".to_string(), key);
+    }
 
     let snapshot = shared.snapshot();
     let t0 = now_ms();
     let (mut base, req_body_b64) =
-        base_entry(mk_id(), t0, method, url.clone(), hostname, headers, &body, &snapshot.routing.workspace_id);
+        base_entry(mk_id(), t0, method, url.clone(), hostname.clone(), headers, &body, &snapshot.routing.workspace_id);
     let method = method.to_string();
     // The routing writes an HTTP/1.1 answer as it would to a socket; it runs on its own so a streamed body
     // keeps flowing after the head is read here.
@@ -109,8 +136,16 @@ pub(super) async fn decide(
             base: &base,
             t0,
         };
-        let claimed = handle_proxy_routing(&mut out, &exchange).await;
-        (!claimed).then_some(base)
+        if !socket {
+            let claimed = handle_proxy_routing(&mut out, &exchange).await;
+            return (!claimed).then_some(base);
+        }
+        // Mocks do not answer WebSockets, and one no rule claims is the browser's own.
+        if !match_proxy_rule(&snapshot.routing.rules, &url, &snapshot.routing.mappings).matched {
+            return Some(base);
+        }
+        relay_proxied(out, &exchange, &hostname).await;
+        None
     });
 
     let Some((head, leftover)) = read_head(&mut answer).await else {
@@ -127,6 +162,10 @@ pub(super) async fn decide(
         .map(|(name, value)| (name.trim().to_lowercase(), value.trim().to_string()))
         .filter(|(name, _)| !is_hop_by_hop(name))
         .collect();
+    if socket && status == 101 {
+        let socket = WebSocketStream::from_raw_socket(Prefixed::new(leftover, answer), Role::Client, None).await;
+        return Some(Decision::Socket { headers, socket: Box::new(socket) });
+    }
     let body = ResponseBody::new(answer, leftover, &head.header_lines);
     let length = raw_header(&head.header_lines, "content-length").and_then(|v| v.parse::<usize>().ok());
     if length.is_none_or(|n| n > MAX_WHOLE_BYTES) {
@@ -146,6 +185,8 @@ const READ_WAIT: Duration = Duration::from_secs(20);
 /// A piece of a relayed answer, in order.
 enum Piece {
     Chunk(Vec<u8>),
+    /// A WebSocket frame from the target, as the log shows it.
+    Frame(Value),
     /// The answer broke off.
     Failed,
 }
@@ -160,8 +201,12 @@ struct Mirror {
     seq: u64,
 }
 
+type Pieces = Arc<tokio::sync::Mutex<mpsc::Receiver<Piece>>>;
+
 enum Kind {
-    Relay(Arc<tokio::sync::Mutex<mpsc::Receiver<Piece>>>),
+    Relay(Pieces),
+    /// A relayed WebSocket: what the page sends goes into `sink`.
+    Socket(Pieces, Arc<tokio::sync::Mutex<SplitSink<Socket, Message>>>),
     Mirror(Box<Mirror>),
 }
 
@@ -237,7 +282,7 @@ fn finish(mirror: Mirror, body: &[u8]) {
 }
 
 /// Feeds a relayed body into a channel, so a read that times out loses nothing. Stops when the reader goes.
-fn pump(mut body: ResponseBody<DuplexStream>) -> Arc<tokio::sync::Mutex<mpsc::Receiver<Piece>>> {
+fn pump(mut body: ResponseBody<DuplexStream>) -> Pieces {
     let (tx, rx) = mpsc::channel(8);
     tokio::spawn(async move {
         loop {
@@ -257,6 +302,34 @@ fn pump(mut body: ResponseBody<DuplexStream>) -> Arc<tokio::sync::Mutex<mpsc::Re
         }
     });
     Arc::new(tokio::sync::Mutex::new(rx))
+}
+
+/// Feeds a relayed WebSocket's frames into a channel, up to and including its close.
+fn pump_socket(socket: Socket) -> Kind {
+    let (sink, mut frames) = socket.split();
+    let (tx, rx) = mpsc::channel(32);
+    tokio::spawn(async move {
+        loop {
+            let next = tokio::select! {
+                _ = tx.closed() => return,
+                next = frames.next() => next,
+            };
+            let Some(Ok(message)) = next else {
+                let _ = tx.send(Piece::Failed).await;
+                return;
+            };
+            let close = message.is_close();
+            if let Some(frame) = logged(&message, "received")
+                && tx.send(Piece::Frame(frame)).await.is_err()
+            {
+                return;
+            }
+            if close {
+                return;
+            }
+        }
+    });
+    Kind::Socket(Arc::new(tokio::sync::Mutex::new(rx)), Arc::new(tokio::sync::Mutex::new(sink)))
 }
 
 fn base64(bytes: &[u8]) -> String {
@@ -302,27 +375,33 @@ async fn decide_command(params: Value, ctx: CommandContext) -> crate::protocol::
             insert(id.clone(), session, Kind::Relay(pump(body)));
             json!({ "action": "relay", "id": id, "status": status, "headers": headers })
         }
+        Decision::Socket { headers, socket } => {
+            let id = mk_id();
+            insert(id.clone(), session, pump_socket(*socket));
+            json!({ "action": "socket", "id": id, "headers": headers })
+        }
         Decision::Failed => json!({ "action": "fail" }),
     })
 }
 
-/// What has arrived of a relayed answer since the last read: waits up to [`READ_WAIT`] for the first piece,
-/// then takes whatever else is ready. `done` once the answer has ended (or there is no such stream).
+/// What has arrived of a relayed answer or WebSocket since the last read: waits up to [`READ_WAIT`] for the
+/// first piece, then takes whatever else is ready. `done` once it has ended (or there is no such stream).
 async fn read_command(params: Value, ctx: CommandContext) -> crate::protocol::Result<Value> {
     let (id, session) = (str_param(&params, "id"), session_of(&ctx));
     let pieces = with_stream(id, &session, |s| match &s.kind {
-        Kind::Relay(pieces) => Some(pieces.clone()),
+        Kind::Relay(pieces) | Kind::Socket(pieces, _) => Some(pieces.clone()),
         Kind::Mirror(_) => None,
     });
-    let Some(pieces) = pieces.flatten() else { return Ok(json!({ "chunks": [], "done": true })) };
+    let Some(pieces) = pieces.flatten() else { return Ok(json!({ "chunks": [], "frames": [], "done": true })) };
     let mut pieces = pieces.lock().await;
     let Ok(mut next) = tokio::time::timeout(READ_WAIT, pieces.recv()).await else {
-        return Ok(json!({ "chunks": [], "done": false }));
+        return Ok(json!({ "chunks": [], "frames": [], "done": false }));
     };
-    let (mut chunks, mut done, mut failed) = (Vec::new(), false, false);
+    let (mut chunks, mut frames, mut done, mut failed) = (Vec::new(), Vec::new(), false, false);
     loop {
         match next {
             Some(Piece::Chunk(chunk)) => chunks.push(base64(&chunk)),
+            Some(Piece::Frame(frame)) => frames.push(frame),
             Some(Piece::Failed) => (done, failed) = (true, true),
             None => done = true,
         }
@@ -339,7 +418,7 @@ async fn read_command(params: Value, ctx: CommandContext) -> crate::protocol::Re
     if done {
         take(id, &session);
     }
-    let mut out = json!({ "chunks": chunks, "done": done });
+    let mut out = json!({ "chunks": chunks, "frames": frames, "done": done });
     if failed {
         out["error"] = json!("the answer broke off");
     }
@@ -394,6 +473,25 @@ fn cancel_command(params: &Value, ctx: &CommandContext) -> Value {
     json!({})
 }
 
+/// The page's end of a relayed WebSocket: `send` (text, or base64 when `binary`) or `close`.
+async fn socket_command(params: Value, ctx: CommandContext, close: bool) -> crate::protocol::Result<Value> {
+    let sink = with_stream(str_param(&params, "id"), &session_of(&ctx), |s| match &s.kind {
+        Kind::Socket(_, sink) => Some(sink.clone()),
+        _ => None,
+    });
+    let Some(sink) = sink.flatten() else { return Ok(json!({ "sent": false })) };
+    let message = if close {
+        let code = params.get("code").and_then(Value::as_u64).map_or(CloseCode::Normal, |c| CloseCode::from(c as u16));
+        Message::Close(Some(CloseFrame { code, reason: str_param(&params, "reason").to_string().into() }))
+    } else if params.get("binary").and_then(Value::as_bool).unwrap_or(false) {
+        Message::binary(decode_base64_lenient(str_param(&params, "data")))
+    } else {
+        Message::text(str_param(&params, "data").to_string())
+    };
+    let sent = sink.lock().await.send(message).await.is_ok();
+    Ok(json!({ "sent": sent }))
+}
+
 pub fn register(registry: &mut CommandRegistry) {
     registry.register("browser.decide", decide_command);
     registry.register("browser.read", read_command);
@@ -401,4 +499,6 @@ pub fn register(registry: &mut CommandRegistry) {
     registry.register_sync("browser.message", |params, ctx| Ok(message_command(&params, ctx)));
     registry.register_sync("browser.close", |params, ctx| Ok(close_command(&params, ctx)));
     registry.register_sync("browser.cancel", |params, ctx| Ok(cancel_command(&params, ctx)));
+    registry.register("browser.wsSend", |params, ctx| socket_command(params, ctx, false));
+    registry.register("browser.wsClose", |params, ctx| socket_command(params, ctx, true));
 }

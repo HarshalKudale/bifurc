@@ -5425,6 +5425,47 @@
     "id"
    ],
    "additionalProperties": false
+  },
+  "browser.wsSend": {
+   "type": "object",
+   "properties": {
+    "id": {
+     "type": "string",
+     "minLength": 1
+    },
+    "data": {
+     "type": "string"
+    },
+    "binary": {
+     "type": "boolean"
+    }
+   },
+   "required": [
+    "id",
+    "data"
+   ],
+   "additionalProperties": false
+  },
+  "browser.wsClose": {
+   "type": "object",
+   "properties": {
+    "id": {
+     "type": "string",
+     "minLength": 1
+    },
+    "code": {
+     "type": "integer",
+     "minimum": 1000,
+     "maximum": 4999
+    },
+    "reason": {
+     "type": "string"
+    }
+   },
+   "required": [
+    "id"
+   ],
+   "additionalProperties": false
   }
  }
 }

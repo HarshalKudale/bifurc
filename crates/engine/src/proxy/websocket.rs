@@ -189,7 +189,7 @@ async fn relay_websocket<S: AsyncRead + AsyncWrite + Unpin>(
 
 /// What the log keeps of a message: text as is, binary as base64, a close with its code. Pings and pongs are not
 /// logged.
-fn logged(message: &Message, direction: &str) -> Option<Value> {
+pub(super) fn logged(message: &Message, direction: &str) -> Option<Value> {
     Some(match message {
         Message::Text(text) => json!({ "direction": direction, "data": text.as_str() }),
         Message::Binary(bytes) => json!({
