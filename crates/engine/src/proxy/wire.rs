@@ -123,12 +123,12 @@ pub async fn read_head<R: AsyncRead + Unpin>(stream: &mut R) -> Option<(RequestH
 }
 
 /// Bytes already read, then the stream.
-struct Buffered<'a, S> {
-    stream: &'a mut S,
+struct Buffered<S> {
+    stream: S,
     buf: Vec<u8>,
 }
 
-impl<S: AsyncRead + Unpin> Buffered<'_, S> {
+impl<S: AsyncRead + Unpin> Buffered<S> {
     async fn fill(&mut self) -> io::Result<()> {
         let mut chunk = [0u8; 8192];
         let read = self.stream.read(&mut chunk).await?;
@@ -158,6 +158,20 @@ impl<S: AsyncRead + Unpin> Buffered<'_, S> {
             self.fill().await?;
         }
     }
+
+    /// The next chunk of a chunked body; `None` after the last one and its trailers.
+    async fn chunk(&mut self) -> io::Result<Option<Vec<u8>>> {
+        let size_line = self.line().await?;
+        let size_text = size_line.split(';').next().unwrap_or("").trim();
+        let size = usize::from_str_radix(size_text, 16).map_err(|_| io::Error::from(io::ErrorKind::InvalidData))?;
+        if size == 0 {
+            while !self.line().await?.is_empty() {}
+            return Ok(None);
+        }
+        let data = self.take(size).await?;
+        self.take(2).await?;
+        Ok(Some(data))
+    }
 }
 
 /// The request body that follows a head: `content-length` bytes, or the chunks of a chunked body. A request
@@ -182,16 +196,53 @@ pub async fn read_body<S: AsyncRead + AsyncWrite + Unpin>(
         return reader.take(length.unwrap_or(0)).await;
     }
     let mut body = Vec::new();
-    loop {
-        let size_line = reader.line().await?;
-        let size_text = size_line.split(';').next().unwrap_or("").trim();
-        let size = usize::from_str_radix(size_text, 16).map_err(|_| io::Error::from(io::ErrorKind::InvalidData))?;
-        if size == 0 {
-            while !reader.line().await?.is_empty() {}
-            return Ok(body);
+    while let Some(chunk) = reader.chunk().await? {
+        body.extend(chunk);
+    }
+    Ok(body)
+}
+
+/// A response body as it arrives, until the stream ends: dechunked when its head says so. Only for a stream
+/// that carries one response and closes, as the proxy's own answers do.
+pub struct ResponseBody<S> {
+    reader: Buffered<S>,
+    chunked: bool,
+    done: bool,
+}
+
+impl<S: AsyncRead + Unpin> ResponseBody<S> {
+    pub fn new(stream: S, leftover: Vec<u8>, header_lines: &[String]) -> Self {
+        let chunked =
+            raw_header(header_lines, "transfer-encoding").is_some_and(|v| v.to_lowercase().contains("chunked"));
+        Self { reader: Buffered { stream, buf: leftover }, chunked, done: false }
+    }
+
+    /// The next piece of the body; `None` once it has ended.
+    pub async fn next(&mut self) -> io::Result<Option<Vec<u8>>> {
+        if self.done {
+            return Ok(None);
         }
-        body.extend(reader.take(size).await?);
-        reader.take(2).await?;
+        let next = if self.chunked {
+            self.reader.chunk().await?
+        } else if !self.reader.buf.is_empty() {
+            Some(std::mem::take(&mut self.reader.buf))
+        } else {
+            match self.reader.fill().await {
+                Ok(()) => Some(std::mem::take(&mut self.reader.buf)),
+                Err(e) if e.kind() == io::ErrorKind::UnexpectedEof => None,
+                Err(e) => return Err(e),
+            }
+        };
+        self.done = next.is_none();
+        Ok(next)
+    }
+
+    pub async fn read_to_end(mut self) -> io::Result<Vec<u8>> {
+        let mut body = Vec::new();
+        while let Some(piece) = self.next().await? {
+            body.extend(piece);
+        }
+        Ok(body)
     }
 }
 

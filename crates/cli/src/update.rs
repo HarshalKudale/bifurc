@@ -44,11 +44,12 @@ fn describe(status: &Value) -> String {
             let action = status.get("action").unwrap_or(&Value::Null);
             match text(action, "kind") {
                 "store" => lines.push(
-                    "  The Microsoft Store installs it: open the Store's Downloads page to get it now.".to_string(),
+                    "  The Microsoft Store installs it: open Bifurc's page in the Store to get it now.".to_string(),
                 ),
                 "command" => lines.push(format!("  Run: {}", text(action, "command"))),
-                "updater" => lines
-                    .push("  Run: bifurc update apply (closes Bifurc, installs it and opens it again).".to_string()),
+                "install" => lines.push(
+                    "  Run: bifurc update apply (installs it, then closes Bifurc and opens it again).".to_string(),
+                ),
                 _ => lines.push(format!("  Download: {}", text(action, "url"))),
             }
             if !text(available, "notesUrl").is_empty() {
@@ -69,8 +70,8 @@ fn describe(status: &Value) -> String {
     lines.join("\n")
 }
 
-/// `update [status|check|apply]`. `apply` hands the update to the updater, which closes Bifurc, installs it and
-/// opens it again.
+/// `update [status|check|apply]`. `apply` has the engine run the install script, which installs the update, then
+/// closes Bifurc and opens it again.
 pub fn update(ctx: &mut Context, sub: Option<&str>) -> Result<String> {
     let command = match sub.unwrap_or("status") {
         "status" => "update.status",
@@ -78,9 +79,9 @@ pub fn update(ctx: &mut Context, sub: Option<&str>) -> Result<String> {
         "apply" => {
             ctx.accept(&[], 0)?;
             let started = ctx.request("update.apply", json!({}))?;
-            return Ok(
-                ctx.print(&started, || "The updater is running. Bifurc closes, updates and opens again.".to_string())
-            );
+            return Ok(ctx.print(&started, || {
+                "Updating. Bifurc installs the new version, then closes and opens again.".to_string()
+            }));
         }
         other => return Err(unknown_verb("update", other)),
     };
@@ -119,26 +120,26 @@ mod tests {
     #[test]
     fn check_asks_the_engine_to_look_now() {
         let argv = ["update", "check"];
-        let current = json!({ "currentVersion": "0.6.0", "channel": "scoop", "checkedAt": 5, "available": null });
+        let current = json!({ "currentVersion": "0.6.0", "channel": "aur", "checkedAt": 5, "available": null });
         let (out, calls) = run(&argv, vec![("update.check", Ok(current))], |c| update(c, sub(&argv)));
-        assert_eq!(out.unwrap(), "Bifurc 0.6.0 (scoop) is up to date.");
+        assert_eq!(out.unwrap(), "Bifurc 0.6.0 (aur) is up to date.");
         assert_eq!(calls[0].0, "update.check");
     }
 
     #[test]
-    fn apply_hands_the_update_to_the_updater() {
+    fn apply_starts_the_reinstall() {
         let argv = ["update", "apply"];
         let (out, calls) =
             run(&argv, vec![("update.apply", Ok(json!({ "started": true })))], |c| update(c, sub(&argv)));
-        assert!(out.unwrap().starts_with("The updater is running."));
+        assert!(out.unwrap().starts_with("Updating."));
         assert_eq!(calls[0].0, "update.apply");
     }
 
     #[test]
     fn a_package_managers_install_is_given_its_command() {
         let mut status = available();
-        status["action"] = json!({ "kind": "command", "command": "scoop update bifurc" });
-        assert!(describe(&status).contains("\n  Run: scoop update bifurc\n"));
+        status["action"] = json!({ "kind": "command", "command": "yay -Syu bifurc-bin" });
+        assert!(describe(&status).contains("\n  Run: yay -Syu bifurc-bin\n"));
     }
 
     #[test]

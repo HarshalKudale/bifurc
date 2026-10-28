@@ -357,6 +357,7 @@ impl WorkspaceHost {
                 if companions_out.disconnected(identity) {
                     bus().emit("companions.changed", companions_out.snapshot());
                 }
+                crate::proxy::end_browser_session(&identity.session_id);
                 if let Some(desktop) = &ended {
                     desktop.on_session_end(identity);
                 }

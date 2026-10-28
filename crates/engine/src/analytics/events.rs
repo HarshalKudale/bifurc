@@ -211,7 +211,8 @@ pub fn is_user_action(action: &str) -> bool {
     match required_scope_for(action) {
         None => false,
         Some(Scope::Read) => ASKED_FOR_READS.contains(&action),
-        Some(_) => !NOT_COUNTED.contains(&action),
+        // The browser companion's commands are a page's own traffic, one call per request.
+        Some(_) => !NOT_COUNTED.contains(&action) && !action.starts_with("browser."),
     }
 }
 

@@ -2,14 +2,15 @@
 //!
 //! The engine reads the update manifest ([`manifest`]) once a day and keeps it in `update.json` in the data
 //! directory, so an interface has the answer as soon as it asks. What the manifest means depends on how this
-//! copy was installed ([`channel`]): the Store updates a Store install, a package manager its own, and the
-//! others are replaced by a file from the releases page.
+//! copy was installed ([`channel`]). Every Windows install but the portable zip is the Store's package (the
+//! Store, Microsoft's installer for it and winget all install it), so the Store updates them all and the
+//! action opens Bifurc's page there. A package manager updates its own installs. On macOS and Linux the
+//! action is `install`: `update.apply` runs `install.sh` from the website in a process of its own, which
+//! installs the new version over this one, then stops the engine and opens Bifurc again;
+//! `event.update.progress` follows it. Anything else is offered a download.
 //!
-//! This module never downloads or installs a release: `update.status` says what there is and what to do about it,
-//! and `event.update.changed` says when that changed. Where `bifurc-updater` sits beside the engine (every
-//! package but the Store's) the action is `updater`, and `update.apply` starts it; it downloads the file,
-//! checks its hash, closes Bifurc, installs and opens it again, and `event.update.progress` follows it. The
-//! request for the manifest carries the engine's version and nothing else.
+//! `update.status` says what there is and what to do about it, and `event.update.changed` says when that
+//! changed. The request for the manifest carries the engine's version and nothing else.
 //!
 //! Off with `"updateCheckEnabled": false` in `app.json` or `BIFURC_UPDATE_CHECK=0`; asking with `update.check`
 //! still works then. Nothing is asked on its own before the terms and the privacy policy were accepted, or by
@@ -18,7 +19,7 @@
 pub mod channel;
 pub mod manifest;
 
-use std::{env::consts::EXE_SUFFIX, path::PathBuf, sync::LazyLock, time::Duration};
+use std::{path::PathBuf, sync::LazyLock, time::Duration};
 
 use parking_lot::Mutex;
 use serde_json::{Value, json};
@@ -40,7 +41,28 @@ const MANIFEST_URLS: [&str; 2] = [
     "https://bifurc.app/updates/v1/stable.json",
     "https://github.com/HarshalKudale/bifurc-releases/releases/latest/download/stable.json",
 ];
-const STORE_UPDATES_URL: &str = "ms-windows-store://downloadsandupdates";
+/// Bifurc's page in the Store app, which has the Update button for an install that has one to take.
+const STORE_PAGE_URL: &str = "ms-windows-store://pdp/?productid=9NCB4FDZZQPV";
+/// What `update.apply` runs: the same script a person pastes into a terminal.
+const INSTALL_SCRIPT_URL: &str = "https://bifurc.app/install.sh";
+/// Runs the install script, and once it has installed the new version stops this engine (which closes the
+/// interfaces) and opens the interface again. A failed script leaves the running Bifurc as it was. The script
+/// is saved before it runs, not piped: a pipe's status is the shell's, which succeeds on a download that failed.
+const REINSTALL: &str = r#"
+progress() { printf '{"state":"%s","version":"%s"%s}\n' "$1" "$BIFURC_VERSION" "$2" > "$BIFURC_UPDATE_PROGRESS"; }
+progress installing ""
+script="$BIFURC_UPDATE_LOG.sh"
+if { curl -fsSL -o "$script" "$BIFURC_INSTALL_SCRIPT" && sh "$script"; } > "$BIFURC_UPDATE_LOG" 2>&1; then
+  rm -f "$script"
+  progress done ""
+  "$BIFURC_APP_DIR/bin/bifurc" engine stop --no-start > /dev/null 2>&1
+  sleep 1
+  "$BIFURC_APP_DIR/bifurc-ui" > /dev/null 2>&1 &
+else
+  rm -f "$script"
+  progress failed ",\"error\":\"the install script failed; what it said is in $BIFURC_UPDATE_LOG\""
+fi
+"#;
 const USER_AGENT: &str = concat!("bifurc-engine/", env!("CARGO_PKG_VERSION"));
 const FETCH_TIMEOUT: Duration = Duration::from_secs(10);
 /// A manifest is a few kilobytes; anything much larger is not one.
@@ -49,8 +71,9 @@ const MAX_MANIFEST_BYTES: usize = 512 * 1024;
 const FIRST_LOOK_AFTER: Duration = Duration::from_secs(30);
 const LOOK_EVERY: Duration = Duration::from_secs(60 * 60);
 const CHECK_EVERY_MS: i64 = 24 * 60 * 60 * 1000;
-/// Where `bifurc-updater` writes how far it is, in the data directory.
+/// Where the reinstall writes how far it is, and what the install script said, in the data directory.
 const PROGRESS_FILE: &str = "update-progress.json";
+const LOG_FILE: &str = "update.log";
 /// How long the engine follows an update before it stops looking.
 const LISTEN_FOR: Duration = Duration::from_secs(30 * 60);
 
@@ -82,28 +105,17 @@ fn enabled() -> bool {
     !env_switched_off(std::env::var("BIFURC_UPDATE_CHECK").ok().as_deref()) && load_settings().update_check_enabled()
 }
 
-/// The updater packaged beside this engine: only the installs that can be replaced in place have one.
-fn updater_path() -> Option<PathBuf> {
-    let updater = std::env::current_exe().ok()?.parent()?.join(format!("bifurc-updater{}", EXE_SUFFIX));
-    updater.is_file().then_some(updater)
-}
-
-fn is_sha256(text: Option<&str>) -> bool {
-    text.is_some_and(|text| text.len() == 64 && text.bytes().all(|byte| byte.is_ascii_hexdigit()))
-}
-
-/// What a person does to get the update: let the updater do it, open the Store, run a package manager's
-/// command, or download a file. `self_update` is whether an updater sits beside this engine; the updater is
-/// used only for a file the manifest gives a checksum for.
-fn action(channel: Channel, available: &Value, self_update: bool) -> Value {
+/// What a person does to get the update: open the Store, let Bifurc reinstall itself, run a package
+/// manager's command, or download a file.
+fn action(channel: Channel, available: &Value) -> Value {
     if available.is_null() {
         return Value::Null;
     }
-    if channel == Channel::Store {
-        return json!({ "kind": "store", "url": STORE_UPDATES_URL });
+    if matches!(channel, Channel::Store | Channel::Installer | Channel::Winget) {
+        return json!({ "kind": "store", "url": STORE_PAGE_URL });
     }
-    if self_update && channel.updater_package().is_some() && is_sha256(opt_str(available, "sha256")) {
-        return json!({ "kind": "updater" });
+    if channel.script_settings().is_some() {
+        return json!({ "kind": "install" });
     }
     if let Some(command) = channel.update_command() {
         return json!({ "kind": "command", "command": command });
@@ -119,7 +131,6 @@ fn status_from(
     enabled: bool,
     checking: bool,
     error: Option<EngineError>,
-    self_update: bool,
 ) -> Value {
     let manifest = stored.get("manifest").unwrap_or(&Value::Null);
     let mut available = manifest::plan(manifest, current, channel);
@@ -136,7 +147,7 @@ fn status_from(
         "checking": checking,
         "checkedAt": stored.get("checkedAt").cloned().unwrap_or(Value::Null),
         "unsupported": manifest::unsupported(manifest, current),
-        "action": action(channel, &available, self_update),
+        "action": action(channel, &available),
         "available": available,
     });
     crate::kernel::streams::put_error(status.as_object_mut().expect("an object"), error.as_ref());
@@ -148,53 +159,41 @@ pub fn status() -> Value {
         let state = STATE.lock();
         (state.checking, state.error.clone())
     };
-    status_from(&stored(), ENGINE_VERSION, channel::detect(), enabled(), checking, error, updater_path().is_some())
+    status_from(&stored(), ENGINE_VERSION, channel::detect(), enabled(), checking, error)
 }
 
 fn progress_path() -> PathBuf {
     data_dir().join(PROGRESS_FILE)
 }
 
-/// Hand the update to `bifurc-updater`, which downloads it, stops this engine, installs it and starts the
-/// interface again. What the updater does is read back from its progress file and announced as
-/// `event.update.progress`. The file to fetch comes from the manifest this engine stored, never from the caller.
+/// Reinstall Bifurc with `install.sh`, in a process of its own that outlives this engine, which it stops once
+/// the new version is in. What it does is read back from its progress file and announced as
+/// `event.update.progress`. The version comes from the manifest this engine stored, never from the caller.
 pub fn apply() -> Result<Value, EngineError> {
     let status = status();
-    let (Some(package), Some(updater)) = (channel::detect().updater_package(), updater_path()) else {
-        return Err(EngineError::bad_request("This install is not updated by an updater."));
+    let Some(settings) = channel::detect().script_settings() else {
+        return Err(EngineError::bad_request("This install is not updated by Bifurc itself."));
     };
-    if status["action"]["kind"] != "updater" {
+    if status["action"]["kind"] != "install" {
         return Err(EngineError::bad_request("There is no update this install can apply."));
     }
-    let available = &status["available"];
+    let version = str_of(&status["available"], "version").to_string();
     let exe = std::env::current_exe().map_err(|e| EngineError::engine(e.to_string()))?;
     let app_dir = exe.parent().ok_or_else(|| EngineError::engine("The engine has no folder."))?;
-    let mut command = std::process::Command::new(updater);
+    let mut command = std::process::Command::new("/bin/sh");
     command
-        .args(["apply", "--package", package])
-        .args(["--url", str_of(available, "downloadUrl")])
-        .args(["--sha256", str_of(available, "sha256")])
-        .args(["--version", str_of(available, "next")])
-        .arg("--app-dir")
-        .arg(app_dir)
-        .arg("--launch")
-        .arg(app_dir.join(format!("bifurc-ui{EXE_SUFFIX}")))
-        .arg("--data-dir")
-        .arg(data_dir())
+        .args(["-c", REINSTALL])
+        .envs(settings.iter().copied())
+        .env("BIFURC_VERSION", &version)
+        .env("BIFURC_INSTALL_SCRIPT", INSTALL_SCRIPT_URL)
+        .env("BIFURC_APP_DIR", app_dir)
+        .env("BIFURC_DATA_DIR", data_dir())
+        .env("BIFURC_UPDATE_PROGRESS", progress_path())
+        .env("BIFURC_UPDATE_LOG", data_dir().join(LOG_FILE))
         .stdin(std::process::Stdio::null())
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
-    if let Some(image) = std::env::var_os("APPIMAGE").filter(|image| !image.is_empty()) {
-        command.arg("--target").arg(image);
-    }
     // It outlives this engine, which it stops.
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        const DETACHED_PROCESS: u32 = 0x0000_0008;
-        const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
-        command.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
-    }
     #[cfg(unix)]
     {
         use std::os::unix::process::CommandExt;
@@ -202,10 +201,10 @@ pub fn apply() -> Result<Value, EngineError> {
     }
     let _ = std::fs::remove_file(progress_path());
     command.spawn().map_err(|e| {
-        EngineError::engine(format!("The updater could not be started: {e}"))
+        EngineError::engine(format!("The update could not be started: {e}"))
             .keyed("updates.updater_failed", json!({ "detail": e.to_string() }))
     })?;
-    bus().emit("update.progress", json!({ "state": "starting", "version": str_of(available, "next") }));
+    bus().emit("update.progress", json!({ "state": "starting", "version": version }));
     tokio::spawn(async {
         let mut last = Value::Null;
         for _ in 0..LISTEN_FOR.as_secs() * 2 {
@@ -367,7 +366,7 @@ mod tests {
             "skipped": skipped,
             "manifest": {
                 "minimumSupported": "0.4.0",
-                "channels": { "store": "0.6.0", "scoop": "0.6.0" },
+                "channels": { "store": "0.6.0" },
                 "releases": [{
                     "version": "0.6.0",
                     "critical": critical,
@@ -378,34 +377,38 @@ mod tests {
     }
 
     fn status_of(stored: &Value, current: &str, channel: Channel) -> Value {
-        status_from(stored, current, channel, true, false, None, false)
+        status_from(stored, current, channel, true, false, None)
     }
 
     #[test]
-    fn an_install_with_an_updater_is_updated_by_it_when_the_file_has_a_checksum() {
-        let file = |name: &str, hash: Option<&str>| json!({ "url": format!("https://github.com/HarshalKudale/bifurc-releases/releases/download/v0.6.0/{name}"), "sha256": hash });
-        let mut stored = stored_with(None, false);
-        stored["manifest"]["releases"][0]["packages"] = json!({
-            "nsis-x64": file("setup.exe", Some(&"a".repeat(64))),
-            "zip-x64": file("app.zip", None),
-            "dmg-x64": file("app.dmg", Some(&"b".repeat(64))),
-        });
-        let action = |channel, self_update| {
-            status_from(&stored, "0.5.0", channel, true, false, None, self_update)["action"].clone()
-        };
-        if std::env::consts::ARCH != "aarch64" {
-            let updater = json!({ "kind": "updater" });
-            assert_eq!(action(Channel::Installer, true), updater);
-            // winget runs the same installer, so the same file replaces its install.
-            assert_eq!(action(Channel::Winget, true), updater);
-            assert_eq!(action(Channel::Dmg, true), updater);
-            assert_eq!(action(Channel::Installer, false)["kind"], "download");
-            // A file with no checksum is not run.
-            assert_eq!(action(Channel::Portable, true)["kind"], "download");
+    fn every_windows_install_but_the_zip_is_updated_from_the_store() {
+        let stored = stored_with(None, false);
+        let store = json!({ "kind": "store", "url": STORE_PAGE_URL });
+        for channel in [Channel::Store, Channel::Installer, Channel::Winget] {
+            assert_eq!(status_of(&stored, "0.5.0", channel)["action"], store, "{channel:?}");
         }
-        // The Store's files are the Store's, whatever sits beside the engine.
-        assert_eq!(action(Channel::Store, true)["kind"], "store");
-        assert_eq!(action(Channel::Aur, true)["kind"], "command");
+        assert_eq!(status_of(&stored, "0.5.0", Channel::Portable)["action"]["kind"], "download");
+    }
+
+    #[test]
+    fn macos_and_linux_installs_are_reinstalled_by_the_script() {
+        let stored = stored_with(None, false);
+        for channel in [Channel::Dmg, Channel::Tarball, Channel::Deb] {
+            assert_eq!(status_of(&stored, "0.5.0", channel)["action"], json!({ "kind": "install" }), "{channel:?}");
+        }
+        // The script makes no AppImage, and a package manager updates its own.
+        assert_eq!(status_of(&stored, "0.5.0", Channel::AppImage)["action"]["kind"], "download");
+        assert_eq!(status_of(&stored, "0.5.0", Channel::Aur)["action"]["kind"], "command");
+    }
+
+    #[test]
+    fn an_install_from_the_store_waits_for_the_store_to_have_the_release() {
+        let mut stored = stored_with(None, false);
+        stored["manifest"]["channels"]["store"] = json!("0.5.0");
+        for channel in [Channel::Store, Channel::Installer, Channel::Winget] {
+            assert_eq!(status_of(&stored, "0.5.0", channel)["available"], Value::Null, "{channel:?}");
+        }
+        assert_eq!(status_of(&stored, "0.5.0", Channel::Dmg)["available"]["version"], "0.6.0");
     }
 
     #[test]
@@ -422,18 +425,14 @@ mod tests {
         let stored = stored_with(None, false);
         assert_eq!(
             status_of(&stored, "0.5.0", Channel::Store)["action"],
-            json!({ "kind": "store", "url": STORE_UPDATES_URL })
+            json!({ "kind": "store", "url": STORE_PAGE_URL })
         );
         assert_eq!(
-            status_of(&stored, "0.5.0", Channel::Scoop)["action"],
-            json!({ "kind": "command", "command": "scoop update bifurc" })
+            status_of(&stored, "0.5.0", Channel::Aur)["action"],
+            json!({ "kind": "command", "command": "yay -Syu bifurc-bin" })
         );
-        if std::env::consts::ARCH != "aarch64" {
-            let installer = status_of(&stored, "0.5.0", Channel::Installer);
-            assert!(installer["action"]["url"].as_str().unwrap().ends_with("/v0.6.0/setup.exe"));
-        }
-        // No file is named for a .deb here, so the download page it is.
-        assert_eq!(status_of(&stored, "0.5.0", Channel::Deb)["action"]["url"], manifest::DOWNLOAD_PAGE);
+        // No file is named for an AppImage here, so the download page it is.
+        assert_eq!(status_of(&stored, "0.5.0", Channel::AppImage)["action"]["url"], manifest::DOWNLOAD_PAGE);
         assert_eq!(status_of(&stored, "0.6.0", Channel::Installer)["action"], Value::Null);
     }
 

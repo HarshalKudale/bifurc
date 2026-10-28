@@ -40,12 +40,12 @@ use crate::{
 };
 
 /// Everything a request needs of the config, composed when the proxy starts and whenever it is told to reload.
-struct Snapshot {
+pub(super) struct Snapshot {
     tls_enabled: bool,
     /// The served workspace's mocks, mappings, rules and environments, narrowed to what is switched on.
     dispatch: Value,
     /// `dispatch` as the routing reads it.
-    routing: Routing,
+    pub(super) routing: Routing,
 }
 
 fn compose_snapshot() -> Snapshot {
@@ -67,9 +67,17 @@ pub(super) struct Shared {
 }
 
 impl Shared {
-    fn snapshot(&self) -> Arc<Snapshot> {
+    pub(super) fn snapshot(&self) -> Arc<Snapshot> {
         self.snapshot.lock().clone().unwrap_or_else(|| Arc::new(compose_snapshot()))
     }
+}
+
+/// The state of the proxy last started, for the browser companion's commands, which reach it without a socket.
+static RUNNING: Mutex<std::sync::Weak<Shared>> = Mutex::new(std::sync::Weak::new());
+
+/// The forward proxy that is serving, if one is.
+pub(super) fn running() -> Option<Arc<Shared>> {
+    RUNNING.lock().upgrade().filter(|shared| shared.core.is_running())
 }
 
 /// The forward proxy as a [`Listener`].
@@ -97,6 +105,7 @@ impl Listener for ProxyServer {
         apply_settings(&load_settings());
         *self.shared.snapshot.lock() = Some(snapshot);
         *self.shared.active.lock() = true;
+        *RUNNING.lock() = Arc::downgrade(&self.shared);
         let shared = self.shared.clone();
         let handler: ConnectionHandler = Arc::new(move |socket| Box::pin(handle_connection(shared.clone(), socket)));
         self.shared.core.start(port, handler);
@@ -185,10 +194,10 @@ fn request_headers(head: &RequestHead) -> Headers {
 }
 
 #[allow(clippy::too_many_arguments)] // the proxy's per-request state, passed through as is
-fn base_entry(
+pub(super) fn base_entry(
     id: String,
     t0: i64,
-    head: &RequestHead,
+    method: &str,
     url: String,
     host: String,
     headers: Headers,
@@ -200,7 +209,7 @@ fn base_entry(
     let entry = RequestLogEntry {
         id,
         ts: t0,
-        method: head.method.clone(),
+        method: method.to_string(),
         url,
         host,
         trace_id: crate::kernel::traffic::traceparent_trace_id(&headers),
@@ -238,7 +247,7 @@ async fn dispatch<W: AsyncRead + AsyncWrite + Unpin>(shared: &Shared, out: &mut 
     let url =
         if raw_target.starts_with("http") { raw_target.to_string() } else { format!("http://{host_header}{req_path}") };
     let (mut base, req_body_b64) =
-        base_entry(id, t0, head, url.clone(), host.clone(), headers.clone(), body, &routing.workspace_id);
+        base_entry(id, t0, &head.method, url.clone(), host.clone(), headers.clone(), body, &routing.workspace_id);
     let forwarded = forwarded_headers(&headers, &base.id);
 
     if absolute {
@@ -318,8 +327,16 @@ pub(super) async fn dispatch_tunnelled<W: AsyncRead + AsyncWrite + Unpin>(
     let (scheme, default_port) = if secure { ("https", 443) } else { ("http", 80) };
     let port_suffix = if port == default_port { String::new() } else { format!(":{port}") };
     let url = format!("{scheme}://{hostname}{port_suffix}{req_path}");
-    let (mut base, req_body_b64) =
-        base_entry(id, t0, head, url.clone(), hostname.to_string(), headers.clone(), body, &routing.workspace_id);
+    let (mut base, req_body_b64) = base_entry(
+        id,
+        t0,
+        &head.method,
+        url.clone(),
+        hostname.to_string(),
+        headers.clone(),
+        body,
+        &routing.workspace_id,
+    );
     let forwarded = forwarded_headers(&headers, &base.id);
     if crate::faults::apply(out, &mut base, t0).await {
         return;

@@ -1262,7 +1262,7 @@ impl SettingsScreen {
             let security = update.critical.then(|| t("settings.update.security").to_owned());
             let notes = [update.summary.clone(), update.steps(), security];
             let get = match &action {
-                UpdateAction::Updater => {
+                UpdateAction::Install => {
                     let apply_model = model.clone();
                     let busy = progress.as_ref().is_some_and(UpdateProgress::busy);
                     let failed = progress.as_ref().is_some_and(|progress| progress.state == "failed");
@@ -1296,7 +1296,7 @@ impl SettingsScreen {
                                 .text_color(if failed { theme.danger } else { theme.muted_foreground })
                                 .child(note)
                         }))
-                        // The updater could not do it; the website still can.
+                        // The reinstall could not do it; the website still can.
                         .children(failed.then(|| {
                             Link::new("update-download")
                                 .href(UPDATE_DOWNLOAD_PAGE)

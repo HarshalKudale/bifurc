@@ -361,5 +361,7 @@
   "policy.invalid": "The policy file is invalid: {reason}",
   "types.no_samples": "\"{name}\" の JSON レスポンスはまだありません。先にリクエストを送信してください。",
   "vault.pull_failed": "{provider} からシークレットを取得できませんでした。{detail}",
-  "vault.setting_invalid": "「{field}」は {provider} の設定として使えません。"
+  "vault.setting_invalid": "「{field}」は {provider} の設定として使えません。",
+  "browser.proxy_off": "フォワードプロキシが実行されていません",
+  "browser.bad_url": "Web アドレスではありません"
 }

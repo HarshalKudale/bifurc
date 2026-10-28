@@ -704,7 +704,7 @@ checksum = "3a8241f3ebb85c056b509d4327ad0358fbbba6ffb340bf388f26350aeda225b1"
 
 [[package]]
 name = "bifurc"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "bifurc-cli",
  "bifurc-mcp",
@@ -717,7 +717,7 @@ dependencies = [
 
 [[package]]
 name = "bifurc-cli"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "base64 0.22.1",
  "bifurc-client",
@@ -731,7 +731,7 @@ dependencies = [
 
 [[package]]
 name = "bifurc-client"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "libc",
  "serde_json",
@@ -741,7 +741,7 @@ dependencies = [
 
 [[package]]
 name = "bifurc-engine"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "aes-gcm",
  "argon2",
@@ -800,7 +800,7 @@ dependencies = [
 
 [[package]]
 name = "bifurc-engine-client"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "bifurc-client",
  "bifurc-protocol",
@@ -814,7 +814,7 @@ dependencies = [
 
 [[package]]
 name = "bifurc-mcp"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "bifurc-cli",
  "rmcp",
@@ -825,7 +825,7 @@ dependencies = [
 
 [[package]]
 name = "bifurc-protocol"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "serde",
  "serde_json",
@@ -833,7 +833,7 @@ dependencies = [
 
 [[package]]
 name = "bifurc-tray"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "ksni",
  "objc2 0.6.4",
@@ -846,7 +846,7 @@ dependencies = [
 
 [[package]]
 name = "bifurc-ui"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "base64 0.22.1",
  "bifurc-engine-client",
@@ -860,18 +860,6 @@ dependencies = [
  "serde",
  "serde_json",
  "winresource",
-]
-
-[[package]]
-name = "bifurc-updater"
-version = "0.6.1"
-dependencies = [
- "hex",
- "reqwest",
- "rustls",
- "serde_json",
- "sha2 0.10.9",
- "tokio",
 ]
 
 [[package]]
@@ -9753,7 +9741,7 @@ checksum = "ec7a2a501ed189703dba8b08142f057e887dfc4b2cc4db2d343ac6376ba3e0b9"
 
 [[package]]
 name = "xtask"
-version = "0.6.1"
+version = "0.6.2"
 dependencies = [
  "serde_json",
  "sha2 0.10.9",

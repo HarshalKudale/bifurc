@@ -1,10 +1,10 @@
 //! How this copy of Bifurc was installed, which decides how it is updated.
 //!
 //! Every package is the same folder in a different wrapper, so the wrapper says which it is: `cargo xtask
-//! package` writes `resources/install.json` (`{"package": "nsis"}`) into each one. Two wrappers are shared by
-//! more than one channel, and those are told apart here: the installer is what winget runs, and
-//! it says so with `/CHANNEL=winget`, which the installer keeps in `install-channel` beside the app; the zip is
-//! what Scoop unpacks, under a folder of its own. A folder with no `install.json` is a build, not an install.
+//! package` writes `resources/install.json` (`{"package": "msix"}`) into each one. The tarball is also what
+//! the AUR package installs, under `/usr`. `nsis` is the installer releases before 0.6.2 had, which winget ran
+//! with `/CHANNEL=winget`, kept in `install-channel` beside the app; those installs are still told apart. A
+//! folder with no `install.json` is a build, not an install.
 
 use std::path::Path;
 
@@ -17,7 +17,6 @@ pub enum Channel {
     Store,
     Installer,
     Winget,
-    Scoop,
     Portable,
     AppImage,
     Deb,
@@ -28,11 +27,10 @@ pub enum Channel {
     Unknown,
 }
 
-const ALL: [Channel; 11] = [
+const ALL: [Channel; 10] = [
     Channel::Store,
     Channel::Installer,
     Channel::Winget,
-    Channel::Scoop,
     Channel::Portable,
     Channel::AppImage,
     Channel::Deb,
@@ -48,7 +46,6 @@ impl Channel {
             Channel::Store => "store",
             Channel::Installer => "installer",
             Channel::Winget => "winget",
-            Channel::Scoop => "scoop",
             Channel::Portable => "portable",
             Channel::AppImage => "appimage",
             Channel::Deb => "deb",
@@ -63,11 +60,13 @@ impl Channel {
         ALL.into_iter().find(|channel| channel.as_str() == name.trim().to_ascii_lowercase())
     }
 
-    /// The name of this channel in the manifest's `channels`, for the channels that publish a release some
-    /// time after it is made. The others have a release as soon as it is on the releases page.
+    /// The name in the manifest's `channels` of the channel that delivers this install's updates, for the
+    /// channels that publish a release some time after it is made. The others have a release as soon as it is
+    /// on the releases page. An installer or winget install is updated from the Store, so it follows the Store.
     pub fn manifest_key(self) -> Option<&'static str> {
         match self {
-            Channel::Store | Channel::Winget | Channel::Scoop | Channel::Aur => Some(self.as_str()),
+            Channel::Store | Channel::Installer | Channel::Winget => Some("store"),
+            Channel::Aur => Some(self.as_str()),
             _ => None,
         }
     }
@@ -75,7 +74,7 @@ impl Channel {
     /// The name, in a release's `packages`, of the file this install is replaced with.
     pub fn package_key(self) -> Option<String> {
         let arm = std::env::consts::ARCH == "aarch64";
-        let package = self.updater_package()?;
+        let package = self.package()?;
         let arch = match package {
             "appimage" | "tarball" => {
                 if arm {
@@ -102,14 +101,10 @@ impl Channel {
         Some(format!("{package}-{arch}"))
     }
 
-    /// The kind of package `bifurc-updater` installs over this install, for the installs that sit in a folder
-    /// the person owns. A package manager that runs the installer (winget) or unpacks the zip (Scoop) leaves the
-    /// same files in the same places, so the same package replaces them. The Store's files are the Store's and
-    /// the AUR's are root's; a dmg's `Bifurc.app` is in /Applications or ~/Applications, which the person can write.
-    pub fn updater_package(self) -> Option<&'static str> {
+    /// The kind of release file this install is, whose link a download is offered with.
+    pub fn package(self) -> Option<&'static str> {
         match self {
-            Channel::Installer | Channel::Winget => Some("nsis"),
-            Channel::Scoop | Channel::Portable => Some("zip"),
+            Channel::Portable => Some("zip"),
             Channel::AppImage => Some("appimage"),
             Channel::Deb => Some("deb"),
             Channel::Tarball => Some("tarball"),
@@ -118,11 +113,21 @@ impl Channel {
         }
     }
 
+    /// Whether `install.sh` reinstalls this install, and the settings it is run with so it puts the same kind
+    /// back: a tarball stays a tarball on a system that has apt, and a .deb asks for root through polkit, since
+    /// no terminal is there to type a password in. The AppImage is not one the script makes.
+    pub fn script_settings(self) -> Option<&'static [(&'static str, &'static str)]> {
+        match self {
+            Channel::Dmg => Some(&[]),
+            Channel::Tarball => Some(&[("BIFURC_METHOD", "tarball")]),
+            Channel::Deb => Some(&[("BIFURC_METHOD", "deb"), ("BIFURC_ELEVATE", "pkexec")]),
+            _ => None,
+        }
+    }
+
     /// The command that updates an install a package manager owns.
     pub fn update_command(self) -> Option<&'static str> {
         match self {
-            Channel::Winget => Some("winget upgrade --id HarshalKudale.Bifurc"),
-            Channel::Scoop => Some("scoop update bifurc"),
             Channel::Aur => Some("yay -Syu bifurc-bin"),
             _ => None,
         }
@@ -140,7 +145,6 @@ pub fn channel_of(app_dir: &Path) -> Channel {
             .and_then(|name| Channel::named(&name))
             .filter(|channel| *channel == Channel::Winget)
             .unwrap_or(Channel::Installer),
-        Some("zip") if path.contains("/scoop/apps/") => Channel::Scoop,
         Some("zip") => Channel::Portable,
         Some("appimage") => Channel::AppImage,
         Some("deb") => Channel::Deb,
@@ -205,12 +209,6 @@ mod tests {
         // Only a package manager that runs the installer is believed.
         std::fs::write(dir.join("install-channel"), "store").unwrap();
         assert_eq!(channel_of(&dir), Channel::Installer);
-    }
-
-    #[test]
-    fn a_zip_under_scoop_is_scoops() {
-        let (_root, dir) = app("zip", &["scoop", "apps", "bifurc", "current"]);
-        assert_eq!(channel_of(&dir), Channel::Scoop);
     }
 
     #[test]

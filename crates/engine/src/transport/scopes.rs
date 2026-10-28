@@ -244,6 +244,14 @@ const SCOPE_BY_COMMAND: &[(&str, Scope)] = &[
     ("ws.list", Scope::Read),
     ("ws.clearMessages", Scope::Write),
     ("env.getMerged", Scope::Read),
+    ("browser.decide", Scope::Write),
+    ("browser.read", Scope::Write),
+    ("browser.open", Scope::Write),
+    ("browser.message", Scope::Write),
+    ("browser.close", Scope::Write),
+    ("browser.cancel", Scope::Write),
+    ("browser.wsSend", Scope::Write),
+    ("browser.wsClose", Scope::Write),
 ];
 
 pub fn required_scope_for(command: &str) -> Option<Scope> {
@@ -269,9 +277,10 @@ pub fn companion_scopes() -> HashSet<Scope> {
 /// The only events the companion endpoint delivers: what the browser extension listens for.
 pub const COMPANION_EVENTS: &[&str] = &["event.settings.changed", "event.server.error", "event.engine.stopping"];
 
-/// Why the companion endpoint refuses `action`, if it does: it serves the proxy status and nothing else.
+/// Why the companion endpoint refuses `action`, if it does: it serves the proxy status and the `browser.*`
+/// commands the extension routes a page's HTTPS calls through, and nothing else.
 pub fn companion_refusal(action: &str) -> Option<EngineError> {
-    (action != "server.status").then(|| {
+    (action != "server.status" && !action.starts_with("browser.")).then(|| {
         EngineError::new(ErrorCode::Forbidden, "the companion endpoint only serves status".to_string())
             .keyed("transport.companion_status_only", serde_json::json!({}))
     })
@@ -294,5 +303,11 @@ mod tests {
             SCOPE_BY_COMMAND.iter().map(|(name, _)| *name).filter(|name| !commands.contains(name)).collect();
         assert!(unscoped.is_empty(), "unscoped (would be denied): {unscoped:?}");
         assert!(surplus.is_empty(), "scoped but not a command: {surplus:?}");
+    }
+
+    #[test]
+    fn the_companion_gets_status_and_the_browser_commands_only() {
+        assert!(companion_refusal("server.status").is_none() && companion_refusal("browser.decide").is_none());
+        assert!(companion_refusal("capture.get").is_some() && companion_refusal("browserx").is_some());
     }
 }
