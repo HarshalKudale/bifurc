@@ -29,15 +29,7 @@ jobs:
         with:
           cache: false
 
-      # The Windows SDK (makeappx, makepri) is expected on the machine; NSIS is installed once if missing.
-      - name: Install NSIS
-        shell: pwsh
-        run: |
-          if (-not (Get-Command makensis -ErrorAction SilentlyContinue) -and -not (Test-Path "C:\Program Files (x86)\NSIS\makensis.exe")) {
-            choco install nsis --no-progress -y
-          }
-          "C:\Program Files (x86)\NSIS" | Out-File -Append -Encoding utf8 $env:GITHUB_PATH
-
+      # The Windows SDK (makeappx, makepri) is expected on the machine.
       - name: Package
         shell: bash
         env:
@@ -47,22 +39,10 @@ jobs:
           BIFURC_POSTHOG_HOST: ${{ vars.BIFURC_POSTHOG_HOST }}
         run: cargo xtask package --release-tag "$RELEASE_TAG"
 
-      # The store manifests are folders; a release holds files. The Scoop manifest also goes up on its own,
-      # so `scoop install <its url>` works straight from the release.
-      - name: Bundle the store manifests
-        shell: pwsh
-        working-directory: release/desktop
-        run: |
-          $version = (Select-String -Path "$env:GITHUB_WORKSPACE\Cargo.toml" -Pattern '^version\s*=\s*"(.*)"' | Select-Object -First 1).Matches[0].Groups[1].Value
-          Compress-Archive -Path manifests -DestinationPath "Bifurc-$version-windows-store-manifests.zip" -Force
-          Copy-Item manifests\scoop\bifurc.json bifurc.json
-
       - name: Attach to the release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ inputs.tag_name }}
           files: |
-            release/desktop/*-setup.exe
             release/desktop/*.msix
             release/desktop/*.zip
-            release/desktop/bifurc.json

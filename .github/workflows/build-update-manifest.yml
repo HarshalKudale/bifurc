@@ -75,7 +75,7 @@ jobs:
           python3 - <<'PY' > wanted.txt
           import fnmatch, json
 
-          patterns = ["*-setup.exe", "*-win-*.zip", "*.deb", "*.AppImage", "*-linux-*.tar.gz", "*-mac-*.dmg"]
+          patterns = ["*-win-*.zip", "*.deb", "*.AppImage", "*-linux-*.tar.gz", "*-mac-*.dmg"]
           for asset in json.load(open("release.json"))["assets"]:
               if any(fnmatch.fnmatch(asset["name"], pattern) for pattern in patterns):
                   print(asset["id"], asset["name"])

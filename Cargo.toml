@@ -10,7 +10,6 @@ members = [
     "crates/engine-client",
     "crates/app",
     "crates/tray",
-    "crates/updater",
     "crates/bifurc",
     "xtask",
 ]
@@ -22,7 +21,6 @@ default-members = [
     "crates/engine",
     "crates/cli",
     "crates/mcp",
-    "crates/updater",
     "crates/bifurc",
     "xtask",
 ]

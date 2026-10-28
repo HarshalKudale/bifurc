@@ -3,7 +3,8 @@ name: Publish release to public repo
 # Copies releases made in this (private) repository to the public bifurc-releases repository, which hosts
 # the downloads and the issue tracker. Manual only: nothing is published until someone names the tags.
 #
-# Only the installable downloads are copied (Windows installer and zip, Linux .deb, AppImage and tarball).
+# Only the installable downloads are copied (Windows portable zip, Linux .deb, AppImage and tarball, and the
+# macOS disk image install.sh uses).
 # Store packages, package-manager manifests and GitHub's generated "Source code" archives are not. GitHub
 # still adds its own source archives to every release, but this repository holds nothing but a README and
 # issue templates, so they contain no Bifurc source.
@@ -107,12 +108,11 @@ jobs:
             GH_TOKEN="$SOURCE_TOKEN" gh release view "$tag" --repo "$SOURCE_REPO" \
               --json name,body,isPrerelease > "$work/release.json"
 
-            # Only what a person installs from: the Windows installer and portable zip, and the Linux .deb,
-            # AppImage and tarball. Everything else on the private release stays there: the Store .msix,
-            # the winget and Scoop manifests (useless to download by hand), and
+            # Only what a person installs from: the Windows portable zip, the Linux .deb, AppImage and tarball,
+            # and the macOS disk image install.sh uses. Everything else on the private release stays there: the
+            # Store .msix, the AUR manifest (useless to download by hand), and
             # the "Source code" archives GitHub generates (never downloaded here, they are not assets).
             GH_TOKEN="$SOURCE_TOKEN" gh release download "$tag" --repo "$SOURCE_REPO" --dir "$work/assets" \
-              --pattern '*-setup.exe' \
               --pattern '*-win-*.zip' \
               --pattern '*.deb' \
               --pattern '*.AppImage' \
@@ -121,7 +121,7 @@ jobs:
               --pattern 'stable.json'
 
             if [ -z "$(ls -A "$work/assets")" ]; then
-              echo "::error::$tag has no installable files (exe, zip, deb, AppImage, tar.gz, dmg) to publish."
+              echo "::error::$tag has no installable files (zip, deb, AppImage, tar.gz, dmg) to publish."
               exit 1
             fi
 

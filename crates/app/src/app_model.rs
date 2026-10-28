@@ -283,7 +283,7 @@ pub struct AppModel {
     setup: SetupState,
     /// What the engine knows about newer versions.
     update: UpdateStatus,
-    /// How far the updater is, once "Update now" was pressed.
+    /// How far the reinstall is, once "Update now" was pressed.
     update_progress: Option<UpdateProgress>,
     /// The engine is being stopped and started again; its connection closing is expected.
     restarting_engine: bool,
@@ -346,7 +346,7 @@ impl AppModel {
         self.update_progress.as_ref()
     }
 
-    /// Has the updater install the newer version. It closes this window, installs, and opens Bifurc again.
+    /// Has the engine reinstall Bifurc at the newer version. It closes this window, installs, and opens Bifurc again.
     pub fn apply_update(&mut self, cx: &mut Context<Self>) {
         if self.update_progress.as_ref().is_some_and(UpdateProgress::busy) {
             return;

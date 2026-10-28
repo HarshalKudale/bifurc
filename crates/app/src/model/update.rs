@@ -7,17 +7,17 @@ use crate::i18n::{t, t_with};
 /// What a person does to get an update, which depends on how this copy was installed.
 #[derive(Debug, Clone, PartialEq)]
 pub enum UpdateAction {
-    /// The Microsoft Store installs it; the address opens the Store's own updates page.
+    /// The Microsoft Store installs it; the address opens Bifurc's page in the Store.
     Store(String),
     /// A package manager installs it, with this command.
     Command(String),
     /// A file to download and run.
     Download(String),
-    /// The updater beside the engine downloads it, installs it and opens Bifurc again.
-    Updater,
+    /// Bifurc installs it itself with the install script, then opens again.
+    Install,
 }
 
-/// How far the updater is (`event.update.progress`).
+/// How far the reinstall is (`event.update.progress`).
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct UpdateProgress {
     /// `starting`, `downloading`, `installing`, `done` or `failed`.
@@ -38,7 +38,7 @@ impl UpdateProgress {
         }
     }
 
-    /// The updater is working, so another run must not start.
+    /// The reinstall is working, so another run must not start.
     pub fn busy(&self) -> bool {
         matches!(self.state.as_str(), "starting" | "downloading" | "installing")
     }
@@ -81,7 +81,7 @@ impl AvailableUpdate {
 
 #[derive(Debug, Clone, Default, PartialEq)]
 pub struct UpdateStatus {
-    /// How this copy was installed: `store`, `installer`, `winget`, `scoop`, `portable`, `appimage`, `deb`,
+    /// How this copy was installed: `store`, `installer`, `winget`, `portable`, `appimage`, `deb`,
     /// `aur`, `tarball`, or `unknown` for a build.
     pub channel: String,
     pub checking: bool,
@@ -119,7 +119,7 @@ impl UpdateStatus {
             "store" => Some(UpdateAction::Store(text(action, "url")?)),
             "command" => Some(UpdateAction::Command(text(action, "command")?)),
             "download" => Some(UpdateAction::Download(text(action, "url")?)),
-            "updater" => Some(UpdateAction::Updater),
+            "install" => Some(UpdateAction::Install),
             _ => None,
         });
         Self {
@@ -143,7 +143,6 @@ impl UpdateStatus {
         t(match self.channel.as_str() {
             "store" => "model.update.channel.store",
             "winget" => "model.update.channel.winget",
-            "scoop" => "model.update.channel.scoop",
             "aur" => "model.update.channel.aur",
             "deb" => "model.update.channel.deb",
             "appimage" => "model.update.channel.appimage",
@@ -179,11 +178,11 @@ mod tests {
     }
 
     #[test]
-    fn the_updater_is_an_action_and_reports_its_progress() {
+    fn reinstalling_is_an_action_and_reports_its_progress() {
         let status = UpdateStatus::from_value(&json!({
-            "available": { "version": "0.6.0", "path": ["0.6.0"] }, "action": { "kind": "updater" },
+            "available": { "version": "0.6.0", "path": ["0.6.0"] }, "action": { "kind": "install" },
         }));
-        assert_eq!(status.action, Some(UpdateAction::Updater));
+        assert_eq!(status.action, Some(UpdateAction::Install));
         let progress = UpdateProgress::from_value(&json!({ "state": "downloading", "received": 25, "total": 100 }));
         assert!(progress.busy());
         assert_eq!(progress.percent(), Some(25));
@@ -206,10 +205,10 @@ mod tests {
     fn a_skipped_update_is_known_but_not_announced() {
         let status = UpdateStatus::from_value(&json!({
             "available": { "version": "0.6.0", "path": ["0.6.0"], "skipped": true },
-            "action": { "kind": "command", "command": "scoop update bifurc" },
+            "action": { "kind": "command", "command": "yay -Syu bifurc-bin" },
         }));
         assert!(status.available.is_some() && status.announced().is_none());
         assert_eq!(status.available.as_ref().and_then(AvailableUpdate::steps), None);
-        assert_eq!(status.action, Some(UpdateAction::Command("scoop update bifurc".to_owned())));
+        assert_eq!(status.action, Some(UpdateAction::Command("yay -Syu bifurc-bin".to_owned())));
     }
 }

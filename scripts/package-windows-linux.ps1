@@ -1,7 +1,7 @@
 # Builds the production bundles for Windows (here) and Linux (in WSL) and packages them into release/desktop.
-#   Windows: nsis, msix, zip, winget, scoop    Linux: appimage, deb, tarball, aur
+#   Windows: msix, zip    Linux: appimage, deb, tarball, aur
 # Usage: pwsh scripts/package-windows-linux.ps1 [-SkipLinux] [-SkipWindows] [-Distro Ubuntu] [-ReleaseTag v0.6.0]
-# Needs on Windows: Rust, NSIS (makensis), Windows SDK (makeappx). In WSL: apt packages below (sudo asked once) and rustup (installed if missing).
+# Needs on Windows: Rust, Windows SDK (makeappx). In WSL: apt packages below (sudo asked once) and rustup (installed if missing).
 param(
     [switch]$SkipWindows,
     [switch]$SkipLinux,

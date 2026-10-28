@@ -4,7 +4,7 @@
 //! cargo xtask dev-ui                        # debug build of the engine and tray helper, then run the UI (`cargo dev:ui`)
 //! cargo xtask licenses [--check]            # regenerate (or verify) crates/app/licenses/third-party.json
 //! cargo xtask package                       # everything this platform has: packages and store manifests
-//! cargo xtask package --target nsis,msix    # windows: installer exe, Store package
+//! cargo xtask package --target msix,zip     # windows: Store package, portable zip
 //! cargo xtask package --target appimage,deb # linux
 //! cargo xtask package --target dmg          # macos: the whole thing is the default there
 //! cargo xtask package --target dir          # the staged folder only
@@ -14,11 +14,8 @@
 //!
 //! | target     | platform | output in `release/desktop`                                               |
 //! | ---------- | -------- | ------------------------------------------------------------------------- |
-//! | `nsis`     | windows  | `Bifurc-<version>-setup.exe`                                              |
 //! | `msix`     | windows  | `Bifurc-<version>.msix`                                                   |
 //! | `zip`      | windows  | `Bifurc-<version>-win-<arch>.zip`, the staged folder as it is             |
-//! | `winget`   | windows  | `manifests/winget/…`, the three files a winget-pkgs pull request holds    |
-//! | `scoop`    | windows  | `manifests/scoop/bifurc.json`                                             |
 //! | `appimage` | linux    | `Bifurc-<version>-<arch>.AppImage`                                        |
 //! | `deb`      | linux    | `bifurc_<version>_<arch>.deb`                                             |
 //! | `tarball`  | linux    | `Bifurc-<version>-linux-<arch>.tar.gz`, the staged folder as it is        |
@@ -26,7 +23,7 @@
 //! | `dmg`      | macos    | `Bifurc-<version>-mac-<arch>.dmg`: `Bifurc.app` and an Applications link  |
 //!
 //! A manifest names the file a package manager downloads and its hash, so its target builds that file too:
-//! `winget` the installer, `scoop` the zip, `aur` the tarball. The download is the file of that
+//! `aur` the tarball. The download is the file of that
 //! name on the GitHub release `--release-tag` names, in `GITHUB_REPOSITORY` (default: this repository).
 //!
 //! Every package is the same folder (`release/desktop/<platform>-unpacked`) in a different wrapper:
@@ -35,8 +32,6 @@
 //! bifurc-ui[.exe]      the interface
 //! bifurc-engine[.exe]  the engine
 //! bifurc-tray[.exe]    the engine's tray icon (Windows), menu-bar icon (macOS) or StatusNotifierItem (Linux)
-//! bifurc-updater[.exe] replaces this install with a newer release; every package but the Store's has it, and
-//!                      an engine that finds it beside itself offers "Update now" (`crates/updater`)
 //! bin/bifurc[.exe]     the `bifurc` command (`crates/bifurc`: the CLI, or the MCP server with `--mcp`) — the only
 //!                      folder that goes on PATH
 //! ```
@@ -45,7 +40,7 @@
 //! beside their own executable, and the engine finds the tray helper beside itself, so the folder works from
 //! wherever it is put and no installer has to write a configuration.
 //!
-//! The one thing a wrapper adds is `resources/install.json`, which names it (`{"package": "nsis"}`): how the
+//! The one thing a wrapper adds is `resources/install.json`, which names it (`{"package": "zip"}`): how the
 //! engine knows how this copy is updated (`crates/engine/src/updates/channel.rs`). The staged folder
 //! itself has none, and is a build.
 
@@ -90,13 +85,11 @@ fn mac_arch() -> &'static str {
     if arch.starts_with("aarch64") { "arm64" } else { "x64" }
 }
 
-/// What Scoop calls it.
-fn scoop_arch() -> &'static str {
-    if env::consts::ARCH == "aarch64" { "arm64" } else { "64bit" }
-}
-
 /// Every target of each platform, in the order they are made: a manifest after the file it describes.
-const WINDOWS_TARGETS: [&str; 5] = ["nsis", "msix", "zip", "winget", "scoop"];
+/// No unsigned installer and no package manager of our own on Windows: installs come from the Store (or
+/// Microsoft's installer for its build, or winget's msstore source), so SmartScreen never stands in the way.
+/// The zip is for running it portably.
+const WINDOWS_TARGETS: [&str; 2] = ["msix", "zip"];
 const LINUX_TARGETS: [&str; 4] = ["appimage", "deb", "tarball", "aur"];
 const MACOS_TARGETS: [&str; 1] = ["dmg"];
 const MACOS: bool = cfg!(target_os = "macos");
@@ -104,8 +97,6 @@ const MACOS: bool = cfg!(target_os = "macos");
 /// The package a manifest's target describes, which is built with it.
 fn needs(target: &str) -> Option<&'static str> {
     match target {
-        "winget" => Some("nsis"),
-        "scoop" => Some("zip"),
         "aur" => Some("tarball"),
         _ => None,
     }
@@ -116,8 +107,6 @@ const HOMEPAGE: &str = "https://bifurc.app";
 const PUBLISHER: &str = "Harshal Kudale";
 /// A package's maintainer field wants an address; this one reaches the maintainer through GitHub.
 const MAINTAINER_EMAIL: &str = "HarshalKudale@users.noreply.github.com";
-const WINGET_PUBLISHER: &str = "HarshalKudale";
-const WINGET_NAME: &str = "Bifurc";
 /// One line and one paragraph, in words that are safe as they are in YAML, XML, JSON and a shell string.
 const SUMMARY: &str = "Desktop API development workspace for localhost routing, capture, mocking and protocol testing";
 const DESCRIPTION: &str = "Bifurc brings together .localhost mappings, proxy rules, traffic capture, mocks, and REST, \
@@ -248,24 +237,12 @@ fn run() -> Result<()> {
     }
     let staged = stage(&ctx)?;
     let mut made = vec![staged.clone()];
-    if wanted("nsis") {
-        mark(&staged, "nsis")?;
-        let installer = package_nsis(&ctx, &staged)?;
-        made.push(installer.clone());
-        if wanted("winget") {
-            made.push(manifest_winget(&ctx, &installer)?);
-        }
-    }
     if wanted("msix") {
         made.push(package_msix(&ctx, &staged)?);
     }
     if wanted("zip") {
         mark(&staged, "zip")?;
-        let zip = package_zip(&ctx, &staged)?;
-        made.push(zip.clone());
-        if wanted("scoop") {
-            made.push(manifest_scoop(&ctx, &zip)?);
-        }
+        made.push(package_zip(&ctx, &staged)?);
     }
     if wanted("dmg") {
         made.push(package_dmg(&ctx, &staged)?);
@@ -483,7 +460,7 @@ fn build(ctx: &Ctx) -> Result<()> {
     let mut cargo = Command::new("cargo");
     cargo
         .args(["build", "--release", "--locked"])
-        .args(["-p", "bifurc-engine", "-p", "bifurc", "-p", "bifurc-tray", "-p", "bifurc-updater", "-p", "bifurc-ui"])
+        .args(["-p", "bifurc-engine", "-p", "bifurc", "-p", "bifurc-tray", "-p", "bifurc-ui"])
         .env("RUSTFLAGS", release_rustflags(ctx))
         .current_dir(&ctx.repo);
     if let Some(target) = build_target() {
@@ -534,9 +511,6 @@ fn stage(ctx: &Ctx) -> Result<PathBuf> {
     copy_file(&cargo_output(ctx, &format!("bifurc-ui{EXE}"))?, &dir.join(format!("bifurc-ui{EXE}")))?;
     copy_file(&cargo_output(ctx, &format!("bifurc-tray{EXE}"))?, &dir.join(format!("bifurc-tray{EXE}")))?;
     make_executable(&dir.join(format!("bifurc-tray{EXE}")))?;
-    // Left out of the Store package by `package_msix`: the Store owns those files.
-    copy_file(&cargo_output(ctx, &format!("bifurc-updater{EXE}"))?, &dir.join(format!("bifurc-updater{EXE}")))?;
-    make_executable(&dir.join(format!("bifurc-updater{EXE}")))?;
     // `bin/bifurc` finds the engine above its `bin/` (`cli/src/locate.rs`).
     copy_file(&cargo_output(ctx, &format!("bifurc{EXE}"))?, &dir.join("bin").join(format!("bifurc{EXE}")))?;
     copy_file(&cargo_output(ctx, &format!("bifurc-engine{EXE}"))?, &dir.join(format!("bifurc-engine{EXE}")))?;
@@ -575,45 +549,8 @@ fn smoke_test(dir: &Path) -> Result<()> {
         Ok(out) => return Err(format!("the staged engine does not run:\n{}", String::from_utf8_lossy(&out.stderr))),
         Err(e) => return Err(format!("the staged engine does not run:\n{e}")),
     }
-    let updater = Command::new(dir.join(format!("bifurc-updater{EXE}"))).arg("--version").output();
-    match updater {
-        Ok(out) if out.status.success() => {}
-        Ok(out) => return Err(format!("the staged updater does not run:\n{}", String::from_utf8_lossy(&out.stderr))),
-        Err(e) => return Err(format!("the staged updater does not run:\n{e}")),
-    }
-    println!("staged CLI, MCP server, engine and updater start");
+    println!("staged CLI, MCP server and engine start");
     Ok(())
-}
-
-// ---------------------------------------------------------------------------------------------------------
-// Windows: installer
-// ---------------------------------------------------------------------------------------------------------
-
-fn find_makensis() -> Result<PathBuf> {
-    first_existing([
-        env_path("MAKENSIS"),
-        on_path("makensis"),
-        env_path("ProgramFiles(x86)").map(|d| d.join("NSIS").join("makensis.exe")),
-        env_path("ProgramFiles").map(|d| d.join("NSIS").join("makensis.exe")),
-    ])
-    .ok_or_else(|| {
-        "makensis was not found. Install NSIS (https://nsis.sourceforge.io) or set MAKENSIS to makensis.exe.".to_owned()
-    })
-}
-
-fn package_nsis(ctx: &Ctx, staged: &Path) -> Result<PathBuf> {
-    let out = ctx.out_dir.join(format!("Bifurc-{VERSION}-setup.exe"));
-    let mut command = Command::new(find_makensis()?);
-    command
-        .arg("/V2")
-        .arg(format!("/DVERSION={VERSION}"))
-        .arg(format!("/DSTAGE={}", staged.display()))
-        .arg(format!("/DOUT={}", out.display()))
-        .arg(format!("/DICON={}", ctx.repo.join("build").join("icon.ico").display()))
-        .arg(ctx.packaging().join("windows").join("bifurc.nsi"))
-        .current_dir(&ctx.repo);
-    exec(command, false)?;
-    Ok(out)
 }
 
 // ---------------------------------------------------------------------------------------------------------
@@ -645,8 +582,6 @@ fn package_msix(ctx: &Ctx, staged: &Path) -> Result<PathBuf> {
     let layout = ctx.out_dir.join("msix-layout");
     empty_dir(&layout)?;
     copy_dir(staged, &layout)?;
-    // The Store updates this package, and installs it where an updater could not replace it.
-    let _ = fs::remove_file(layout.join(format!("bifurc-updater{EXE}")));
     mark(&layout, "msix")?;
     // The icons are indexed from a folder of their own, so indexing never reads file names in the layout as
     // resource qualifiers.
@@ -699,10 +634,10 @@ fn package_msix(ctx: &Ctx, staged: &Path) -> Result<PathBuf> {
 }
 
 // ---------------------------------------------------------------------------------------------------------
-// Windows: portable zip, and the manifests of winget and Scoop
+// Windows: portable zip
 // ---------------------------------------------------------------------------------------------------------
 
-/// The staged folder as a zip: what Scoop installs, and a Bifurc that runs from wherever it is unpacked.
+/// The staged folder as a zip: a Bifurc that runs from wherever it is unpacked.
 fn package_zip(ctx: &Ctx, staged: &Path) -> Result<PathBuf> {
     let out = ctx.out_dir.join(format!("Bifurc-{VERSION}-win-{}.zip", sdk_arch()));
     let _ = fs::remove_file(&out);
@@ -721,38 +656,6 @@ fn package_zip(ctx: &Ctx, staged: &Path) -> Result<PathBuf> {
     entries.sort();
     command.args(entries);
     exec(command, true)?;
-    Ok(out)
-}
-
-/// The three files of a winget-pkgs pull request, in the folder they have there.
-fn manifest_winget(ctx: &Ctx, installer: &Path) -> Result<PathBuf> {
-    let id = format!("{WINGET_PUBLISHER}.{WINGET_NAME}");
-    let initial = WINGET_PUBLISHER[..1].to_lowercase();
-    let root = ctx.manifests().join("winget");
-    empty_dir(&root)?;
-    let dir = root.join("manifests").join(initial).join(WINGET_PUBLISHER).join(WINGET_NAME).join(VERSION);
-    fs::create_dir_all(&dir).map_err(|e| format!("{}: {e}", dir.display()))?;
-    let url = ctx.asset_url(installer);
-    let hash = sha256_of(installer)?.to_uppercase();
-    let values = [("PACKAGE_ID", id.as_str()), ("ARCH", sdk_arch()), ("URL", url.as_str()), ("SHA256", hash.as_str())];
-    for (template, file) in [
-        ("version.yaml", format!("{id}.yaml")),
-        ("installer.yaml", format!("{id}.installer.yaml")),
-        ("locale.yaml", format!("{id}.locale.en-US.yaml")),
-    ] {
-        write_file(&dir.join(file), &manifest(ctx, &format!("windows/winget/{template}"), &values)?)?;
-    }
-    Ok(dir)
-}
-
-/// The Scoop manifest: `scoop install <its url>`, or a file of a bucket.
-fn manifest_scoop(ctx: &Ctx, zip: &Path) -> Result<PathBuf> {
-    let dir = ctx.manifests().join("scoop");
-    empty_dir(&dir)?;
-    let (url, hash) = (ctx.asset_url(zip), sha256_of(zip)?);
-    let values = [("ARCH", scoop_arch()), ("FILE_ARCH", sdk_arch()), ("URL", url.as_str()), ("SHA256", hash.as_str())];
-    let out = dir.join("bifurc.json");
-    write_file(&out, &manifest(ctx, "windows/scoop/bifurc.json", &values)?)?;
     Ok(out)
 }
 

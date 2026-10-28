@@ -10,7 +10,7 @@
 //!   "releases": [
 //!     { "version": "0.5.0", "date": "2026-10-20", "minDirectFrom": "0.4.0", "critical": false,
 //!       "summary": "…", "notesUrl": "https://bifurc.app/changelog",
-//!       "packages": { "nsis-x64": { "url": "https://github.com/…/Bifurc-0.5.0-setup.exe", "sha256": "…", "size": 1 } } }
+//!       "packages": { "zip-x64": { "url": "https://github.com/…/Bifurc-0.5.0-win-x64.zip", "sha256": "…", "size": 1 } } }
 //!   ]
 //! }
 //! ```
@@ -147,17 +147,22 @@ pub fn unsupported(manifest: &Value, current: &str) -> bool {
 mod tests {
     use super::*;
 
+    /// The name a portable zip's file has in `packages` on this machine.
+    fn zip() -> String {
+        Channel::Portable.package_key().unwrap()
+    }
+
     fn manifest() -> Value {
-        let file = |name: &str| json!({ "url": format!("https://github.com/HarshalKudale/bifurc-releases/releases/download/{name}") });
+        let file = |name: &str| json!({ zip(): { "url": format!("https://github.com/HarshalKudale/bifurc-releases/releases/download/{name}") } });
         json!({
             "schema": 1,
             "minimumSupported": "0.4.0",
             "channels": { "store": "0.5.0" },
             "releases": [
                 { "version": "0.6.0", "minDirectFrom": "0.5.0", "summary": "six", "notesUrl": "https://bifurc.app/changelog",
-                  "packages": { "nsis-x64": file("v0.6.0/Bifurc-0.6.0-setup.exe") } },
+                  "packages": file("v0.6.0/Bifurc-0.6.0-win.zip") },
                 { "version": "0.5.0", "minDirectFrom": "0.4.0", "critical": true,
-                  "packages": { "nsis-x64": file("v0.5.0/Bifurc-0.5.0-setup.exe") } },
+                  "packages": file("v0.5.0/Bifurc-0.5.0-win.zip") },
                 { "version": "0.4.0", "minDirectFrom": "0.3.0" },
                 { "version": "0.7.0-beta.1" }
             ]
@@ -175,22 +180,22 @@ mod tests {
 
     #[test]
     fn an_install_on_the_newest_version_is_offered_nothing() {
-        assert_eq!(plan(&manifest(), "0.6.0", Channel::Installer), Value::Null);
-        assert_eq!(plan(&manifest(), "0.9.0", Channel::Installer), Value::Null);
+        assert_eq!(plan(&manifest(), "0.6.0", Channel::Portable), Value::Null);
+        assert_eq!(plan(&manifest(), "0.9.0", Channel::Portable), Value::Null);
     }
 
     #[test]
     fn a_recent_install_goes_straight_to_the_newest() {
-        let plan = plan(&manifest(), "0.5.0", Channel::Installer);
+        let plan = plan(&manifest(), "0.5.0", Channel::Portable);
         assert_eq!(plan["version"], "0.6.0");
         assert_eq!(plan["path"], json!(["0.6.0"]));
         assert_eq!(plan["critical"], false);
-        assert!(plan["downloadUrl"].as_str().unwrap().ends_with("Bifurc-0.6.0-setup.exe"));
+        assert!(plan["downloadUrl"].as_str().unwrap().ends_with("Bifurc-0.6.0-win.zip"));
     }
 
     #[test]
     fn an_old_install_is_taken_through_the_releases_in_between() {
-        let plan = plan(&manifest(), "0.3.0", Channel::Installer);
+        let plan = plan(&manifest(), "0.3.0", Channel::Portable);
         assert_eq!(plan["version"], "0.6.0");
         assert_eq!(plan["path"], json!(["0.4.0", "0.5.0", "0.6.0"]));
         assert_eq!(plan["next"], "0.4.0");
@@ -201,7 +206,7 @@ mod tests {
 
     #[test]
     fn an_install_older_than_every_step_is_still_given_one() {
-        assert_eq!(plan(&manifest(), "0.1.0", Channel::Installer)["next"], "0.4.0");
+        assert_eq!(plan(&manifest(), "0.1.0", Channel::Portable)["next"], "0.4.0");
     }
 
     #[test]
@@ -213,9 +218,9 @@ mod tests {
     #[test]
     fn a_download_from_anywhere_else_is_not_offered() {
         let mut manifest = manifest();
-        manifest["releases"][0]["packages"]["nsis-x64"]["url"] = json!("https://example.com/Bifurc-0.6.0-setup.exe");
+        manifest["releases"][0]["packages"][zip()]["url"] = json!("https://example.com/Bifurc-0.6.0-win.zip");
         manifest["releases"][0]["notesUrl"] = json!("http://bifurc.app/changelog");
-        let plan = plan(&manifest, "0.5.0", Channel::Installer);
+        let plan = plan(&manifest, "0.5.0", Channel::Portable);
         assert_eq!(plan["downloadUrl"], Value::Null);
         assert_eq!(plan["notesUrl"], Value::Null);
     }

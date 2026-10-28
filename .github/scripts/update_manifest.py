@@ -28,7 +28,7 @@ import sys
 
 SCHEMA = 1
 CHANGELOG_URL = "https://bifurc.app/changelog"
-CHANNELS = ["store", "winget", "scoop", "aur"]
+CHANNELS = ["store", "aur"]
 # The key of a file in a release's `packages`, by the name `cargo xtask package` gives it. An install looks its
 # own file up by this key (`Channel::package_key`).
 PACKAGES = [
