@@ -31,14 +31,6 @@ on:
         description: "One line on what the latest release brings, shown where the app announces it"
         required: false
         type: string
-      min_direct_from:
-        description: "Oldest version that may update to the latest release in one step (default: any)"
-        required: false
-        type: string
-      minimum_supported:
-        description: "Oldest version still supported; older installs are told so (default: unchanged)"
-        required: false
-        type: string
       critical:
         description: "The latest release fixes a security problem"
         required: false

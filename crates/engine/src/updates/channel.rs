@@ -125,6 +125,11 @@ impl Channel {
         }
     }
 
+    /// Whether this is the Store's package, which `update.apply` updates with winget.
+    pub fn uses_winget(self) -> bool {
+        matches!(self, Channel::Store | Channel::Installer | Channel::Winget)
+    }
+
     /// The command that updates an install a package manager owns.
     pub fn update_command(self) -> Option<&'static str> {
         match self {

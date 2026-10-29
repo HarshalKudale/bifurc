@@ -2,18 +2,16 @@
 
 use serde_json::Value;
 
-use crate::i18n::{t, t_with};
+use crate::i18n::t;
 
 /// What a person does to get an update, which depends on how this copy was installed.
 #[derive(Debug, Clone, PartialEq)]
 pub enum UpdateAction {
-    /// The Microsoft Store installs it; the address opens Bifurc's page in the Store.
-    Store(String),
     /// A package manager installs it, with this command.
     Command(String),
     /// A file to download and run.
     Download(String),
-    /// Bifurc installs it itself with the install script, then opens again.
+    /// Bifurc installs it itself (with winget, or the install script), then opens again.
     Install,
 }
 
@@ -57,26 +55,8 @@ pub struct AvailableUpdate {
     pub notes_url: Option<String>,
     /// It fixes a security problem.
     pub critical: bool,
-    /// The versions to install, in order. More than one when this version cannot go to the newest in one step.
-    pub path: Vec<String>,
     /// The user asked not to be told about this version.
     pub skipped: bool,
-}
-
-impl AvailableUpdate {
-    /// The step to take now.
-    pub fn next(&self) -> &str {
-        self.path.first().map_or(self.version.as_str(), String::as_str)
-    }
-
-    /// The order to install in, when there is more than one step.
-    pub fn steps(&self) -> Option<String> {
-        let (first, rest) = self.path.split_first().filter(|(_, rest)| !rest.is_empty())?;
-        Some(t_with(
-            "model.update.steps",
-            &[("version", &self.version), ("first", first), ("rest", &rest.join(t("model.update.step_separator")))],
-        ))
-    }
 }
 
 #[derive(Debug, Clone, Default, PartialEq)]
@@ -89,8 +69,6 @@ pub struct UpdateStatus {
     pub checked: bool,
     /// Why the last check failed.
     pub error: Option<String>,
-    /// This version is older than the oldest one still supported.
-    pub unsupported: bool,
     pub available: Option<AvailableUpdate>,
     pub action: Option<UpdateAction>,
 }
@@ -107,16 +85,10 @@ impl UpdateStatus {
                 summary: text(available, "summary"),
                 notes_url: text(available, "notesUrl"),
                 critical: flag(available, "critical"),
-                path: available
-                    .get("path")
-                    .and_then(Value::as_array)
-                    .map(|path| path.iter().filter_map(Value::as_str).map(str::to_owned).collect())
-                    .unwrap_or_default(),
                 skipped: flag(available, "skipped"),
             })
         });
         let action = value.get("action").and_then(|action| match action.get("kind").and_then(Value::as_str)? {
-            "store" => Some(UpdateAction::Store(text(action, "url")?)),
             "command" => Some(UpdateAction::Command(text(action, "command")?)),
             "download" => Some(UpdateAction::Download(text(action, "url")?)),
             "install" => Some(UpdateAction::Install),
@@ -127,7 +99,6 @@ impl UpdateStatus {
             checking: flag(value, "checking"),
             checked: value.get("checkedAt").is_some_and(|at| !at.is_null()),
             error: crate::engine::text_in(value, "error"),
-            unsupported: flag(value, "unsupported"),
             available,
             action,
         }
@@ -162,25 +133,21 @@ mod tests {
     fn a_status_is_read_from_what_the_engine_reports() {
         let status = UpdateStatus::from_value(&json!({
             "currentVersion": "0.4.0", "channel": "installer", "enabled": true, "checking": false, "checkedAt": 5,
-            "error": null, "unsupported": true,
+            "error": null,
             "action": { "kind": "download", "url": "https://bifurc.app/download" },
             "available": { "version": "0.6.0", "summary": "Faster.", "notesUrl": null, "critical": true,
-                           "path": ["0.5.0", "0.6.0"], "next": "0.5.0", "skipped": false },
+                           "skipped": false },
         }));
-        assert!(status.checked && status.unsupported && !status.checking);
+        assert!(status.checked && !status.checking);
         assert_eq!(status.action, Some(UpdateAction::Download("https://bifurc.app/download".to_owned())));
         let update = status.announced().expect("an update");
-        assert_eq!((update.version.as_str(), update.next(), update.critical), ("0.6.0", "0.5.0", true));
-        assert_eq!(
-            update.steps().as_deref(),
-            Some("This version cannot be updated to 0.6.0 in one step. Install 0.5.0 first, then 0.6.0.")
-        );
+        assert_eq!((update.version.as_str(), update.critical), ("0.6.0", true));
     }
 
     #[test]
     fn reinstalling_is_an_action_and_reports_its_progress() {
         let status = UpdateStatus::from_value(&json!({
-            "available": { "version": "0.6.0", "path": ["0.6.0"] }, "action": { "kind": "install" },
+            "available": { "version": "0.6.0" }, "action": { "kind": "install" },
         }));
         assert_eq!(status.action, Some(UpdateAction::Install));
         let progress = UpdateProgress::from_value(&json!({ "state": "downloading", "received": 25, "total": 100 }));
@@ -204,11 +171,10 @@ mod tests {
     #[test]
     fn a_skipped_update_is_known_but_not_announced() {
         let status = UpdateStatus::from_value(&json!({
-            "available": { "version": "0.6.0", "path": ["0.6.0"], "skipped": true },
+            "available": { "version": "0.6.0", "skipped": true },
             "action": { "kind": "command", "command": "yay -Syu bifurc-bin" },
         }));
         assert!(status.available.is_some() && status.announced().is_none());
-        assert_eq!(status.available.as_ref().and_then(AvailableUpdate::steps), None);
         assert_eq!(status.action, Some(UpdateAction::Command("yay -Syu bifurc-bin".to_owned())));
     }
 }

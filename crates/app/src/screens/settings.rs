@@ -19,12 +19,12 @@ use gpui_kit::component::{
     h_flex,
     input::{Input, InputEvent, InputState},
     link::Link,
-    setting::{NumberFieldOptions, SettingField, SettingGroup, SettingItem, SettingPage, Settings},
+    setting::{NumberFieldOptions, SelectIndex, SettingField, SettingGroup, SettingItem, SettingPage, Settings},
     tag::Tag,
     v_flex,
 };
 use gpui_kit::{
-    App, AppContext as _, Axis, ClipboardItem, Context, Entity, InteractiveElement as _, IntoElement,
+    App, AppContext as _, Axis, ClipboardItem, Context, ElementId, Entity, InteractiveElement as _, IntoElement,
     ParentElement as _, Render, SharedString, Styled as _, Subscription, TestSupportExt as _, Window, div,
 };
 use serde_json::{Value, json};
@@ -232,6 +232,8 @@ pub struct SettingsScreen {
     companions: Vec<CompanionRow>,
     /// The account being signed out.
     signing_out: Option<String>,
+    /// How many times About was asked for from outside; each one opens it afresh.
+    about_requests: u64,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -245,6 +247,12 @@ fn set_request_default(model: &Entity<AppModel>, cx: &mut App, change: impl FnOn
 }
 
 impl SettingsScreen {
+    /// Opens the About page, where an update is installed.
+    pub fn show_about(&mut self, cx: &mut Context<Self>) {
+        self.about_requests += 1;
+        cx.notify();
+    }
+
     pub fn new(model: Entity<AppModel>, cx: &mut Context<Self>) -> Self {
         let mut subscriptions = vec![
             cx.observe(&model, |_, _, cx| cx.notify()),
@@ -275,6 +283,7 @@ impl SettingsScreen {
             accounts: Vec::new(),
             companions: Vec::new(),
             signing_out: None,
+            about_requests: 0,
             _subscriptions: subscriptions,
         };
         this.refresh_accounts(cx);
@@ -1217,7 +1226,6 @@ impl SettingsScreen {
                 (None, true) => Tag::success().child(t("settings.update.up_to_date")),
                 (None, false) => Tag::secondary().child(t("settings.update.not_checked")),
             };
-            let unsupported = status.unsupported.then_some(t("settings.update.unsupported"));
             let failure = status.error.as_ref().map(|error| t_with("settings.update.failed", &[("error", error)]));
             h_flex()
                 .w_full()
@@ -1228,7 +1236,6 @@ impl SettingsScreen {
                         .min_w_0()
                         .child(t_with("settings.version", &[("version", &env!("CARGO_PKG_VERSION"))]))
                         .child(div().text_xs().text_color(theme.muted_foreground).child(status.channel_note()))
-                        .children(unsupported.map(|text| div().text_xs().text_color(theme.warning).child(text)))
                         .children(failure.map(|text| div().text_xs().text_color(theme.danger).child(text))),
                 )
                 .child(state)
@@ -1260,7 +1267,7 @@ impl SettingsScreen {
         let item = SettingItem::render(move |options, _, cx| {
             let theme = cx.theme().clone();
             let security = update.critical.then(|| t("settings.update.security").to_owned());
-            let notes = [update.summary.clone(), update.steps(), security];
+            let notes = [update.summary.clone(), security];
             let get = match &action {
                 UpdateAction::Install => {
                     let apply_model = model.clone();
@@ -1300,17 +1307,13 @@ impl SettingsScreen {
                         .children(failed.then(|| {
                             Link::new("update-download")
                                 .href(UPDATE_DOWNLOAD_PAGE)
-                                .child(t_with("settings.update.download", &[("version", &update.next())]))
+                                .child(t_with("settings.update.download", &[("version", &update.version)]))
                         }))
                         .into_any_element()
                 }
-                UpdateAction::Store(url) => Link::new("update-store")
-                    .href(url.clone())
-                    .child(t("settings.update.open_store"))
-                    .into_any_element(),
                 UpdateAction::Download(url) => Link::new("update-download")
                     .href(url.clone())
-                    .child(t_with("settings.update.download", &[("version", &update.next())]))
+                    .child(t_with("settings.update.download", &[("version", &update.version)]))
                     .into_any_element(),
                 UpdateAction::Command(command) => {
                     let copied = command.clone();
@@ -1384,19 +1387,24 @@ impl SettingsScreen {
 
 impl Render for SettingsScreen {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let pages = vec![
+        let mut pages = vec![
             self.appearance_page(cx),
             self.accounts_page(cx),
             self.servers_page(cx).groups(self.behavior_groups(cx)),
             self.requests_page(),
             self.https_page(),
-            self.about_page(cx),
-            super::licenses::page(),
         ];
+        let about = SelectIndex { page_ix: pages.len(), group_ix: None };
+        pages.extend([self.about_page(cx), super::licenses::page()]);
+        // The kit keeps the open page per id and reads the default only once, so a new id opens About.
+        let settings = match self.about_requests {
+            0 => Settings::new("settings"),
+            n => Settings::new(ElementId::NamedInteger("settings".into(), n)).default_selected_index(about),
+        };
         div()
             .size_full()
             .bg(cx.theme().background)
-            .child(Settings::new("settings").with_group_variant(GroupBoxVariant::Outline).pages(pages))
+            .child(settings.with_group_variant(GroupBoxVariant::Outline).pages(pages))
     }
 }
 

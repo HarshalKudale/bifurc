@@ -1793,6 +1793,18 @@ impl CaptureScreen {
             .into_any_element()
     }
 
+    /// A section's title over its pairs: in the text color and underlined, so it is not read as one more name.
+    fn heading(label: &'static str, cx: &mut Context<Self>) -> gpui_kit::Div {
+        let theme = cx.theme();
+        page::section_label(label, cx)
+            .font_semibold()
+            .text_color(theme.foreground)
+            .pb_1()
+            .mb_1()
+            .border_b_1()
+            .border_color(theme.border)
+    }
+
     fn pairs(
         label: &'static str,
         rows: &[(String, String)],
@@ -1802,7 +1814,7 @@ impl CaptureScreen {
         let muted = cx.theme().muted_foreground;
         v_flex()
             .gap_1()
-            .child(page::section_label(label, cx))
+            .child(Self::heading(label, cx))
             .children((rows.is_empty()).then(|| div().text_sm().text_color(muted).child(empty)))
             .children(rows.iter().map(|(name, value)| Self::pair(name.clone(), value.clone(), cx)))
             .into_any_element()
@@ -1839,7 +1851,7 @@ impl CaptureScreen {
             .overflow_y_scroll()
             .p_4()
             .gap_4()
-            .child(v_flex().gap_1().child(page::section_label(t("capture.section.general"), cx)).children(general))
+            .child(v_flex().gap_1().child(Self::heading(t("capture.section.general"), cx)).children(general))
             .child(Self::pairs(
                 t("capture.section.response_headers"),
                 &exchange.response_headers,

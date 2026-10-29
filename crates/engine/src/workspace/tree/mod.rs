@@ -372,7 +372,7 @@ fn no_folder() -> std::io::Error {
     std::io::Error::new(std::io::ErrorKind::NotFound, "No such folder.")
 }
 
-fn copy_dir(from: &Path, to: &Path) -> std::io::Result<()> {
+pub(crate) fn copy_dir(from: &Path, to: &Path) -> std::io::Result<()> {
     std::fs::create_dir_all(to)?;
     for entry in std::fs::read_dir(from)? {
         let entry = entry?;
