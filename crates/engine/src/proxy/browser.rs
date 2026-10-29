@@ -465,10 +465,14 @@ fn close_command(params: &Value, ctx: &CommandContext) -> Value {
     json!({})
 }
 
-/// The page gave up on a request: a relayed answer is dropped (which stops the routing), a mirror is logged.
+/// The page gave up on a request, or the extension leaves it out of the capture (a script or a stylesheet a page
+/// fetched): a relayed answer is dropped, which stops the routing; a mirror with no answer yet goes unlogged, one
+/// that had one is logged as it stands.
 fn cancel_command(params: &Value, ctx: &CommandContext) -> Value {
-    if let Some(stream) = take(str_param(params, "id"), &session_of(ctx)) {
-        end(stream);
+    match take(str_param(params, "id"), &session_of(ctx)) {
+        Some(Stream { kind: Kind::Mirror(mirror), .. }) if mirror.opened.is_none() => {}
+        Some(stream) => end(stream),
+        None => {}
     }
     json!({})
 }

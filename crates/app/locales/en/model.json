@@ -20,8 +20,6 @@
   "update.channel.portable": "Running from an unpacked folder. A newer one replaces it.",
   "update.channel.installer": "Installed with the installer. A newer one replaces it and keeps your workspaces.",
   "update.channel.build": "This is a build, not an install: it is not updated.",
-  "update.step_separator": ", then ",
-  "update.steps": "This version cannot be updated to {version} in one step. Install {first} first, then {rest}.",
   "trust.no_reason": "it failed without saying why",
   "trust.run_in_terminal": "Run this in a terminal: {command}",
   "trust.no_store": "No system trust store was found. Add {file} to your trusted roots by hand.",

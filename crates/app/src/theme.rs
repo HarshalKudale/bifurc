@@ -56,7 +56,8 @@ pub fn init(cx: &mut App) {
         // and the remaining themes still load.
         let _ = ThemeRegistry::global_mut(cx).load_themes_from_str(source);
     }
-    let Some(config) = serde_json::from_str::<ThemeSet>(DEFAULT_DARK).ok().and_then(|set| set.themes.into_iter().next())
+    let Some(config) =
+        serde_json::from_str::<ThemeSet>(DEFAULT_DARK).ok().and_then(|set| set.themes.into_iter().next())
     else {
         return;
     };
@@ -121,7 +122,15 @@ mod tests {
             ] {
                 assert!(fill.l - text.l > 0.4, "badge text must contrast with its fill: {fill:?} {text:?}");
             }
-            let surfaces = [theme.background, theme.sidebar, theme.group_box, theme.accordion, theme.status_bar, theme.tab_bar, theme.tab_bar_segmented];
+            let surfaces = [
+                theme.background,
+                theme.sidebar,
+                theme.group_box,
+                theme.accordion,
+                theme.status_bar,
+                theme.tab_bar,
+                theme.tab_bar_segmented,
+            ];
             for (i, a) in surfaces.iter().enumerate() {
                 for b in &surfaces[i + 1..] {
                     assert_ne!(a, b, "two regions share a surface color");

@@ -215,6 +215,11 @@ impl WorkspaceHost {
         notice("starting: data directory set");
         crate::analytics::start(opts.transport.kind().as_str());
         notice("starting: analytics started");
+        // Before anything reads the data. A failure keeps the backup and the data as the last step left it.
+        if let Err(err) = crate::workspace::migrations::run(&data_dir(), crate::ENGINE_VERSION) {
+            notice(&format!("data migration failed: {err}"));
+            crate::analytics::failed("migration");
+        }
         let log = EventLog::new(bus());
         crate::capture::start_capture_recording();
         let sweeper = crate::workspace::blob::start_blob_sweeper();

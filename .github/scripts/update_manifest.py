@@ -7,10 +7,11 @@ crates/engine/src/updates/manifest.rs.
 
   update_manifest.py release --manifest stable.json --version 0.5.0 --tag v0.5.0 \\
       --repo HarshalKudale/bifurc-releases --assets <folder of the release's files> \\
-      [--summary "…"] [--min-direct-from 0.4.0] [--critical] [--minimum-supported 0.4.0] [--date 2026-10-20]
+      [--summary "…"] [--critical] [--date 2026-10-20]
 
       Adds the release (or replaces the entry of the same version), with the address, SHA-256 and size of
-      each file an install is replaced by.
+      each file an install is replaced by. Any version updates to the newest in one step (the new version
+      migrates the data), so the fields older manifests had for steps and support are dropped.
 
   update_manifest.py channel --manifest stable.json --channel store --version 0.5.0
 
@@ -119,14 +120,11 @@ def add_release(args):
         "notesUrl": CHANGELOG_URL,
         "packages": packages,
     }
-    # Left out, a release may replace any version in one step.
-    min_direct_from = args.min_direct_from or earlier.get("minDirectFrom")
-    if min_direct_from:
-        release["minDirectFrom"] = min_direct_from
     others = [r for r in manifest["releases"] if r.get("version") != args.version]
+    for other in others:
+        other.pop("minDirectFrom", None)
     manifest["releases"] = sorted(others + [release], key=lambda r: version_key(r["version"]), reverse=True)
-    if args.minimum_supported:
-        manifest["minimumSupported"] = args.minimum_supported
+    manifest.pop("minimumSupported", None)
     save(args.manifest, manifest)
     print(f"{args.version}: {', '.join(packages)}")
 
@@ -151,8 +149,6 @@ def main():
     release.add_argument("--repo", required=True)
     release.add_argument("--assets", required=True)
     release.add_argument("--summary", default="")
-    release.add_argument("--min-direct-from", type=a_version)
-    release.add_argument("--minimum-supported", type=a_version)
     release.add_argument("--critical", action="store_true")
     release.add_argument("--date", default="")
     release.set_defaults(run=add_release)

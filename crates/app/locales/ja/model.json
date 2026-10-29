@@ -20,8 +20,6 @@
   "update.channel.portable": "展開したフォルダーから実行されています。新しいものに置き換えられます。",
   "update.channel.installer": "インストーラーでインストールされています。新しいものに置き換えられ、ワークスペースは保持されます。",
   "update.channel.build": "これはインストールではなくビルドです。更新されません。",
-  "update.step_separator": "、その次に ",
-  "update.steps": "このバージョンから {version} へは一度に更新できません。先に {first} をインストールし、次に {rest} をインストールしてください。",
   "trust.no_reason": "理由は示されず失敗しました",
   "trust.run_in_terminal": "ターミナルで次を実行してください: {command}",
   "trust.no_store": "システムの信頼ストアが見つかりませんでした。{file} を信頼するルートに手動で追加してください。",

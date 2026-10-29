@@ -19,7 +19,8 @@ fn captured_exchanges_are_listed_and_were_asked_for_by_workspace(cx: &mut gpui_k
     let mut ui = open_populated(cx);
     ui.show(Screen::Capture);
     assert!(ui.has("capture-c1") && ui.has("capture-c2"));
-    assert!(!ui.has("empty-state"));
+    // The list is not empty; the one empty state is the detail panel's, with nothing selected.
+    assert_eq!(ui.count("empty-state"), 1);
     assert!(ui.fake.sent("capture.list").contains(&json!({"workspaceId": "w1", "summary": true})));
     assert!(!ui.has("capture-close-detail"), "nothing is selected yet");
 }
@@ -227,4 +228,19 @@ fn webhook_traffic_is_listed_unless_its_chip_is_off(cx: &mut gpui_kit::TestAppCo
     ]}));
     ui.show(Screen::Capture);
     assert!(ui.has("capture-w9"));
+}
+
+#[gpui_kit::test]
+fn without_https_interception_capture_says_what_the_extension_covers(cx: &mut gpui_kit::TestAppContext) {
+    let mut ui = open_populated(cx);
+    ui.fake.reply("server.status", json!({"running": true, "port": 8080, "https": false}));
+    ui.fake.emit("event.server.error", json!({}));
+    ui.settle();
+    ui.show(Screen::Capture);
+    assert!(ui.has("capture-https-settings"));
+    // Decrypting HTTPS itself, the proxy captures everything: nothing to explain.
+    ui.fake.reply("server.status", json!({"running": true, "port": 8080, "https": true}));
+    ui.fake.emit("event.server.error", json!({}));
+    ui.settle();
+    assert!(!ui.has("capture-https-settings"));
 }

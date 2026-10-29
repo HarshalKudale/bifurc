@@ -16,6 +16,7 @@ use gpui_kit::component::{
     button::{Button, ButtonGroup, ButtonVariants as _},
     checkbox::Checkbox,
     dialog::DialogFooter,
+    dock::{DockArea, DockLayout, DockSkin, panel_handle},
     form::{Field, Form},
     h_flex,
     input::{Editor, EditorState, Input, InputEvent, InputState},
@@ -28,18 +29,18 @@ use gpui_kit::component::{
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     AppContext as _, ClipboardItem, Context, Entity, EventEmitter, InteractiveElement as _, IntoElement, MouseButton,
-    ParentElement as _, Render, SharedString, StatefulInteractiveElement as _, Styled as _, Subscription,
+    ParentElement as _, Pixels, Render, SharedString, StatefulInteractiveElement as _, Styled as _, Subscription,
     TestSupportExt as _, UniformListScrollHandle, Window, div, px, uniform_list,
 };
 use serde_json::{Value, json};
-use std::{collections::HashSet, ops::Range};
+use std::{collections::HashSet, ops::Range, rc::Rc};
 
 use crate::{
     app_model::{AppModel, ModelEvent},
+    commands::ShowSettings,
     components::{
         Syntax,
         binary::{BinaryBody, save_to_file, suggested_file_name},
-        master_detail::list_over_detail,
         page,
     },
     engine::{call, call_in, describe, failure, fetch_artifact},
@@ -57,7 +58,20 @@ use crate::{
         },
         vault::VaultState,
     },
+    panels::host::{HostPanel, PartView, remember_pane_size, settle_last_pane},
+    preferences::Preferences,
 };
+
+/// Without HTTPS interception the browser extension captures only a page's own calls for data, so these kinds
+/// can come only from plain-HTTP sites through the proxy.
+const SITE_FILES: [ResourceType; 6] = [
+    ResourceType::Doc,
+    ResourceType::Css,
+    ResourceType::Js,
+    ResourceType::Font,
+    ResourceType::Img,
+    ResourceType::Media,
+];
 
 /// Several exchanges being saved one after the other as requests or mocks.
 struct SaveRun {
@@ -266,6 +280,11 @@ pub struct CaptureScreen {
     /// The vault credentials go into; `None` creates one.
     import_vault: Option<String>,
     scroll: UniformListScrollHandle,
+    /// The list and the selected exchange, as two panels the user can stack or put side by side, as on Requests.
+    dock: Entity<DockArea>,
+    _skin: Rc<DockSkin>,
+    /// The saved detail-pane size, applied by `settle_last_pane` once the dock has been laid out.
+    pending_detail_size: Option<Pixels>,
     _subscriptions: Vec<Subscription>,
 }
 
@@ -291,6 +310,8 @@ impl CaptureScreen {
         let response_body = read_only_editor(window, cx);
         let stream = cx.new(|cx| stream::CapturedStream::new(window, cx));
         let subscriptions = vec![
+            // The HTTPS note follows the proxy's status.
+            cx.observe(&model, |_, _, cx| cx.notify()),
             cx.subscribe_in(&model, window, |this, _, event: &ModelEvent, window, cx| match event {
                 ModelEvent::Traffic(payload) => {
                     let active = this.model.read(cx).workspace_id().to_owned();
@@ -329,6 +350,28 @@ impl CaptureScreen {
                 }
             }),
         ];
+        let (dock, skin) = DockSkin::dock_area("capture-dock", Some(1), window, cx);
+        let screen = cx.entity();
+        let list_panel = cx.new(|cx| HostPanel::new("CaptureListPanel", t("capture.panel.list_title"), "", "", cx));
+        let detail_panel =
+            cx.new(|cx| HostPanel::new("CaptureDetailPanel", t("capture.panel.detail_title"), "", "", cx));
+        let list_view = PartView::new(&screen, Self::render_list_part, cx).into();
+        let detail_view = PartView::new(&screen, Self::render_detail_part, cx).into();
+        list_panel.update(cx, |panel, cx| panel.set_view(Some(list_view), cx));
+        detail_panel.update(cx, |panel, cx| panel.set_view(Some(detail_view), cx));
+        // Dock sizes are physical starting points the user resizes; they are not part of the rem scale.
+        let detail_size = Preferences::global(cx).dock_size("capture-dock").unwrap_or(px(360.));
+        dock.update(cx, |area, cx| {
+            area.set_center(
+                DockLayout::v_split()
+                    .child(DockLayout::tabs().panel_view(panel_handle(list_panel), cx), None)
+                    .child(DockLayout::tabs().panel_view(panel_handle(detail_panel), cx), Some(detail_size)),
+                window,
+                cx,
+            );
+        });
+        let mut subscriptions = subscriptions;
+        subscriptions.push(remember_pane_size(&dock, "capture-dock", 1, cx));
         let mut this = Self {
             model,
             entries: Vec::new(),
@@ -354,6 +397,9 @@ impl CaptureScreen {
             cookies_to_jar: true,
             import_vault: None,
             scroll: UniformListScrollHandle::new(),
+            dock,
+            _skin: skin,
+            pending_detail_size: Some(detail_size),
             _subscriptions: subscriptions,
         };
         this.reload(window, cx);
@@ -1325,10 +1371,60 @@ impl CaptureScreen {
     }
 
     /// The type filter, the switch for local traffic, and what can be done with the ticked exchanges.
+    /// Without HTTPS interception the browser extension handles a page's HTTPS calls, and only those: said where
+    /// the traffic shows up, so missing page loads are not a surprise.
+    /// The proxy runs without decrypting HTTPS, so a browser's HTTPS reaches Capture only through the extension.
+    fn extension_mode(&self, cx: &gpui_kit::App) -> bool {
+        let proxy = self.model.read(cx).proxy();
+        proxy.running && !proxy.https
+    }
+
+    fn render_list_part(&mut self, _: &mut Window, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
+        self.render_list(cx)
+    }
+
+    fn render_detail_part(&mut self, _: &mut Window, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
+        match self.selected_entry().cloned() {
+            Some(entry) => self.render_detail(&entry, cx),
+            None => page::empty(t("capture.panel.detail_empty_title"), t("capture.panel.detail_empty_body")),
+        }
+    }
+
+    fn render_https_note(&self, cx: &mut Context<Self>) -> Option<gpui_kit::AnyElement> {
+        if !self.extension_mode(cx) {
+            return None;
+        }
+        let theme = cx.theme();
+        let note = h_flex()
+            .flex_none()
+            .gap_3()
+            .px_4()
+            .py_1p5()
+            .border_b_1()
+            .border_color(theme.border)
+            .child(
+                div()
+                    .flex_1()
+                    .min_w_0()
+                    .text_sm()
+                    .text_color(theme.muted_foreground)
+                    .child(t("capture.browser_https.note")),
+            )
+            .child(
+                Button::new("capture-https-settings")
+                    .ghost()
+                    .small()
+                    .label(t("capture.browser_https.settings"))
+                    .on_click(|_, window, cx| window.dispatch_action(Box::new(ShowSettings), cx)),
+            );
+        Some(note.into_any_element())
+    }
+
     fn render_toolbar(&self, cx: &mut Context<Self>) -> gpui_kit::AnyElement {
         let theme = cx.theme().clone();
         let ticked = self.checked.len();
         let ticked_saves = self.ticked_saves();
+        let extension_mode = self.extension_mode(cx);
         let selected_tab = self
             .type_filter
             .map_or(0, |kind| ResourceType::ALL.iter().position(|candidate| *candidate == kind).map_or(0, |ix| ix + 1));
@@ -1342,7 +1438,12 @@ impl CaptureScreen {
                     cx.notify();
                 }))
                 .child(Tab::new().label(t("capture.types.all"))),
-            |bar, kind| bar.child(Tab::new().label(kind.label())),
+            |bar, kind| {
+                let unreachable = extension_mode
+                    && SITE_FILES.contains(kind)
+                    && !self.entries.iter().any(|entry| entry.resource_type() == *kind);
+                bar.child(Tab::new().label(kind.label()).disabled(unreachable))
+            },
         );
         h_flex()
             .flex_none()
@@ -1692,6 +1793,18 @@ impl CaptureScreen {
             .into_any_element()
     }
 
+    /// A section's title over its pairs: in the text color and underlined, so it is not read as one more name.
+    fn heading(label: &'static str, cx: &mut Context<Self>) -> gpui_kit::Div {
+        let theme = cx.theme();
+        page::section_label(label, cx)
+            .font_semibold()
+            .text_color(theme.foreground)
+            .pb_1()
+            .mb_1()
+            .border_b_1()
+            .border_color(theme.border)
+    }
+
     fn pairs(
         label: &'static str,
         rows: &[(String, String)],
@@ -1701,7 +1814,7 @@ impl CaptureScreen {
         let muted = cx.theme().muted_foreground;
         v_flex()
             .gap_1()
-            .child(page::section_label(label, cx))
+            .child(Self::heading(label, cx))
             .children((rows.is_empty()).then(|| div().text_sm().text_color(muted).child(empty)))
             .children(rows.iter().map(|(name, value)| Self::pair(name.clone(), value.clone(), cx)))
             .into_any_element()
@@ -1738,7 +1851,7 @@ impl CaptureScreen {
             .overflow_y_scroll()
             .p_4()
             .gap_4()
-            .child(v_flex().gap_1().child(page::section_label(t("capture.section.general"), cx)).children(general))
+            .child(v_flex().gap_1().child(Self::heading(t("capture.section.general"), cx)).children(general))
             .child(Self::pairs(
                 t("capture.section.response_headers"),
                 &exchange.response_headers,
@@ -2039,7 +2152,22 @@ impl CaptureScreen {
 }
 
 impl Render for CaptureScreen {
-    fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+    fn render(&mut self, window: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
+        if self.pending_detail_size.is_some() {
+            // The dock's bounds are known only after its first layout, so settle on the next frame.
+            let screen = cx.entity();
+            window.on_next_frame(move |window, cx| {
+                screen.update(cx, |this, cx| {
+                    if let Some(size) = this.pending_detail_size {
+                        if settle_last_pane(&this.dock, size, window, cx) {
+                            this.pending_detail_size = None;
+                        } else {
+                            cx.notify();
+                        }
+                    }
+                });
+            });
+        }
         let header = page::header(
             t("capture.page.title"),
             t("capture.page.subtitle"),
@@ -2064,9 +2192,11 @@ impl Render for CaptureScreen {
                 ),
             cx,
         );
-        let detail = self.selected_entry().cloned().map(|entry| self.render_detail(&entry, cx));
-        let split = list_over_detail("capture-split", self.render_list(cx), detail);
-        let body = v_flex().size_full().child(self.render_toolbar(cx)).child(div().flex_1().min_h_0().child(split));
+        let body = v_flex()
+            .size_full()
+            .child(self.render_toolbar(cx))
+            .children(self.render_https_note(cx))
+            .child(div().flex_1().min_h_0().child(self.dock.clone()));
         page::screen(header, body, cx).into_any_element()
     }
 }

@@ -100,6 +100,9 @@ pub struct ProxyStatus {
     pub running: bool,
     pub port: u16,
     pub error: Option<String>,
+    /// The listener decrypts HTTPS: the setting is on and its certificate is loaded. Without it, the browser
+    /// extension handles a page's HTTPS calls itself.
+    pub https: bool,
     /// A start or stop is in flight.
     pub busy: bool,
 }
@@ -110,6 +113,7 @@ impl ProxyStatus {
             running: value.get("running").and_then(Value::as_bool).unwrap_or(false),
             port: value.get("port").and_then(Value::as_u64).and_then(|p| u16::try_from(p).ok()).unwrap_or(0),
             error: error_text(value),
+            https: value.get("https").and_then(Value::as_bool).unwrap_or(false),
             busy: false,
         }
     }
@@ -1241,7 +1245,10 @@ impl AppModel {
         let client = self.engine.client.clone();
         call(&client, cx, "workspace.setActive", json!({ "id": id }), |this, outcome, cx| {
             if let Err(error) = outcome {
-                cx.emit(ModelEvent::Notice(t_with("app.model.switch_workspace_failed", &[("error", &describe(&error))])));
+                cx.emit(ModelEvent::Notice(t_with(
+                    "app.model.switch_workspace_failed",
+                    &[("error", &describe(&error))],
+                )));
             }
             // Also after a failure: a workspace just made is in the config, and the screen waiting on it must see it.
             this.refresh(cx);

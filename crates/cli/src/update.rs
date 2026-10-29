@@ -24,28 +24,11 @@ fn describe(status: &Value) -> String {
             if !text(available, "summary").is_empty() {
                 lines.push(format!("  {}", text(available, "summary")));
             }
-            let path: Vec<&str> = available
-                .get("path")
-                .and_then(Value::as_array)
-                .into_iter()
-                .flatten()
-                .filter_map(Value::as_str)
-                .collect();
-            if path.len() > 1 {
-                lines.push(format!(
-                    "  This version cannot go there in one step. Update to {} first, then {}.",
-                    path[0],
-                    path[1..].join(", then ")
-                ));
-            }
             if available.get("critical").is_some_and(truthy) {
                 lines.push("  It fixes a security problem.".to_string());
             }
             let action = status.get("action").unwrap_or(&Value::Null);
             match text(action, "kind") {
-                "store" => lines.push(
-                    "  The Microsoft Store installs it: open Bifurc's page in the Store to get it now.".to_string(),
-                ),
                 "command" => lines.push(format!("  Run: {}", text(action, "command"))),
                 "install" => lines.push(
                     "  Run: bifurc update apply (installs it, then closes Bifurc and opens it again).".to_string(),
@@ -61,17 +44,14 @@ fn describe(status: &Value) -> String {
         }
         None => lines.push(format!("{installed} is up to date.")),
     }
-    if status.get("unsupported").is_some_and(truthy) {
-        lines.push("  This version is no longer supported.".to_string());
-    }
     if !text(status, "error").is_empty() {
         lines.push(format!("  The last check failed: {}", text(status, "error")));
     }
     lines.join("\n")
 }
 
-/// `update [status|check|apply]`. `apply` has the engine run the install script, which installs the update, then
-/// closes Bifurc and opens it again.
+/// `update [status|check|apply]`. `apply` has the engine install the update (with winget on Windows, the install
+/// script elsewhere), which closes Bifurc and opens it again.
 pub fn update(ctx: &mut Context, sub: Option<&str>) -> Result<String> {
     let command = match sub.unwrap_or("status") {
         "status" => "update.status",
@@ -97,22 +77,21 @@ mod tests {
 
     fn available() -> Value {
         json!({
-            "currentVersion": "0.4.0", "channel": "installer", "checkedAt": 5, "error": null, "unsupported": false,
+            "currentVersion": "0.4.0", "channel": "installer", "checkedAt": 5, "error": null,
             "action": { "kind": "download", "url": "https://bifurc.app/download" },
-            "available": { "version": "0.6.0", "summary": "Faster.", "path": ["0.5.0", "0.6.0"], "critical": true,
+            "available": { "version": "0.6.0", "summary": "Faster.", "critical": true,
                            "notesUrl": "https://bifurc.app/changelog" },
         })
     }
 
     #[test]
-    fn an_update_is_described_with_its_steps_and_how_to_get_it() {
+    fn an_update_is_described_with_how_to_get_it() {
         let argv = ["update"];
         let (out, calls) = run(&argv, vec![("update.status", Ok(available()))], |c| update(c, sub(&argv)));
         assert_eq!(
             out.unwrap(),
-            "Bifurc 0.4.0 (installer): version 0.6.0 is available.\n  Faster.\n  This version cannot go there in one \
-             step. Update to 0.5.0 first, then 0.6.0.\n  It fixes a security problem.\n  Download: \
-             https://bifurc.app/download\n  What changed: https://bifurc.app/changelog"
+            "Bifurc 0.4.0 (installer): version 0.6.0 is available.\n  Faster.\n  It fixes a security problem.\n  \
+             Download: https://bifurc.app/download\n  What changed: https://bifurc.app/changelog"
         );
         assert_eq!(calls[0].0, "update.status");
     }
