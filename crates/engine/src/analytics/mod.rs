@@ -126,6 +126,15 @@ fn project_key() -> Option<String> {
         .or_else(|| non_empty(option_env!("BIFURC_POSTHOG_KEY").map(str::to_string)))
 }
 
+/// An official build has its project key compiled in, and no other key was given when it runs.
+fn official(runtime_key: Option<String>, built_key: Option<&str>) -> bool {
+    non_empty(runtime_key).is_none() && non_empty(built_key.map(str::to_string)).is_some()
+}
+
+fn official_build() -> bool {
+    official(std::env::var("BIFURC_POSTHOG_KEY").ok(), option_env!("BIFURC_POSTHOG_KEY"))
+}
+
 fn host() -> String {
     non_empty(std::env::var("BIFURC_POSTHOG_HOST").ok())
         .or_else(|| non_empty(option_env!("BIFURC_POSTHOG_HOST").map(str::to_string)))
@@ -221,6 +230,7 @@ fn event(distinct_id: &str, name: &str, properties: Value) -> Value {
         "engine_version": ENGINE_VERSION,
         "os": std::env::consts::OS,
         "arch": std::env::consts::ARCH,
+        "official_build": official_build(),
     });
     json!({ "event": name, "distinct_id": distinct_id, "properties": merged(&common, &properties) })
 }
@@ -496,7 +506,17 @@ mod tests {
         keys.sort_unstable();
         assert_eq!(
             keys,
-            ["$geoip_disable", "$ip", "$lib", "$process_person_profile", "arch", "client", "engine_version", "os"]
+            [
+                "$geoip_disable",
+                "$ip",
+                "$lib",
+                "$process_person_profile",
+                "arch",
+                "client",
+                "engine_version",
+                "official_build",
+                "os"
+            ]
         );
         assert_eq!(properties["$process_person_profile"], false);
         assert_eq!(properties["$ip"], "0.0.0.0");
@@ -590,6 +610,15 @@ mod tests {
         let background = stop_running();
         assert_eq!(background.len(), 1);
         assert!(background[0]["properties"].get("workspace_id").is_none());
+    }
+
+    #[test]
+    fn only_a_compiled_in_key_makes_a_build_official() {
+        assert!(official(None, Some("phc_x")));
+        assert!(official(Some("  ".into()), Some("phc_x")));
+        assert!(!official(Some("phc_mine".into()), Some("phc_x")));
+        assert!(!official(None, None));
+        assert!(!official(None, Some("")));
     }
 
     #[test]
