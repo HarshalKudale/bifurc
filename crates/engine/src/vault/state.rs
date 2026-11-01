@@ -234,7 +234,7 @@ impl Redactor {
             for (name, value) in &open.values {
                 if value.len() >= MIN_SECRET_LEN {
                     let reference = format!("{{{{{}.{}}}}}", open.name, name);
-                    for variant in encodings(&value) {
+                    for variant in encodings(value) {
                         secrets.push((variant, reference.clone()));
                     }
                 }

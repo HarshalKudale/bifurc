@@ -15,6 +15,7 @@ use crate::i18n::t;
 pub struct CaptureOverlay {
     /// `None` while the engine is still opening the tunnel.
     url: Option<String>,
+    #[allow(clippy::type_complexity)]
     on_cancel: Rc<dyn Fn(&mut Window, &mut App)>,
 }
 
