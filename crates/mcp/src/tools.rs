@@ -1001,7 +1001,7 @@ pub fn catalog() -> Vec<Tool> {
         Row {
             name: "vault_list",
             words: &["vault", "list"],
-            summary: "List the secret vaults, whether each is sealed, and the names of their secrets (never the values).",
+            summary: "(beta) List the secret vaults, whether each is sealed, and the names of their secrets (never the values).",
             details: "A secret is used in a request as {{vault.SECRET}}. Creating a vault, setting a secret, unsealing \
                 and changing the passphrase take a secret, so the user does them: in the desktop app or with the \
                 bifurc command (bifurc vault --help).",

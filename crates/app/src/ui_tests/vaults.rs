@@ -199,6 +199,46 @@ fn a_vault_moved_off_the_repository_says_so_until_acknowledged(cx: &mut gpui_kit
 }
 
 #[gpui_kit::test]
+fn the_beta_notice_heads_an_empty_screen_and_a_vault(cx: &mut gpui_kit::TestAppContext) {
+    let mut ui = open_empty(cx);
+    ui.show(Screen::Vaults);
+    assert!(ui.has("vaults-beta"));
+
+    let mut ui = open_populated(cx);
+    ui.show(Screen::Vaults);
+    ui.click("vault-vt2");
+    assert!(ui.has("vaults-beta"), "on a vault's detail too");
+}
+
+#[gpui_kit::test]
+fn dismissing_the_moved_notice_acknowledges_every_moved_vault_and_it_stays_gone(cx: &mut gpui_kit::TestAppContext) {
+    let mut ui = open_populated(cx);
+    let moved = |at: serde_json::Value| {
+        json!([
+            {"id": "vt1", "name": "Keys", "provider": "local", "state": "unsealed", "secrets": [], "path": null,
+             "approved": true, "movedAt": at},
+            {"id": "vt2", "name": "Locked", "provider": "local", "state": "sealed", "secrets": [], "path": null,
+             "approved": true, "movedAt": at},
+        ])
+    };
+    ui.fake.reply("vault.list", moved(json!(5)));
+    ui.fake.emit("event.vault.changed", json!({"workspaceId": "w1", "id": "vt1"}));
+    ui.show(Screen::Vaults);
+    assert!(ui.has("vault-moved-ok"));
+    ui.fake.forget_calls();
+    ui.click("vault-moved-ok");
+    let mut sent = ui.fake.sent("vault.acknowledge");
+    sent.sort_by_key(|call| call["id"].as_str().unwrap().to_owned());
+    assert_eq!(sent, [json!({"workspaceId": "w1", "id": "vt1"}), json!({"workspaceId": "w1", "id": "vt2"})]);
+
+    // The engine now says nothing was moved; reopening the screen shows no notice.
+    ui.fake.reply("vault.list", moved(serde_json::Value::Null));
+    ui.fake.emit("event.vault.changed", json!({"workspaceId": "w1", "id": "vt1"}));
+    ui.show(Screen::Vaults);
+    assert!(!ui.has("vault-moved-ok"));
+}
+
+#[gpui_kit::test]
 fn renaming_a_vault_sends_the_new_name(cx: &mut gpui_kit::TestAppContext) {
     let mut ui = open_populated(cx);
     ui.show(Screen::Vaults);

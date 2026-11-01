@@ -243,6 +243,14 @@ async fn a_vault_kept_in_the_repository_moves_to_this_device_and_says_so() {
     let kept: Value =
         serde_json::from_str(&std::fs::read_to_string(device_dir(ws).join("old1.json")).unwrap()).unwrap();
     assert!(kept.get("movedAt").is_none(), "already acknowledged here");
+
+    // And again, on every later workspace open or pull: it is never told twice.
+    for _ in 0..2 {
+        std::fs::write(&repo_file, serde_json::to_string(&old).unwrap()).unwrap();
+        store::migrate(ws);
+        let listed = engine.call("vault.list", json!({ "workspaceId": ws })).await;
+        assert_eq!(listed[0]["movedAt"], Value::Null);
+    }
 }
 
 /// A linked vault on the fake `op`, pulling the item `item`.

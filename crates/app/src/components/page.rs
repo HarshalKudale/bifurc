@@ -23,6 +23,17 @@ pub fn header(
     actions: impl IntoElement,
     cx: &App,
 ) -> Div {
+    header_tagged(title, None::<Div>, description, actions, cx)
+}
+
+/// [`header`] with something (a `Beta` tag) after the title.
+pub fn header_tagged(
+    title: impl Into<SharedString>,
+    tag: Option<impl IntoElement>,
+    description: impl Into<SharedString>,
+    actions: impl IntoElement,
+    cx: &App,
+) -> Div {
     let theme = cx.theme();
     h_flex()
         .flex_none()
@@ -36,7 +47,7 @@ pub fn header(
                 .flex_1()
                 .min_w_0()
                 .gap_1()
-                .child(div().font_semibold().child(title.into()))
+                .child(h_flex().gap_2().child(div().font_semibold().child(title.into())).children(tag))
                 .child(div().text_sm().text_color(theme.muted_foreground).child(description.into())),
         )
         .child(h_flex().flex_none().gap_2().child(actions))

@@ -77,5 +77,8 @@
   "title": "Tresore",
   "description": "Geheimnisse, die Anfragen als {{vault.NAME}} verwenden. Kein Wert wird synchronisiert: Ein Tresor hält sie auf diesem Gerät oder liest sie aus einem Secret-Manager.",
   "pulled_hint": "Von {provider} abgerufen. Ändere seine Geheimnisse dort.",
-  "no_pulled_body": "Entsiegle ihn, um seine Geheimnisse von {provider} abzurufen, und nutze sie dann in einer Anfrage als {{vault.NAME}}."
+  "no_pulled_body": "Entsiegle ihn, um seine Geheimnisse von {provider} abzurufen, und nutze sie dann in einer Anfrage als {{vault.NAME}}.",
+  "beta_tag": "Beta",
+  "beta_title": "Tresore sind in der Beta",
+  "beta_body": "Tresore sind instabil und noch in Entwicklung. Sie funktionieren möglicherweise nicht wie erwartet, und die Art, wie sie Daten speichern, kann sich ändern. Lokale Tresore bleiben nur auf diesem Gerät: Sie werden nie synchronisiert oder in Git committet. Bewahre von jedem hier gespeicherten Geheimnis eine eigene Kopie auf."
 }
