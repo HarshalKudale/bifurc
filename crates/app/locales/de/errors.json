@@ -363,5 +363,9 @@
   "vault.pull_failed": "Die Geheimnisse konnten nicht von {provider} abgerufen werden. {detail}",
   "vault.setting_invalid": "Das ist keine Einstellung von {provider} für „{field}“.",
   "browser.proxy_off": "der Forward-Proxy läuft nicht",
-  "browser.bad_url": "keine Webadresse"
+  "browser.bad_url": "keine Webadresse",
+  "tunnel.not_installed": "cloudflared ist nicht installiert; installiere es über die Einrichtung oder die Einstellungen",
+  "tunnel.no_address": "cloudflared hat keine öffentliche Adresse geliefert; ist dieser Computer online?",
+  "updates.updater_failed": "Der Updater ist fehlgeschlagen: {detail}",
+  "webhook.failed": "Die Webhook-Anfrage ist fehlgeschlagen: {detail}"
 }
