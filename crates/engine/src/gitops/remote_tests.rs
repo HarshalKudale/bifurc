@@ -989,10 +989,7 @@ async fn a_collaborator_imports_a_shared_workspace_with_the_access_github_gives(
 
     seed_remote(&guard, "octo/writable", 42, workspace_file("writable-ws")).await;
     seed_remote(&guard, "octo/readable", 42, workspace_file("readable-ws")).await;
-    // A repository that says it belongs to an organization.
-    let mut declares = workspace_file("declared-ws").unwrap();
-    declares["organization"] = json!({ "publicId": "pub_acme", "name": "Acme", "workspaceId": "ws_1" });
-    seed_remote(&guard, "octo/declared", 42, Some(declares)).await;
+    seed_remote(&guard, "octo/declared", 42, workspace_file("declared-ws")).await;
     {
         let mut hub = guard.hub.lock();
         for (repo, push) in [("octo/writable", true), ("octo/readable", false), ("octo/declared", true)] {
@@ -1010,8 +1007,6 @@ async fn a_collaborator_imports_a_shared_workspace_with_the_access_github_gives(
         assert_eq!(imported["ok"], true, "{repo}: {imported}");
         auto_sync::stop_all_auto_sync();
         assert_eq!(imported["workspace"]["syncConfig"]["access"], access, "{repo}");
-        // Nothing of an organization is kept with the workspace.
-        assert!(load_settings().workspace(ws).unwrap().get("organization").is_none(), "{repo}");
         assert!(ws_dir(ws).exists());
     }
 

@@ -7,8 +7,6 @@
 //! that workspace's own id as `workspace_id`, whatever the workspace is (local only, a git repository, synced,
 //! imported by its owner or by a collaborator); an event that belongs to no workspace carries none.
 //!
-//! An `organization` an older version left in a workspace of `app.json` is ignored.
-//!
 //! A command a client sends becomes at most one event ([`events::finished`]), sent within [`EVENTS_EVERY`]:
 //! - what [`events::describe`] makes of it when it succeeds (`mock created`, `request sent`);
 //! - its own name (`request.parseCurl`) when it succeeds and nothing describes it;
@@ -213,7 +211,7 @@ fn routing() -> Arc<Routing> {
 }
 
 /// What an event done in a workspace says on top of what was done: the workspace's own id on this device, which
-/// is a random id and no name. Nothing about the account or any organization.
+/// is a random id and no name. Nothing about the account.
 fn workspace_properties(workspace_id: &str) -> Value {
     json!({ "workspace_id": workspace_id })
 }
@@ -622,27 +620,21 @@ mod tests {
     }
 
     #[test]
-    fn with_the_switch_off_nothing_is_sent_whatever_an_old_app_json_says_of_organizations() {
-        let organization = json!({
-            "publicId": "pub_acme", "name": "Acme", "workspaceId": "ws_team", "analytics": true, "githubUserId": 7,
-        });
-        let workspaces = json!([{ "id": "team", "name": "Team", "accountId": "a", "organization": organization }]);
+    fn an_unknown_key_in_app_json_changes_nothing_that_is_sent() {
+        let workspaces = json!([{ "id": "team", "name": "Team", "accountId": "a", "extra": { "analytics": true } }]);
 
-        // On: the old `organization` is ignored, the event is anonymous and names the workspace by its own id.
+        // On: the event is anonymous and names the workspace by its own id.
         let root = running(json!({ "telemetryEnabled": true, "workspaces": workspaces }));
-        assert_eq!(load_settings().workspace("team").unwrap()["organization"]["publicId"], "pub_acme");
         let sent = sent_by("request.parseCurl", json!({ "workspaceId": "team" }), Ok(&json!({})));
         assert_eq!(sent.len(), 1);
         assert_eq!(sent[0]["distinct_id"], "install-1");
         let properties = sent[0]["properties"].as_object().unwrap();
         assert_eq!(properties["workspace_id"], "team");
-        for gone in ["org_public_id", "github_user_id"] {
-            assert!(!properties.contains_key(gone), "{gone}");
-        }
+        assert!(!properties.contains_key("extra"));
         stop_running();
         drop(root);
 
-        // Off: the organization's `analytics: true` no longer overrides the switch.
+        // Off: a key saying `analytics: true` does not override the switch.
         let _root = running(json!({ "telemetryEnabled": false, "workspaces": workspaces }));
         assert!(describe("request.parseCurl", &json!({ "workspaceId": "team" })).is_none());
         assert!(sent_by("request.parseCurl", json!({ "workspaceId": "team" }), Ok(&json!({}))).is_empty());

@@ -307,8 +307,6 @@ pub async fn zip_run(_ws_id: String, source: PathBuf, _strategy: Strategy) -> Im
         let object = object_mut(&mut data);
         object.insert("id".into(), json!(new_id));
         object.insert("name".into(), json!(name));
-        // A copy from an archive is a workspace of its own, not the organization's the original was.
-        object.shift_remove("organization");
         std::fs::write(&workspace_file, pretty(&data)).map_err(io_failure)?;
     }
 

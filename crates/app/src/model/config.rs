@@ -1022,15 +1022,6 @@ mod tests {
     }
 
     #[test]
-    fn an_organization_in_an_old_answer_is_ignored() {
-        let config = json!({
-            "activeWorkspaceId": "w1",
-            "workspaces": [{ "id": "w1", "name": "W", "organization": { "name": "Acme", "analytics": true } }],
-        });
-        assert_eq!(ConfigSnapshot::from_value(&config).unwrap().workspaces[0].name, "W");
-    }
-
-    #[test]
     fn a_config_without_an_active_workspace_is_refused() {
         assert!(ConfigSnapshot::from_value(&json!({})).is_err());
     }
