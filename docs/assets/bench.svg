@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="760" height="236" viewBox="0 0 760 236" role="img" aria-label="Install size, idle memory and cold start of Bifurc compared with other apps">
+<style>
+  text { font: 13px system-ui, -apple-system, "Segoe UI", sans-serif; fill: #1f2328; }
+  .t { font-weight: 600; } .v { fill: #57606a; } .us { fill: #4f46e5; } .them { fill: #8c959f; }
+  .c { font-size: 11px; fill: #57606a; }
+  @media (prefers-color-scheme: dark) { text { fill: #e6edf3; } .v, .c { fill: #9198a1; } .us { fill: #818cf8; } .them { fill: #6e7681; } }
+</style>
+<text x="0" y="26" class="t">Install size on disk</text><text x="102" y="51" class="l" text-anchor="end">Bifurc</text><rect x="110" y="38" width="88" height="18" rx="3" class="us"/><text x="206" y="51" class="v">91 MB</text><text x="102" y="81" class="l" text-anchor="end">Postman</text><rect x="110" y="68" width="520" height="18" rx="3" class="them"/><text x="638" y="81" class="v">535 MB</text><text x="0" y="134" class="t">Idle memory (private working set)</text><text x="102" y="159" class="l" text-anchor="end">Bifurc</text><rect x="110" y="146" width="50" height="18" rx="3" class="us"/><text x="168" y="159" class="v">90 MB</text><text x="102" y="189" class="l" text-anchor="end">Postman</text><rect x="110" y="176" width="520" height="18" rx="3" class="them"/><text x="638" y="189" class="v">940 MB</text><text x="0" y="230" class="c">Windows 11, 2026-10. Lower is better.</text>
+</svg>
