@@ -37,11 +37,8 @@ use crate::{
     workspace::{paths::data_dir, settings::load_settings},
 };
 
-/// The manifest, and the `stable.json` asset of the latest release it is served from, for when the website does not answer.
-const MANIFEST_URLS: [&str; 2] = [
-    "https://bifurc.app/updates/v1/stable.json",
-    "https://github.com/HarshalKudale/bifurc-releases/releases/latest/download/stable.json",
-];
+/// The manifest, served by the website.
+const MANIFEST_URLS: [&str; 1] = ["https://bifurc.app/updates/v1/stable.json"];
 /// Bifurc's page in the Store app, which has the Update button for an install that has one to take.
 const STORE_PAGE_URL: &str = "ms-windows-store://pdp/?productid=9NCB4FDZZQPV";
 /// What `update.apply` runs: the same script a person pastes into a terminal.
@@ -407,7 +404,7 @@ mod tests {
                 "releases": [{
                     "version": "0.6.0",
                     "critical": critical,
-                    "packages": { "nsis-x64": { "url": "https://github.com/HarshalKudale/bifurc-releases/releases/download/v0.6.0/setup.exe" } }
+                    "packages": { "nsis-x64": { "url": "https://github.com/HarshalKudale/bifurc/releases/download/v0.6.0/setup.exe" } }
                 }]
             }
         })
