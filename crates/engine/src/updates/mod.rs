@@ -404,7 +404,7 @@ mod tests {
                 "releases": [{
                     "version": "0.6.0",
                     "critical": critical,
-                    "packages": { "nsis-x64": { "url": "https://github.com/HarshalKudale/bifurc/releases/download/v0.6.0/setup.exe" } }
+                    "packages": { "zip-x64": { "url": "https://github.com/HarshalKudale/bifurc/releases/download/v0.6.0/setup.exe" } }
                 }]
             }
         })
@@ -417,7 +417,7 @@ mod tests {
     #[test]
     fn every_windows_install_but_the_zip_is_updated_with_winget() {
         let stored = stored_with(None, false);
-        for channel in [Channel::Store, Channel::Installer, Channel::Winget] {
+        for channel in [Channel::Store, Channel::Winget] {
             assert_eq!(status_of(&stored, "0.5.0", channel)["action"], json!({ "kind": "install" }), "{channel:?}");
         }
         assert_eq!(status_of(&stored, "0.5.0", Channel::Portable)["action"]["kind"], "download");
@@ -438,7 +438,7 @@ mod tests {
     fn an_install_from_the_store_waits_for_the_store_to_have_the_release() {
         let mut stored = stored_with(None, false);
         stored["manifest"]["channels"]["store"] = json!("0.5.0");
-        for channel in [Channel::Store, Channel::Installer, Channel::Winget] {
+        for channel in [Channel::Store, Channel::Winget] {
             assert_eq!(status_of(&stored, "0.5.0", channel)["available"], Value::Null, "{channel:?}");
         }
         assert_eq!(status_of(&stored, "0.5.0", Channel::Dmg)["available"]["version"], "0.6.0");
@@ -446,7 +446,7 @@ mod tests {
 
     #[test]
     fn nothing_is_known_before_the_first_check() {
-        let status = status_of(&json!({}), "0.5.0", Channel::Installer);
+        let status = status_of(&json!({}), "0.5.0", Channel::Store);
         assert_eq!(status["available"], Value::Null);
         assert_eq!(status["action"], Value::Null);
         assert_eq!(status["checkedAt"], Value::Null);
@@ -461,12 +461,12 @@ mod tests {
         );
         // No file is named for an AppImage here, so the download page it is.
         assert_eq!(status_of(&stored, "0.5.0", Channel::AppImage)["action"]["url"], manifest::DOWNLOAD_PAGE);
-        assert_eq!(status_of(&stored, "0.6.0", Channel::Installer)["action"], Value::Null);
+        assert_eq!(status_of(&stored, "0.6.0", Channel::Store)["action"], Value::Null);
     }
 
     #[test]
     fn a_skipped_version_stays_skipped_unless_it_is_a_security_release() {
-        let skipped = |stored: &Value| status_of(stored, "0.5.0", Channel::Installer)["available"]["skipped"].clone();
+        let skipped = |stored: &Value| status_of(stored, "0.5.0", Channel::Store)["available"]["skipped"].clone();
         assert_eq!(skipped(&stored_with(None, false)), false);
         assert_eq!(skipped(&stored_with(Some("0.6.0"), false)), true);
         assert_eq!(skipped(&stored_with(Some("0.5.5"), false)), false);
