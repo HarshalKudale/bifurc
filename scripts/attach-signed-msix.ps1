@@ -24,8 +24,9 @@ $Path = (Resolve-Path $Path).Path
 
 $signature = Get-AuthenticodeSignature $Path
 if ($signature.Status -ne 'Valid') { throw "Signature is $($signature.Status), not Valid." }
-if ($signature.SignerCertificate.Subject -notmatch 'CN=Microsoft Corporation') {
-  throw "Signed by $($signature.SignerCertificate.Subject), not Microsoft Corporation."
+# The Store signs with a per-app certificate (CN=<guid>) issued by a Microsoft Marketplace CA.
+if ($signature.SignerCertificate.Issuer -notmatch 'CN=Microsoft Marketplace CA') {
+  throw "Issued by $($signature.SignerCertificate.Issuer), not a Microsoft Marketplace CA."
 }
 
 Add-Type -AssemblyName System.IO.Compression.FileSystem
