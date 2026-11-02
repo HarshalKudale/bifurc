@@ -9,6 +9,7 @@ use gpui_kit::component::{
     sidebar::{
         Sidebar, SidebarCollapsible, SidebarGroup, SidebarHeader, SidebarItem as _, SidebarMenu, SidebarMenuItem,
     },
+    tag::Tag,
     v_flex,
 };
 // The full icon catalog: the component crate's own enum has no mail icon.
@@ -146,6 +147,14 @@ impl Shell {
             Screen::Vaults => Some(self.model.read(cx).vaults().len()).filter(|n| *n > 0),
             _ => screen.count(config),
         };
+        if screen == Screen::Vaults {
+            let beta = t("vaults.beta_tag");
+            return item.suffix(move |_, cx| {
+                h_flex().gap_1().child(Tag::warning().small().child(beta)).children(
+                    count.map(|n| div().text_xs().text_color(cx.theme().muted_foreground).child(n.to_string())),
+                )
+            });
+        }
         match count {
             Some(count) => item
                 .suffix(move |_, cx| div().text_xs().text_color(cx.theme().muted_foreground).child(count.to_string())),

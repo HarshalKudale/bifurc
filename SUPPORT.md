@@ -1,14 +1,7 @@
-# Support Bifurc
+# Support
 
-Bifurc is maintained by [Harshal Kudale](https://github.com/HarshalKudale).
+- **Bugs:** open an [issue](https://github.com/HarshalKudale/bifurc/issues/new/choose) with steps to reproduce.
+- **Questions and ideas:** use [Discussions](https://github.com/HarshalKudale/bifurc/discussions).
+- **Licensing** (commercial or enterprise use, redistribution): write to **contact@bifurc.app**.
 
-## Community support
-
-You can support the project by:
-
-- opening issues with strong reproduction details
-- sharing the tool with other developers
-
-## Licensing questions
-
-Bifurc is under the PolyForm Noncommercial License 1.0.0. If you are unsure whether your use is non-commercial, or want a commercial license, or want a separate agreement (for example to embed or redistribute it), contact the author at **contact@bifurc.app**.
+Bifurc is a free project maintained by one person, so there are no guarantees on response time.

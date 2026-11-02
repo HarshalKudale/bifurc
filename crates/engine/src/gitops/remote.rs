@@ -479,7 +479,6 @@ async fn import(account_id: &str, repo_name: &str) -> Result<Value, Refusal> {
             .keyed("workspace.import_exists", json!({ "repo": repo.full_name }))
             .into());
     }
-    //     };
     // Asked before anything is cloned: a repository that is not a workspace never reaches this device.
     let not_a_workspace = || {
         EngineError::engine(format!("{} is not a Bifurc workspace: it has no workspace.json of one.", repo.full_name))

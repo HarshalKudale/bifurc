@@ -92,7 +92,7 @@ ignore = [
 # [possible values: any SPDX 3.11 short identifier (+ optional exception)].
 allow = [
     # Bifurc's own crates.
-    "LicenseRef-PolyForm-Noncommercial-1.0.0",
+    "LicenseRef-Bifurc-PolyForm-Strict-1.0.0-with-additions",
     # Permissive licenses of the dependency tree (cargo xtask licenses lists the notices we ship).
     "MIT",
     "MIT-0",

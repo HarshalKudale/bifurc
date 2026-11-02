@@ -27,7 +27,7 @@ use crate::i18n::{t, t_with};
 
 const REPOSITORY_URL: &str = "https://github.com/HarshalKudale/bifurc";
 const LICENSE_URL: &str = "https://github.com/HarshalKudale/bifurc/blob/master/LICENSE";
-const NONCOMMERCIAL_URL: &str = "https://polyformproject.org/licenses/noncommercial/1.0.0";
+const STRICT_URL: &str = "https://polyformproject.org/licenses/strict/1.0.0";
 
 #[derive(Debug, Deserialize)]
 struct Notices {
@@ -75,7 +75,7 @@ pub fn page() -> SettingPage {
             SettingItem::new(
                 t("licenses.own.license.title"),
                 SettingField::render(|_, _, _| {
-                    Link::new("own-license-link").href(NONCOMMERCIAL_URL).child("PolyForm Noncommercial 1.0.0")
+                    Link::new("own-license-link").href(STRICT_URL).child("PolyForm Strict 1.0.0 with additions")
                 }),
             )
             .description(t("licenses.own.license.description"))

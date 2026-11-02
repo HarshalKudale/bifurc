@@ -1,0 +1,175 @@
+name: Release
+
+# Manual. Builds Windows, Linux and macOS in one run and attaches the files straight to a draft release.
+# See docs/releasing.md for the steps before and after.
+on:
+  workflow_dispatch:
+    inputs:
+      version:
+        description: "Version without v; must equal Cargo.toml (e.g. 0.6.5)"
+        required: true
+      title:
+        description: "Release name after the version (e.g. Everything is open)"
+        required: false
+      prerelease:
+        type: boolean
+        default: false
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release
+  cancel-in-progress: false
+
+env:
+  CARGO_INCREMENTAL: "0"
+  CARGO_TERM_COLOR: always
+
+jobs:
+  gate:
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - name: Check the version, the branch and the tag
+        env:
+          VERSION: ${{ inputs.version }}
+        run: |
+          echo "$VERSION" | grep -Eq '^[0-9]+\.[0-9]+\.[0-9]+$' || { echo "::error::bad version"; exit 1; }
+          current="$(sed -n '/^\[workspace.package\]/,/^\[/{s/^version *= *"\(.*\)"/\1/p}' Cargo.toml)"
+          [ "$current" = "$VERSION" ] || { echo "::error::Cargo.toml is $current, not $VERSION"; exit 1; }
+          [ "$GITHUB_REF" = "refs/heads/master" ] || { echo "::error::run this from master"; exit 1; }
+          if git ls-remote --exit-code --tags "https://github.com/$GITHUB_REPOSITORY" "refs/tags/v$VERSION" >/dev/null 2>&1; then
+            echo "::error::tag v$VERSION exists"; exit 1
+          fi
+      - name: Refuse while an owner placeholder is left
+        run: "! git grep -n 'TODO[(]owner[)]:'"
+      - name: Create the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          VERSION: ${{ inputs.version }}
+          TITLE: ${{ inputs.title }}
+          PRERELEASE: ${{ inputs.prerelease }}
+        run: |
+          args=(--draft --target "$GITHUB_SHA" --generate-notes)
+          if [ -n "$TITLE" ]; then args+=(--title "Bifurc $VERSION — $TITLE"); else args+=(--title "Bifurc $VERSION"); fi
+          [ "$PRERELEASE" = "true" ] && args+=(--prerelease)
+          if [ "$VERSION" = "0.6.5" ]; then
+            printf '%s\n' \
+              '- The source is now public under the Bifurc license.' \
+              '- Releases have moved to this repository.' \
+              '- Upgrading straight from 0.5.0 or later is supported.' > notes.md
+            args+=(--notes-file notes.md)
+          fi
+          gh release create "v$VERSION" "${args[@]}" --repo "$GITHUB_REPOSITORY"
+
+  ci:
+    uses: ./.github/workflows/ci.yml
+
+  build:
+    name: build (${{ matrix.os }})
+    needs: [gate, ci]
+    environment: release
+    permissions:
+      contents: write
+      id-token: write
+      attestations: write
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - os: windows-latest
+            targets: msix,zip
+          - os: ubuntu-22.04
+            targets: appimage,deb,tarball
+          - os: macos-14
+            targets: dmg
+    runs-on: ${{ matrix.os }}
+    defaults:
+      run:
+        shell: bash
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1
+        with:
+          cache: false
+          target: ${{ runner.os == 'macOS' && 'aarch64-apple-darwin' || '' }}
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          key: release-${{ matrix.os }}
+          cache-on-failure: true
+      - name: Install GPUI's build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential clang cmake pkg-config libasound2-dev libfontconfig-dev \
+            libwayland-dev libx11-xcb-dev libxkbcommon-x11-dev libssl-dev libzstd-dev libvulkan1 dpkg-dev zip
+      - name: Package
+        env:
+          RELEASE_TAG: v${{ inputs.version }}
+          BIFURC_BUILD_TARGET: ${{ runner.os == 'macOS' && 'aarch64-apple-darwin' || '' }}
+          BIFURC_GITHUB_CLIENT_ID: ${{ secrets.BIFURC_GITHUB_CLIENT_ID }}
+          BIFURC_POSTHOG_KEY: ${{ secrets.BIFURC_POSTHOG_KEY }}
+          BIFURC_POSTHOG_HOST: ${{ secrets.BIFURC_POSTHOG_HOST }}
+          TARGETS: ${{ matrix.targets }}
+        run: cargo xtask package --target "$TARGETS" --release-tag "$RELEASE_TAG"
+      - name: Name the files
+        id: files
+        env:
+          VERSION: ${{ inputs.version }}
+        working-directory: release/desktop
+        run: |
+          # The unsigned MSIX is for Partner Center only; the Store re-signs it. It is not checksummed or attested.
+          if [ -f "Bifurc-$VERSION.msix" ]; then mv "Bifurc-$VERSION.msix" "Bifurc-$VERSION-UNSIGNED-for-store-upload.msix"; fi
+          ls -1 *.zip *.AppImage *.deb *.tar.gz *.dmg 2>/dev/null | grep -v 'linux-store-manifests' > "$RUNNER_TEMP/files.txt" || true
+          cat "$RUNNER_TEMP/files.txt"
+          os="$RUNNER_OS"
+          cp "$RUNNER_TEMP/files.txt" "$RUNNER_TEMP/upload.txt"
+          ls -1 *UNSIGNED*.msix >> "$RUNNER_TEMP/upload.txt" 2>/dev/null || true
+          xargs -a "$RUNNER_TEMP/files.txt" sha256sum > "SHA256SUMS-$os.txt" 2>/dev/null || xargs shasum -a 256 < "$RUNNER_TEMP/files.txt" > "SHA256SUMS-$os.txt"
+          {
+            echo "list<<EOF"
+            sed 's#^#release/desktop/#' "$RUNNER_TEMP/files.txt"
+            echo "EOF"
+          } >> "$GITHUB_OUTPUT"
+      - name: Attest build provenance
+        uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2
+        with:
+          subject-path: ${{ steps.files.outputs.list }}
+      - name: Attach to the draft release
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: v${{ inputs.version }}
+        working-directory: release/desktop
+        run: |
+          mapfile -t files < "$RUNNER_TEMP/upload.txt"
+          gh release upload "$TAG" "${files[@]}" "SHA256SUMS-$RUNNER_OS.txt" --clobber --repo "$GITHUB_REPOSITORY"
+
+  checksums:
+    needs: build
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: write
+    steps:
+      - name: One SHA256SUMS.txt
+        env:
+          GH_TOKEN: ${{ github.token }}
+          TAG: v${{ inputs.version }}
+        run: |
+          gh release download "$TAG" --repo "$GITHUB_REPOSITORY" --pattern 'SHA256SUMS-*.txt'
+          cat SHA256SUMS-*.txt > SHA256SUMS.txt
+          gh release upload "$TAG" SHA256SUMS.txt --clobber --repo "$GITHUB_REPOSITORY"
+          for f in SHA256SUMS-*.txt; do gh release delete-asset "$TAG" "$f" -y --repo "$GITHUB_REPOSITORY"; done
+          {
+            echo "## Draft v${{ inputs.version }} is ready"
+            echo "1. Download the UNSIGNED MSIX from the draft and submit it in Partner Center."
+            echo "2. Delete that asset from the draft: \`gh release delete-asset $TAG Bifurc-${{ inputs.version }}-UNSIGNED-for-store-upload.msix -y\`"
+            echo "3. Publish the draft; don't wait for the Store."
+            echo "4. Run Publish release in bifurc-studio. See docs/releasing.md."
+          } >> "$GITHUB_STEP_SUMMARY"

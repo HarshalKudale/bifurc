@@ -1,8 +1,18 @@
-Required Notice: Copyright (c) 2024 Harshal Kudale (https://bifurc.app)
+Required Notice: Copyright (c) 2024-2026 Harshal Kudale (https://bifurc.app)
 
-# PolyForm Noncommercial License 1.0.0
+Additional permissions (these add to the PolyForm Strict License 1.0.0 below and take nothing away from it):
 
-<https://polyformproject.org/licenses/noncommercial/1.0.0>
+1. Personal changes. You may make changes to the software for your own personal use. You may not distribute
+   changed versions, in source or binary form, to anyone.
+2. Contributions. You may make changes in order to propose them to the licensor (for example a pull request
+   to https://github.com/HarshalKudale/bifurc), and you may keep a public fork on GitHub for that purpose only.
+   Contributions are accepted under the Bifurc Contributor License Agreement (CLA.md).
+3. Commercial use, including use within a company, enterprise or other organization for its business, needs
+   a separate written license. Contact contact@bifurc.app.
+
+# PolyForm Strict License 1.0.0
+
+<https://polyformproject.org/licenses/strict/1.0.0>
 
 ## Acceptance
 
@@ -10,21 +20,7 @@ In order to get any license under these terms, you must agree to them as both st
 
 ## Copyright License
 
-The licensor grants you a copyright license for the software to do everything you might do with the software that would otherwise infringe the licensor's copyright in it for any permitted purpose.  However, you may only distribute the software according to [Distribution License](#distribution-license) and make changes or new works based on the software according to [Changes and New Works License](#changes-and-new-works-license).
-
-## Distribution License
-
-The licensor grants you an additional copyright license to distribute copies of the software.  Your license to distribute covers distributing the software with changes and new works permitted by [Changes and New Works License](#changes-and-new-works-license).
-
-## Notices
-
-You must ensure that anyone who gets a copy of any part of the software from you also gets a copy of these terms or the URL for them above, as well as copies of any plain-text lines beginning with `Required Notice:` that the licensor provided with the software.  For example:
-
-> Required Notice: Copyright Yoyodyne, Inc. (http://example.com)
-
-## Changes and New Works License
-
-The licensor grants you an additional copyright license to make changes and new works based on the software for any permitted purpose.
+The licensor grants you a copyright license for the software to do everything you might do with the software that would otherwise infringe the licensor's copyright in it for any permitted purpose, other than distributing the software or making changes or new works based on the software.
 
 ## Patent License
 

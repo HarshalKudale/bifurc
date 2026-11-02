@@ -24,8 +24,9 @@ use serde_json::{Value, json};
 use super::channel::Channel;
 use crate::utils::json::{array_of, bool_of, opt_str, str_of};
 
-/// Where a download may come from, and where a link may lead: the releases repository and the website.
-const TRUSTED_PREFIXES: [&str; 2] = ["https://github.com/HarshalKudale/bifurc-releases/", "https://bifurc.app/"];
+/// Where a download may come from, and where a link may lead: the repository's releases and the website. The
+/// trailing slash matters: it keeps `bifurc-evil` from matching.
+const TRUSTED_PREFIXES: [&str; 2] = ["https://github.com/HarshalKudale/bifurc/", "https://bifurc.app/"];
 /// Where a person gets Bifurc when the manifest names no file for their install.
 pub const DOWNLOAD_PAGE: &str = "https://bifurc.app/download";
 
@@ -104,7 +105,7 @@ mod tests {
     }
 
     fn manifest() -> Value {
-        let file = |name: &str| json!({ zip(): { "url": format!("https://github.com/HarshalKudale/bifurc-releases/releases/download/{name}") } });
+        let file = |name: &str| json!({ zip(): { "url": format!("https://github.com/HarshalKudale/bifurc/releases/download/{name}") } });
         json!({
             "schema": 1,
             "channels": { "store": "0.5.0" },
@@ -117,6 +118,23 @@ mod tests {
                 { "version": "0.7.0-beta.1" }
             ]
         })
+    }
+
+    #[test]
+    fn only_this_repository_and_the_website_are_trusted() {
+        for url in [
+            "https://bifurc.app/dl/v0.6.5/Bifurc-0.6.5-win-x64.zip",
+            "https://github.com/HarshalKudale/bifurc/releases/download/v0.6.5/a.zip",
+        ] {
+            assert_eq!(trusted(url), Some(url));
+        }
+        for url in [
+            "https://github.com/HarshalKudale/bifurc-releases/releases/download/v0.6.5/a.zip",
+            "https://github.com/HarshalKudale/bifurcX/releases/download/v0.6.5/a.zip",
+            "https://bifurc.app.evil.example/a.zip",
+        ] {
+            assert_eq!(trusted(url), None);
+        }
     }
 
     #[test]

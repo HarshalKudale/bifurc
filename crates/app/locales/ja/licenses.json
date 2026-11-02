@@ -1,7 +1,7 @@
 {
   "page.title": "ライセンス",
   "own.license.title": "ライセンス",
-  "own.license.description": "非商用目的であれば無料で使用できます。再販、再パッケージ、商用製品の開発への利用はできません。",
+  "own.license.description": "個人の非商用利用は無料です。商用利用や企業での利用には書面での許可が必要で、再配布はできません。",
   "own.full_text.title": "全文",
   "own.full_text.description": "{url} で確認できます",
   "assets.title": "同梱アセット",
