@@ -359,6 +359,16 @@ impl Ui {
 
     /// Presses a key or chord (`ctrl-s`, `escape`, `secondary-1`) on whatever has focus.
     pub fn press(&mut self, keys: &str) {
+        // The app binds the platform's primary modifier (Cmd on macOS), and the tests spell it Ctrl.
+        let keys = &if cfg!(target_os = "macos") {
+            let keys = keys.replace("ctrl-", "secondary-");
+            match keys.strip_prefix("alt-") {
+                Some(rest) => format!("secondary-alt-{rest}"),
+                None => keys,
+            }
+        } else {
+            keys.to_string()
+        };
         self.cx.update_window(self.window, |_, window, cx| press(window, keys, cx)).expect("the window is open");
         self.settle();
     }
