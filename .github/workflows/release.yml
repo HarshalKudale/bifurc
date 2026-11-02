@@ -68,6 +68,9 @@ jobs:
           gh release create "v$VERSION" "${args[@]}" --repo "$GITHUB_REPOSITORY"
 
   ci:
+    permissions:
+      contents: read
+      pull-requests: read
     uses: ./.github/workflows/ci.yml
 
   build:
