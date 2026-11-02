@@ -31,7 +31,7 @@ serde_json = { version = "1", features = ["preserve_order"] }
 # UI tests: GPUI's test platform, and the element observation Kit's own components register with. Test-only:
 # `cargo xtask licenses` leaves what these features pull in out of the shipped notices.
 gpui = { package = "gpui-pre", version = "=0.3.9", features = ["test-support"] }
-gpui-base = { version = "0.7.3", features = ["test-support"] }
+gpui-base = { version = "0.8.0", features = ["test-support"] }
 gpui-component = { version = "0.7.3", features = ["test-support"] }
 
 # The executable's icon (what the taskbar and Explorer show) is a resource compiled in by build.rs.
