@@ -7,7 +7,7 @@ Only the latest minor release of Bifurc gets security fixes.
 ## Reporting a vulnerability
 
 Please do not open a public issue. Report it through GitHub's private vulnerability reporting (the "Security"
-tab of this repository), or write to **security@bifurc.app** (TODO(owner): create this alias, else use contact@bifurc.app).
+tab of this repository), or write to **security@bifurc.app**.
 
 You will get an acknowledgement within 7 days.
 
