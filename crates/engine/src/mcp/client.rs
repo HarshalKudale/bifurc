@@ -231,7 +231,11 @@ fn describe_start(error: &ClientInitializeError, program: bool) -> EngineError {
             // A program that left before the first request was written ends the pipe, which is the same ending.
             let mut link: Option<&(dyn std::error::Error + 'static)> = Some(error.error.as_ref());
             while let Some(inner) = link {
-                if program && inner.downcast_ref::<std::io::Error>().is_some_and(|io| io.kind() == std::io::ErrorKind::BrokenPipe) {
+                if program
+                    && inner
+                        .downcast_ref::<std::io::Error>()
+                        .is_some_and(|io| io.kind() == std::io::ErrorKind::BrokenPipe)
+                {
                     return EngineError::upstream("The program ended before the MCP handshake finished")
                         .keyed("mcp.program_ended", json!({}));
                 }
