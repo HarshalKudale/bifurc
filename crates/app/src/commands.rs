@@ -322,7 +322,8 @@ mod tests {
         let mut all = vec![KeyBinding::new("secondary-enter", InputEnter, Some("Input"))];
         all.extend(super::keys());
         let contexts: Vec<_> = contexts.iter().map(|c| KeyContext::parse(c).unwrap()).collect();
-        let (found, _) = Keymap::new(all).bindings_for_input(&[Keystroke::parse(keys).unwrap()], &contexts);
+        let (found, _) = Keymap::new(all)
+            .bindings_for_input(&[Keystroke::parse(&crate::test_support::platform_keys(keys)).unwrap()], &contexts);
         found.first().map(|binding| binding.action().boxed_clone())
     }
 
