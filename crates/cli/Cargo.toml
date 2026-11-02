@@ -13,7 +13,7 @@ path = "src/lib.rs"
 [dependencies]
 bifurc-protocol = { path = "../protocol" }
 bifurc-client = { path = "../client" }
-base64 = "0.22"
+base64 = "0.23"
 serde_json = { version = "1", features = ["preserve_order"] }
 
 [target.'cfg(unix)'.dependencies]
