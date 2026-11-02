@@ -14,9 +14,7 @@
   <a href="https://addons.mozilla.org/firefox/addon/bifurc-companion/"><img src="https://img.shields.io/amo/users/bifurc-companion" alt="Firefox users"></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/license-Bifurc%20License%20(non--commercial)-blue" alt="License"></a>
   <a href="https://github.com/HarshalKudale/bifurc/stargazers"><img src="https://img.shields.io/github/stars/HarshalKudale/bifurc?style=flat" alt="Stars"></a>
-  <!-- TODO(owner): confirm the Ko-fi page exists -->
-  <a href="https://ko-fi.com/harshalkudale"><img src="https://img.shields.io/badge/Ko--fi-support-FF5E5B?logo=ko-fi&logoColor=white" alt="Ko-fi"></a>
-  <!-- TODO(owner): enable GitHub Sponsors -->
+  <a href="https://ko-fi.com/codewrath"><img src="https://img.shields.io/badge/Ko--fi-support-FF5E5B?logo=ko-fi&logoColor=white" alt="Ko-fi"></a>
   <a href="https://github.com/sponsors/HarshalKudale"><img src="https://img.shields.io/github/sponsors/HarshalKudale" alt="Sponsors"></a>
   <a href="https://www.producthunt.com/products/bifurc"><img src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1290225&theme=light" alt="Bifurc on Product Hunt" height="20"></a>
 </p>
@@ -141,8 +139,8 @@ cargo test --workspace --locked
 
 Bifurc is free and maintained by one person. If it saves you time:
 
-- [Ko-fi](https://ko-fi.com/harshalkudale) (TODO(owner): confirm the page exists)
-- [GitHub Sponsors](https://github.com/sponsors/HarshalKudale) (TODO(owner): enable Sponsors)
+- [Ko-fi](https://ko-fi.com/codewrath)
+- [GitHub Sponsors](https://github.com/sponsors/HarshalKudale)
 - star the repo, and tell a friend
 
 ## Contributing, security, license
