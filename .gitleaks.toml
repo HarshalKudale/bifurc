@@ -1,0 +1,17 @@
+title = "Bifurc"
+
+[extend]
+useDefault = true
+
+# Test fixtures: throwaway keys and fake tokens that exist so tests can parse them.
+[allowlist]
+paths = [
+  '''crates/engine/tests/data/.*\.pem''',
+  '''crates/engine/src/certificates/mod\.rs''',
+  '''packages/engine-rust/src/certificates/mod\.rs''',
+  '''crates/engine/src/jwt/tests\.rs''',
+  '''crates/engine/src/proxy/tests\.rs''',
+  '''crates/mcp/src/invoke\.rs''',
+  '''packages/engine-rust/src/capture/import\.rs''',
+]
+regexes = ['''sk_test''', '''sk_live_123''']

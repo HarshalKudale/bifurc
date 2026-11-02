@@ -192,6 +192,17 @@ pub fn get_cert_status(data_dir: &Path) -> (bool, Option<String>) {
     }
 }
 
+/// Delete the CA files. Best effort per file; `true` when at least one was removed.
+pub fn remove_ca(data_dir: &Path) -> bool {
+    let mut removed = false;
+    for path in [data_dir.join(CA_CERT_FILE), data_dir.join(CA_KEY_FILE)] {
+        if path.exists() && std::fs::remove_file(&path).is_ok() {
+            removed = true;
+        }
+    }
+    removed
+}
+
 #[cfg(test)]
 mod uniqueness_tests {
     use super::*;
@@ -203,15 +214,4 @@ mod uniqueness_tests {
         assert_ne!(a, b);
         assert_ne!(identify_cert(&a).unwrap().subject, identify_cert(&b).unwrap().subject);
     }
-}
-
-/// Delete the CA files. Best effort per file; `true` when at least one was removed.
-pub fn remove_ca(data_dir: &Path) -> bool {
-    let mut removed = false;
-    for path in [data_dir.join(CA_CERT_FILE), data_dir.join(CA_KEY_FILE)] {
-        if path.exists() && std::fs::remove_file(&path).is_ok() {
-            removed = true;
-        }
-    }
-    removed
 }

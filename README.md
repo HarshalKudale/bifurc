@@ -1,113 +1,158 @@
-# Bifurc
-[![Website](https://img.shields.io/badge/Website-Bifurc-4F46E5?logo=googlechrome&logoColor=white)](https://bifurc.app/)
-[![Tests](https://github.com/HarshalKudale/bifurc/actions/workflows/test.yml/badge.svg)](https://github.com/HarshalKudale/bifurc/actions/workflows/test.yml)
-[![Latest Release](https://img.shields.io/github/v/release/HarshalKudale/bifurc?display_name=tag&sort=semver)](https://github.com/HarshalKudale/bifurc/releases/latest)
-[![GitHub Downloads](https://img.shields.io/github/downloads/HarshalKudale/bifurc/total)](https://github.com/HarshalKudale/bifurc/releases)
-[![License](https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-blue)](LICENSE)
-[![GitHub stars](https://img.shields.io/github/stars/HarshalKudale/bifurc?style=flat)](https://github.com/HarshalKudale/bifurc/stargazers)
+<p align="center">
+  <img src="build/icon.png" alt="Bifurc" width="96">
+</p>
 
-**Bifurc is a desktop API development workspace for localhost routing, capture, mocking, protocol testing, and git-backed configuration.**
+<h1 align="center">Bifurc</h1>
 
-It brings together `*.localhost` mappings, proxy rules, capture tooling, REST/GraphQL/SOAP/gRPC request authoring, browser-assisted workflows, TLS interception, and workspace history in one developer-focused app.
+<p align="center"><b>The local-first workspace for your APIs and your localhost: send requests, capture traffic, mock and rewrite it, all in files you can put in git.</b></p>
 
-## Main capabilities
+<p align="center">
+  <a href="https://github.com/HarshalKudale/bifurc/actions/workflows/ci.yml"><img src="https://github.com/HarshalKudale/bifurc/actions/workflows/ci.yml/badge.svg" alt="CI"></a>
+  <a href="https://github.com/HarshalKudale/bifurc/releases/latest"><img src="https://img.shields.io/github/v/release/HarshalKudale/bifurc?display_name=tag&sort=semver" alt="Latest release"></a>
+  <a href="https://github.com/HarshalKudale/bifurc/releases"><img src="https://img.shields.io/endpoint?url=https://bifurc.app/badge/downloads.json" alt="Downloads"></a>
+  <a href="https://chromewebstore.google.com/detail/dcifgipphabedoiemccjpocgiganpjhi"><img src="https://img.shields.io/chrome-web-store/users/dcifgipphabedoiemccjpocgiganpjhi" alt="Chrome users"></a>
+  <a href="https://addons.mozilla.org/firefox/addon/bifurc-companion/"><img src="https://img.shields.io/amo/users/bifurc-companion" alt="Firefox users"></a>
+  <a href="LICENSE"><img src="https://img.shields.io/badge/license-Bifurc%20License%20(non--commercial)-blue" alt="License"></a>
+  <a href="https://github.com/HarshalKudale/bifurc/stargazers"><img src="https://img.shields.io/github/stars/HarshalKudale/bifurc?style=flat" alt="Stars"></a>
+  <!-- TODO(owner): confirm the Ko-fi page exists -->
+  <a href="https://ko-fi.com/harshalkudale"><img src="https://img.shields.io/badge/Ko--fi-support-FF5E5B?logo=ko-fi&logoColor=white" alt="Ko-fi"></a>
+  <!-- TODO(owner): enable GitHub Sponsors -->
+  <a href="https://github.com/sponsors/HarshalKudale"><img src="https://img.shields.io/github/sponsors/HarshalKudale" alt="Sponsors"></a>
+  <a href="https://www.producthunt.com/products/bifurc"><img src="https://api.producthunt.com/widgets/embed-image/v1/featured.svg?post_id=1290225&theme=light" alt="Bifurc on Product Hunt" height="20"></a>
+</p>
 
-- map friendly `*.localhost` domains to local services
-- intercept, inspect, and replay HTTP traffic
-- create mocks for REST, GraphQL, SOAP, and gRPC workflows
-- save and organize authored requests across protocols
-- use a browser companion extension for DevTools-driven capture and mock creation
-- version workspace data with git and sync it between collaborators
+<p align="center">
+  <picture>
+    <source media="(prefers-color-scheme: dark)" srcset="docs/assets/capture-dark.png">
+    <img src="docs/assets/capture-light.png" alt="Bifurc capturing traffic" width="900">
+  </picture>
+</p>
 
-## Engine, CLI, MCP server and desktop UI
+Bifurc is a native Rust desktop app, a CLI and an MCP server for developers who work on services running on their
+own machine. It gives local services names (`api.localhost`), captures what they send, mocks and rewrites what
+they receive, and sends requests for REST, GraphQL, SOAP, gRPC, WebSocket and more. Everything you save is a file
+in a git-backed workspace on your disk. No account is needed.
 
-The engine (`crates/engine`), the `bifurc` command (`crates/bifurc`, over the CLI in `crates/cli` and the MCP server
-in `crates/mcp`), the shared wire types and client
-(`crates/protocol`, `crates/client`) and the desktop UI (`crates/app`, `crates/tray`) are all Rust. There is no Node runtime.
+Bifurc is **open source, free for personal non-commercial use**. Commercial or enterprise use needs written
+permission, and redistribution is not allowed. See [License](#license).
+
+## Install
+
+| Where | How |
+| --- | --- |
+| Microsoft Store | [Bifurc in the Store](https://apps.microsoft.com/detail/9NCB4FDZZQPV) |
+| winget | `winget install --id 9NCB4FDZZQPV --source msstore` |
+| macOS and Linux script | `curl -fsSL https://bifurc.app/install.sh \| sh` |
+| Debian / Ubuntu | the `.deb` from [Releases](https://github.com/HarshalKudale/bifurc/releases/latest) |
+| Linux, any | the AppImage or the tarball from [Releases](https://github.com/HarshalKudale/bifurc/releases/latest) |
+| macOS | the `.dmg` from [Releases](https://github.com/HarshalKudale/bifurc/releases/latest) |
+| Windows, portable | the `win-x64.zip` from [Releases](https://github.com/HarshalKudale/bifurc/releases/latest) |
+| Browser extension | [Chrome / Edge](https://chromewebstore.google.com/detail/dcifgipphabedoiemccjpocgiganpjhi), [Firefox](https://addons.mozilla.org/firefox/addon/bifurc-companion/) ([source](https://github.com/HarshalKudale/bifurc-extension)) |
+
+**Verify a download.** Every release has a `SHA256SUMS.txt` and build provenance:
 
 ```bash
-cargo dev:engine     # the engine, in this terminal (logs here; Ctrl+C or `cargo dev:cli engine stop` ends it)
-cargo dev:ui         # the UI; attaches to a running engine, or starts one from target/ if none is
-cargo dev:cli <cmd>  # the `bifurc` CLI, e.g. `cargo dev:cli status`
-cargo dev:mcp        # `bifurc --mcp`, the MCP server, on this terminal's stdin and stdout
-cargo xtask package  # installer / Store package / AppImage / macOS .dmg
+sha256sum -c SHA256SUMS.txt --ignore-missing
+gh attestation verify <file> --repo HarshalKudale/bifurc
 ```
 
-All of them find each other through `<data-dir>/runtime.json`; set `BIFURC_DATA_DIR` to use a scratch directory.
-On Windows a running engine locks `target/debug/bifurc-engine.exe`, so stop it before rebuilding it.
+## What it does
 
-### MCP server
+- **Localhost domains:** a built-in reverse proxy gives each service a name such as `api.localhost`, over HTTPS if you
+  want. No hosts file.
+- **Capture:** a forward proxy and a browser extension show the traffic of your browser and your apps, HTTPS included.
+- **Mocks and proxy rules:** answer a request yourself, change part of the real answer, send a URL to your local
+  build, or rewrite traffic with scripts. Your app keeps calling the real URL.
+- **Requests:** REST, GraphQL, SOAP (from a WSDL), gRPC, WebSocket, Socket.IO, SSE and an MCP client, with
+  environments, scripts, flows and load tests.
+- **Git-backed workspaces:** mappings, rules, requests, mocks and environments are files with history. Publish to a
+  GitHub repo you own and import it elsewhere.
+- **Vaults (beta):** passphrase-encrypted secrets that stay on one device. Vaults are unstable and still under
+  development.
+- **CLI and MCP server:** the same verbs as the app, with exit codes, for scripts, CI and AI agents.
 
-`bifurc --mcp` gives an AI agent the commands of the `bifurc` CLI as tools, over stdio. `--mcp` must be the first
-argument. It talks to the same engine and starts one if none is running. Register it with an MCP host as a stdio
-server whose command is `bifurc` with the argument `--mcp`, for example:
+### CLI and MCP quick start
+
+```bash
+bifurc status                 # is the engine running?
+bifurc --help                 # every command
+```
+
+`bifurc --mcp` gives an AI agent the CLI's commands as tools, over stdio. Register it with an MCP host as a stdio
+server whose command is `bifurc` with the argument `--mcp`:
 
 ```json
 { "mcpServers": { "bifurc": { "command": "bifurc", "args": ["--mcp"] } } }
 ```
 
-The everyday tools (send a request, list requests, mocks and mappings, create a mock or a mapping) are listed to
-the agent; it finds the others with `search_tools`, reads one with `describe_tool` and runs it with `call_tool`.
-After `--mcp` the server's own options may follow (`cargo dev:mcp --all-tools` lists every tool instead, for a host that searches tools itself; `--help` lists the rest). Like the CLI it cannot
-delete anything, read a secret, sign in or stop the engine.
+Like the CLI, the MCP server cannot delete anything, read a secret, sign in or stop the engine. See
+[docs/mcp.md](docs/mcp.md).
 
+## How it compares
 
-## Repository structure
+Taken from the comparison pages on [bifurc.app](https://bifurc.app); each competitor row follows that product's own
+documentation at the time of writing. See the pages for the notes and the dates.
 
-```text
-Bifurc/
-├── crates/
-│   ├── protocol/       # Wire types and command schemas shared by the engine and its clients
-│   ├── client/         # Synchronous engine client shared by the CLI and MCP server
-│   ├── engine/         # The engine: proxies, mocks, requests, workspaces, git
-│   ├── cli/            # The CLI (library)
-│   ├── mcp/            # The MCP server (library): the CLI's commands as tools
-│   ├── engine-client/  # The desktop UI's async connection to the engine
-│   ├── app/            # Desktop UI (GPUI)
-│   ├── tray/           # Tray helper the engine runs
-│   └── bifurc/         # The `bifurc` binary: the CLI, or the MCP server with `--mcp`
-├── xtask/              # `cargo xtask package`
-├── packaging/          # Installer, Store package and AppImage templates
-└── build/              # Icons
-```
+| | Bifurc | Postman | Charles | Fiddler Classic |
+| --- | --- | --- | --- | --- |
+| Price | Free for personal use | Free plan limited to one user; paid team plans | Paid licence, free trial | Free |
+| Source available | Yes | No | No | No |
+| Account needed | No | Used for sync and collaboration | No | No |
+| Workspaces as files in git | Yes | No (Postman's cloud) | No | No |
+| Custom `*.localhost` domains | Yes | No | No | No |
+| HTTPS capture | Yes | Yes (its proxy or Interceptor) | Yes (SSL Proxying) | Yes |
+| Mocks | On real traffic, no URL change | Mock servers with their own URL | Map Local | AutoResponder |
+| Rewrite traffic in flight | Yes, with scripts | No | Rewrite | FiddlerScript and rules |
+| REST, GraphQL, gRPC, SOAP requests | Yes | Yes (SOAP as raw XML) | Repeat and Compose for HTTP | Composer for HTTP |
+| CLI | Yes | Yes | No | No |
+| MCP server | Yes | Yes | No | No |
+| Browser extension | Chrome and Firefox | No | No | No |
+| Platforms | Windows, macOS, Linux | Windows, macOS, Linux, web | macOS, Windows, Linux | Windows |
 
-The browser companion extension (`bifurc-extension`) and the published site (`bifurc-website`) are separate repositories.
+Insomnia, Bruno and HTTP Toolkit are not in the table yet: their rows need checking against their current
+documentation first.
 
-## Documentation
+## Performance
 
-The documentation source now lives in the **website repository only** and is rendered from markdown files in `bifurc-website\content\docs`.
+[![Install size, idle memory and start-up compared](docs/assets/bench.svg)](docs/performance.md)
 
-- Website repo: `bifurc-website\`
-- Docs source: `bifurc-website\content\docs\`
-- Website routes: `/docs/*`
+Numbers, the machine and the method are in [docs/performance.md](docs/performance.md). Run `scripts/bench/bench.ps1`
+(Windows) or `scripts/bench/bench.sh` to measure your own.
 
-## Quick start
+## Build from source
 
 ```bash
 git clone https://github.com/HarshalKudale/bifurc.git
-cargo dev:engine   # then, in another terminal:
+cd bifurc
+cargo dev:engine   # the engine, in this terminal; then, in another terminal:
 cargo dev:ui
 ```
 
-## Browser extension
+Per-OS dependencies, the `.env` file and the packaging targets are in [docs/building.md](docs/building.md). The
+developer docs are in [docs/](docs/); the user documentation is on [bifurc.app/docs](https://bifurc.app/docs).
 
-Load the `bifurc-extension` repository's folder unpacked in Chrome or Edge to:
-
-- toggle browser proxy routing
-- review traffic inside a Bifurc DevTools tab
-- create saved requests and mocks from live browser traffic
-
-## Testing
+Builds you make yourself send no analytics. See [docs/analytics.md](docs/analytics.md).
 
 ```bash
-cargo test                # protocol, engine, CLI, MCP server (the default members)
-cargo test --workspace    # and the UI crates, which need GPUI's build dependencies
+cargo test --workspace --locked
 ```
 
-## Licensing
+## Support Bifurc
 
-Bifurc is free to use for personal, non-commercial purposes under the [PolyForm Noncommercial License 1.0.0](LICENSE).
+Bifurc is free and maintained by one person. If it saves you time:
 
-You may not resell it, repackage it, or use it to build commercial products or generate profit.
+- [Ko-fi](https://ko-fi.com/harshalkudale) (TODO(owner): confirm the page exists)
+- [GitHub Sponsors](https://github.com/sponsors/HarshalKudale) (TODO(owner): enable Sponsors)
+- star the repo, and tell a friend
 
-See [LICENSE](LICENSE) for the full terms. Questions: contact@bifurc.app.
+## Contributing, security, license
+
+- **Contributing:** read [CONTRIBUTING.md](CONTRIBUTING.md). Contributions need a signed [CLA](CLA.md). Vaults are in beta, so please
+  don't open feature PRs for them yet.
+- **Security:** report vulnerabilities privately, see [SECURITY.md](SECURITY.md).
+- **License:** [LICENSE](LICENSE) is the PolyForm Strict License 1.0.0 plus some added permissions. In plain words:
+  free for personal and non-commercial use; you may change your own copy and send changes upstream; commercial or
+  enterprise use needs written permission; no redistribution of Bifurc or of changed versions. The Bifurc name and
+  logo are covered by [TRADEMARKS.md](TRADEMARKS.md). This is not an OSI-approved license.
+
+**Contact:** contact@bifurc.app

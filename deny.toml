@@ -76,6 +76,9 @@ ignore = [
     { id = "RUSTSEC-2026-0206", reason = "rustybuzz: transitive via GPUI text shaping only" },
     { id = "RUSTSEC-2026-0192", reason = "ttf-parser: transitive via GPUI text shaping only" },
     { id = "RUSTSEC-2025-0134", reason = "rustls-pemfile: only GPUI's reqwest fork still uses it; the engine moved to rustls::pki_types" },
+    { id = "RUSTSEC-2026-0370", reason = "zvariant: unmaintained, merged into zbus 6; transitive via Linux desktop integration only (accessibility, portals, tray, notifications)" },
+    { id = "RUSTSEC-2026-0371", reason = "zbus_names: unmaintained, merged into zbus 6; transitive via Linux desktop integration only (accessibility, portals, tray, notifications)" },
+    { id = "RUSTSEC-2026-0372", reason = "zvariant_derive: unmaintained, merged into zbus 6; transitive via Linux desktop integration only (accessibility, portals, tray, notifications)" },
 ]
 # If this is true, then cargo deny will use the git executable to fetch advisory database.
 # If this is false, then it uses a built-in git library.
@@ -92,7 +95,7 @@ ignore = [
 # [possible values: any SPDX 3.11 short identifier (+ optional exception)].
 allow = [
     # Bifurc's own crates.
-    "LicenseRef-PolyForm-Noncommercial-1.0.0",
+    "LicenseRef-Bifurc-PolyForm-Strict-1.0.0-with-additions",
     # Permissive licenses of the dependency tree (cargo xtask licenses lists the notices we ship).
     "MIT",
     "MIT-0",

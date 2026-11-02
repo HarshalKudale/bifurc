@@ -77,5 +77,8 @@
   "title": "Vaults",
   "description": "Secrets that requests use as {{vault.NAME}}. No value is synced: a vault keeps them on this device, or reads them from a secret manager.",
   "pulled_hint": "Pulled from {provider}. Change its secrets there.",
-  "no_pulled_body": "Unseal it to pull its secrets from {provider}, then use them in a request as {{vault.NAME}}."
+  "no_pulled_body": "Unseal it to pull its secrets from {provider}, then use them in a request as {{vault.NAME}}.",
+  "beta_tag": "Beta",
+  "beta_title": "Vaults are in beta",
+  "beta_body": "Vaults are unstable and still under development. They may not work as expected, and how they store data may change. Local vaults stay on this device only: they are never synced or committed to git. Keep your own copy of any secret you store here."
 }

@@ -1,0 +1,119 @@
+name: CI
+
+on:
+  pull_request:
+    branches: [master]
+  push:
+    branches: [master]
+  workflow_dispatch:
+  workflow_call:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
+env:
+  CARGO_INCREMENTAL: "0"
+  CARGO_TERM_COLOR: always
+
+jobs:
+  lint:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1
+        with:
+          cache: false
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+      - name: Install GPUI's build dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential clang cmake pkg-config libasound2-dev libfontconfig-dev \
+            libwayland-dev libx11-xcb-dev libxkbcommon-x11-dev libssl-dev libzstd-dev libvulkan1
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+      - name: Lint the whole workspace
+        run: cargo clippy --workspace --all-targets --locked -- -D warnings
+      - name: Check the third-party license notices are current
+        run: cargo xtask licenses --check
+      - name: Audit dependencies (advisories, licenses, bans, sources)
+        uses: EmbarkStudios/cargo-deny-action@3c6349835b2b7b196a839186cb8b78e02f7b5f25 # v2
+        with:
+          command: check
+
+  test:
+    name: test (${{ matrix.os }})
+    # While the repository is private macOS minutes count 10x and Windows 2x, so pull requests run Ubuntu only.
+    # Once it is public every system runs on every pull request.
+    strategy:
+      fail-fast: false
+      matrix:
+        os: ${{ fromJSON(github.event_name == 'pull_request' && github.event.repository.private && '["ubuntu-22.04"]' || '["ubuntu-22.04","windows-latest","macos-14"]') }}
+    runs-on: ${{ matrix.os }}
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          persist-credentials: false
+      - uses: actions-rust-lang/setup-rust-toolchain@166cdcfd11aee3cb47222f9ddb555ce30ddb9659 # v1
+        with:
+          cache: false
+      - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
+        with:
+          key: ${{ matrix.os }}
+      - name: Install GPUI's build dependencies
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y build-essential clang cmake pkg-config libasound2-dev libfontconfig-dev \
+            libwayland-dev libx11-xcb-dev libxkbcommon-x11-dev libssl-dev libzstd-dev libvulkan1
+      - name: Test the workspace
+        run: cargo test --workspace --locked
+
+  secrets:
+    runs-on: ubuntu-22.04
+    permissions:
+      contents: read
+      pull-requests: read
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - uses: gitleaks/gitleaks-action@ff98106e4c7b2bc287b24eaf42907196329070c7 # v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
+  workflow-guard:
+    runs-on: ubuntu-22.04
+    steps:
+      - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
+        with:
+          fetch-depth: 0
+          persist-credentials: false
+      - name: A fork may not change the build or CI without approval
+        if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.fork
+        env:
+          BASE: ${{ github.event.pull_request.base.sha }}
+          HEAD: ${{ github.event.pull_request.head.sha }}
+          LABELS: ${{ toJSON(github.event.pull_request.labels.*.name) }}
+        run: |
+          if git diff --name-only "$BASE" "$HEAD" | grep -E '^(\.github/|xtask/|deny\.toml|\.cargo/|rust-toolchain\.toml)|(^|/)build\.rs$'; then
+            echo "$LABELS" | grep -q '"ci-approved"' || { echo "::error::A maintainer must add the ci-approved label."; exit 1; }
+          fi
+      - name: Every job runs on a GitHub-hosted runner
+        run: "! grep -rn 'self-hoste[d]' .github/workflows/"
+
+  all-green:
+    if: always()
+    needs: [lint, test, secrets, workflow-guard]
+    runs-on: ubuntu-22.04
+    steps:
+      - name: Every required job passed
+        env:
+          RESULTS: ${{ toJSON(needs.*.result) }}
+        run: "! echo \"$RESULTS\" | grep -Eq 'failure|cancelled'"

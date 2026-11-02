@@ -7,8 +7,6 @@
 //! that workspace's own id as `workspace_id`, whatever the workspace is (local only, a git repository, synced,
 //! imported by its owner or by a collaborator); an event that belongs to no workspace carries none.
 //!
-//! An `organization` an older version left in a workspace of `app.json` is ignored.
-//!
 //! A command a client sends becomes at most one event ([`events::finished`]), sent within [`EVENTS_EVERY`]:
 //! - what [`events::describe`] makes of it when it succeeds (`mock created`, `request sent`);
 //! - its own name (`request.parseCurl`) when it succeeds and nothing describes it;
@@ -126,6 +124,15 @@ fn project_key() -> Option<String> {
         .or_else(|| non_empty(option_env!("BIFURC_POSTHOG_KEY").map(str::to_string)))
 }
 
+/// An official build has its project key compiled in, and no other key was given when it runs.
+fn official(runtime_key: Option<String>, built_key: Option<&str>) -> bool {
+    non_empty(runtime_key).is_none() && non_empty(built_key.map(str::to_string)).is_some()
+}
+
+fn official_build() -> bool {
+    official(std::env::var("BIFURC_POSTHOG_KEY").ok(), option_env!("BIFURC_POSTHOG_KEY"))
+}
+
 fn host() -> String {
     non_empty(std::env::var("BIFURC_POSTHOG_HOST").ok())
         .or_else(|| non_empty(option_env!("BIFURC_POSTHOG_HOST").map(str::to_string)))
@@ -204,7 +211,7 @@ fn routing() -> Arc<Routing> {
 }
 
 /// What an event done in a workspace says on top of what was done: the workspace's own id on this device, which
-/// is a random id and no name. Nothing about the account or any organization.
+/// is a random id and no name. Nothing about the account.
 fn workspace_properties(workspace_id: &str) -> Value {
     json!({ "workspace_id": workspace_id })
 }
@@ -221,6 +228,7 @@ fn event(distinct_id: &str, name: &str, properties: Value) -> Value {
         "engine_version": ENGINE_VERSION,
         "os": std::env::consts::OS,
         "arch": std::env::consts::ARCH,
+        "official_build": official_build(),
     });
     json!({ "event": name, "distinct_id": distinct_id, "properties": merged(&common, &properties) })
 }
@@ -496,7 +504,17 @@ mod tests {
         keys.sort_unstable();
         assert_eq!(
             keys,
-            ["$geoip_disable", "$ip", "$lib", "$process_person_profile", "arch", "client", "engine_version", "os"]
+            [
+                "$geoip_disable",
+                "$ip",
+                "$lib",
+                "$process_person_profile",
+                "arch",
+                "client",
+                "engine_version",
+                "official_build",
+                "os"
+            ]
         );
         assert_eq!(properties["$process_person_profile"], false);
         assert_eq!(properties["$ip"], "0.0.0.0");
@@ -593,27 +611,30 @@ mod tests {
     }
 
     #[test]
-    fn with_the_switch_off_nothing_is_sent_whatever_an_old_app_json_says_of_organizations() {
-        let organization = json!({
-            "publicId": "pub_acme", "name": "Acme", "workspaceId": "ws_team", "analytics": true, "githubUserId": 7,
-        });
-        let workspaces = json!([{ "id": "team", "name": "Team", "accountId": "a", "organization": organization }]);
+    fn only_a_compiled_in_key_makes_a_build_official() {
+        assert!(official(None, Some("phc_x")));
+        assert!(official(Some("  ".into()), Some("phc_x")));
+        assert!(!official(Some("phc_mine".into()), Some("phc_x")));
+        assert!(!official(None, None));
+        assert!(!official(None, Some("")));
+    }
 
-        // On: the old `organization` is ignored, the event is anonymous and names the workspace by its own id.
+    #[test]
+    fn an_unknown_key_in_app_json_changes_nothing_that_is_sent() {
+        let workspaces = json!([{ "id": "team", "name": "Team", "accountId": "a", "extra": { "analytics": true } }]);
+
+        // On: the event is anonymous and names the workspace by its own id.
         let root = running(json!({ "telemetryEnabled": true, "workspaces": workspaces }));
-        assert_eq!(load_settings().workspace("team").unwrap()["organization"]["publicId"], "pub_acme");
         let sent = sent_by("request.parseCurl", json!({ "workspaceId": "team" }), Ok(&json!({})));
         assert_eq!(sent.len(), 1);
         assert_eq!(sent[0]["distinct_id"], "install-1");
         let properties = sent[0]["properties"].as_object().unwrap();
         assert_eq!(properties["workspace_id"], "team");
-        for gone in ["org_public_id", "github_user_id"] {
-            assert!(!properties.contains_key(gone), "{gone}");
-        }
+        assert!(!properties.contains_key("extra"));
         stop_running();
         drop(root);
 
-        // Off: the organization's `analytics: true` no longer overrides the switch.
+        // Off: a key saying `analytics: true` does not override the switch.
         let _root = running(json!({ "telemetryEnabled": false, "workspaces": workspaces }));
         assert!(describe("request.parseCurl", &json!({ "workspaceId": "team" })).is_none());
         assert!(sent_by("request.parseCurl", json!({ "workspaceId": "team" }), Ok(&json!({}))).is_empty());

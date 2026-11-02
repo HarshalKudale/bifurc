@@ -22,7 +22,7 @@ use gpui_kit::component::{
 use gpui_kit::prelude::FluentBuilder as _;
 use gpui_kit::{
     ClipboardItem, Context, Entity, InteractiveElement as _, IntoElement, ParentElement as _, Render,
-    StatefulInteractiveElement as _, Styled as _, Subscription, Window, div,
+    StatefulInteractiveElement as _, Styled as _, Subscription, TestSupportExt as _, Window, div,
 };
 use serde_json::{Value, json};
 
@@ -154,10 +154,16 @@ impl VaultsScreen {
         });
     }
 
+    /// Closes the "moved to this device" notice for good: every vault that was moved is acknowledged, not only the
+    /// one on screen, so no other vault tells the user again in the next session.
     fn acknowledge(&mut self, cx: &mut Context<Self>) {
-        let Some(vault) = self.vault(cx) else { return };
-        let payload = json!({ "workspaceId": self.workspace(cx), "id": vault.id });
-        self.run("vault.acknowledge", payload, t("vaults.error_acknowledge"), cx);
+        let workspace = self.workspace(cx);
+        let moved: Vec<String> =
+            self.model.read(cx).vaults().iter().filter(|v| v.moved).map(|v| v.id.clone()).collect();
+        for id in moved {
+            let payload = json!({ "workspaceId": workspace, "id": id });
+            self.run("vault.acknowledge", payload, t("vaults.error_acknowledge"), cx);
+        }
     }
 
     pub fn prompt_rename(&mut self, window: &mut Window, cx: &mut Context<Self>) {
@@ -399,7 +405,14 @@ impl VaultsScreen {
                     .gap_2()
                     .px_4()
                     .py_2()
-                    .child(Alert::warning("vault-moved", t("vaults.moved_body")).title(t("vaults.moved_title")))
+                    .child({
+                        let view = cx.weak_entity();
+                        Alert::warning("vault-moved", t("vaults.moved_body")).title(t("vaults.moved_title")).on_close(
+                            move |_, _, cx| {
+                                view.update(cx, |this, cx| this.acknowledge(cx)).ok();
+                            },
+                        )
+                    })
                     .child(
                         h_flex().justify_end().child(
                             Button::new("vault-moved-ok")
@@ -611,8 +624,9 @@ impl VaultsScreen {
 
 impl Render for VaultsScreen {
     fn render(&mut self, _: &mut Window, cx: &mut Context<Self>) -> impl IntoElement {
-        let header = page::header(
+        let header = page::header_tagged(
             t("vaults.title"),
+            Some(Tag::warning().small().child(t("vaults.beta_tag"))),
             t("vaults.description"),
             Button::new("new-vault")
                 .small()
@@ -623,7 +637,18 @@ impl Render for VaultsScreen {
         );
         let list = self.render_list(cx).into_any_element();
         let detail = self.render_detail(cx);
-        let body = master_detail(Some(list), detail, cx);
+        let beta = div()
+            .id("vaults-beta")
+            .test_support()
+            .flex_none()
+            .px_4()
+            .py_2()
+            .child(Alert::warning("vaults-beta-alert", t("vaults.beta_body")).title(t("vaults.beta_title")));
+        let body = v_flex().size_full().child(beta).child(div().flex_1().min_h_0().child(master_detail(
+            Some(list),
+            detail,
+            cx,
+        )));
         page::screen(header, body, cx)
     }
 }

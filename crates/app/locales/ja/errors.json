@@ -363,5 +363,9 @@
   "vault.pull_failed": "{provider} からシークレットを取得できませんでした。{detail}",
   "vault.setting_invalid": "「{field}」は {provider} の設定として使えません。",
   "browser.proxy_off": "フォワードプロキシが実行されていません",
-  "browser.bad_url": "Web アドレスではありません"
+  "browser.bad_url": "Web アドレスではありません",
+  "tunnel.not_installed": "cloudflared がインストールされていません。セットアップまたは設定からインストールしてください",
+  "tunnel.no_address": "cloudflared が公開アドレスを返しませんでした。このコンピューターはオンラインですか?",
+  "updates.updater_failed": "アップデーターが失敗しました: {detail}",
+  "webhook.failed": "Webhook リクエストが失敗しました: {detail}"
 }

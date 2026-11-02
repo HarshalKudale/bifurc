@@ -85,6 +85,7 @@ fn emit<V: 'static>(
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 fn render_tab<V: 'static>(
     tab: StripTab,
     ix: usize,

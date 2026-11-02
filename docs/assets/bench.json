@@ -1,0 +1,10 @@
+{
+  "date": "2026-10",
+  "machine": "not recorded on the compare page",
+  "os": "Windows 11",
+  "note": "Measured for the bifurc.app/compare/postman page: Bifurc 0.6.1 with its proxy engine running against Postman 12.33.2, both idle after launch; memory is the private working set (the figure Task Manager shows). Cold start was not measured. Run scripts/bench/bench.ps1 to replace this file with a full run.",
+  "results": [
+    { "name": "Bifurc", "installMb": 91, "idleMemoryMb": 90 },
+    { "name": "Postman", "installMb": 535, "idleMemoryMb": 940 }
+  ]
+}

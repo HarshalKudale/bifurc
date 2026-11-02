@@ -2,9 +2,7 @@
 //!
 //! Every package is the same folder in a different wrapper, so the wrapper says which it is: `cargo xtask
 //! package` writes `resources/install.json` (`{"package": "msix"}`) into each one. The tarball is also what
-//! the AUR package installs, under `/usr`. `nsis` is the installer releases before 0.6.2 had, which winget ran
-//! with `/CHANNEL=winget`, kept in `install-channel` beside the app; those installs are still told apart. A
-//! folder with no `install.json` is a build, not an install.
+//! the AUR package installs, under `/usr`. A folder with no `install.json` is a build, not an install.
 
 use std::path::Path;
 
@@ -15,7 +13,6 @@ use crate::utils::json::{opt_str, read_json};
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum Channel {
     Store,
-    Installer,
     Winget,
     Portable,
     AppImage,
@@ -27,9 +24,8 @@ pub enum Channel {
     Unknown,
 }
 
-const ALL: [Channel; 10] = [
+const ALL: [Channel; 9] = [
     Channel::Store,
-    Channel::Installer,
     Channel::Winget,
     Channel::Portable,
     Channel::AppImage,
@@ -44,7 +40,6 @@ impl Channel {
     pub fn as_str(self) -> &'static str {
         match self {
             Channel::Store => "store",
-            Channel::Installer => "installer",
             Channel::Winget => "winget",
             Channel::Portable => "portable",
             Channel::AppImage => "appimage",
@@ -62,10 +57,10 @@ impl Channel {
 
     /// The name in the manifest's `channels` of the channel that delivers this install's updates, for the
     /// channels that publish a release some time after it is made. The others have a release as soon as it is
-    /// on the releases page. An installer or winget install is updated from the Store, so it follows the Store.
+    /// on the releases page. A winget install is updated from the Store, so it follows the Store.
     pub fn manifest_key(self) -> Option<&'static str> {
         match self {
-            Channel::Store | Channel::Installer | Channel::Winget => Some("store"),
+            Channel::Store | Channel::Winget => Some("store"),
             Channel::Aur => Some(self.as_str()),
             _ => None,
         }
@@ -127,7 +122,7 @@ impl Channel {
 
     /// Whether this is the Store's package, which `update.apply` updates with winget.
     pub fn uses_winget(self) -> bool {
-        matches!(self, Channel::Store | Channel::Installer | Channel::Winget)
+        matches!(self, Channel::Store | Channel::Winget)
     }
 
     /// The command that updates an install a package manager owns.
@@ -145,11 +140,6 @@ pub fn channel_of(app_dir: &Path) -> Channel {
     let path = app_dir.to_string_lossy().replace('\\', "/").to_ascii_lowercase();
     match opt_str(&marker, "package") {
         Some("msix") => Channel::Store,
-        Some("nsis") => std::fs::read_to_string(app_dir.join("install-channel"))
-            .ok()
-            .and_then(|name| Channel::named(&name))
-            .filter(|channel| *channel == Channel::Winget)
-            .unwrap_or(Channel::Installer),
         Some("zip") => Channel::Portable,
         Some("appimage") => Channel::AppImage,
         Some("deb") => Channel::Deb,
@@ -194,7 +184,6 @@ mod tests {
     fn each_wrapper_is_its_channel() {
         for (package, channel) in [
             ("msix", Channel::Store),
-            ("nsis", Channel::Installer),
             ("zip", Channel::Portable),
             ("appimage", Channel::AppImage),
             ("deb", Channel::Deb),
@@ -204,16 +193,6 @@ mod tests {
             let (_root, dir) = app(package, &["app"]);
             assert_eq!(channel_of(&dir), channel, "{package}");
         }
-    }
-
-    #[test]
-    fn the_installer_remembers_the_package_manager_that_ran_it() {
-        let (_root, dir) = app("nsis", &["app"]);
-        std::fs::write(dir.join("install-channel"), "winget\r\n").unwrap();
-        assert_eq!(channel_of(&dir), Channel::Winget);
-        // Only a package manager that runs the installer is believed.
-        std::fs::write(dir.join("install-channel"), "store").unwrap();
-        assert_eq!(channel_of(&dir), Channel::Installer);
     }
 
     #[test]

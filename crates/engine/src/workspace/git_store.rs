@@ -355,18 +355,11 @@ fn parse_audit_entry(block: &str) -> Option<Value> {
     }
     let body = lines.collect::<Vec<_>>().join("\n");
 
-    static PATTERNS: LazyLock<Option<(Regex, Regex)>> = LazyLock::new(|| {
-        let current = Regex::new(r"^(create|update|delete) ([A-Za-z]\w*)(?: \[([^\]]*)\])? (.+)$").ok()?;
-        let legacy = Regex::new(r"^(create|update|delete)\((\w+)\): (.+)$").ok()?;
-        Some((current, legacy))
-    });
-    let (current, legacy) = PATTERNS.as_ref()?;
+    static PATTERN: LazyLock<Option<Regex>> =
+        LazyLock::new(|| Regex::new(r"^(create|update|delete) ([A-Za-z]\w*)(?: \[([^\]]*)\])? (.+)$").ok());
+    let current = PATTERN.as_ref()?;
     let change = body_field(&body, "change");
-    let described = if current.find(subject).is_some() || legacy.find(subject).is_some() {
-        subject
-    } else {
-        change.as_deref().unwrap_or(subject)
-    };
+    let described = if current.find(subject).is_some() { subject } else { change.as_deref().unwrap_or(subject) };
     let group = |m: &regress::Match, i: usize| m.group(i).map(|range| described[range].to_string());
 
     let (action, entity, name, changed_fields) = if let Some(m) = current.find(described) {
@@ -374,9 +367,6 @@ fn parse_audit_entry(block: &str) -> Option<Value> {
             .filter(|f| !f.is_empty())
             .map(|f| f.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect::<Vec<_>>());
         (group(&m, 1)?, group(&m, 2)?, group(&m, 4)?.trim().to_string(), fields)
-    } else if let Some(m) = legacy.find(described) {
-        let name = group(&m, 3)?;
-        (group(&m, 1)?, group(&m, 2)?, name.split(" — ").next().unwrap_or("").trim().to_string(), None)
     } else {
         ("update".to_string(), String::new(), subject.trim().to_string(), None)
     };
@@ -501,7 +491,7 @@ mod tests {
     use super::*;
 
     #[test]
-    fn audit_entries_parse_current_and_legacy_subjects() {
+    fn audit_entries_parse_the_commit_subject() {
         let entry = parse_audit_entry(
             "abc123\n1700000000\nupdate mock [name,responseBody] Login ok\nentity-id: m1\nworkspace-id: w1\nactor: laptop\n",
         )
@@ -512,11 +502,6 @@ mod tests {
         assert_eq!(entry["changedFields"], json!(["name", "responseBody"]));
         assert_eq!(entry["ts"], 1_700_000_000_000i64);
         assert_eq!(entry["actor"], "laptop");
-
-        let legacy = parse_audit_entry("def\n1\ncreate(request): Ping — GET /ping\n").unwrap();
-        assert_eq!(legacy["entityName"], "Ping");
-        assert_eq!(legacy["actor"], "local");
-        assert!(legacy.get("changedFields").is_none());
 
         // The user's own subject: what the commit did is in its `change:` line.
         let custom = parse_audit_entry(

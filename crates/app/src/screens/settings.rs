@@ -47,7 +47,7 @@ use crate::{
 const STORE_REVIEW_URL: &str = "https://apps.microsoft.com/detail/9ncb4fdzzqpv#ratings-and-reviews";
 const UPDATE_DOWNLOAD_PAGE: &str = "https://bifurc.app/download";
 const REPOSITORY_URL: &str = "https://github.com/HarshalKudale/bifurc";
-const RELEASES_URL: &str = "https://github.com/HarshalKudale/bifurc-releases/releases";
+const RELEASES_URL: &str = "https://github.com/HarshalKudale/bifurc/releases";
 
 // The engine's defaults for the settings below that are blank when unset (engine workspace/settings.rs).
 const DEFAULT_CAPTURE_LIMIT: u64 = 200;
@@ -1122,7 +1122,7 @@ impl SettingsScreen {
                 SettingItem::new(
                     t("settings.updates.releases_title"),
                     SettingField::render(|_, _, _| {
-                        Link::new("releases-link").href(RELEASES_URL).child("github.com/HarshalKudale/bifurc-releases")
+                        Link::new("releases-link").href(RELEASES_URL).child("github.com/HarshalKudale/bifurc")
                     }),
                 )
                 .description(t("settings.updates.releases_description"))

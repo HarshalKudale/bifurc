@@ -63,7 +63,7 @@
   "dev.invalid.port": "A port is a number from 1 to 65535.",
   "dev.invalid.mapping": "A mapping is a name of letters, digits and -, such as api or api.localhost.",
   "dev.invalid.vault": "This workspace has no vault named \"{name}\".",
-  "dev.unseal_title": "Unseal {vault} to start {name}",
+  "dev.unseal_title": "Unseal {vault} to start {name} (Tresore sind in der Beta)",
   "dev.unseal": "Unseal and start",
   "dev.remove.title": "Remove \"{name}\"?",
   "dev.remove.body": "Its definition is deleted, and it is stopped if it is running.",

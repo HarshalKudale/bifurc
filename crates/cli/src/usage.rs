@@ -76,7 +76,7 @@ Groups (bifurc <group> --help shows the arguments and options of each verb)
   history       log | file | show | export                            The audit log and a file's commits
   export        formats | create                                      A workspace's items as a file
   import        check | run                                           A file of Postman, Insomnia, OpenAPI, …
-  vault         list | providers | create | set | unset | test | setup | approve | unseal | seal | rename | passphrase | delete | run
+  vault [beta]  list | providers | create | set | unset | test | setup | approve | unseal | seal | rename | passphrase | delete | run
                                                                       Encrypted secrets
   account       list | login | repos | logout                         GitHub sign-in
   proxy         status | start | stop | restart                       The forward and the reverse proxy
@@ -464,6 +464,9 @@ The JSON of a flow
                                          A flow with an MCP node is refused.";
 
 const VAULT: &str = "Usage: bifurc vault <verb>
+
+[beta] Vaults are unstable and still under development: how they store data may change, and a local vault is
+never synced. Keep your own copy of any secret you store here.
 
 Secrets, used as {{vault.SECRET}} (and the signing key of {{$jwt …}}, see `jwt`). No vault puts a value in the
 workspace's repository. A local vault keeps its values sealed with a passphrase on this device only, and is the
