@@ -359,16 +359,7 @@ impl Ui {
 
     /// Presses a key or chord (`ctrl-s`, `escape`, `secondary-1`) on whatever has focus.
     pub fn press(&mut self, keys: &str) {
-        // The app binds the platform's primary modifier (Cmd on macOS), and the tests spell it Ctrl.
-        let keys = &if cfg!(target_os = "macos") {
-            let keys = keys.replace("ctrl-", "secondary-");
-            match keys.strip_prefix("alt-") {
-                Some(rest) => format!("secondary-alt-{rest}"),
-                None => keys,
-            }
-        } else {
-            keys.to_string()
-        };
+        let keys = &platform_keys(keys);
         self.cx.update_window(self.window, |_, window, cx| press(window, keys, cx)).expect("the window is open");
         self.settle();
     }
@@ -461,6 +452,20 @@ fn click(window: &mut Window, within: &[ElementId], id: impl Into<ElementId>, cx
     ] {
         window.dispatch_event(event, cx);
         draw(window, cx);
+    }
+}
+
+/// Spells a key the way the platform binds it: the tests write Ctrl, the app binds Cmd on macOS. Tab and Page
+/// Up/Down stay Ctrl there, as the app binds them.
+pub fn platform_keys(keys: &str) -> String {
+    if !cfg!(target_os = "macos") {
+        return keys.to_string();
+    }
+    let literal_ctrl = ["tab", "pageup", "pagedown"].iter().any(|k| keys.ends_with(&format!("-{k}")));
+    let keys = if literal_ctrl { keys.to_string() } else { keys.replace("ctrl-", "secondary-") };
+    match keys.strip_prefix("alt-") {
+        Some(rest) => format!("secondary-alt-{rest}"),
+        None => keys,
     }
 }
 
