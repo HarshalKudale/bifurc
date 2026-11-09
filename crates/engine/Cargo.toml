@@ -86,7 +86,7 @@ libc = "0.2"
 [target.'cfg(windows)'.dependencies]
 # The type process-wrap takes creation flags as.
 windows = { version = "0.62", features = ["Win32_System_Threading"] }
-windows-sys = { version = "0.59", features = [
+windows-sys = { version = "0.61", features = [
     "Win32_Foundation",
     "Win32_Security",
     "Win32_Security_Cryptography",
