@@ -34,7 +34,7 @@ aes-gcm = "0.10"
 zeroize = "1"
 # JWT signing (HMAC, RSA, ECDSA): the crypto provider rustls already uses, so no new package.
 ring = "0.17.14"
-rand = "0.9"
+rand = "0.10"
 uuid = { version = "1", features = ["v4"] }
 url = "2"
 percent-encoding = "2"
