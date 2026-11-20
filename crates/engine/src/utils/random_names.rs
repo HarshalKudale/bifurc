@@ -1,6 +1,6 @@
 //! Default names for things created without one.
 
-use rand::Rng;
+use rand::RngExt;
 
 const ADJECTIVES: [&str; 48] = [
     "amber", "blue", "bright", "calm", "clear", "cool", "crisp", "dark", "deep", "dry", "fair", "fast", "fine",

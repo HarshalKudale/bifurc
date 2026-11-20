@@ -102,6 +102,8 @@ jobs:
       - uses: actions-rust-lang/setup-rust-toolchain@a188e68d0fd2bd36ad51dccb2b07ba6e75105f30 # v2.0.1
         with:
           cache: false
+          # v2 denies warnings through CARGO_BUILD_WARNINGS, which cargo reads only from 1.97; keep v1's flag.
+          rustflags: -D warnings
           target: ${{ runner.os == 'macOS' && 'aarch64-apple-darwin' || '' }}
       - uses: Swatinem/rust-cache@d1527c8f67ef9af357290475d4af4b0fab8f12e0 # v2
         with:

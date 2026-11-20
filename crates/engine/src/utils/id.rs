@@ -2,7 +2,7 @@
 
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use rand::Rng;
+use rand::RngExt;
 
 /// Milliseconds since the epoch (`Date.now()`).
 pub fn now_ms() -> i64 {

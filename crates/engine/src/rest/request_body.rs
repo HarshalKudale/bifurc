@@ -4,7 +4,7 @@
 //! `{name, kind: "text" | "file", value, fileName?, contentType?}`), all as JSON.
 
 use base64::Engine as _;
-use rand::Rng;
+use rand::RngExt;
 use serde_json::{Map, Value, json};
 
 use crate::{

@@ -8,7 +8,7 @@
 
 use std::{
     collections::HashMap,
-    io::{Read, Write},
+    io::{self, Read, Write},
     sync::{
         Arc, Mutex,
         atomic::{AtomicBool, AtomicU64, Ordering},
@@ -132,8 +132,8 @@ impl EngineClient {
     /// right for probing a possibly stale `runtime.json`; the default rides out a busy named pipe.
     pub fn connect_attempts(address: &str, client_version: &str, attempts: u32) -> Result<(Self, Hello)> {
         let stream = connect_with_retry(address, attempts)?;
-        let (reader, writer) = stream.split();
-        let client = Self::from_halves(reader, writer);
+        let stream = Arc::new(stream);
+        let client = Self::from_halves(Half(Arc::clone(&stream)), Half(stream));
         let hello = client.call_blocking(
             "hello",
             json!({
@@ -218,6 +218,26 @@ impl EngineClient {
 
 /// A named pipe server accepts one client per pending instance, so a connect that races another can see
 /// `ERROR_PIPE_BUSY`; the engine's own clients retry the same way.
+/// One side of the socket. `&Stream` reads and writes, so the reader thread and the sender share one stream;
+/// it closes when both halves are dropped.
+struct Half(Arc<Stream>);
+
+impl Read for Half {
+    fn read(&mut self, buf: &mut [u8]) -> io::Result<usize> {
+        (&*self.0).read(buf)
+    }
+}
+
+impl Write for Half {
+    fn write(&mut self, buf: &[u8]) -> io::Result<usize> {
+        (&*self.0).write(buf)
+    }
+
+    fn flush(&mut self) -> io::Result<()> {
+        (&*self.0).flush()
+    }
+}
+
 fn connect_with_retry(address: &str, attempts: u32) -> Result<Stream> {
     let mut last = None;
     for attempt in 0..attempts.max(1) {

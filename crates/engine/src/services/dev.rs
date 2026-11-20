@@ -867,15 +867,16 @@ mod tests {
         let registry = Arc::new(registry);
         let port = std::net::TcpListener::bind("127.0.0.1:0").unwrap().local_addr().unwrap().port();
         let script =
-            format!("$l=[Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback,{port});$l.Start();Start-Sleep 40");
+            format!("$l=[Net.Sockets.TcpListener]::new([Net.IPAddress]::Loopback,{port});$l.Start();Start-Sleep 120");
         let cmd = format!("powershell -NoProfile -Command \"{script}\"");
         let id = json!({"workspaceId": "ws1", "name": "bound"});
         let define = json!({"workspaceId": "ws1", "name": "bound", "cmd": cmd, "mapping": "bound"});
         let defined = call(&registry, "devservice.define", define).await.unwrap();
         assert_eq!(defined["service"]["mapping"], "bound.localhost");
         call(&registry, "devservice.up", id.clone()).await.unwrap();
+        // Each look spawns two PowerShells, which on a busy runner can take most of a minute to find the port.
         let mut mapped = Value::Null;
-        for _ in 0..200 {
+        for _ in 0..900 {
             let listed = call(&registry, "devservice.list", json!({"workspaceId": "ws1"})).await.unwrap();
             mapped = listed["services"][0]["mappedPort"].clone();
             if !mapped.is_null() {
