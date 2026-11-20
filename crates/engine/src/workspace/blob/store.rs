@@ -24,7 +24,7 @@ use base64::{
     Engine as _, alphabet,
     engine::{DecodePaddingMode, GeneralPurpose, GeneralPurposeConfig, general_purpose::STANDARD},
 };
-use rand::RngCore;
+use rand::Rng;
 use serde_json::{Value, json};
 use sha2::{Digest, Sha256};
 

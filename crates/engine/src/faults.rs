@@ -22,7 +22,7 @@ use std::{
 };
 
 use parking_lot::Mutex;
-use rand::Rng;
+use rand::RngExt;
 use serde_json::{Value, json};
 use tokio::io::{AsyncRead, AsyncReadExt, AsyncWrite, AsyncWriteExt};
 

@@ -1,6 +1,6 @@
 //! `{{random.*}}` token resolution: the engine's one implementation of the generators.
 
-use rand::Rng;
+use rand::RngExt;
 
 use crate::utils::id::now_ms;
 

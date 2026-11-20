@@ -9,7 +9,7 @@ use std::{
     path::{Path, PathBuf},
 };
 
-use rand::Rng;
+use rand::RngExt;
 use rcgen::{
     BasicConstraints, CertificateParams, DistinguishedName, DnType, IsCa, KeyPair, KeyUsagePurpose, SerialNumber,
 };

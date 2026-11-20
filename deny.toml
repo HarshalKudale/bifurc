@@ -79,6 +79,7 @@ ignore = [
     { id = "RUSTSEC-2026-0370", reason = "zvariant: unmaintained, merged into zbus 6; transitive via Linux desktop integration only (accessibility, portals, tray, notifications)" },
     { id = "RUSTSEC-2026-0371", reason = "zbus_names: unmaintained, merged into zbus 6; transitive via Linux desktop integration only (accessibility, portals, tray, notifications)" },
     { id = "RUSTSEC-2026-0372", reason = "zvariant_derive: unmaintained, merged into zbus 6; transitive via Linux desktop integration only (accessibility, portals, tray, notifications)" },
+    { id = "RUSTSEC-2026-0543", reason = "chrono: unmaintained, no fixed release; transitive via GPUI, rmcp and schemars only, Bifurc does not use it" },
 ]
 # If this is true, then cargo deny will use the git executable to fetch advisory database.
 # If this is false, then it uses a built-in git library.
