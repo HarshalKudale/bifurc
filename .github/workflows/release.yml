@@ -89,7 +89,7 @@ jobs:
             targets: msix,zip
           - os: ubuntu-22.04
             targets: appimage,deb,tarball
-          - os: macos-14
+          - os: macos-15
             targets: dmg
     runs-on: ${{ matrix.os }}
     defaults:

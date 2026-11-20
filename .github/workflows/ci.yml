@@ -55,7 +55,7 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        os: ${{ fromJSON(github.event_name == 'pull_request' && github.event.repository.private && '["ubuntu-22.04"]' || '["ubuntu-22.04","windows-latest","macos-14"]') }}
+        os: ${{ fromJSON(github.event_name == 'pull_request' && github.event.repository.private && '["ubuntu-22.04"]' || '["ubuntu-22.04","windows-latest","macos-15"]') }}
     runs-on: ${{ matrix.os }}
     steps:
       - uses: actions/checkout@11d5960a326750d5838078e36cf38b85af677262 # v4
