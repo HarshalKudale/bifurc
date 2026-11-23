@@ -12,7 +12,7 @@ path = "src/main.rs"
 
 # The tray icon ships as a PNG.
 [target.'cfg(any(windows, target_os = "macos", target_os = "linux"))'.dependencies]
-png = "0.17"
+png = "0.18"
 
 [target.'cfg(any(windows, target_os = "macos"))'.dependencies]
 # No GTK: Linux uses ksni below, and tray-icon is only built on Windows and macOS.
